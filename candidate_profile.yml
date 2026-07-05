@@ -1,0 +1,72 @@
+target_roles:
+  - Backend Engineer
+  - Python Developer
+  - Software Engineer Backend
+  - Full Stack Python-oriented
+secondary_roles:
+  - AI Engineer junior/mid if Python backend is strong
+  - Data Engineer when Python, ETL, API or cloud are central
+  - Technical Solutions Engineer
+  - Technical Consultant
+strong_skills:
+  - Python
+  - Django
+  - FastAPI
+  - Flask
+  - REST APIs
+  - SQL
+  - MySQL
+  - Aurora
+  - MongoDB
+  - DocumentDB
+  - Redis
+  - Docker
+  - AWS
+  - Celery
+  - RabbitMQ
+  - English professional
+  - Spanish native
+medium_skills:
+  - React
+  - TypeScript
+  - Kubernetes
+  - CI/CD
+  - PostgreSQL
+  - ETL
+  - SaaS
+weak_skills:
+  - GCP
+  - Azure
+  - Terraform
+  - Mobile
+industries:
+  - SaaS
+  - AI
+  - Developer tools
+  - Automation
+  - Consulting
+preferred_locations:
+  - Spain remote
+  - Malaga hybrid
+  - Europe remote
+  - UK/EU remote accepting Spain residence
+preferred_work_modes:
+  - remote
+  - hybrid
+min_salary:
+dealbreakers:
+  - unpaid
+  - commission only
+  - mandatory relocation outside Spain/EU without remote option
+  - visa sponsorship impossible for Spain residency
+  - manual QA only
+avoid_roles:
+  - Pure Frontend
+  - Pure Mobile
+  - Senior Architect 8+ years mandatory
+  - Pure DevOps
+  - Manual QA
+  - Sales without technical component
+  - Unpaid internship
+real_experience_years: 4.0
+notes: Backend/software developer profile strongest around Python APIs, cloud-backed systems, SQL/NoSQL data stores, async processing and pragmatic product delivery.

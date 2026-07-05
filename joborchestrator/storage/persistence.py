@@ -19,6 +19,8 @@ import pandas as pd
 
 from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.normalization import normalize_job_identity
+from joborchestrator.ranking.ranker import RANKING_VERSION, result_to_dict
+from joborchestrator.ranking.schemas import RankingResult
 from joborchestrator.paths import DB_PATH
 
 SCHEMA = """
@@ -111,6 +113,28 @@ CREATE TABLE IF NOT EXISTS scan_events (
     duration_seconds REAL DEFAULT 0,
     FOREIGN KEY(source_id) REFERENCES company_sources(id)
 );
+
+CREATE TABLE IF NOT EXISTS job_rankings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    final_score INTEGER NOT NULL,
+    decision TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    scores_json TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    reasoning_summary TEXT,
+    recommended_application_angle TEXT,
+    cv_keywords_to_emphasize_json TEXT,
+    cv_keywords_to_avoid_overclaiming_json TEXT,
+    ranking_version TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(job_id, ranking_version),
+    FOREIGN KEY(job_id) REFERENCES job_postings(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_rankings_decision ON job_rankings(decision);
+CREATE INDEX IF NOT EXISTS idx_job_rankings_score ON job_rankings(final_score);
 """
 
 
@@ -633,6 +657,142 @@ def get_recent_scan_events(limit: int = 20) -> pd.DataFrame:
                LIMIT ?""",
             conn,
             params=(limit,),
+        )
+    finally:
+        conn.close()
+
+
+def save_job_ranking(job_id: int, ranking: RankingResult) -> int:
+    now = datetime.now().isoformat(timespec="seconds")
+    payload = result_to_dict(ranking)
+    conn = _conn()
+    try:
+        existing = conn.execute(
+            "SELECT id, created_at FROM job_rankings WHERE job_id = ? AND ranking_version = ?",
+            (job_id, ranking.ranking_version),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """UPDATE job_rankings SET
+                       final_score = ?, decision = ?, confidence = ?, scores_json = ?,
+                       evidence_json = ?, reasoning_summary = ?, recommended_application_angle = ?,
+                       cv_keywords_to_emphasize_json = ?, cv_keywords_to_avoid_overclaiming_json = ?,
+                       updated_at = ?
+                   WHERE id = ?""",
+                (
+                    ranking.final_score,
+                    ranking.decision,
+                    ranking.confidence,
+                    json.dumps(payload["scores"], ensure_ascii=False),
+                    json.dumps(payload["evidence"], ensure_ascii=False),
+                    ranking.reasoning_summary,
+                    ranking.recommended_application_angle,
+                    json.dumps(ranking.cv_keywords_to_emphasize, ensure_ascii=False),
+                    json.dumps(ranking.cv_keywords_to_avoid_overclaiming, ensure_ascii=False),
+                    now,
+                    existing["id"],
+                ),
+            )
+            ranking_id = int(existing["id"])
+        else:
+            cursor = conn.execute(
+                """INSERT INTO job_rankings (
+                       job_id, final_score, decision, confidence, scores_json, evidence_json,
+                       reasoning_summary, recommended_application_angle,
+                       cv_keywords_to_emphasize_json, cv_keywords_to_avoid_overclaiming_json,
+                       ranking_version, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    job_id,
+                    ranking.final_score,
+                    ranking.decision,
+                    ranking.confidence,
+                    json.dumps(payload["scores"], ensure_ascii=False),
+                    json.dumps(payload["evidence"], ensure_ascii=False),
+                    ranking.reasoning_summary,
+                    ranking.recommended_application_angle,
+                    json.dumps(ranking.cv_keywords_to_emphasize, ensure_ascii=False),
+                    json.dumps(ranking.cv_keywords_to_avoid_overclaiming, ensure_ascii=False),
+                    ranking.ranking_version,
+                    now,
+                    now,
+                ),
+            )
+            ranking_id = int(cursor.lastrowid)
+        conn.commit()
+        return ranking_id
+    finally:
+        conn.close()
+
+
+def get_ranked_jobs(
+    decisions: list[str] | None = None,
+    min_score: int | None = None,
+    sources: list[str] | None = None,
+    with_red_flags: bool | None = None,
+    ranking_version: str = RANKING_VERSION,
+) -> pd.DataFrame:
+    conn = _conn()
+    try:
+        params: list[object] = [ranking_version]
+        query = """
+            SELECT
+                jp.id AS job_id, jp.title, jp.company, jp.location, jp.source, jp.url,
+                jp.apply_url, jp.description_text, jp.department, jp.workplace_type,
+                jp.first_seen_at, jp.last_seen_at, jp.status AS scan_status, jp.pipeline_status,
+                jr.final_score, jr.decision, jr.confidence, jr.scores_json, jr.evidence_json,
+                jr.reasoning_summary, jr.recommended_application_angle,
+                jr.cv_keywords_to_emphasize_json, jr.cv_keywords_to_avoid_overclaiming_json,
+                jr.ranking_version, jr.updated_at AS ranked_at
+            FROM job_rankings jr
+            JOIN job_postings jp ON jp.id = jr.job_id
+            WHERE jr.ranking_version = ?
+        """
+        if decisions:
+            placeholders = ",".join("?" for _ in decisions)
+            query += f" AND jr.decision IN ({placeholders})"
+            params.extend(decisions)
+        if min_score is not None:
+            query += " AND jr.final_score >= ?"
+            params.append(min_score)
+        if sources:
+            placeholders = ",".join("?" for _ in sources)
+            query += f" AND jp.source IN ({placeholders})"
+            params.extend(sources)
+        if with_red_flags is True:
+            query += " AND jr.evidence_json LIKE '%red_flags%' AND jr.evidence_json NOT LIKE '%\"red_flags\": []%'"
+        elif with_red_flags is False:
+            query += " AND (jr.evidence_json LIKE '%\"red_flags\": []%' OR jr.evidence_json NOT LIKE '%red_flags%')"
+        query += """
+            ORDER BY
+              CASE jr.decision
+                WHEN 'APPLY_NOW' THEN 1
+                WHEN 'APPLY_WITH_TAILORED_CV' THEN 2
+                WHEN 'MAYBE' THEN 3
+                WHEN 'SKIP' THEN 4
+                WHEN 'AVOID' THEN 5
+                ELSE 6
+              END,
+              jr.final_score DESC
+        """
+        return pd.read_sql_query(query, conn, params=params)
+    finally:
+        conn.close()
+
+
+def get_unranked_jobs(ranking_version: str = RANKING_VERSION, limit: int = 500) -> pd.DataFrame:
+    conn = _conn()
+    try:
+        return pd.read_sql_query(
+            """SELECT jp.*
+               FROM job_postings jp
+               LEFT JOIN job_rankings jr
+                 ON jr.job_id = jp.id AND jr.ranking_version = ?
+               WHERE jr.id IS NULL
+               ORDER BY jp.last_seen_at DESC
+               LIMIT ?""",
+            conn,
+            params=(ranking_version, limit),
         )
     finally:
         conn.close()
