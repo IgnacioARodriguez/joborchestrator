@@ -23,8 +23,8 @@ python3 test_scanner.py
 ```
 joborchestrator/
 ├── ✅ app.py                    (modificado: +Tab 5)
-├── ✅ jobscrapping.py           (sin cambios)
-├── ✅ lotes_core.py             (arreglado: merge str/int64)
+├── ✅ joborchestrator/scanning/linkedin.py      (scraper de LinkedIn)
+├── ✅ joborchestrator/batching.py               (lotes y parseo)
 ├── ✅ persistence.py            (sin cambios)
 ├── ✅ requirements.txt           (actualizado: +httpx, +pyyaml)
 ├── ✅ README.md                  (actualizado: +Tab 5 info)
@@ -46,12 +46,12 @@ joborchestrator/
 
 ### Test 1: Imports
 ```python
-python3 -c "import providers; import scan_core; import scan_portals; print('✅ Imports OK')"
+python -c "from joborchestrator.scanning import providers, core, portals; print('✅ Imports OK')"
 ```
 
 ### Test 2: Carga config
 ```python
-python3 -c "import scan_portals; config = scan_portals.load_portals_config(); print(f'✅ Config loaded: {len(config.get(\"tracked_companies\", []))} companies')"
+python -c "from joborchestrator.scanning import portals; config = portals.load_portals_config(); print(f'✅ Config loaded: {len(config.get(\"tracked_companies\", []))} companies')"
 ```
 
 ### Test 3: Streamlit

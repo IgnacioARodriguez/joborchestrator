@@ -4,10 +4,6 @@ Job Orchestrator — UI local para tu pipeline de búsqueda de empleo.
 Corre con:
     streamlit run app.py
 
-Requiere en la misma carpeta:
-    - jobscrapping.py   (tu scraper de LinkedIn, sin modificar en su lógica)
-    - lotes_core.py      (lógica de filtrado/lotes/parseo)
-
 IMPORTANTE: el scraping SIGUE corriendo en local, con tu sesión real de LinkedIn
 y un navegador visible. Esta UI solo lo orquesta como subproceso; no automatiza
 aplicar a ofertas ni enviar mensajes (eso sigue fuera de alcance a propósito).
@@ -15,14 +11,13 @@ aplicar a ofertas ni enviar mensajes (eso sigue fuera de alcance a propósito).
 
 import subprocess
 import sys
-from pathlib import Path
 from io import BytesIO
 import asyncio
 
 import pandas as pd
 import streamlit as st
 
-from lotes_core import (
+from joborchestrator.batching import (
     filtrar_ofertas,
     generar_lotes,
     parsear_tabla_respuesta,
@@ -30,20 +25,19 @@ from lotes_core import (
     FILAS_POR_LOTE_DEFAULT,
     MIN_DESCRIPCION_LEN_DEFAULT,
 )
-import persistence as db
-import scan_portals
-import trust_validator
-import archetype_detector
-import repost_detector
-import asyncio
-import evaluation_framework
-import cover_letter_generator
-import ats_autofill
+from joborchestrator.paths import LINKEDIN_SCRAPER, PROJECT_ROOT, SALIDAS_DIR
+from joborchestrator.storage import persistence as db
+from joborchestrator.scanning import portals as scan_portals
+from joborchestrator.intelligence import trust_validator
+from joborchestrator.intelligence import archetype_detector
+from joborchestrator.intelligence import repost_detector
+from joborchestrator.intelligence import evaluation_framework
+from joborchestrator.intelligence import cover_letter_generator
+from joborchestrator.intelligence import ats_autofill
 
 db.init_db()
 
-BASE_DIR = Path(__file__).parent
-SALIDAS_DIR = BASE_DIR / "salidas_todas_posiciones_raw"
+BASE_DIR = PROJECT_ROOT
 
 st.set_page_config(page_title="Job Orchestrator", layout="wide")
 
@@ -73,27 +67,27 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(
 with tab1:
     st.subheader("Lanzar el scraper")
     st.markdown(
-        "Esto ejecuta `jobscrapping.py` tal cual, en un proceso aparte. "
+        "Esto ejecuta el scraper de LinkedIn en un proceso aparte. "
         "Se abrirá un navegador real donde tendrás que loguearte a mano la primera vez "
         "(igual que corriéndolo directo por consola). **Esta pestaña solo lanza y muestra logs — "
         "no cambia nada de cómo scrapea.**"
     )
 
-    if not (BASE_DIR / "jobscrapping.py").exists():
-        st.error("No encuentro `jobscrapping.py` en esta carpeta. Ponlo junto a `app.py`.")
+    if not LINKEDIN_SCRAPER.exists():
+        st.error("No encuentro el scraper de LinkedIn dentro de `joborchestrator/scanning/`.")
     else:
         col1, col2 = st.columns([1, 3])
         with col1:
             lanzar = st.button("▶ Iniciar scraping", type="primary")
         with col2:
-            st.info("Alternativa: corre `python3 jobscrapping.py` en tu terminal como ya hacías, "
+            st.info("Alternativa: corre `python -m joborchestrator.scanning.linkedin` en tu terminal, "
                     "y usa solo las pestañas 2 y 3 de aquí.")
 
         if lanzar:
             log_box = st.empty()
             logs = []
             proceso = subprocess.Popen(
-                [sys.executable, str(BASE_DIR / "jobscrapping.py")],
+                [sys.executable, str(LINKEDIN_SCRAPER)],
                 cwd=str(BASE_DIR),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

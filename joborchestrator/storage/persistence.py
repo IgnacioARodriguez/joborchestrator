@@ -13,11 +13,10 @@ sesiones y entre semanas.
 """
 
 import sqlite3
-from pathlib import Path
 from datetime import datetime
 import pandas as pd
 
-DB_PATH = Path(__file__).parent / "job_tracker.db"
+from joborchestrator.paths import DB_PATH
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS ofertas (

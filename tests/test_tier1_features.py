@@ -16,21 +16,21 @@ print("=" * 60)
 # Test 1: Imports
 print("\n1️⃣  Testing imports...")
 try:
-    import trust_validator
+    from joborchestrator.intelligence import trust_validator
     print("   ✅ trust_validator imported")
 except ImportError as e:
     print(f"   ❌ Failed: {e}")
     sys.exit(1)
 
 try:
-    import archetype_detector
+    from joborchestrator.intelligence import archetype_detector
     print("   ✅ archetype_detector imported")
 except ImportError as e:
     print(f"   ❌ Failed: {e}")
     sys.exit(1)
 
 try:
-    import repost_detector
+    from joborchestrator.intelligence import repost_detector
     print("   ✅ repost_detector imported")
 except ImportError as e:
     print(f"   ❌ Failed: {e}")
@@ -115,7 +115,7 @@ print(f"   Duplicates detected: {result['stats']['repost_count']}")
 
 # Test 5: Salary Filtering
 print("\n5️⃣  Testing Salary Filtering...")
-from scan_core import filter_by_salary
+from joborchestrator.scanning.core import filter_by_salary
 
 test_salary_jobs = [
     {"titulo": "Engineer 1", "salary_min": 60000, "salary_max": 100000},
@@ -133,7 +133,7 @@ print(f"   Filtered: {len(filtered)} jobs")
 # Test 6: Integration
 print("\n6️⃣  Testing Integration...")
 try:
-    import scan_portals
+    from joborchestrator.scanning import portals as scan_portals
     print("   ✅ scan_portals integration check")
     
     # Check new functions exist

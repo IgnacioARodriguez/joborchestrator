@@ -82,6 +82,7 @@ def detect_reposts(jobs: List[Dict]) -> Dict:
             continue
         
         current_group = list(group1)
+        group_similarity = 1.0
         processed_hashes.add(hash1)
         
         # Buscar similares en otros hashes
@@ -105,19 +106,22 @@ def detect_reposts(jobs: List[Dict]) -> Dict:
             if combined_sim > 0.70:
                 current_group.extend(group2)
                 processed_hashes.add(hash2)
+                group_similarity = max(group_similarity, combined_sim)
         
         # Si el grupo tiene >1 oferta, es un repost
         if len(current_group) > 1:
+            seen_dates = [
+                job.get('fecha_publicada') or job.get('posted_date')
+                for job in current_group
+                if job.get('fecha_publicada') or job.get('posted_date')
+            ]
             repost_groups.append({
                 "master_job": current_group[0],  # La primera es "maestra"
                 "count": len(current_group),
                 "duplicates": current_group[1:],
-                "similarity": combined_sim if len(current_group) > 1 else 1.0,
+                "similarity": group_similarity,
                 "first_seen": current_group[0].get('fecha_publicada') or current_group[0].get('posted_date'),
-                "last_seen": max(
-                    [job.get('fecha_publicada') or job.get('posted_date') for job in current_group],
-                    default=None
-                ),
+                "last_seen": max(seen_dates, default=None),
             })
         else:
             processed_hashes.add(hash1)
@@ -138,6 +142,9 @@ def detect_reposts(jobs: List[Dict]) -> Dict:
             "repost_groups": len(repost_groups),
             "total_reposts": sum(rg["count"] for rg in repost_groups),
             "unique": len(single_postings) + len(repost_groups),
+            "unique_count": len(single_postings),
+            "master_count": len(repost_groups),
+            "repost_count": sum(len(rg["duplicates"]) for rg in repost_groups),
         },
     }
 

@@ -10,7 +10,7 @@
 OPCIÓN A: Manual (LinkedIn scraping)
 ──────────────────────────────────
   1. Tab 1: Scraping
-     └─ python3 jobscrapping.py (navegador manual)
+     └─ python -m joborchestrator.scanning.linkedin (navegador manual)
      └─ Genera Excel: salidas_todas_posiciones_raw/*.xlsx
 
   2. Tab 2: Preparar lotes

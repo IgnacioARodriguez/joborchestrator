@@ -1,13 +1,9 @@
-import os
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT))
-
-from evaluation_framework import build_af_evaluation
-from cover_letter_generator import build_cover_letter_payload, export_cover_letter_pdf
-from ats_autofill import build_autofill_plan
+from joborchestrator.intelligence.evaluation_framework import build_af_evaluation
+from joborchestrator.intelligence.cover_letter_generator import (
+    build_cover_letter_payload,
+    export_cover_letter_pdf,
+)
+from joborchestrator.intelligence.ats_autofill import build_autofill_plan
 
 
 def test_af_evaluation_structure():

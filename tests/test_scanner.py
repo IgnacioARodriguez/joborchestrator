@@ -6,13 +6,7 @@ Run this to verify the scanner is working correctly.
 """
 
 import asyncio
-import sys
-from pathlib import Path
-
-# Add project to path
-sys.path.insert(0, str(Path(__file__).parent))
-
-import scan_portals
+from joborchestrator.scanning import portals as scan_portals
 
 
 async def main():

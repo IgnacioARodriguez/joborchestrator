@@ -6,20 +6,17 @@ Combines Level 0-3 scanning methods into a unified pipeline.
 
 import asyncio
 import yaml
-from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
 
 import pandas as pd
 
-import providers
-import scan_core
-import trust_validator
-import archetype_detector
-import repost_detector
-
-
-PORTALS_FILE = Path("portals.yml")
+from joborchestrator.paths import PORTALS_FILE
+from joborchestrator.scanning import providers
+from joborchestrator.scanning import core as scan_core
+from joborchestrator.intelligence import trust_validator
+from joborchestrator.intelligence import archetype_detector
+from joborchestrator.intelligence import repost_detector
 
 
 def load_portals_config() -> Dict:

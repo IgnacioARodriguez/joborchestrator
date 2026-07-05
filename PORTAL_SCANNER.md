@@ -103,7 +103,7 @@ location_filter:
 
 ```python
 import asyncio
-import scan_portals
+from joborchestrator.scanning import portals as scan_portals
 
 result = asyncio.run(scan_portals.run_full_scan())
 print(f"Nuevas ofertas: {len(result['new_jobs'])}")

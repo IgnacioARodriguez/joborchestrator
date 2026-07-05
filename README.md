@@ -1,82 +1,76 @@
-# Job Orchestrator — UI local
+# Job Orchestrator
 
-Une tu scraper (`jobscrapping.py`) y la generación/consolidación de lotes de
-ranking en una sola pantalla local con Streamlit.
+Aplicacion local en Streamlit para organizar un pipeline de busqueda de empleo:
+scraping, preparacion de lotes para IA, consolidacion de ranking, historial de
+ofertas y escaneo de portales ATS.
 
-## Instalación (una sola vez)
+## Instalacion
 
 ```bash
-pip install -r requirements.txt --break-system-packages
-playwright install chromium   # si aún no lo tenías de antes
+pip install -r requirements.txt
+playwright install chromium
 ```
 
-## Estructura de carpeta esperada
-
-```
-joborchestrator/
-├── app.py
-├── lotes_core.py
-├── jobscrapping.py      <- tu scraper, cópialo aquí tal cual
-└── requirements.txt
-```
-
-## Correrla
+## Ejecutar la app
 
 ```bash
 streamlit run app.py
 ```
 
-Se abre en el navegador en `http://localhost:8501`.
+La interfaz se abre normalmente en `http://localhost:8501`.
 
-## Qué hace cada pestaña
+## Estructura
 
-1. **Scraping** — lanza `jobscrapping.py` como subproceso y muestra el log en
-   vivo. Se abre un navegador real donde harás login manual la primera vez,
-   exactamente igual que corriéndolo por consola. Si preferís seguir
-   corriéndolo por terminal aparte, podés saltarte esta pestaña y usar solo
-   la 2 y la 3.
+```text
+joborchestrator/
+├── app.py
+├── portals.yml
+├── requirements.txt
+├── pyproject.toml
+├── joborchestrator/
+│   ├── batching.py
+│   ├── paths.py
+│   ├── intelligence/
+│   ├── scanning/
+│   └── storage/
+├── data/
+└── tests/
+```
 
-2. **Preparar lotes** — carga el Excel más reciente de
-   `salidas_todas_posiciones_raw/` (o uno que subas a mano), filtra
-   duplicados/descripciones vacías, y genera los prompts por lote agrupados
-   por categoría. Cada lote se muestra en una caja de código con botón de
-   copiar incorporado — pégalo en un chat nuevo de Claude.ai o ChatGPT.
+## Modulos principales
 
-3. **Consolidar ranking** — pega la tabla que te devuelve la IA para cada
-   lote, la parsea a filas reales, y cuando tengas todos los lotes guardados
-   arma un ranking final ordenado por `SCORE_TOTAL` descendente, con el link
-   directo a cada oferta. Ahí mismo podés tildar "¿Aplicado?" y agregar notas
-   antes de descargar el Excel.
+- `app.py`: UI de Streamlit y orquestacion de pantallas.
+- `joborchestrator/batching.py`: filtrado de ofertas, generacion de lotes y parseo de respuestas.
+- `joborchestrator/storage/persistence.py`: persistencia SQLite local.
+- `joborchestrator/scanning/`: scanner de portales, proveedores ATS y scraper de LinkedIn.
+- `joborchestrator/intelligence/`: validacion de confianza, arquetipos, reposts, cartas y autofill ATS.
+- `joborchestrator/paths.py`: rutas compartidas para evitar paths relativos dispersos.
 
-4. **Historial / Aplicadas** — vista de todas las ofertas que pasaron alguna
-   vez por "Preparar lotes", con scores, fechas de vista, estado de aplicado
-   y notas. Podés marcar nuevas aplicaciones acá.
+## Scraper de LinkedIn
 
-5. **🔍 Portal Scanner** — descubrimiento automatizado de ofertas en múltiples
-   plataformas ATS (Greenhouse, Ashby, Lever, Workday, etc.). Escanea empresas
-   configuradas en `portals.yml` usando 4 niveles inteligentes de búsqueda.
-   Las nuevas ofertas se pueden importar directamente a "Preparar lotes".
+Desde la UI se lanza como subproceso. Tambien puede ejecutarse manualmente:
 
-4. **Historial / Aplicadas** — todo lo que alguna vez pasó por el sistema,
-   venga de hoy o de semanas atrás. Buscá por título/empresa, marcá aplicadas,
-   agregá notas.
+```bash
+python -m joborchestrator.scanning.linkedin
+```
 
-## Persistencia y deduplicación
+El scraper sigue usando navegador local y sesion manual. No automatiza
+credenciales, captchas, aplicaciones ni mensajes.
 
-Todo se guarda en `job_tracker.db` (SQLite), un archivo que vive en esta misma
-carpeta. Mientras no borres esa carpeta ni el archivo:
+## Tests
 
-- Si volvés a scrapear en una semana y salen ofertas repetidas, la pestaña 2
-  las excluye automáticamente al generar lotes (hay un checkbox por si en
-  algún caso puntual querés forzar que se incluyan igual).
-- Los scores de facilidad de entrada y el estado de "aplicado" quedan
-  guardados para siempre, visibles en la pestaña 4.
-- Si borrás `job_tracker.db`, perdés todo el histórico — hacé backup de ese
-  archivo si te importa conservarlo (ej. copialo a Google Drive de vez en
-  cuando).
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
 
-## Qué NO hace (a propósito)
+## Datos locales
 
-No aplica a ofertas ni envía mensajes por vos. Esa parte se mantiene manual
-para no arriesgar tu cuenta de LinkedIn — ver la conversación donde se
-definió esta arquitectura.
+Estos archivos se mantienen fuera de Git por defecto:
+
+- `.venv/`
+- `__pycache__/` y caches de test
+- `job_tracker.db`
+- `data/scan_history.tsv`
+
+`data/.gitkeep` se versiona solo para conservar la carpeta.

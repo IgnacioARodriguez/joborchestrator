@@ -6,14 +6,13 @@ Handles filtering, deduplication, and scan history management.
 
 import csv
 import re
-from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Set, Tuple
 import pandas as pd
 
+from joborchestrator.paths import DATA_DIR
 
-SCAN_HISTORY_FILE = Path("data") / "scan_history.tsv"
-DATA_DIR = Path("data")
+SCAN_HISTORY_FILE = DATA_DIR / "scan_history.tsv"
 
 
 def ensure_data_dir():
@@ -51,7 +50,8 @@ def load_scan_history() -> Set[str]:
 def load_evaluated_urls() -> Set[str]:
     """Load URLs from persistence database (already evaluated)."""
     try:
-        import persistence as db
+        from joborchestrator.storage import persistence as db
+
         conn = db._conn()
         rows = conn.execute("SELECT DISTINCT url FROM ofertas WHERE url IS NOT NULL").fetchall()
         conn.close()
