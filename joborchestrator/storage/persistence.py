@@ -141,6 +141,8 @@ CREATE INDEX IF NOT EXISTS idx_job_rankings_score ON job_rankings(final_score);
 def _conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA journal_mode = WAL")
     conn.execute(SCHEMA)
     conn.executescript(SCANNER_SCHEMA)
     _ensure_scanner_columns(conn)

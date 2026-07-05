@@ -873,9 +873,18 @@ with tab6:
 
         scan_col, info_col = st.columns([1, 2])
         with scan_col:
+            scan_concurrency = st.slider(
+                "Parallel scans",
+                min_value=1,
+                max_value=12,
+                value=6,
+                help="How many ATS sources to scan at the same time.",
+            )
             if st.button("Scan sources", type="primary", use_container_width=True):
                 with st.spinner("Scanning enabled ATS sources..."):
-                    results = asyncio.run(source_scanner.scan_enabled_sources())
+                    results = asyncio.run(
+                        source_scanner.scan_enabled_sources(max_concurrency=scan_concurrency)
+                    )
                 total_new = sum(len(result.new_jobs) for result in results)
                 total_updated = sum(len(result.updated_jobs) for result in results)
                 total_errors = sum(len(result.errors) for result in results)
