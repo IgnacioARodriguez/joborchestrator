@@ -14,6 +14,7 @@ import sys
 from io import BytesIO
 import asyncio
 import json
+import os
 from urllib.parse import quote
 
 import pandas as pd
@@ -33,6 +34,7 @@ from joborchestrator.storage import persistence as db
 from joborchestrator.scanning import scanner as source_scanner
 from joborchestrator.scanning.providers import PROVIDERS
 from joborchestrator.ranking import persistence as ranking_store
+from joborchestrator.ranking.llm_ranker import DEFAULT_LLM_MODEL, llm_ranking_version
 from joborchestrator.ranking.ranker import RANKING_VERSION
 
 db.init_db()
@@ -732,23 +734,46 @@ with tab5:
         f"Current version: `{RANKING_VERSION}`."
     )
 
+    llm_cols = st.columns([1, 1, 2])
+    with llm_cols[0]:
+        use_llm_ranking = st.checkbox("Use LLM enhancement", value=False)
+    with llm_cols[1]:
+        llm_model = st.text_input("LLM model", value=DEFAULT_LLM_MODEL, disabled=not use_llm_ranking)
+    with llm_cols[2]:
+        if use_llm_ranking and not os.getenv("OPENAI_API_KEY"):
+            st.warning("Set `OPENAI_API_KEY` to enable LLM ranking. Without it, ranking falls back to heuristics.")
+        elif use_llm_ranking:
+            st.info("LLM ranking uses structured JSON and saves a separate ranking version.")
+
+    effective_use_llm = use_llm_ranking and bool(os.getenv("OPENAI_API_KEY"))
+    target_ranking_version = llm_ranking_version(llm_model) if effective_use_llm else RANKING_VERSION
+
     action_cols = st.columns(3)
     with action_cols[0]:
         if st.button("Rank unranked jobs", type="primary", use_container_width=True):
             with st.spinner("Ranking unranked opportunities..."):
-                summary = ranking_store.rank_unranked_jobs()
+                summary = ranking_store.rank_unranked_jobs(
+                    use_llm=effective_use_llm,
+                    model=llm_model,
+                    ranking_version=target_ranking_version,
+                )
             st.success(" Â· ".join(f"{count} {decision}" for decision, count in summary.items()))
             st.rerun()
     with action_cols[1]:
         if st.button("Re-rank all jobs", use_container_width=True):
             with st.spinner("Re-ranking all stored opportunities..."):
-                summary = ranking_store.rerank_all_jobs()
+                summary = ranking_store.rerank_all_jobs(use_llm=effective_use_llm, model=llm_model)
             st.success(" Â· ".join(f"{count} {decision}" for decision, count in summary.items()))
             st.rerun()
     with action_cols[2]:
         st.info("Rankings are stored in SQLite and versioned, so algorithm changes can be recalculated.")
 
     st.divider()
+    versions = db.get_ranking_versions()
+    if target_ranking_version not in versions:
+        versions = [target_ranking_version, *versions]
+    selected_ranking_version = st.selectbox("Ranking version", versions)
+
     filter_cols = st.columns([2, 1, 1, 1])
     with filter_cols[0]:
         decisions = st.multiselect(
@@ -776,6 +801,7 @@ with tab5:
         min_score=min_score,
         sources=sources or None,
         with_red_flags=with_red_flags,
+        ranking_version=selected_ranking_version,
     )
 
     if ranked.empty:

@@ -782,6 +782,17 @@ def get_ranked_jobs(
         conn.close()
 
 
+def get_ranking_versions() -> list[str]:
+    conn = _conn()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT ranking_version FROM job_rankings ORDER BY ranking_version DESC"
+        ).fetchall()
+        return [row["ranking_version"] for row in rows]
+    finally:
+        conn.close()
+
+
 def get_unranked_jobs(ranking_version: str = RANKING_VERSION, limit: int = 500) -> pd.DataFrame:
     conn = _conn()
     try:
