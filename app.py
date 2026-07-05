@@ -13,9 +13,12 @@ import subprocess
 import sys
 from io import BytesIO
 import asyncio
+import json
+from urllib.parse import quote
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from joborchestrator.batching import (
     filtrar_ofertas,
@@ -38,6 +41,8 @@ from joborchestrator.intelligence import ats_autofill
 db.init_db()
 
 BASE_DIR = PROJECT_ROOT
+CHATGPT_PROMPT_URL = "https://chatgpt.com/?q={prompt}"
+MAX_PREFILL_URL_CHARS = 7500
 
 st.set_page_config(page_title="Job Orchestrator", layout="wide")
 
@@ -47,6 +52,51 @@ if "resultados" not in st.session_state:
     st.session_state.resultados = {}  # nombre_lote -> DataFrame
 if "df_filtrado" not in st.session_state:
     st.session_state.df_filtrado = None
+
+
+def build_chatgpt_url(prompt: str) -> str:
+    return CHATGPT_PROMPT_URL.format(prompt=quote(prompt))
+
+
+def render_chatgpt_tabs_launcher(lotes: list[dict]) -> None:
+    urls = [
+        {
+            "label": f"Lote {lote['numero']:02d} - {lote['categoria']}",
+            "url": build_chatgpt_url(lote["prompt"]),
+            "tooLong": len(lote["prompt"]) > MAX_PREFILL_URL_CHARS,
+        }
+        for lote in lotes
+    ]
+    payload = json.dumps(urls).replace("</", "<\\/")
+    components.html(
+        f"""
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button id="open-chatgpt-lots" style="
+            border:0;border-radius:6px;padding:9px 14px;font-weight:600;
+            background:#ff4b4b;color:white;cursor:pointer">
+            Abrir todos en ChatGPT
+          </button>
+          <span id="open-chatgpt-status" style="font:13px sans-serif;color:#555"></span>
+        </div>
+        <script>
+          const lots = {payload};
+          const button = document.getElementById("open-chatgpt-lots");
+          const status = document.getElementById("open-chatgpt-status");
+
+          button.addEventListener("click", () => {{
+            let opened = 0;
+            lots.forEach((lot, index) => {{
+              setTimeout(() => {{
+                const tab = window.open(lot.url, "_blank", "noopener,noreferrer");
+                if (tab) opened += 1;
+                status.textContent = `Abiertas ${{opened}}/${{lots.length}} pestañas. Si falta alguna, permite popups.`;
+              }}, index * 250);
+            }});
+          }});
+        </script>
+        """,
+        height=46,
+    )
 
 st.title("🎯 Job Orchestrator")
 st.caption("Scraping → lotes para IA → consolidación de ranking. Todo corre en tu máquina.")
@@ -203,8 +253,27 @@ with tab2:
         st.caption("Abrí una conversación NUEVA en Claude.ai o ChatGPT por cada lote, pega el contenido, "
                    "y guardá la tabla de respuesta para la pestaña 3.")
 
+        prompts_largos = [
+            lote for lote in st.session_state.lotes
+            if len(lote["prompt"]) > MAX_PREFILL_URL_CHARS
+        ]
+        render_chatgpt_tabs_launcher(st.session_state.lotes)
+        if prompts_largos:
+            st.warning(
+                f"{len(prompts_largos)} prompt(s) son largos para precargar por URL. "
+                "Si ChatGPT abre el chat sin texto, usa el bloque de prompt de cada lote para copiar y pegar."
+            )
+        st.caption(
+            "El prellenado usa URLs de ChatGPT y puede depender del navegador/sesion. "
+            "Si el navegador bloquea pestanas, permite popups para esta app o abre los lotes uno por uno."
+        )
+
         for lote in st.session_state.lotes:
             with st.expander(f"Lote {lote['numero']:02d} — {lote['categoria']} ({lote['n_filas']} ofertas)"):
+                st.link_button(
+                    "Abrir este lote en ChatGPT",
+                    build_chatgpt_url(lote["prompt"]),
+                )
                 st.code(lote["prompt"], language="text")
 
 # ---------------------------------------------------------------------------
