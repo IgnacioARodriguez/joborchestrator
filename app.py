@@ -30,13 +30,8 @@ from joborchestrator.batching import (
 )
 from joborchestrator.paths import LINKEDIN_SCRAPER, PROJECT_ROOT, SALIDAS_DIR
 from joborchestrator.storage import persistence as db
-from joborchestrator.scanning import portals as scan_portals
-from joborchestrator.intelligence import trust_validator
-from joborchestrator.intelligence import archetype_detector
-from joborchestrator.intelligence import repost_detector
-from joborchestrator.intelligence import evaluation_framework
-from joborchestrator.intelligence import cover_letter_generator
-from joborchestrator.intelligence import ats_autofill
+from joborchestrator.scanning import scanner as source_scanner
+from joborchestrator.scanning.providers import PROVIDERS
 
 db.init_db()
 
@@ -96,6 +91,51 @@ def render_chatgpt_tabs_launcher(lotes: list[dict]) -> None:
         </script>
         """,
         height=46,
+    )
+
+
+def render_badge(label: str, tone: str = "neutral") -> str:
+    colors = {
+        "new": ("#e6f5ee", "#1f6f55"),
+        "updated": ("#fff4df", "#8a5a11"),
+        "seen": ("#eef1f4", "#52606d"),
+        "applied": ("#e7f0ff", "#2454a6"),
+        "discarded": ("#f7e8e8", "#9c2f2f"),
+        "error": ("#fdecec", "#a83232"),
+        "neutral": ("#eef1f4", "#52606d"),
+    }
+    bg, fg = colors.get(tone, colors["neutral"])
+    return (
+        f"<span style='display:inline-flex;align-items:center;border-radius:999px;"
+        f"padding:3px 9px;font-size:12px;font-weight:700;background:{bg};color:{fg};'>"
+        f"{label}</span>"
+    )
+
+
+def render_job_card(row: dict) -> None:
+    scan_status = row.get("status") or "seen"
+    pipeline_status = row.get("pipeline_status")
+    badges = render_badge(scan_status.title(), scan_status)
+    if pipeline_status:
+        badges += " " + render_badge(str(pipeline_status).title(), str(pipeline_status))
+    st.markdown(
+        f"""
+        <div style="border:1px solid #dfe5dc;border-radius:10px;padding:16px 18px;margin-bottom:12px;background:white;box-shadow:0 1px 2px rgba(23,33,27,0.04);">
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+            <div>
+              <div style="font-size:17px;font-weight:750;color:#17211b;">{row.get('title') or 'Untitled role'}</div>
+              <div style="margin-top:4px;color:#6d756f;font-size:13px;">{row.get('company') or '-'} · {row.get('location') or 'Location not listed'} · {row.get('source') or '-'}</div>
+            </div>
+            <div>{badges}</div>
+          </div>
+          <div style="display:flex;gap:18px;margin-top:12px;color:#6d756f;font-size:12px;">
+            <span>First seen: {row.get('first_seen_at') or '-'}</span>
+            <span>Last seen: {row.get('last_seen_at') or '-'}</span>
+            <span>Seen {row.get('times_seen') or 0}x</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
 st.markdown(
@@ -668,269 +708,212 @@ with tab4:
 # TAB 5 — PORTAL SCANNER
 # ---------------------------------------------------------------------------
 with tab5:
-    st.subheader("🔍 Portal Scanner — Búsqueda Automatizada de Ofertas")
-    st.markdown(
-        "Escanea múltiples plataformas (Greenhouse, Ashby, Lever, etc.) automáticamente. "
-        "Career-Ops inspired multi-level discovery."
+    st.sidebar.markdown("### Scanner")
+    scanner_view = st.sidebar.radio(
+        "Workspace",
+        ["Dashboard", "Sources", "Opportunity Inbox", "Job Detail"],
+        label_visibility="collapsed",
+        key="scanner_workspace",
     )
 
-    st.markdown("### 🧠 Evaluación A-F y ayuda de candidatura")
-    st.caption("Ahora puedes evaluar una oferta, preparar un cover letter más estructurado y generar un plan de autofill para ATS compatibles.")
+    st.subheader("Opportunity scanner")
+    st.caption("Track official ATS sources, detect fresh roles, and keep a private local inbox of opportunities.")
 
-    with st.expander("1) Evaluación A-F estructurada", expanded=False):
-        af_job_title = st.text_input("Título de la oferta", value="Senior Python Backend Engineer")
-        af_company = st.text_input("Empresa", value="Anthropic")
-        af_desc = st.text_area("Descripción / JD", height=120, value="Build scalable APIs with Python, FastAPI, PostgreSQL and AWS. Lead backend architecture and mentor engineers.")
-        af_profile = st.text_area("Perfil del candidato", height=100, value="Backend engineer with Python, FastAPI, PostgreSQL, AWS, and mentoring experience.")
-        if st.button("Generar evaluación A-F"):
-            af_result = evaluation_framework.build_af_evaluation(
-                {"title": af_job_title, "company": af_company, "description": af_desc},
-                af_profile,
-            )
-            st.json(af_result)
+    if scanner_view == "Dashboard":
+        overview = db.get_scanner_overview()
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Tracked jobs", overview["total_jobs"])
+        with c2:
+            st.metric("New last scan", overview["last_scan_new"])
+        with c3:
+            st.metric("Updated last scan", overview["last_scan_updated"])
+        with c4:
+            st.metric("Enabled sources", overview["source_count"])
 
-    with st.expander("2) Cover Letter Generator avanzado", expanded=False):
-        cl_title = st.text_input("Título para cover letter", value="Senior Backend Engineer")
-        cl_company = st.text_input("Empresa", value="Acme Labs")
-        cl_desc = st.text_area("Descripción de la oferta", height=100, value="Build reliable APIs, optimize performance, work with Python and distributed systems.")
-        cl_profile = st.text_area("Perfil para el cover", height=100, value="I am a backend engineer with Python, system design and mentoring experience.")
-        cl_tone = st.selectbox("Tono", ["confident", "warm"], index=0)
-        if st.button("Preparar cover letter"):
-            payload = cover_letter_generator.build_cover_letter_payload(
-                {"title": cl_title, "company": cl_company, "description": cl_desc},
-                cl_profile,
-            )
-            draft = cover_letter_generator.build_professional_cover_letter(
-                {"title": cl_title, "company": cl_company, "description": cl_desc},
-                cl_profile,
-                tone=cl_tone,
-            )
-            st.session_state.cover_draft = draft
-            st.text_area("Draft editable", value=draft, height=220, key="cover_draft_editor")
-            st.json(payload)
-            if st.button("Exportar PDF", key="export_cover_pdf"):
-                out_path = BASE_DIR / "salida_cover_letter.pdf"
-                ok = cover_letter_generator.export_cover_letter_pdf(st.session_state.cover_draft, out_path)
-                if ok:
-                    st.success(f"PDF generado en {out_path}")
-                    with open(out_path, "rb") as f:
-                        st.download_button("Descargar PDF", f.read(), file_name="cover_letter.pdf", mime="application/pdf")
-            if st.button("Guardar plantilla por empresa", key="save_company_template"):
-                st.session_state.saved_templates = st.session_state.get("saved_templates", {})
-                st.session_state.saved_templates[cl_company] = {
-                    "title": cl_title,
-                    "company": cl_company,
-                    "draft": st.session_state.cover_draft,
-                }
-                st.success(f"Plantilla guardada para {cl_company}")
+        scan_col, info_col = st.columns([1, 2])
+        with scan_col:
+            if st.button("Scan sources", type="primary", use_container_width=True):
+                with st.spinner("Scanning enabled ATS sources..."):
+                    results = asyncio.run(source_scanner.scan_enabled_sources())
+                total_new = sum(len(result.new_jobs) for result in results)
+                total_updated = sum(len(result.updated_jobs) for result in results)
+                total_errors = sum(len(result.errors) for result in results)
+                st.success(f"Scan complete: {total_new} new, {total_updated} updated, {total_errors} errors.")
+                st.rerun()
+        with info_col:
+            last_scan = overview.get("last_scan") or "Never"
+            st.info(f"Last scan: {last_scan}. Scans use public ATS APIs only; no login automation or auto-apply.")
 
-        saved_templates = st.session_state.get("saved_templates", {})
-        if saved_templates:
-            st.caption("Plantillas guardadas")
-            for company, data in saved_templates.items():
-                with st.expander(company):
-                    st.text(data["draft"])
+        errors = db.get_recent_scan_errors(limit=5)
+        if not errors.empty:
+            st.markdown("### Recent errors")
+            for _, row in errors.iterrows():
+                st.markdown(
+                    f"{render_badge('Error', 'error')} **{row['company_name']}** · {row['provider']} · {row['error']}",
+                    unsafe_allow_html=True,
+                )
 
-    with st.expander("3) Application Auto-Fill", expanded=False):
-        autofill_title = st.text_input("Título de la oferta para autofill", value="Product Engineer")
-        autofill_company = st.text_input("Empresa para autofill", value="GreenTech")
-        autofill_desc = st.text_area("Descripción breve del puesto", height=100, value="Build internal tools, collaborate with product, scale frontend and backend systems.")
-        autofill_ats = st.selectbox("ATS compatible", ["greenhouse", "ashby", "lever"], index=0)
-        autofill_variant = st.radio("Versión de respuestas", ["corta", "larga"], horizontal=True)
-        if st.button("Generar plan de autofill"):
-            plan = ats_autofill.build_autofill_plan(
-                {"title": autofill_title, "company": autofill_company, "description": autofill_desc},
-                ats_type=autofill_ats,
+        events = db.get_recent_scan_events(limit=10)
+        if not events.empty:
+            st.markdown("### Recent scans")
+            st.dataframe(
+                events[["company_name", "provider", "status", "found_count", "new_count", "updated_count", "finished_at"]],
+                use_container_width=True,
+                hide_index=True,
             )
-            if autofill_variant == "corta":
-                plan["form_responses"] = [
-                    {k: v for k, v in item.items() if k != "answer"}
-                    | {"answer": item["answer"][:220]}
-                    for item in plan["form_responses"]
-                ]
-            st.json(plan)
-    
-    # Load config
-    config = scan_portals.load_portals_config()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Empresas configuradas", len(config.get("tracked_companies", [])))
-    with col2:
-        st.metric("Queries de búsqueda", len(config.get("search_queries", [])))
-    
-    st.divider()
-    st.markdown("### 🚀 Ejecutar Scan")
-    
-    # Selector de validaciones
-    col_val1, col_val2, col_val3 = st.columns(3)
-    with col_val1:
-        enable_trust = st.checkbox("✅ Trust Validator", value=True, help="Detecta scams y ghost jobs")
-    with col_val2:
-        enable_archetype = st.checkbox("🏷️ Archetype Detection", value=True, help="Clasifica tipo de rol")
-    with col_val3:
-        enable_repost = st.checkbox("🔁 Repost Detection", value=True, help="Detecta ofertas republicadas")
-    
-    if st.button("▶ Iniciar escaneo de portales", type="primary", key="scan_button"):
-        with st.spinner("Escaneando portales... esto puede tomar 1-2 minutos..."):
-            try:
-                result = asyncio.run(scan_portals.run_full_scan(config))
-                
-                st.success("✅ Escaneo completado")
-                
-                # Show report
-                st.code(result["report"])
-                
-                # Show new jobs
-                if result["new_jobs"]:
-                    jobs_to_process = result["new_jobs"]
-                    
-                    # Apply Trust Validator
-                    if enable_trust:
-                        st.markdown("#### 🛡️ Trust Validation")
-                        trust_result = scan_portals.apply_trust_validation(jobs_to_process)
-                        
-                        trust_cols = st.columns(3)
-                        with trust_cols[0]:
-                            st.metric("✅ Safe", trust_result["stats"]["safe_count"], help="Score ≥ 70")
-                        with trust_cols[1]:
-                            st.metric("⚠️ Warning", trust_result["stats"]["warning_count"], help="40-70")
-                        with trust_cols[2]:
-                            st.metric("🚨 Danger", trust_result["stats"]["danger_count"], help="Score < 40")
-                        
-                        # Filter to only safe/warning jobs
-                        jobs_to_process = trust_result["safe"] + trust_result["warning"]
-                        
-                        if trust_result["danger"]:
-                            with st.expander(f"🚨 {len(trust_result['danger'])} Ofertas peligrosas (filtradas)"):
-                                for job in trust_result["danger"]:
-                                    trust_info = job["trust_validation"]
-                                    st.warning(f"**{job.get('title')}** @ {job.get('company')}")
-                                    st.caption(trust_info["recommendation"])
-                    
-                    # Apply Archetype Detection
-                    if enable_archetype:
-                        st.markdown("#### 🏷️ Role Classification")
-                        arch_result = scan_portals.apply_archetype_detection(jobs_to_process)
-                        
-                        # Show distribution
-                        dist = arch_result["stats"]["distribution"]
-                        if dist:
-                            dist_cols = st.columns(min(3, len(dist)))
-                            for i, (arch, count) in enumerate(sorted(dist.items())):
-                                with dist_cols[i % len(dist_cols)]:
-                                    st.metric(arch.title(), count)
-                        
-                        # Add archetype info to jobs
-                        for job in jobs_to_process:
-                            job["archetype_info"] = job.get("archetype_detection", {})
-                    
-                    # Apply Repost Detection
-                    if enable_repost:
-                        st.markdown("#### 🔁 Repost Detection")
-                        repost_result = scan_portals.apply_repost_detection(jobs_to_process)
-                        
-                        repost_cols = st.columns(3)
-                        with repost_cols[0]:
-                            st.metric("🆕 Unique", repost_result["stats"]["unique_count"])
-                        with repost_cols[1]:
-                            st.metric("👑 Master", repost_result["stats"]["master_count"])
-                        with repost_cols[2]:
-                            st.metric("🔁 Duplicates (filtered)", repost_result["stats"]["repost_count"])
-                        
-                        # Filter to only unique + master
-                        jobs_final = repost_result["unique"] + repost_result["masters"]
-                    else:
-                        jobs_final = jobs_to_process
-                    
-                    st.markdown(f"### 📋 {len(jobs_final)} ofertas después de validaciones")
-                    
-                    df_preview = pd.DataFrame([
-                        {
-                            "Empresa": j.get("company", ""),
-                            "Título": j.get("title", ""),
-                            "Ubicación": j.get("location", ""),
-                            "Archetype": j.get("archetype_info", {}).get("primary_archetype", "-"),
-                            "Trust": f"{j.get('trust_validation', {}).get('trust_score', '-')}" if enable_trust else "-",
-                            "URL": j.get("url", ""),
-                        }
-                        for j in jobs_final
-                    ])
-                    
-                    st.dataframe(
-                        df_preview,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "URL": st.column_config.LinkColumn("Link"),
-                        }
-                    )
-                    
-                    if st.button("📥 Importar a 'Preparar lotes'"):
-                        # Convert to DataFrame format similar to Excel import
-                        df_import = pd.DataFrame([
-                            {
-                                "id": j.get("job_id", ""),
-                                "titulo": j.get("title", ""),
-                                "empresa": j.get("company", ""),
-                                "ubicacion": j.get("location", ""),
-                                "url": j.get("url", ""),
-                                "descripcion": "",  # Would need to fetch full JD
-                                "modalidad": "Remoto" if "remote" in j.get("title", "").lower() else "Presencial",
-                                "categoria": "imported_from_scan",
-                                "extraccion_ok": True,
-                            }
-                            for j in jobs_final
-                        ])
-                        
-                        st.session_state.df_import_scan = df_import
-                        st.success(f"✅ {len(df_import)} ofertas preparadas para lotes")
-                else:
-                    st.info("No se encontraron nuevas ofertas (todos duplicados o filtrados)")
-                    
-            except Exception as e:
-                st.error(f"❌ Error durante el escaneo: {e}")
-                import traceback
-                st.code(traceback.format_exc())
-    
-    st.divider()
-    st.markdown("### ⚙️ Configuración")
-    
-    if st.checkbox("Mostrar portals.yml", value=False):
-        st.code(open("portals.yml").read(), language="yaml")
-    
-    if st.button("🔄 Recargar configuración"):
-        st.rerun()
-    
-    st.divider()
-    st.markdown("### 📊 Historial de Scans")
-    
-    scan_history = scan_portals.get_scan_history_df()
-    if not scan_history.empty:
-        # Show last 50 scans
-        scan_history_recent = scan_history.tail(50)
-        st.dataframe(
-            scan_history_recent,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "url": st.column_config.LinkColumn("URL"),
-                "first_seen": st.column_config.TextColumn("Fecha"),
+
+    elif scanner_view == "Sources":
+        st.markdown("### Sources")
+        sources = db.list_company_sources()
+        if sources.empty:
+            st.info("No sources yet. Add your first Greenhouse, Lever, or Ashby board below.")
+        else:
+            display_sources = sources[[
+                "id", "provider", "company_name", "company_ref", "enabled", "last_scan_at", "last_scan_status", "last_scan_error"
+            ]].copy()
+            display_sources["enabled"] = display_sources["enabled"].astype(bool)
+            st.dataframe(display_sources, use_container_width=True, hide_index=True)
+
+            scan_options = {
+                f"{row['company_name']} · {row['provider']} · {row['company_ref']}": row
+                for row in sources.to_dict("records")
             }
+            selected_label = st.selectbox("Scan one source", list(scan_options.keys()))
+            if st.button("Scan selected source", type="primary"):
+                selected = scan_options[selected_label]
+                with st.spinner(f"Scanning {selected['company_name']}..."):
+                    result = asyncio.run(source_scanner.scan_source_row(selected))
+                if result.errors:
+                    st.error(result.errors[0])
+                else:
+                    st.success(
+                        f"{result.company_name}: {len(result.new_jobs)} new, "
+                        f"{len(result.updated_jobs)} updated, {len(result.unchanged_jobs)} unchanged."
+                    )
+                st.rerun()
+
+        st.divider()
+        st.markdown("### Add source")
+        with st.form("add_company_source", clear_on_submit=True):
+            provider = st.selectbox("Provider", sorted(PROVIDERS.keys()))
+            company_name = st.text_input("Company name", placeholder="Anthropic")
+            company_ref = st.text_input("Company ref", placeholder="anthropic")
+            enabled = st.checkbox("Enabled", value=True)
+            submitted = st.form_submit_button("Add source", type="primary")
+            if submitted:
+                if not company_name.strip() or not company_ref.strip():
+                    st.error("Company name and company ref are required.")
+                else:
+                    db.add_company_source(provider, company_name.strip(), company_ref.strip(), enabled)
+                    st.success("Source saved.")
+                    st.rerun()
+
+    elif scanner_view == "Opportunity Inbox":
+        st.markdown("### Opportunity Inbox")
+        status_filter = st.multiselect(
+            "Show statuses",
+            ["new", "updated", "seen", "shortlisted", "applied", "discarded"],
+            default=["new", "updated"],
         )
-        
-        # Statistics
-        stats_cols = st.columns(4)
-        with stats_cols[0]:
-            st.metric("Total vistas", len(scan_history))
-        with stats_cols[1]:
-            added = len(scan_history[scan_history["status"] == "added"])
-            st.metric("Agregadas", added)
-        with stats_cols[2]:
-            duplicates = len(scan_history[scan_history["status"] == "skipped_dup"])
-            st.metric("Duplicadas", duplicates)
-        with stats_cols[3]:
-            expired = len(scan_history[scan_history["status"] == "skipped_expired"])
-            st.metric("Expiradas", expired)
-    else:
-        st.info("Aún sin historial de scans.")
+        scan_statuses = [status for status in status_filter if status in {"new", "updated", "seen"}]
+        jobs = db.get_job_postings(statuses=scan_statuses or None, limit=100)
+        if not jobs.empty and any(status in {"shortlisted", "applied", "discarded"} for status in status_filter):
+            jobs = jobs[
+                jobs["pipeline_status"].isin([status for status in status_filter if status in {"shortlisted", "applied", "discarded"}])
+                | jobs["status"].isin(scan_statuses)
+            ]
+
+        if jobs.empty:
+            st.info("No opportunities match this view yet. Add sources and run a scan.")
+        else:
+            for _, row in jobs.iterrows():
+                data = row.to_dict()
+                render_job_card(data)
+                action_cols = st.columns([1, 1, 1, 1, 3])
+                with action_cols[0]:
+                    if data.get("url"):
+                        st.link_button("Open", data["url"], use_container_width=True)
+                with action_cols[1]:
+                    if st.button("Shortlist", key=f"shortlist_{data['id']}", use_container_width=True):
+                        db.update_job_status(int(data["id"]), "shortlisted")
+                        st.rerun()
+                with action_cols[2]:
+                    if st.button("Applied", key=f"applied_{data['id']}", use_container_width=True):
+                        db.update_job_status(int(data["id"]), "applied")
+                        st.rerun()
+                with action_cols[3]:
+                    if st.button("Discard", key=f"discard_{data['id']}", use_container_width=True):
+                        db.update_job_status(int(data["id"]), "discarded")
+                        st.rerun()
+                with action_cols[4]:
+                    if st.button("View detail", key=f"detail_{data['id']}", use_container_width=True):
+                        st.session_state.selected_scanner_job_id = int(data["id"])
+                        st.info("Open the Job Detail view from the scanner sidebar to inspect this opportunity.")
+
+    elif scanner_view == "Job Detail":
+        jobs = db.get_job_postings(limit=500)
+        if jobs.empty:
+            st.info("No jobs stored yet.")
+        else:
+            options = {
+                f"{row['title'] or 'Untitled'} · {row['company']} · {row['source']} · #{row['id']}": int(row["id"])
+                for _, row in jobs.iterrows()
+            }
+            default_id = st.session_state.get("selected_scanner_job_id")
+            labels = list(options.keys())
+            default_index = 0
+            if default_id:
+                for i, label in enumerate(labels):
+                    if options[label] == default_id:
+                        default_index = i
+                        break
+            selected = st.selectbox("Select opportunity", labels, index=default_index)
+            job = db.get_job_posting(options[selected])
+            if job:
+                st.markdown(f"### {job.get('title') or 'Untitled role'}")
+                st.markdown(
+                    f"{render_badge((job.get('status') or 'seen').title(), job.get('status') or 'seen')} "
+                    f"{render_badge((job.get('pipeline_status') or 'Untriaged').title(), job.get('pipeline_status') or 'neutral')}",
+                    unsafe_allow_html=True,
+                )
+                meta_cols = st.columns(4)
+                with meta_cols[0]:
+                    st.metric("Company", job.get("company") or "-")
+                with meta_cols[1]:
+                    st.metric("Source", job.get("source") or "-")
+                with meta_cols[2]:
+                    st.metric("Seen", job.get("times_seen") or 0)
+                with meta_cols[3]:
+                    st.metric("Active", "Yes" if job.get("is_active") else "No")
+
+                link_cols = st.columns(2)
+                with link_cols[0]:
+                    if job.get("url"):
+                        st.link_button("Open posting", job["url"], use_container_width=True)
+                with link_cols[1]:
+                    if job.get("apply_url"):
+                        st.link_button("Apply URL", job["apply_url"], use_container_width=True)
+
+                st.markdown("### Description")
+                st.write(job.get("description_text") or "No clean description available.")
+
+                st.markdown("### Tracking")
+                st.dataframe(
+                    pd.DataFrame([
+                        {
+                            "external_id": job.get("external_id"),
+                            "first_seen_at": job.get("first_seen_at"),
+                            "last_seen_at": job.get("last_seen_at"),
+                            "content_hash": job.get("content_hash"),
+                        }
+                    ]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                with st.expander("Debug: raw provider payload", expanded=False):
+                    try:
+                        st.json(json.loads(job.get("raw_payload") or "{}"))
+                    except json.JSONDecodeError:
+                        st.code(job.get("raw_payload") or "")

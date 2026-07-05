@@ -1,250 +1,342 @@
-"""
-Portal Scanner — ATS Provider Modules (Level 2 APIs)
+from __future__ import annotations
 
-Handles direct API calls to Greenhouse, Ashby, Lever, Workday, BambooHR, etc.
-"""
+import asyncio
+from typing import Any, Protocol
 
 import httpx
-import json
-from typing import Optional, List, Dict
-from datetime import datetime
-import asyncio
+
+from joborchestrator.scanning.models import JobPosting
+from joborchestrator.scanning.normalization import compute_content_hash, first_value, html_to_text
+
+DEFAULT_TIMEOUT_SECONDS = 20.0
 
 
-class ATSProvider:
-    """Base class for ATS providers."""
-    
-    def __init__(self, company: str, timeout: int = 30):
-        self.company = company
+class ProviderError(RuntimeError):
+    pass
+
+
+class JobProvider(Protocol):
+    source: str
+
+    async def list_jobs(self, company_ref: str, company_name: str | None = None) -> list[JobPosting]:
+        ...
+
+    async def get_job_detail(
+        self,
+        company_ref: str,
+        external_id: str,
+        company_name: str | None = None,
+    ) -> JobPosting | None:
+        ...
+
+
+class BaseProvider:
+    source = "base"
+
+    def __init__(self, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> None:
         self.timeout = timeout
-        self.session = httpx.AsyncClient(timeout=timeout)
-    
-    async def fetch_jobs(self) -> List[Dict]:
-        """Fetch jobs from this provider. Returns [{ title, url, location, job_id }]"""
-        raise NotImplementedError
+
+    async def _get_json(self, url: str, **kwargs: Any) -> Any:
+        timeout = httpx.Timeout(self.timeout)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            try:
+                response = await client.get(url, **kwargs)
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as exc:
+                raise ProviderError(f"{self.source} returned HTTP {exc.response.status_code} for {url}") from exc
+            except httpx.TimeoutException as exc:
+                raise ProviderError(f"{self.source} timed out after {self.timeout}s for {url}") from exc
+            except httpx.HTTPError as exc:
+                raise ProviderError(f"{self.source} request failed for {url}: {exc}") from exc
+            except ValueError as exc:
+                raise ProviderError(f"{self.source} returned invalid JSON for {url}") from exc
+
+    async def _post_json(self, url: str, payload: dict[str, Any]) -> Any:
+        timeout = httpx.Timeout(self.timeout)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            try:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as exc:
+                raise ProviderError(f"{self.source} returned HTTP {exc.response.status_code} for {url}") from exc
+            except httpx.TimeoutException as exc:
+                raise ProviderError(f"{self.source} timed out after {self.timeout}s for {url}") from exc
+            except httpx.HTTPError as exc:
+                raise ProviderError(f"{self.source} request failed for {url}: {exc}") from exc
+            except ValueError as exc:
+                raise ProviderError(f"{self.source} returned invalid JSON for {url}") from exc
+
+    def _finalize(self, job: JobPosting) -> JobPosting:
+        job.content_hash = compute_content_hash(
+            job.title,
+            job.company,
+            job.location,
+            job.description_text or job.description_html,
+            job.apply_url,
+        )
+        return job
 
 
-class GreenhouseProvider(ATSProvider):
-    """Greenhouse Boards API: https://boards-api.greenhouse.io/v1/boards/{company}/jobs"""
-    
-    def __init__(self, company: str, api_url: Optional[str] = None):
-        super().__init__(company)
-        # api_url should be like: https://boards-api.greenhouse.io/v1/boards/anthropic/jobs
-        self.api_url = api_url or f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs"
-    
-    async def fetch_jobs(self) -> List[Dict]:
-        try:
-            resp = await self.session.get(self.api_url)
-            resp.raise_for_status()
-            data = resp.json()
-            
-            jobs = []
-            for job in data.get("jobs", []):
-                jobs.append({
-                    "title": job.get("title", ""),
-                    "url": job.get("absolute_url", ""),
-                    "location": job.get("location", {}).get("name", "Remote"),
-                    "job_id": str(job.get("id", "")),
-                    "posted_at": job.get("posted_at", ""),
-                    "department": job.get("department", {}).get("name", ""),
-                })
-            
-            return jobs
-        except Exception as e:
-            print(f"[Greenhouse] Error fetching jobs for {self.company}: {e}")
-            return []
+class GreenhouseProvider(BaseProvider):
+    source = "greenhouse"
+
+    def _jobs_url(self, board_token: str) -> str:
+        return f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs?content=true"
+
+    def _detail_url(self, board_token: str, external_id: str) -> str:
+        return f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{external_id}?content=true"
+
+    async def list_jobs(self, company_ref: str, company_name: str | None = None) -> list[JobPosting]:
+        data = await self._get_json(self._jobs_url(company_ref))
+        jobs = data.get("jobs", []) if isinstance(data, dict) else []
+        return [self.normalize_job(job, company_ref, company_name) for job in jobs]
+
+    async def get_job_detail(
+        self,
+        company_ref: str,
+        external_id: str,
+        company_name: str | None = None,
+    ) -> JobPosting | None:
+        data = await self._get_json(self._detail_url(company_ref, external_id))
+        if not isinstance(data, dict):
+            return None
+        return self.normalize_job(data, company_ref, company_name)
+
+    def normalize_job(
+        self,
+        payload: dict[str, Any],
+        company_ref: str,
+        company_name: str | None = None,
+    ) -> JobPosting:
+        description_html = first_value(payload.get("content"), payload.get("description"))
+        location = payload.get("location") or {}
+        department = payload.get("department") or {}
+        offices = payload.get("offices") or []
+        workplace_type = None
+        if isinstance(offices, list) and offices:
+            workplace_type = ", ".join(filter(None, [office.get("name") for office in offices if isinstance(office, dict)])) or None
+
+        job = JobPosting(
+            external_id=str(payload.get("id") or payload.get("internal_job_id") or ""),
+            source=self.source,
+            company=company_name or company_ref,
+            title=payload.get("title"),
+            location=location.get("name") if isinstance(location, dict) else None,
+            workplace_type=workplace_type,
+            department=department.get("name") if isinstance(department, dict) else None,
+            url=payload.get("absolute_url"),
+            apply_url=payload.get("absolute_url"),
+            description_html=description_html,
+            description_text=html_to_text(description_html),
+            posted_at=payload.get("updated_at"),
+            raw_payload=payload,
+        )
+        return self._finalize(job)
 
 
-class AshbyProvider(ATSProvider):
-    """Ashby GraphQL API (via jobs.ashbyhq.com)"""
-    
-    def __init__(self, company: str):
-        super().__init__(company)
-        self.api_url = "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobBoardWithTeams"
-    
-    async def fetch_jobs(self) -> List[Dict]:
-        try:
-            query = """
-            query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!) {
-              jobBoard(organizationHostedJobsPageName: $organizationHostedJobsPageName) {
-                jobPostings {
-                  id
-                  title
-                  locationNames
-                  employmentType
-                }
-              }
-            }
-            """
-            
-            payload = {
-                "operationName": "ApiJobBoardWithTeams",
-                "variables": {
-                    "organizationHostedJobsPageName": self.company
-                },
-                "query": query
-            }
-            
-            resp = await self.session.post(self.api_url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            
-            jobs = []
-            job_postings = data.get("data", {}).get("jobBoard", {}).get("jobPostings", [])
-            for job in job_postings:
-                url = f"https://jobs.ashbyhq.com/{self.company}?ashby_jid={job.get('id', '')}"
-                jobs.append({
-                    "title": job.get("title", ""),
-                    "url": url,
-                    "location": ", ".join(job.get("locationNames", ["Remote"])),
-                    "job_id": job.get("id", ""),
-                    "employment_type": job.get("employmentType", ""),
-                })
-            
-            return jobs
-        except Exception as e:
-            print(f"[Ashby] Error fetching jobs for {self.company}: {e}")
-            return []
+class LeverProvider(BaseProvider):
+    source = "lever"
+
+    def _jobs_url(self, slug: str) -> str:
+        return f"https://api.lever.co/v0/postings/{slug}?mode=json"
+
+    async def list_jobs(self, company_ref: str, company_name: str | None = None) -> list[JobPosting]:
+        data = await self._get_json(self._jobs_url(company_ref))
+        postings = data if isinstance(data, list) else []
+        return [self.normalize_job(job, company_ref, company_name) for job in postings]
+
+    async def get_job_detail(
+        self,
+        company_ref: str,
+        external_id: str,
+        company_name: str | None = None,
+    ) -> JobPosting | None:
+        jobs = await self.list_jobs(company_ref, company_name)
+        return next((job for job in jobs if job.external_id == str(external_id)), None)
+
+    def normalize_job(
+        self,
+        payload: dict[str, Any],
+        company_ref: str,
+        company_name: str | None = None,
+    ) -> JobPosting:
+        categories = payload.get("categories") or {}
+        lists = payload.get("lists") or []
+        list_html = " ".join(
+            str(item.get("content", ""))
+            for item in lists
+            if isinstance(item, dict) and item.get("content")
+        )
+        description_html = " ".join(
+            filter(
+                None,
+                [
+                    payload.get("description"),
+                    payload.get("descriptionPlain"),
+                    list_html,
+                    payload.get("additional"),
+                    payload.get("additionalPlain"),
+                ],
+            )
+        ) or None
+
+        job = JobPosting(
+            external_id=str(payload.get("id") or ""),
+            source=self.source,
+            company=company_name or company_ref,
+            title=payload.get("text"),
+            location=categories.get("location"),
+            workplace_type=first_value(payload.get("workplaceType"), categories.get("commitment")),
+            department=first_value(categories.get("department"), categories.get("team")),
+            url=payload.get("hostedUrl"),
+            apply_url=payload.get("applyUrl"),
+            description_html=description_html,
+            description_text=first_value(payload.get("descriptionPlain"), html_to_text(description_html)),
+            posted_at=payload.get("createdAt"),
+            raw_payload=payload,
+        )
+        return self._finalize(job)
 
 
-class LeverProvider(ATSProvider):
-    """Lever API: https://api.lever.co/v0/postings/{company}?mode=json"""
-    
-    def __init__(self, company: str):
-        super().__init__(company)
-        self.api_url = f"https://api.lever.co/v0/postings/{company}?mode=json"
-    
-    async def fetch_jobs(self) -> List[Dict]:
-        try:
-            resp = await self.session.get(self.api_url)
-            resp.raise_for_status()
-            data = resp.json()
-            
-            jobs = []
-            for job in data:
-                jobs.append({
-                    "title": job.get("text", ""),
-                    "url": job.get("hostedUrl", job.get("applyUrl", "")),
-                    "location": job.get("categories", {}).get("location", "Remote"),
-                    "job_id": job.get("id", ""),
-                    "team": job.get("categories", {}).get("team", ""),
-                })
-            
-            return jobs
-        except Exception as e:
-            print(f"[Lever] Error fetching jobs for {self.company}: {e}")
-            return []
+class AshbyProvider(BaseProvider):
+    source = "ashby"
+
+    def _jobs_url(self, board_name: str) -> str:
+        return f"https://api.ashbyhq.com/posting-api/job-board/{board_name}?includeCompensation=true"
+
+    async def list_jobs(self, company_ref: str, company_name: str | None = None) -> list[JobPosting]:
+        data = await self._get_json(self._jobs_url(company_ref))
+        postings = []
+        if isinstance(data, dict):
+            postings = first_value(data.get("jobs"), data.get("jobPostings"), data.get("postings")) or []
+        return [self.normalize_job(job, company_ref, company_name) for job in postings]
+
+    async def get_job_detail(
+        self,
+        company_ref: str,
+        external_id: str,
+        company_name: str | None = None,
+    ) -> JobPosting | None:
+        jobs = await self.list_jobs(company_ref, company_name)
+        return next((job for job in jobs if job.external_id == str(external_id)), None)
+
+    def normalize_job(
+        self,
+        payload: dict[str, Any],
+        company_ref: str,
+        company_name: str | None = None,
+    ) -> JobPosting:
+        location = first_value(payload.get("locationName"), payload.get("location"))
+        if not location and isinstance(payload.get("locationNames"), list):
+            location = ", ".join(payload["locationNames"]) or None
+
+        compensation = first_value(payload.get("compensation"), payload.get("compensationTierSummary"))
+        salary_min = salary_max = salary_currency = None
+        if isinstance(compensation, dict):
+            salary_min = first_value(compensation.get("minValue"), compensation.get("salaryMin"), compensation.get("min"))
+            salary_max = first_value(compensation.get("maxValue"), compensation.get("salaryMax"), compensation.get("max"))
+            salary_currency = first_value(compensation.get("currencyCode"), compensation.get("currency"))
+        elif isinstance(payload.get("compensationTiers"), list) and payload["compensationTiers"]:
+            first_tier = payload["compensationTiers"][0]
+            if isinstance(first_tier, dict):
+                salary_min = first_value(first_tier.get("minValue"), first_tier.get("min"))
+                salary_max = first_value(first_tier.get("maxValue"), first_tier.get("max"))
+                salary_currency = first_value(first_tier.get("currencyCode"), first_tier.get("currency"))
+
+        description_html = first_value(payload.get("descriptionHtml"), payload.get("description"), payload.get("jobDescriptionHtml"))
+        job = JobPosting(
+            external_id=str(first_value(payload.get("id"), payload.get("jobId")) or ""),
+            source=self.source,
+            company=company_name or company_ref,
+            title=payload.get("title"),
+            location=location,
+            workplace_type=first_value(payload.get("employmentType"), payload.get("workplaceType")),
+            department=first_value(payload.get("departmentName"), payload.get("teamName")),
+            url=first_value(payload.get("jobUrl"), payload.get("hostedUrl"), f"https://jobs.ashbyhq.com/{company_ref}?ashby_jid={payload.get('id')}"),
+            apply_url=first_value(payload.get("applyUrl"), payload.get("jobUrl")),
+            description_html=description_html,
+            description_text=first_value(payload.get("descriptionPlain"), html_to_text(description_html)),
+            salary_min=_to_float(salary_min),
+            salary_max=_to_float(salary_max),
+            salary_currency=salary_currency,
+            posted_at=first_value(payload.get("publishedDate"), payload.get("createdAt"), payload.get("postedAt")),
+            raw_payload=payload,
+        )
+        return self._finalize(job)
 
 
-class WorkdayProvider(ATSProvider):
-    """Workday CXS API"""
-    
-    def __init__(self, company: str, workday_url: Optional[str] = None):
-        super().__init__(company)
-        # URL format: https://{company}.{shard}.myworkdayjobs.com/wday/cxs/{company}/{site}/jobs
-        # Shard defaults to 'wd1' or 'wd5'
-        self.workday_url = workday_url
-    
-    async def fetch_jobs(self) -> List[Dict]:
-        if not self.workday_url:
-            return []
-        
-        try:
-            payload = {
-                "appliedFacets": {},
-                "limit": 100,
-                "offset": 0,
-                "searchText": ""
-            }
-            
-            resp = await self.session.post(self.workday_url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            
-            jobs = []
-            for job in data.get("jobPostings", []):
-                url = f"{self.workday_url.rsplit('/', 1)[0]}/{job.get('id', '')}"
-                jobs.append({
-                    "title": job.get("title", ""),
-                    "url": url,
-                    "location": job.get("location", ""),
-                    "job_id": job.get("id", ""),
-                })
-            
-            return jobs
-        except Exception as e:
-            print(f"[Workday] Error fetching jobs: {e}")
-            return []
-
-
-class BambooHRProvider(ATSProvider):
-    """BambooHR careers API"""
-    
-    def __init__(self, company: str, domain: str):
-        super().__init__(company)
-        self.domain = domain  # e.g., "company.bamboohr.com"
-    
-    async def fetch_jobs(self) -> List[Dict]:
-        try:
-            # Fetch list
-            list_url = f"https://{self.domain}/careers/list"
-            resp = await self.session.get(list_url)
-            resp.raise_for_status()
-            
-            # Parse HTML (simplified — real code would use BeautifulSoup)
-            # For now, return empty and note this needs HTML parsing
-            return []
-        except Exception as e:
-            print(f"[BambooHR] Error fetching jobs for {self.company}: {e}")
-            return []
-
-
-async def get_provider(api_provider: str, company: str, api_url: Optional[str] = None) -> Optional[ATSProvider]:
-    """Factory function to get the right provider based on api_provider type."""
-    
-    if api_provider == "greenhouse":
-        return GreenhouseProvider(company, api_url)
-    elif api_provider == "ashby":
-        return AshbyProvider(company)
-    elif api_provider == "lever":
-        return LeverProvider(company)
-    elif api_provider == "workday":
-        return WorkdayProvider(company, api_url)
-    elif api_provider == "bamboohr":
-        return BambooHRProvider(company, api_url or "")
-    else:
+def _to_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
         return None
 
 
-async def fetch_all_providers(companies: List[Dict]) -> Dict[str, List[Dict]]:
-    """Fetch jobs from all configured companies (Level 2)."""
-    
-    results = {}
-    tasks = []
-    
-    for company_cfg in companies:
-        if not company_cfg.get("enabled", True):
-            continue
-        
-        api_provider = company_cfg.get("api_provider")
-        api_url = company_cfg.get("api")
+PROVIDERS: dict[str, JobProvider] = {
+    "greenhouse": GreenhouseProvider(),
+    "lever": LeverProvider(),
+    "ashby": AshbyProvider(),
+}
+
+
+def get_provider(source_type: str) -> JobProvider | None:
+    return PROVIDERS.get((source_type or "").lower())
+
+
+async def list_jobs_for_source(
+    source_type: str,
+    company_ref: str,
+    company_name: str | None = None,
+) -> list[JobPosting]:
+    provider = get_provider(source_type)
+    if provider is None:
+        raise ProviderError(f"Unsupported provider: {source_type}")
+    return await provider.list_jobs(company_ref, company_name)
+
+
+async def fetch_all_providers(companies: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Backward-compatible adapter for the legacy portal scanner."""
+    results: dict[str, list[dict[str, Any]]] = {}
+
+    async def _fetch(company_cfg: dict[str, Any]) -> None:
         company_name = company_cfg.get("name", "")
-        
-        if not api_provider:
-            continue
-        
-        provider = await get_provider(api_provider, company_name, api_url)
-        if provider:
-            tasks.append(fetch_single(provider, company_name, results))
-    
-    if tasks:
-        await asyncio.gather(*tasks)
-    
+        source_type = company_cfg.get("api_provider")
+        company_ref = company_cfg.get("company_ref") or _legacy_company_ref(company_cfg)
+        if not source_type or not company_ref:
+            return
+        try:
+            jobs = await list_jobs_for_source(source_type, company_ref, company_name)
+            results[company_name] = [
+                {
+                    "title": job.title or "",
+                    "url": job.url or "",
+                    "location": job.location or "",
+                    "job_id": job.external_id,
+                    "department": job.department or "",
+                    "source": job.source,
+                    "description": job.description_text or "",
+                    "salary_min": job.salary_min,
+                    "salary_max": job.salary_max,
+                }
+                for job in jobs
+            ]
+        except ProviderError as exc:
+            print(f"[{source_type}] {company_name}: {exc}")
+            results[company_name] = []
+
+    await asyncio.gather(*[_fetch(cfg) for cfg in companies if cfg.get("enabled", True)])
     return results
 
 
-async def fetch_single(provider: ATSProvider, company_name: str, results: Dict):
-    """Fetch jobs from a single provider."""
-    jobs = await provider.fetch_jobs()
-    results[company_name] = jobs
-    print(f"✓ {company_name}: {len(jobs)} jobs found")
+def _legacy_company_ref(company_cfg: dict[str, Any]) -> str | None:
+    if company_cfg.get("company_ref"):
+        return company_cfg["company_ref"]
+    api_url = company_cfg.get("api") or ""
+    if "/boards/" in api_url:
+        return api_url.split("/boards/", 1)[1].split("/", 1)[0]
+    return company_cfg.get("slug") or company_cfg.get("name")
+
