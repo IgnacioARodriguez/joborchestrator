@@ -73,7 +73,7 @@ def render_chatgpt_tabs_launcher(lotes: list[dict]) -> None:
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button id="open-chatgpt-lots" style="
             border:0;border-radius:6px;padding:9px 14px;font-weight:600;
-            background:#ff4b4b;color:white;cursor:pointer">
+            background:#111827;color:white;cursor:pointer">
             Abrir todos en ChatGPT
           </button>
           <span id="open-chatgpt-status" style="font:13px sans-serif;color:#555"></span>
@@ -98,19 +98,206 @@ def render_chatgpt_tabs_launcher(lotes: list[dict]) -> None:
         height=46,
     )
 
-st.title("🎯 Job Orchestrator")
-st.caption("Scraping → lotes para IA → consolidación de ranking. Todo corre en tu máquina.")
+st.markdown(
+    """
+    <style>
+    :root {
+        --bg: #f7f8f5;
+        --surface: #ffffff;
+        --ink: #17211b;
+        --muted: #6d756f;
+        --line: #dfe5dc;
+        --accent: #286f5a;
+    }
+
+    .stApp {
+        background: linear-gradient(180deg, #fbfcf9 0%, var(--bg) 340px);
+        color: var(--ink);
+    }
+
+    .block-container {
+        max-width: 1180px;
+        padding-top: 2.1rem;
+        padding-bottom: 3rem;
+    }
+
+    h1, h2, h3, h4 {
+        color: var(--ink);
+        letter-spacing: 0;
+    }
+
+    h1 {
+        font-size: 2.15rem;
+        line-height: 1.08;
+        margin-bottom: 0.35rem;
+    }
+
+    .app-kicker {
+        color: var(--accent);
+        font-size: 0.77rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 0.45rem;
+    }
+
+    .app-subtitle {
+        color: var(--muted);
+        font-size: 0.98rem;
+        max-width: 720px;
+        margin-bottom: 1.15rem;
+    }
+
+    .flow-strip {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 1px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--line);
+        margin: 1.25rem 0 1.1rem;
+    }
+
+    .flow-step {
+        background: rgba(255,255,255,0.86);
+        padding: 0.8rem 0.9rem;
+    }
+
+    .flow-step strong {
+        display: block;
+        font-size: 0.86rem;
+    }
+
+    .flow-step span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.78rem;
+        margin-top: 0.16rem;
+    }
+
+    div[data-testid="stMetric"] {
+        background: rgba(255,255,255,0.78);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.75rem 0.9rem;
+    }
+
+    div[data-testid="stMetricLabel"] p {
+        color: var(--muted);
+        font-size: 0.78rem;
+    }
+
+    div[data-testid="stMetricValue"] {
+        color: var(--ink);
+        font-size: 1.35rem;
+    }
+
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0.25rem;
+        border-bottom: 1px solid var(--line);
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 6px 6px 0 0;
+        color: var(--muted);
+        font-weight: 600;
+        padding: 0.65rem 0.95rem;
+    }
+
+    .stTabs [aria-selected="true"] {
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-bottom-color: var(--surface);
+    }
+
+    .stButton > button,
+    .stDownloadButton > button,
+    .stLinkButton > a {
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        box-shadow: none;
+        font-weight: 650;
+    }
+
+    .stButton > button[kind="primary"] {
+        background: var(--ink);
+        border-color: var(--ink);
+        color: white;
+    }
+
+    .stTextInput input,
+    .stTextArea textarea,
+    .stNumberInput input,
+    div[data-baseweb="select"] > div {
+        border-radius: 6px;
+    }
+
+    div[data-testid="stAlert"],
+    div[data-testid="stExpander"],
+    div[data-testid="stDataFrame"],
+    div[data-testid="stDataEditor"] {
+        border-radius: 8px;
+    }
+
+    pre {
+        border-radius: 8px !important;
+        border: 1px solid var(--line) !important;
+        background: #fbfcf9 !important;
+    }
+
+    hr {
+        margin: 1.35rem 0;
+        border-color: var(--line);
+    }
+
+    @media (max-width: 760px) {
+        .block-container {
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
+
+        .flow-strip {
+            grid-template-columns: 1fr;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown('<div class="app-kicker">Local career ops</div>', unsafe_allow_html=True)
+st.title("Job Orchestrator")
+st.markdown(
+    '<div class="app-subtitle">Un tablero compacto para escanear ofertas, preparar lotes con IA, consolidar ranking y mantener historial sin perder contexto.</div>',
+    unsafe_allow_html=True,
+)
 
 _stats = db.stats_generales()
-st.caption(
-    f"📊 Histórico: {_stats['total_vistas']} ofertas vistas alguna vez · "
-    f"{_stats['con_score']} ya puntuadas · {_stats['aplicadas']} marcadas como aplicadas"
+metric_cols = st.columns(3)
+with metric_cols[0]:
+    st.metric("Ofertas vistas", _stats["total_vistas"])
+with metric_cols[1]:
+    st.metric("Ya puntuadas", _stats["con_score"])
+with metric_cols[2]:
+    st.metric("Aplicadas", _stats["aplicadas"])
+
+st.markdown(
+    """
+    <div class="flow-strip">
+      <div class="flow-step"><strong>1. Captura</strong><span>Scraper o portal scanner</span></div>
+      <div class="flow-step"><strong>2. Lotes</strong><span>Prompts listos para IA</span></div>
+      <div class="flow-step"><strong>3. Ranking</strong><span>Scores y decision</span></div>
+      <div class="flow-step"><strong>4. Historial</strong><span>Seguimiento continuo</span></div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["1️⃣ Scraping", "2️⃣ Preparar lotes", "3️⃣ Consolidar ranking", "4️⃣ Historial / Aplicadas", "5️⃣ Portal Scanner"]
+    ["Scraping", "Lotes", "Ranking", "Historial", "Portal scanner"]
 )
-
 # ---------------------------------------------------------------------------
 # TAB 1 — SCRAPING
 # ---------------------------------------------------------------------------
