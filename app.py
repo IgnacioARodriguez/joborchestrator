@@ -617,6 +617,53 @@ with tab4:
             st.success("Guardado.")
             st.rerun()
 
+    st.divider()
+    with st.expander("Mantenimiento del historial", expanded=False):
+        st.caption(
+            "Usa estas acciones cuando cambies el sistema de puntuacion o quieras reprocesar posiciones. "
+            "Son acciones locales sobre `job_tracker.db`."
+        )
+
+        st.markdown("**Resetear puntuaciones**")
+        st.caption(
+            "Mantiene ofertas, aplicadas y notas, pero borra scores y razones. "
+            "Para volver a generar lotes de ofertas ya vistas, marca en Lotes la opcion de incluir vistas anteriores."
+        )
+        confirm_reset = st.text_input(
+            "Escribe RESET para borrar solo puntuaciones",
+            key="confirm_reset_scores",
+        )
+        if st.button(
+            "Resetear puntuaciones",
+            disabled=confirm_reset != "RESET",
+            type="secondary",
+        ):
+            filas = db.resetear_puntuaciones()
+            st.session_state.resultados = {}
+            st.session_state.df_final = None
+            st.success(f"Puntuaciones reseteadas en {filas} ofertas.")
+            st.rerun()
+
+        st.divider()
+        st.markdown("**Borrar historial completo**")
+        st.caption(
+            "Elimina todas las ofertas del historial. Despues de esto, las posiciones podran entrar como nuevas."
+        )
+        confirm_delete = st.text_input(
+            "Escribe BORRAR HISTORIAL para eliminar todo",
+            key="confirm_delete_history",
+        )
+        if st.button(
+            "Borrar historial completo",
+            disabled=confirm_delete != "BORRAR HISTORIAL",
+        ):
+            filas = db.borrar_historial()
+            st.session_state.lotes = []
+            st.session_state.resultados = {}
+            st.session_state.df_filtrado = None
+            st.session_state.df_final = None
+            st.success(f"Historial eliminado: {filas} ofertas borradas.")
+            st.rerun()
 # ---------------------------------------------------------------------------
 # TAB 5 — PORTAL SCANNER
 # ---------------------------------------------------------------------------

@@ -191,6 +191,44 @@ def get_historial(solo_aplicadas: bool = False) -> pd.DataFrame:
     return df
 
 
+def resetear_puntuaciones() -> int:
+    """Borra scores y razones para poder recalcular con un sistema nuevo."""
+    conn = _conn()
+    try:
+        cursor = conn.execute(
+            """UPDATE ofertas SET
+                   score_total = NULL,
+                   fit_stack = NULL,
+                   fit_seniority = NULL,
+                   barreras_duras = NULL,
+                   volumen_contratacion = NULL,
+                   transferibilidad = NULL,
+                   razon_breve = NULL
+               WHERE score_total IS NOT NULL
+                  OR fit_stack IS NOT NULL
+                  OR fit_seniority IS NOT NULL
+                  OR barreras_duras IS NOT NULL
+                  OR volumen_contratacion IS NOT NULL
+                  OR transferibilidad IS NOT NULL
+                  OR razon_breve IS NOT NULL"""
+        )
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
+
+
+def borrar_historial() -> int:
+    """Elimina todo el historial local de ofertas."""
+    conn = _conn()
+    try:
+        cursor = conn.execute("DELETE FROM ofertas")
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
+
+
 def stats_generales() -> dict:
     conn = _conn()
     try:
