@@ -19,6 +19,13 @@ streamlit run app.py
 
 La interfaz se abre normalmente en `http://localhost:8501`.
 
+En Windows, si tienes la `.venv` del proyecto, usa el lanzador incluido para
+evitar mezclar dependencias con otro Python:
+
+```bat
+run_app.bat
+```
+
 ## Estructura
 
 ```text
