@@ -8,6 +8,7 @@ import pytest
 from joborchestrator.ranking.manual_llm_review import (
     ManualLLMReviewError,
     build_manual_review_prompt,
+    manual_review_status,
     parse_manual_review_response,
     ranking_from_storage_row,
 )
@@ -117,3 +118,31 @@ def test_build_manual_review_prompt_includes_job_and_current_ranking() -> None:
     assert "Backend Engineer" in prompt
     assert "current_ranking" in prompt
     assert "Return only valid JSON" in prompt
+
+
+def test_manual_review_status_maps_reasons_to_user_friendly_text() -> None:
+    needs_review, reason = manual_review_status(
+        {
+            "requires_llm_review": True,
+            "llm_escalation_reasons": [
+                "central_requirement_coverage_requires_review",
+                "role_confidence_below_threshold",
+            ],
+        }
+    )
+
+    assert needs_review is True
+    assert "Coverage needs review" in reason
+    assert "Low role confidence" in reason
+
+
+def test_manual_review_status_hides_already_reviewed_items() -> None:
+    needs_review, reason = manual_review_status(
+        {
+            "requires_llm_review": False,
+            "llm_escalation_reasons": ["manual_chatgpt_review_applied"],
+        }
+    )
+
+    assert needs_review is False
+    assert reason == "Reviewed"

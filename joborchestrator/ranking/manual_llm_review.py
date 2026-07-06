@@ -15,6 +15,17 @@ class ManualLLMReviewError(ValueError):
     pass
 
 
+def manual_review_status(evidence: dict[str, Any]) -> tuple[bool, str]:
+    requires_review = bool(evidence.get("requires_llm_review"))
+    reasons = [str(reason) for reason in evidence.get("llm_escalation_reasons") or []]
+    if "manual_chatgpt_review_applied" in reasons:
+        return False, "Reviewed"
+    if not requires_review and not reasons:
+        return False, ""
+    visible_reasons = [reason for reason in reasons if reason != "manual_chatgpt_review_applied"]
+    return requires_review, ", ".join(_friendly_reason(reason) for reason in visible_reasons) or "Needs review"
+
+
 def build_manual_review_prompt(job: dict[str, Any], current_ranking: RankingResult) -> str:
     profile = load_candidate_profile()
     payload = {
@@ -179,6 +190,17 @@ def _compact_job(job: dict[str, Any]) -> dict[str, Any]:
     if len(description) > 8000:
         compact["description_text"] = description[:8000] + "\n[truncated]"
     return compact
+
+
+def _friendly_reason(reason: str) -> str:
+    labels = {
+        "central_requirement_coverage_below_low_threshold": "Low central coverage",
+        "central_requirement_coverage_requires_review": "Coverage needs review",
+        "role_confidence_below_threshold": "Low role confidence",
+        "insufficient_requirement_backed_evidence": "Thin requirement evidence",
+        "llm_fallback_applied": "LLM fallback applied",
+    }
+    return labels.get(reason, reason.replace("_", " ").title())
 
 
 def _int_between(value: Any, low: int, high: int, field: str) -> int:

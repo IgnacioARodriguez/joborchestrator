@@ -36,6 +36,7 @@ from joborchestrator.ranking.llm_ranker import DEFAULT_LLM_MODEL
 from joborchestrator.ranking.manual_llm_review import (
     ManualLLMReviewError,
     build_manual_review_prompt,
+    manual_review_status,
     parse_manual_review_response,
     ranking_from_storage_row,
 )
@@ -65,6 +66,15 @@ def open_tracked_job_link(label: str, url: str, job_id: int, key: str, use_conta
             height=24,
         )
         st.caption("Added to Historial.")
+
+
+def parse_json_cell(value, default):
+    try:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return default
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return default
 
 
 def render_badge(label: str, tone: str = "neutral") -> str:
@@ -670,7 +680,7 @@ with tab5:
         versions = [target_ranking_version, *versions]
     selected_ranking_version = st.selectbox("Ranking version", versions)
 
-    filter_cols = st.columns([2, 1, 1, 1])
+    filter_cols = st.columns([2, 1, 1, 1, 1])
     with filter_cols[0]:
         decisions = st.multiselect(
             "Decision",
@@ -685,6 +695,8 @@ with tab5:
         sources = st.multiselect("Source", available_sources)
     with filter_cols[3]:
         flags_mode = st.selectbox("Red flags", ["Any", "With flags", "No flags"])
+    with filter_cols[4]:
+        only_needs_review = st.checkbox("Needs ChatGPT review")
 
     with_red_flags = None
     if flags_mode == "With flags":
@@ -700,12 +712,25 @@ with tab5:
         ranking_version=selected_ranking_version,
     )
 
+    if not ranked.empty:
+        review_flags = ranked["evidence_json"].apply(
+            lambda value: manual_review_status(parse_json_cell(value, {}))
+        )
+        ranked = ranked.copy()
+        ranked["needs_chatgpt_review"] = review_flags.apply(lambda item: item[0])
+        ranked["review_reason"] = review_flags.apply(lambda item: item[1])
+        if only_needs_review:
+            ranked = ranked[ranked["needs_chatgpt_review"]]
+
     if ranked.empty:
-        unranked = db.get_unranked_jobs(limit=1)
-        if unranked.empty:
-            st.info("No scanner jobs found yet. Add ATS sources in Portal scanner and run a scan first.")
+        if only_needs_review:
+            st.info("No rankings in this view need manual ChatGPT review.")
         else:
-            st.info("Jobs exist but no ranking matches this view. Use Rank unranked jobs.")
+            unranked = db.get_unranked_jobs(limit=1)
+            if unranked.empty:
+                st.info("No scanner jobs found yet. Add ATS sources in Portal scanner and run a scan first.")
+            else:
+                st.info("Jobs exist but no ranking matches this view. Use Rank unranked jobs.")
     else:
         table = ranked[
             [
@@ -716,6 +741,8 @@ with tab5:
                 "location",
                 "final_score",
                 "decision",
+                "needs_chatgpt_review",
+                "review_reason",
                 "pipeline_status",
                 "url",
                 "apply_url",
@@ -730,6 +757,8 @@ with tab5:
             column_config={
                 "final_score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100),
                 "confidence": st.column_config.NumberColumn("Confidence", format="%.2f"),
+                "needs_chatgpt_review": st.column_config.CheckboxColumn("Needs review"),
+                "review_reason": st.column_config.TextColumn("Review reason"),
                 "url": st.column_config.LinkColumn("Posting"),
                 "apply_url": st.column_config.LinkColumn("Apply"),
             },
@@ -737,14 +766,20 @@ with tab5:
 
         st.markdown("### Ranking details")
         for _, row in ranked.iterrows():
-            evidence = json.loads(row.get("evidence_json") or "{}")
-            scores = json.loads(row.get("scores_json") or "{}")
-            emphasize = json.loads(row.get("cv_keywords_to_emphasize_json") or "[]")
-            avoid = json.loads(row.get("cv_keywords_to_avoid_overclaiming_json") or "[]")
+            evidence = parse_json_cell(row.get("evidence_json"), {})
+            scores = parse_json_cell(row.get("scores_json"), {})
+            emphasize = parse_json_cell(row.get("cv_keywords_to_emphasize_json"), [])
+            avoid = parse_json_cell(row.get("cv_keywords_to_avoid_overclaiming_json"), [])
             title = row.get("title") or "Untitled role"
-            header = f"{int(row['final_score'])} Â· {row['company']} Â· {title}"
+            review_label = " Â· Needs ChatGPT review" if row.get("needs_chatgpt_review") else ""
+            header = f"{int(row['final_score'])} Â· {row['company']} Â· {title}{review_label}"
             with st.expander(header, expanded=False):
-                st.markdown(render_decision_badge(row["decision"]), unsafe_allow_html=True)
+                badges = render_decision_badge(row["decision"])
+                if row.get("needs_chatgpt_review"):
+                    badges += " " + render_badge("Needs ChatGPT review", "updated")
+                st.markdown(badges, unsafe_allow_html=True)
+                if row.get("needs_chatgpt_review"):
+                    st.caption(f"Review reason: {row.get('review_reason') or 'Needs review'}")
                 meta_cols = st.columns(4)
                 with meta_cols[0]:
                     st.metric("Technical", scores.get("technical_fit", 0))
