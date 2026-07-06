@@ -21,6 +21,10 @@ class JobPosting:
     salary_max: float | None = None
     salary_currency: str | None = None
     posted_at: str | None = None
+    scraped_at: str | None = None
+    posted_at_raw: str | None = None
+    posted_at_estimated: str | None = None
+    posted_at_confidence: str | None = None
     first_seen_at: str | None = None
     last_seen_at: str | None = None
     times_seen: int = 0
@@ -30,6 +34,8 @@ class JobPosting:
     status: str = "seen"
     parse_confidence: float | None = None
     data_quality_flags: list[str] = field(default_factory=list)
+    repost_key: str | None = None
+    soft_identity_key: str | None = None
 
     @property
     def stable_key(self) -> tuple[str, str, str]:

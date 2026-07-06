@@ -60,6 +60,29 @@ def test_low_quality_extraction_is_flagged():
     assert "Very short or missing description" in job.data_quality_flags
 
 
+def test_missing_company_imports_as_unknown_with_quality_flag():
+    df = pd.DataFrame(
+        [
+            {
+                "id": "li-missing-company",
+                "titulo": "Go Full Stack Software Engineer",
+                "empresa": None,
+                "ubicacion": "Remote",
+                "url": "https://www.linkedin.com/jobs/view/111/",
+                "descripcion": "Requirements: Go, APIs, backend systems. Responsibilities: build services." * 8,
+                "fecha_publicacion": "hace 1 semana",
+            }
+        ]
+    )
+
+    job = linkedin_dataframe_to_job_postings(df)[0]
+
+    assert job.company == "UNKNOWN"
+    assert job.posted_at_raw == "hace 1 semana"
+    assert job.posted_at_confidence == "low"
+    assert "missing_company" in job.data_quality_flags
+
+
 def test_import_upserts_without_duplicates(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "linkedin.db")
     db.init_db()

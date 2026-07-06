@@ -11,11 +11,9 @@ aplicar a ofertas ni enviar mensajes (eso sigue fuera de alcance a propÃ³sito)
 
 import subprocess
 import sys
-from io import BytesIO
 import asyncio
 import json
 import os
-from urllib.parse import quote
 
 import pandas as pd
 import streamlit as st
@@ -23,10 +21,6 @@ import streamlit.components.v1 as components
 
 from joborchestrator.batching import (
     filtrar_ofertas,
-    generar_lotes,
-    parsear_tabla_respuesta,
-    PERFIL_CANDIDATO_DEFAULT,
-    FILAS_POR_LOTE_DEFAULT,
     MIN_DESCRIPCION_LEN_DEFAULT,
 )
 from joborchestrator.paths import LINKEDIN_SCRAPER, PROJECT_ROOT, SALIDAS_DIR
@@ -42,62 +36,27 @@ from joborchestrator.ranking.ranker import RANKING_VERSION
 db.init_db()
 
 BASE_DIR = PROJECT_ROOT
-CHATGPT_PROMPT_URL = "https://chatgpt.com/?q={prompt}"
-MAX_PREFILL_URL_CHARS = 7500
 
 st.set_page_config(page_title="Job Orchestrator", layout="wide")
 
-if "lotes" not in st.session_state:
-    st.session_state.lotes = []
-if "resultados" not in st.session_state:
-    st.session_state.resultados = {}  # nombre_lote -> DataFrame
 if "df_filtrado" not in st.session_state:
     st.session_state.df_filtrado = None
 
 
-def build_chatgpt_url(prompt: str) -> str:
-    return CHATGPT_PROMPT_URL.format(prompt=quote(prompt))
-
-
-def render_chatgpt_tabs_launcher(lotes: list[dict]) -> None:
-    urls = [
-        {
-            "label": f"Lote {lote['numero']:02d} - {lote['categoria']}",
-            "url": build_chatgpt_url(lote["prompt"]),
-            "tooLong": len(lote["prompt"]) > MAX_PREFILL_URL_CHARS,
-        }
-        for lote in lotes
-    ]
-    payload = json.dumps(urls).replace("</", "<\\/")
-    components.html(
-        f"""
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button id="open-chatgpt-lots" style="
-            border:0;border-radius:6px;padding:9px 14px;font-weight:600;
-            background:#111827;color:white;cursor:pointer">
-            Abrir todos en ChatGPT
-          </button>
-          <span id="open-chatgpt-status" style="font:13px sans-serif;color:#555"></span>
-        </div>
-        <script>
-          const lots = {payload};
-          const button = document.getElementById("open-chatgpt-lots");
-          const status = document.getElementById("open-chatgpt-status");
-
-          button.addEventListener("click", () => {{
-            let opened = 0;
-            lots.forEach((lot, index) => {{
-              setTimeout(() => {{
-                const tab = window.open(lot.url, "_blank", "noopener,noreferrer");
-                if (tab) opened += 1;
-                status.textContent = `Abiertas ${{opened}}/${{lots.length}} pestaÃ±as. Si falta alguna, permite popups.`;
-              }}, index * 250);
-            }});
-          }});
-        </script>
-        """,
-        height=46,
-    )
+def open_tracked_job_link(label: str, url: str, job_id: int, key: str, use_container_width: bool = True) -> None:
+    if st.button(label, key=key, use_container_width=use_container_width):
+        db.registrar_job_posting_abierta(job_id)
+        safe_url = json.dumps(url)
+        components.html(
+            f"""
+            <script>
+              window.open({safe_url}, "_blank", "noopener,noreferrer");
+            </script>
+            <a href={safe_url} target="_blank" rel="noopener noreferrer">Open link</a>
+            """,
+            height=24,
+        )
+        st.caption("Added to Historial.")
 
 
 def render_badge(label: str, tone: str = "neutral") -> str:
@@ -332,7 +291,7 @@ st.markdown(
 st.markdown('<div class="app-kicker">Local career ops</div>', unsafe_allow_html=True)
 st.title("Job Orchestrator")
 st.markdown(
-    '<div class="app-subtitle">Un tablero compacto para escanear ofertas, preparar lotes con IA, consolidar ranking y mantener historial sin perder contexto.</div>',
+    '<div class="app-subtitle">Un tablero compacto para importar ofertas, rankear oportunidades y trackear aplicaciones sin perder contexto.</div>',
     unsafe_allow_html=True,
 )
 
@@ -349,16 +308,16 @@ st.markdown(
     """
     <div class="flow-strip">
       <div class="flow-step"><strong>1. Captura</strong><span>Scraper o portal scanner</span></div>
-      <div class="flow-step"><strong>2. Lotes</strong><span>Prompts listos para IA</span></div>
-      <div class="flow-step"><strong>3. Ranking</strong><span>Scores y decision</span></div>
-      <div class="flow-step"><strong>4. Historial</strong><span>Seguimiento continuo</span></div>
+      <div class="flow-step"><strong>2. Import</strong><span>LinkedIn Excel a SQLite</span></div>
+      <div class="flow-step"><strong>3. Ranking</strong><span>Score accionable</span></div>
+      <div class="flow-step"><strong>4. Historial</strong><span>Solo ofertas abiertas</span></div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-    ["Scraping", "Lotes", "Ranking legacy", "Historial", "Opportunity Ranking", "Portal scanner"]
+tab1, tab2, tab5, tab6, tab4 = st.tabs(
+    ["Scraping", "Import LinkedIn", "Opportunity Ranking", "Portal scanner", "Historial"]
 )
 # ---------------------------------------------------------------------------
 # TAB 1 â€” SCRAPING
@@ -400,7 +359,7 @@ with tab1:
                 proceso.wait()
 
             if proceso.returncode == 0:
-                st.success("Scraping terminado. Ve a la pestaÃ±a 2 para preparar los lotes.")
+                st.success("Scraping terminado. Ve a Import LinkedIn para cargar el Excel al ranking store.")
             else:
                 st.warning(f"El proceso terminÃ³ con cÃ³digo {proceso.returncode}. Revisa el log arriba.")
 
@@ -417,10 +376,11 @@ with tab1:
         st.text("TodavÃ­a no existe la carpeta de salidas (corre el scraper primero).")
 
 # ---------------------------------------------------------------------------
-# TAB 2 â€” PREPARAR LOTES
+# TAB 2 â€” IMPORT LINKEDIN
 # ---------------------------------------------------------------------------
 with tab2:
-    st.subheader("Cargar Excel y generar lotes")
+    st.subheader("Import LinkedIn Excel")
+    st.caption("Carga el Excel del scraper propio y normaliza las ofertas en `job_postings` para rankearlas.")
 
     origen = st.radio(
         "Â¿De dÃ³nde saco el Excel?",
@@ -445,193 +405,33 @@ with tab2:
             df_crudo = pd.read_excel(subido)
 
     if df_crudo is not None:
-        c1, c2 = st.columns(2)
-        with c1:
-            filas_por_lote = st.number_input(
-                "Filas por lote", min_value=10, max_value=100,
-                value=FILAS_POR_LOTE_DEFAULT, step=5,
-            )
-        with c2:
-            min_desc_len = st.number_input(
-                "Longitud mÃ­nima de descripciÃ³n (filtra basura)",
-                min_value=0, max_value=2000, value=MIN_DESCRIPCION_LEN_DEFAULT, step=50,
-            )
-
-        perfil = st.text_area("Perfil del candidato (editable)", value=PERFIL_CANDIDATO_DEFAULT, height=180)
-
-        ids_ya_vistos = db.get_ids_ya_vistos()
-        forzar_incluir_vistas = st.checkbox(
-            "Incluir de todas formas ofertas que ya vi en corridas anteriores",
-            value=False,
-            help="Por defecto se excluyen para no volver a mandarlas a la IA ni re-mostrarlas.",
+        min_desc_len = st.number_input(
+            "Longitud mÃ­nima de descripciÃ³n (filtra basura)",
+            min_value=0,
+            max_value=2000,
+            value=MIN_DESCRIPCION_LEN_DEFAULT,
+            step=50,
         )
 
-        if st.button("Generar lotes", type="primary"):
+        if st.button("Import LinkedIn jobs", type="primary"):
             df_filtrado, stats = filtrar_ofertas(df_crudo, min_descripcion_len=min_desc_len)
-
-            n_antes_dedup = len(df_filtrado)
-            if not forzar_incluir_vistas and "id" in df_filtrado.columns and ids_ya_vistos:
-                df_filtrado = df_filtrado[~df_filtrado["id"].isin(ids_ya_vistos)].reset_index(drop=True)
-            n_despues_dedup = len(df_filtrado)
-
             st.session_state.df_filtrado = df_filtrado
 
             st.write(
                 f"Original: **{stats['original']}** â†’ tras duplicados: **{stats['tras_duplicados']}** "
                 f"â†’ tras extracciÃ³n OK: **{stats['tras_extraccion_ok']}** "
-                f"â†’ tras descripciÃ³n mÃ­nima: **{stats['tras_descripcion_minima']}** "
-                f"â†’ tras excluir ya vistas antes: **{n_despues_dedup}** "
-                f"({n_antes_dedup - n_despues_dedup} descartadas por repetidas)"
+                f"â†’ tras descripciÃ³n mÃ­nima: **{stats['tras_descripcion_minima']}**"
             )
 
             if df_filtrado.empty:
-                st.warning("No quedÃ³ ninguna oferta nueva tras deduplicar. "
-                           "Si querÃ©s reprocesarlas igual, marcÃ¡ la casilla de arriba.")
+                st.warning("No quedÃ³ ninguna oferta tras deduplicar y filtrar.")
             else:
-                lotes = generar_lotes(df_filtrado, filas_por_lote=filas_por_lote, perfil_candidato=perfil)
-                st.session_state.lotes = lotes
-                # Registra en el histÃ³rico apenas se generan lotes, asÃ­ una corrida
-                # posterior en la misma semana ya no las vuelve a traer aunque no
-                # llegues a consolidar el ranking.
-                db.registrar_ofertas_vistas(df_filtrado)
                 import_stats = import_linkedin_dataframe_to_job_postings(df_filtrado)
-                st.success(f"{len(lotes)} lotes generados. BajÃ¡ para copiarlos uno por uno.")
-                st.caption(
+                st.success(
                     "Ranking store actualizado desde LinkedIn scraper: "
                     f"{import_stats['new']} nuevas, {import_stats['updated']} actualizadas, "
                     f"{import_stats['seen']} sin cambios."
                 )
-
-    if st.session_state.lotes:
-        st.divider()
-        st.markdown(f"### {len(st.session_state.lotes)} lotes listos")
-        st.caption("AbrÃ­ una conversaciÃ³n NUEVA en Claude.ai o ChatGPT por cada lote, pega el contenido, "
-                   "y guardÃ¡ la tabla de respuesta para la pestaÃ±a 3.")
-
-        prompts_largos = [
-            lote for lote in st.session_state.lotes
-            if len(lote["prompt"]) > MAX_PREFILL_URL_CHARS
-        ]
-        render_chatgpt_tabs_launcher(st.session_state.lotes)
-        if prompts_largos:
-            st.warning(
-                f"{len(prompts_largos)} prompt(s) son largos para precargar por URL. "
-                "Si ChatGPT abre el chat sin texto, usa el bloque de prompt de cada lote para copiar y pegar."
-            )
-        st.caption(
-            "El prellenado usa URLs de ChatGPT y puede depender del navegador/sesion. "
-            "Si el navegador bloquea pestanas, permite popups para esta app o abre los lotes uno por uno."
-        )
-
-        for lote in st.session_state.lotes:
-            with st.expander(f"Lote {lote['numero']:02d} â€” {lote['categoria']} ({lote['n_filas']} ofertas)"):
-                st.link_button(
-                    "Abrir este lote en ChatGPT",
-                    build_chatgpt_url(lote["prompt"]),
-                )
-                st.code(lote["prompt"], language="text")
-
-# ---------------------------------------------------------------------------
-# TAB 3 â€” CONSOLIDAR
-# ---------------------------------------------------------------------------
-with tab3:
-    st.subheader("Pegar respuestas de la IA y consolidar")
-
-    if not st.session_state.lotes:
-        st.info("Primero generÃ¡ los lotes en la pestaÃ±a 2.")
-    else:
-        nombres_lotes = [f"{l['numero']:02d} â€” {l['categoria']} ({l['n_filas']} ofertas)" for l in st.session_state.lotes]
-        seleccion = st.selectbox("Â¿QuÃ© lote estÃ¡s pegando?", nombres_lotes)
-        idx = nombres_lotes.index(seleccion)
-        lote_actual = st.session_state.lotes[idx]
-
-        respuesta_texto = st.text_area(
-            "PegÃ¡ aquÃ­ la tabla que te devolviÃ³ Claude/ChatGPT para este lote",
-            height=250,
-            key=f"resp_{lote_actual['nombre']}",
-        )
-
-        if st.button("Guardar este lote"):
-            df_parsed = parsear_tabla_respuesta(respuesta_texto)
-            if df_parsed.empty:
-                st.error("No pude parsear ninguna fila. RevisÃ¡ que hayas pegado la tabla completa con el separador '|'.")
-            else:
-                st.session_state.resultados[lote_actual["nombre"]] = df_parsed
-                st.success(f"Guardado: {len(df_parsed)} filas parseadas.")
-                st.dataframe(df_parsed, use_container_width=True)
-
-        st.divider()
-        guardados = list(st.session_state.resultados.keys())
-        st.markdown(f"**Lotes guardados: {len(guardados)} / {len(st.session_state.lotes)}**")
-        for nombre in guardados:
-            st.text(f"âœ… {nombre}")
-
-        if guardados:
-            if st.button("ðŸ”— Consolidar ranking final", type="primary"):
-                df_final = pd.concat(st.session_state.resultados.values(), ignore_index=True)
-
-                # Enriquece con datos originales (empresa, url, modalidad, descripcion) si hay match por id
-                if st.session_state.df_filtrado is not None and "id" in df_final.columns:
-                    cols_extra = [c for c in ["id", "url", "modalidad", "ubicacion", "busqueda_keywords"]
-                                  if c in st.session_state.df_filtrado.columns]
-                    if cols_extra:
-                        # Convertir 'id' a string en ambos para evitar mismatch str/int64
-                        df_final["id"] = df_final["id"].astype(str)
-                        df_temp = st.session_state.df_filtrado[cols_extra].copy()
-                        df_temp["id"] = df_temp["id"].astype(str)
-                        df_final = df_final.merge(
-                            df_temp, on="id", how="left", suffixes=("", "_orig")
-                        )
-
-                if "SCORE_TOTAL" in df_final.columns:
-                    df_final = df_final.sort_values("SCORE_TOTAL", ascending=False)
-
-                # Persiste los scores en la base para no perderlos y para que
-                # queden visibles en la pestaÃ±a de Historial.
-                db.guardar_scores(df_final)
-
-                st.session_state.df_final = df_final
-                st.success(f"Ranking final: {len(df_final)} ofertas. Scores guardados en el histÃ³rico.")
-
-        if "df_final" in st.session_state:
-            st.markdown("### Ranking final â€” marcÃ¡ acÃ¡ directamente las que ya aplicaste")
-            df_mostrar = st.session_state.df_final.copy()
-            if "aplicado" not in df_mostrar.columns:
-                df_mostrar["aplicado"] = False
-            if "notas" not in df_mostrar.columns:
-                df_mostrar["notas"] = ""
-
-            columnas_visibles = [c for c in [
-                "id", "titulo", "empresa", "SCORE_TOTAL", "url", "modalidad",
-                "razon_breve", "aplicado", "notas",
-            ] if c in df_mostrar.columns]
-
-            df_editado = st.data_editor(
-                df_mostrar[columnas_visibles],
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "url": st.column_config.LinkColumn("Link oferta"),
-                    "aplicado": st.column_config.CheckboxColumn("Â¿Aplicado?"),
-                    "SCORE_TOTAL": st.column_config.NumberColumn("Score", format="%.0f"),
-                },
-                disabled=[c for c in columnas_visibles if c not in ("aplicado", "notas")],
-                key="editor_ranking_final",
-            )
-
-            if st.button("ðŸ’¾ Guardar estado de 'aplicado' en el histÃ³rico"):
-                db.actualizar_estado_bulk(df_editado)
-                st.success("Estado guardado. Ya no hace falta que las vuelvas a ver la prÃ³xima semana.")
-
-            buffer = BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                df_editado.to_excel(writer, index=False, sheet_name="Ranking")
-            st.download_button(
-                "â¬‡ Descargar ranking final (.xlsx)",
-                data=buffer.getvalue(),
-                file_name="ranking_facilidad_entrada.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
 
 # ---------------------------------------------------------------------------
 # TAB 4 â€” HISTORIAL / APLICADAS
@@ -639,16 +439,15 @@ with tab3:
 with tab4:
     st.subheader("Historial completo")
     st.caption(
-        "Todas las ofertas que pasaron alguna vez por 'Preparar lotes', vengan de la corrida "
-        "de hoy o de hace semanas. AcÃ¡ podÃ©s marcar aplicadas, agregar notas, o simplemente "
-        "confirmar que algo ya fue procesado."
+        "Ofertas que abriste desde Opportunity Ranking o Portal scanner. AcÃ¡ podÃ©s marcar aplicadas, "
+        "agregar notas y mantener trazabilidad de lo que realmente revisaste."
     )
 
     solo_aplicadas = st.checkbox("Mostrar solo las que ya marquÃ© como aplicadas", value=False)
     df_hist = db.get_historial(solo_aplicadas=solo_aplicadas)
 
     if df_hist.empty:
-        st.info("TodavÃ­a no hay nada en el histÃ³rico. GenerÃ¡ lotes en la pestaÃ±a 2 primero.")
+        st.info("TodavÃ­a no hay nada en el histÃ³rico. AbrÃ­ una oferta desde Opportunity Ranking para registrarla.")
     else:
         busqueda = st.text_input("Buscar por tÃ­tulo o empresa")
         if busqueda:
@@ -695,7 +494,7 @@ with tab4:
         st.markdown("**Resetear puntuaciones**")
         st.caption(
             "Mantiene ofertas, aplicadas y notas, pero borra scores y razones. "
-            "Para volver a generar lotes de ofertas ya vistas, marca en Lotes la opcion de incluir vistas anteriores."
+            "Los scores se volverÃ¡n a copiar desde Opportunity Ranking cuando abras una oferta rankeada."
         )
         confirm_reset = st.text_input(
             "Escribe RESET para borrar solo puntuaciones",
@@ -707,8 +506,6 @@ with tab4:
             type="secondary",
         ):
             filas = db.resetear_puntuaciones()
-            st.session_state.resultados = {}
-            st.session_state.df_final = None
             st.success(f"Puntuaciones reseteadas en {filas} ofertas.")
             st.rerun()
 
@@ -726,10 +523,7 @@ with tab4:
             disabled=confirm_delete != "BORRAR HISTORIAL",
         ):
             filas = db.borrar_historial()
-            st.session_state.lotes = []
-            st.session_state.resultados = {}
             st.session_state.df_filtrado = None
-            st.session_state.df_final = None
             st.success(f"Historial eliminado: {filas} ofertas borradas.")
             st.rerun()
 # ---------------------------------------------------------------------------
@@ -896,10 +690,20 @@ with tab5:
                 link_cols = st.columns(2)
                 with link_cols[0]:
                     if row.get("url"):
-                        st.link_button("Open posting", row["url"], use_container_width=True)
+                        open_tracked_job_link(
+                            "Open posting",
+                            row["url"],
+                            int(row["job_id"]),
+                            key=f"open_posting_ranked_{int(row['job_id'])}",
+                        )
                 with link_cols[1]:
                     if row.get("apply_url"):
-                        st.link_button("Open apply page", row["apply_url"], use_container_width=True)
+                        open_tracked_job_link(
+                            "Open apply page",
+                            row["apply_url"],
+                            int(row["job_id"]),
+                            key=f"open_apply_ranked_{int(row['job_id'])}",
+                        )
 
                 st.markdown("**Application kit**")
                 default_status = row.get("pipeline_status") or "unreviewed"
@@ -1092,7 +896,12 @@ with tab6:
                 action_cols = st.columns([1, 1, 1, 1, 3])
                 with action_cols[0]:
                     if data.get("url"):
-                        st.link_button("Open", data["url"], use_container_width=True)
+                        open_tracked_job_link(
+                            "Open",
+                            data["url"],
+                            int(data["id"]),
+                            key=f"open_inbox_{int(data['id'])}",
+                        )
                 with action_cols[1]:
                     if st.button("Shortlist", key=f"shortlist_{data['id']}", use_container_width=True):
                         db.update_job_status(int(data["id"]), "shortlisted")
@@ -1149,10 +958,20 @@ with tab6:
                 link_cols = st.columns(2)
                 with link_cols[0]:
                     if job.get("url"):
-                        st.link_button("Open posting", job["url"], use_container_width=True)
+                        open_tracked_job_link(
+                            "Open posting",
+                            job["url"],
+                            int(job["id"]),
+                            key=f"open_posting_detail_{int(job['id'])}",
+                        )
                 with link_cols[1]:
                     if job.get("apply_url"):
-                        st.link_button("Apply URL", job["apply_url"], use_container_width=True)
+                        open_tracked_job_link(
+                            "Apply URL",
+                            job["apply_url"],
+                            int(job["id"]),
+                            key=f"open_apply_detail_{int(job['id'])}",
+                        )
 
                 st.markdown("### Description")
                 st.write(job.get("description_text") or "No clean description available.")

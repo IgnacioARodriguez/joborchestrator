@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 from datetime import date, datetime
@@ -13,6 +14,7 @@ from joborchestrator.scanning.normalization import clean_display_text, compute_c
 from joborchestrator.storage import persistence as db
 
 LINKEDIN_SOURCE = "linkedin_scraper"
+logger = logging.getLogger(__name__)
 
 _JOB_ID_PATTERNS = [
     re.compile(r"/jobs/view/(\d+)", re.IGNORECASE),
@@ -22,9 +24,10 @@ _JOB_ID_PATTERNS = [
 
 
 def linkedin_dataframe_to_job_postings(df: pd.DataFrame) -> list[JobPosting]:
+    scraped_at = datetime.now().isoformat(timespec="seconds")
     jobs: list[JobPosting] = []
     for _, row in df.iterrows():
-        job = linkedin_row_to_job_posting(row.to_dict())
+        job = linkedin_row_to_job_posting(row.to_dict(), scraped_at=scraped_at)
         if job:
             jobs.append(job)
     return jobs
@@ -42,10 +45,11 @@ def import_linkedin_dataframe_to_job_postings(df: pd.DataFrame) -> dict[str, Any
     }
 
 
-def linkedin_row_to_job_posting(row: dict[str, Any]) -> JobPosting | None:
+def linkedin_row_to_job_posting(row: dict[str, Any], scraped_at: str | None = None) -> JobPosting | None:
     normalized = {str(k).strip(): _clean_value(v) for k, v in row.items()}
     title = _text(first_value(normalized.get("title"), normalized.get("titulo"), normalized.get("puesto")))
-    company = _text(first_value(normalized.get("company"), normalized.get("empresa")))
+    company_raw = _text(first_value(normalized.get("company"), normalized.get("empresa")))
+    company = company_raw or "UNKNOWN"
     url = _text(first_value(normalized.get("url"), normalized.get("job_url"), normalized.get("link")))
     apply_url = _text(
         first_value(
@@ -59,7 +63,11 @@ def linkedin_row_to_job_posting(row: dict[str, Any]) -> JobPosting | None:
     )
     external_id = extract_linkedin_external_id(normalized, url=url, title=title, company=company)
 
-    if not external_id or not title or not company:
+    if not external_id:
+        _log_discarded_linkedin_row(normalized, "missing_external_id")
+        return None
+    if not title:
+        _log_discarded_linkedin_row(normalized, "missing_title")
         return None
 
     location = _text(first_value(normalized.get("location"), normalized.get("ubicacion")))
@@ -67,6 +75,9 @@ def linkedin_row_to_job_posting(row: dict[str, Any]) -> JobPosting | None:
     description = _text(first_value(normalized.get("description_text"), normalized.get("description"), normalized.get("descripcion")))
     posted_at = _text(first_value(normalized.get("posted_at"), normalized.get("fecha_publicacion"), normalized.get("fecha_publicada"), normalized.get("fecha")))
     parse_confidence, flags = parse_quality(normalized, title=title, company=company, url=url, location=location, description=description)
+    if company_raw is None:
+        flags.append("missing_company")
+    flags = _dedupe(flags)
 
     raw_payload = {key: _json_safe(value) for key, value in normalized.items()}
     raw_payload["source_adapter"] = LINKEDIN_SOURCE
@@ -83,6 +94,9 @@ def linkedin_row_to_job_posting(row: dict[str, Any]) -> JobPosting | None:
         apply_url=apply_url,
         description_text=description,
         posted_at=posted_at,
+        scraped_at=scraped_at or datetime.now().isoformat(timespec="seconds"),
+        posted_at_raw=posted_at,
+        posted_at_confidence="low",
         content_hash=compute_content_hash(title, company, location, description, apply_url),
         raw_payload=raw_payload,
         parse_confidence=parse_confidence,
@@ -216,3 +230,16 @@ def _dedupe(values: list[str]) -> list[str]:
             seen.add(key)
             out.append(value)
     return out
+
+
+def _log_discarded_linkedin_row(row: dict[str, Any], reason: str) -> None:
+    external_id = first_value(row.get("external_id"), row.get("id"), row.get("job_id"), row.get("linkedin_id"), "")
+    title = first_value(row.get("title"), row.get("titulo"), row.get("puesto"), "")
+    company = first_value(row.get("company"), row.get("empresa"), "")
+    logger.warning(
+        "Discarded LinkedIn scraper row: id=%s reason=%s title=%s company=%s",
+        external_id,
+        reason,
+        title,
+        company,
+    )

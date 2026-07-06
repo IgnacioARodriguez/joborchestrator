@@ -14,14 +14,41 @@ sesiones y entre semanas.
 
 import sqlite3
 import json
+import hashlib
+import re
+import shutil
 from datetime import datetime
+from pathlib import Path
 import pandas as pd
 
 from joborchestrator.scanning.models import JobPosting
-from joborchestrator.scanning.normalization import normalize_job_identity
+from joborchestrator.scanning.normalization import normalize_job_identity, normalize_text
 from joborchestrator.ranking.ranker import RANKING_VERSION, result_to_dict
 from joborchestrator.ranking.schemas import RankingResult
 from joborchestrator.paths import DB_PATH
+
+BACKUP_DIR_NAME = "backups"
+SPEED_RANKING_MIGRATION_COLUMNS = {
+    "parse_confidence": "REAL",
+    "data_quality_flags": "TEXT",
+    "scraped_at": "TEXT",
+    "posted_at_raw": "TEXT",
+    "posted_at_estimated": "TEXT",
+    "posted_at_confidence": "TEXT",
+    "repost_key": "TEXT",
+    "soft_identity_key": "TEXT",
+    "speed_signal": "REAL",
+    "role_viable": "INTEGER",
+    "application_effort_signal": "REAL",
+    "data_quality_signal": "REAL",
+    "source_reliability_signal": "REAL",
+}
+APPLICATION_KIT_COLUMNS = {
+    "recruiter_message": "TEXT",
+    "cover_letter": "TEXT",
+    "ats_cv_text": "TEXT",
+    "autofill_notes": "TEXT",
+}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS ofertas (
@@ -90,6 +117,17 @@ CREATE TABLE IF NOT EXISTS job_postings (
     pipeline_status TEXT,
     parse_confidence REAL,
     data_quality_flags TEXT,
+    scraped_at TEXT,
+    posted_at_raw TEXT,
+    posted_at_estimated TEXT,
+    posted_at_confidence TEXT,
+    repost_key TEXT,
+    soft_identity_key TEXT,
+    speed_signal REAL,
+    role_viable INTEGER,
+    application_effort_signal REAL,
+    data_quality_signal REAL,
+    source_reliability_signal REAL,
     recruiter_message TEXT,
     cover_letter TEXT,
     ats_cv_text TEXT,
@@ -151,26 +189,132 @@ def _conn():
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute(SCHEMA)
     conn.executescript(SCANNER_SCHEMA)
+    if _scanner_migration_needed(conn):
+        backup_database("before_speed_ranking_migration")
     _ensure_scanner_columns(conn)
+    _backfill_speed_ranking_columns(conn)
+    conn.commit()
     return conn
 
 
+def backup_database(reason: str = "manual") -> Path | None:
+    """Create a timestamped copy of the SQLite database before schema/data migrations."""
+    db_path = Path(DB_PATH)
+    if not db_path.exists():
+        return None
+
+    safe_reason = re.sub(r"[^a-zA-Z0-9_-]+", "_", reason).strip("_") or "backup"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_dir = db_path.parent / BACKUP_DIR_NAME
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / f"{db_path.stem}_{timestamp}_{safe_reason}{db_path.suffix}"
+    shutil.copy2(db_path, backup_path)
+    return backup_path
+
+
 def _ensure_scanner_columns(conn: sqlite3.Connection) -> None:
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(job_postings)").fetchall()}
+    columns = _table_columns(conn, "job_postings")
     if "pipeline_status" not in columns:
         conn.execute("ALTER TABLE job_postings ADD COLUMN pipeline_status TEXT")
-    if "parse_confidence" not in columns:
-        conn.execute("ALTER TABLE job_postings ADD COLUMN parse_confidence REAL")
-    if "data_quality_flags" not in columns:
-        conn.execute("ALTER TABLE job_postings ADD COLUMN data_quality_flags TEXT")
-    if "recruiter_message" not in columns:
-        conn.execute("ALTER TABLE job_postings ADD COLUMN recruiter_message TEXT")
-    if "cover_letter" not in columns:
-        conn.execute("ALTER TABLE job_postings ADD COLUMN cover_letter TEXT")
-    if "ats_cv_text" not in columns:
-        conn.execute("ALTER TABLE job_postings ADD COLUMN ats_cv_text TEXT")
-    if "autofill_notes" not in columns:
-        conn.execute("ALTER TABLE job_postings ADD COLUMN autofill_notes TEXT")
+        columns.add("pipeline_status")
+    for column, column_type in {**SPEED_RANKING_MIGRATION_COLUMNS, **APPLICATION_KIT_COLUMNS}.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE job_postings ADD COLUMN {column} {column_type}")
+            columns.add(column)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_job_postings_repost_key ON job_postings(repost_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_job_postings_soft_identity ON job_postings(soft_identity_key)")
+
+
+def _scanner_migration_needed(conn: sqlite3.Connection) -> bool:
+    tables = {
+        row["name"]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    if "job_postings" not in tables:
+        return False
+    columns = _table_columns(conn, "job_postings")
+    expected = {"pipeline_status", *SPEED_RANKING_MIGRATION_COLUMNS, *APPLICATION_KIT_COLUMNS}
+    if not expected.issubset(columns):
+        return True
+    row = conn.execute(
+        """SELECT 1
+           FROM job_postings
+           WHERE scraped_at IS NULL
+              OR posted_at_raw IS NULL
+              OR posted_at_confidence IS NULL
+              OR repost_key IS NULL
+              OR soft_identity_key IS NULL
+           LIMIT 1"""
+    ).fetchone()
+    return row is not None
+
+
+def _backfill_speed_ranking_columns(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """SELECT id, source, title, company, location, apply_url, url, posted_at,
+                  first_seen_at, identity_key, scraped_at, posted_at_raw,
+                  posted_at_confidence, repost_key, soft_identity_key
+           FROM job_postings
+           WHERE scraped_at IS NULL
+              OR posted_at_raw IS NULL
+              OR posted_at_confidence IS NULL
+              OR repost_key IS NULL
+              OR soft_identity_key IS NULL"""
+    ).fetchall()
+    for row in rows:
+        soft_identity_key = row["soft_identity_key"] or row["identity_key"] or normalize_job_identity(
+            row["title"],
+            row["company"],
+            row["location"],
+        )
+        repost_key = row["repost_key"] or _compute_backfill_repost_key(
+            row["title"],
+            row["company"],
+            row["location"],
+            row["apply_url"] or row["url"],
+        )
+        posted_at_confidence = row["posted_at_confidence"]
+        if not posted_at_confidence:
+            posted_at_confidence = "low" if row["source"] == "linkedin_scraper" else "medium"
+
+        conn.execute(
+            """UPDATE job_postings SET
+                   scraped_at = COALESCE(scraped_at, ?),
+                   posted_at_raw = COALESCE(posted_at_raw, ?),
+                   posted_at_confidence = COALESCE(posted_at_confidence, ?),
+                   repost_key = COALESCE(repost_key, ?),
+                   soft_identity_key = COALESCE(soft_identity_key, ?)
+               WHERE id = ?""",
+            (
+                row["first_seen_at"],
+                row["posted_at"],
+                posted_at_confidence,
+                repost_key,
+                soft_identity_key,
+                row["id"],
+            ),
+        )
+
+
+def _compute_backfill_repost_key(
+    title: str | None,
+    company: str | None,
+    location: str | None,
+    apply_or_source_url: str | None,
+) -> str:
+    normalized = "|".join(
+        [
+            normalize_text(title),
+            normalize_text(company),
+            normalize_text(location),
+            normalize_text(apply_or_source_url),
+        ]
+    )
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
 
 
 def init_db():
@@ -434,6 +578,16 @@ def upsert_job_posting(job: JobPosting, seen_at: str | None = None) -> str:
     raw_payload = json.dumps(job.raw_payload, ensure_ascii=False, sort_keys=True)
     data_quality_flags = json.dumps(job.data_quality_flags or [], ensure_ascii=False)
     identity_key = normalize_job_identity(job.title, job.company, job.location)
+    soft_identity_key = job.soft_identity_key or identity_key
+    repost_key = job.repost_key or _compute_backfill_repost_key(
+        job.title,
+        job.company,
+        job.location,
+        job.apply_url or job.url,
+    )
+    scraped_at = job.scraped_at or now
+    posted_at_raw = job.posted_at_raw or job.posted_at
+    posted_at_confidence = job.posted_at_confidence or ("low" if job.source == "linkedin_scraper" else "medium")
     conn = _conn()
     try:
         existing = conn.execute(
@@ -451,8 +605,10 @@ def upsert_job_posting(job: JobPosting, seen_at: str | None = None) -> str:
                        url, apply_url, description_html, description_text, salary_min, salary_max,
                        salary_currency, posted_at, first_seen_at, last_seen_at, times_seen,
                        is_active, content_hash, raw_payload, status, pipeline_status,
-                       parse_confidence, data_quality_flags, identity_key
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?)""",
+                       parse_confidence, data_quality_flags, scraped_at, posted_at_raw,
+                       posted_at_estimated, posted_at_confidence, repost_key, soft_identity_key,
+                       identity_key
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     job.external_id,
                     job.source,
@@ -477,6 +633,12 @@ def upsert_job_posting(job: JobPosting, seen_at: str | None = None) -> str:
                     None,
                     job.parse_confidence,
                     data_quality_flags,
+                    scraped_at,
+                    posted_at_raw,
+                    job.posted_at_estimated,
+                    posted_at_confidence,
+                    repost_key,
+                    soft_identity_key,
                     identity_key,
                 ),
             )
@@ -489,7 +651,9 @@ def upsert_job_posting(job: JobPosting, seen_at: str | None = None) -> str:
                        salary_min = ?, salary_max = ?, salary_currency = ?, posted_at = ?,
                        last_seen_at = ?, times_seen = times_seen + 1, is_active = 1,
                        content_hash = ?, raw_payload = ?, status = ?, parse_confidence = ?,
-                       data_quality_flags = ?, identity_key = ?
+                       data_quality_flags = ?, scraped_at = COALESCE(scraped_at, ?),
+                       posted_at_raw = ?, posted_at_estimated = ?, posted_at_confidence = ?,
+                       repost_key = ?, soft_identity_key = ?, identity_key = ?
                    WHERE source = ? AND company = ? AND external_id = ?""",
                 (
                     job.title,
@@ -510,6 +674,12 @@ def upsert_job_posting(job: JobPosting, seen_at: str | None = None) -> str:
                     status,
                     job.parse_confidence,
                     data_quality_flags,
+                    scraped_at,
+                    posted_at_raw,
+                    job.posted_at_estimated,
+                    posted_at_confidence,
+                    repost_key,
+                    soft_identity_key,
                     identity_key,
                     job.source,
                     job.company,
@@ -625,6 +795,112 @@ def update_job_status(job_id: int, status: str) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def registrar_job_posting_abierta(job_id: int) -> bool:
+    """Add a normalized job to legacy history only when the user opens it."""
+    conn = _conn()
+    try:
+        row = conn.execute("SELECT * FROM job_postings WHERE id = ?", (job_id,)).fetchone()
+        if row is None:
+            return False
+
+        external_id = row["external_id"]
+        ahora = datetime.now().isoformat(timespec="seconds")
+        ranking = _latest_ranking_for_job(conn, job_id)
+        existe = conn.execute("SELECT id FROM ofertas WHERE id = ?", (external_id,)).fetchone()
+        if existe:
+            conn.execute(
+                """UPDATE ofertas SET
+                       fecha_ultima_vista = ?,
+                       veces_vista = veces_vista + 1,
+                       score_total = COALESCE(?, score_total),
+                       fit_stack = COALESCE(?, fit_stack),
+                       fit_seniority = COALESCE(?, fit_seniority),
+                       barreras_duras = COALESCE(?, barreras_duras),
+                       volumen_contratacion = COALESCE(?, volumen_contratacion),
+                       transferibilidad = COALESCE(?, transferibilidad),
+                       razon_breve = COALESCE(?, razon_breve)
+                   WHERE id = ?""",
+                (
+                    ahora,
+                    ranking["score_total"],
+                    ranking["fit_stack"],
+                    ranking["fit_seniority"],
+                    ranking["barreras_duras"],
+                    ranking["volumen_contratacion"],
+                    ranking["transferibilidad"],
+                    ranking["razon_breve"],
+                    external_id,
+                ),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO ofertas
+                   (id, titulo, empresa, ubicacion, modalidad, categoria, url,
+                    fecha_primera_vista, fecha_ultima_vista, veces_vista,
+                    score_total, fit_stack, fit_seniority, barreras_duras,
+                    volumen_contratacion, transferibilidad, razon_breve)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    external_id,
+                    row["title"] or "",
+                    row["company"] or "",
+                    row["location"] or "",
+                    row["workplace_type"] or "",
+                    row["source"] or "",
+                    row["url"] or row["apply_url"] or "",
+                    ahora,
+                    ahora,
+                    ranking["score_total"],
+                    ranking["fit_stack"],
+                    ranking["fit_seniority"],
+                    ranking["barreras_duras"],
+                    ranking["volumen_contratacion"],
+                    ranking["transferibilidad"],
+                    ranking["razon_breve"],
+                ),
+            )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def _latest_ranking_for_job(conn: sqlite3.Connection, job_id: int) -> dict[str, object | None]:
+    row = conn.execute(
+        """SELECT final_score, scores_json, reasoning_summary, ranking_version, updated_at
+           FROM job_rankings
+           WHERE job_id = ?
+           ORDER BY updated_at DESC
+           LIMIT 1""",
+        (job_id,),
+    ).fetchone()
+    empty = {
+        "score_total": None,
+        "fit_stack": None,
+        "fit_seniority": None,
+        "barreras_duras": None,
+        "volumen_contratacion": None,
+        "transferibilidad": None,
+        "razon_breve": None,
+    }
+    if row is None:
+        return empty
+    try:
+        scores = json.loads(row["scores_json"] or "{}")
+    except json.JSONDecodeError:
+        scores = {}
+    risk_penalty = scores.get("risk_penalty")
+    return {
+        "score_total": row["final_score"],
+        "fit_stack": scores.get("technical_fit"),
+        "fit_seniority": scores.get("seniority_fit"),
+        "barreras_duras": None if risk_penalty is None else max(0, 100 - float(risk_penalty) * 2.5),
+        "volumen_contratacion": scores.get("application_roi"),
+        "transferibilidad": scores.get("role_fit"),
+        "razon_breve": row["reasoning_summary"],
+    }
 
 
 def update_job_application_materials(

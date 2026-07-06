@@ -3,9 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Any
 
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
-
 
 def build_professional_cover_letter(job: Dict[str, Any], profile: str, tone: str = "confident") -> str:
     """Generate a more polished cover letter draft for direct use."""
@@ -75,6 +72,12 @@ def build_cover_letter_payload(job: Dict[str, Any], profile: str) -> Dict[str, A
 
 def export_cover_letter_pdf(text: str, output_path: str | Path) -> bool:
     """Export simple text content to PDF using reportlab with a more polished layout."""
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("PDF export requires reportlab. Install it with `pip install reportlab`.") from exc
+
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
