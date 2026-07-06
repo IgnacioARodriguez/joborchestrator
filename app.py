@@ -134,20 +134,20 @@ def render_ranking_action_toolbar(job_id: int, default_action: str) -> str:
     first_row = st.columns(4)
     second_row = st.columns(5)
     action_slots = [
-        (first_row[0], "Review ranking with ChatGPT"),
-        (first_row[1], "Generate application kit with ChatGPT"),
-        (first_row[2], "Edit application kit"),
-        (first_row[3], "Inspect ranking evidence"),
-        (second_row[0], "Open posting"),
-        (second_row[1], "Open apply page"),
-        (second_row[2], "Mark shortlisted"),
-        (second_row[3], "Mark applied"),
-        (second_row[4], "Mark discarded"),
+        (first_row[0], "Review ranking with ChatGPT", "GPT review"),
+        (first_row[1], "Generate application kit with ChatGPT", "GPT kit"),
+        (first_row[2], "Edit application kit", "Edit kit"),
+        (first_row[3], "Inspect ranking evidence", "Evidence"),
+        (second_row[0], "Open posting", "Posting"),
+        (second_row[1], "Open apply page", "Apply page"),
+        (second_row[2], "Mark shortlisted", "Shortlist"),
+        (second_row[3], "Mark applied", "Applied"),
+        (second_row[4], "Mark discarded", "Discard"),
     ]
-    for column, action in action_slots:
+    for column, action, label in action_slots:
         with column:
             button_type = "primary" if st.session_state[state_key] == action else "secondary"
-            if st.button(action, key=f"action_{job_id}_{action}", type=button_type, use_container_width=True):
+            if st.button(label, key=f"action_{job_id}_{action}", type=button_type, use_container_width=True):
                 st.session_state[state_key] = action
                 st.rerun()
     return st.session_state[state_key]
@@ -392,22 +392,25 @@ st.markdown(
     """
     <style>
     :root {
-        --bg: #f7f8f5;
+        --bg: #f7f8fb;
         --surface: #ffffff;
-        --ink: #17211b;
-        --muted: #6d756f;
-        --line: #dfe5dc;
-        --accent: #286f5a;
+        --ink: #111827;
+        --muted: #6b7280;
+        --line: #e5e7eb;
+        --accent: #335cff;
+        --success: #15803d;
+        --warning: #b45309;
+        --danger: #b91c1c;
     }
 
     .stApp {
-        background: linear-gradient(180deg, #fbfcf9 0%, var(--bg) 340px);
+        background: var(--bg);
         color: var(--ink);
     }
 
     .block-container {
-        max-width: 1180px;
-        padding-top: 2.1rem;
+        max-width: 1240px;
+        padding-top: 1.35rem;
         padding-bottom: 3rem;
     }
 
@@ -417,7 +420,7 @@ st.markdown(
     }
 
     h1 {
-        font-size: 2.15rem;
+        font-size: 2rem;
         line-height: 1.08;
         margin-bottom: 0.35rem;
     }
@@ -450,7 +453,7 @@ st.markdown(
     }
 
     .flow-step {
-        background: rgba(255,255,255,0.86);
+        background: var(--surface);
         padding: 0.8rem 0.9rem;
     }
 
@@ -467,10 +470,11 @@ st.markdown(
     }
 
     div[data-testid="stMetric"] {
-        background: rgba(255,255,255,0.78);
+        background: var(--surface);
         border: 1px solid var(--line);
         border-radius: 8px;
         padding: 0.75rem 0.9rem;
+        box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
     }
 
     div[data-testid="stMetricLabel"] p {
@@ -486,13 +490,14 @@ st.markdown(
     .stTabs [data-baseweb="tab-list"] {
         gap: 0.25rem;
         border-bottom: 1px solid var(--line);
+        background: transparent;
     }
 
     .stTabs [data-baseweb="tab"] {
-        border-radius: 6px 6px 0 0;
+        border-radius: 8px 8px 0 0;
         color: var(--muted);
         font-weight: 600;
-        padding: 0.65rem 0.95rem;
+        padding: 0.58rem 0.85rem;
     }
 
     .stTabs [aria-selected="true"] {
@@ -505,15 +510,16 @@ st.markdown(
     .stButton > button,
     .stDownloadButton > button,
     .stLinkButton > a {
-        border-radius: 6px;
+        border-radius: 8px;
         border: 1px solid var(--line);
         box-shadow: none;
         font-weight: 650;
+        min-height: 38px;
     }
 
     .stButton > button[kind="primary"] {
-        background: var(--ink);
-        border-color: var(--ink);
+        background: var(--accent);
+        border-color: var(--accent);
         color: white;
     }
 
@@ -529,6 +535,13 @@ st.markdown(
     div[data-testid="stDataFrame"],
     div[data-testid="stDataEditor"] {
         border-radius: 8px;
+    }
+
+    div[data-testid="stDataFrame"],
+    div[data-testid="stDataEditor"] {
+        border: 1px solid var(--line);
+        background: var(--surface);
+        box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
     }
 
     pre {
@@ -560,7 +573,7 @@ st.markdown(
 st.markdown('<div class="app-kicker">Local career ops</div>', unsafe_allow_html=True)
 st.title("Job Orchestrator")
 st.markdown(
-    '<div class="app-subtitle">Un tablero compacto para importar ofertas, rankear oportunidades y trackear aplicaciones sin perder contexto.</div>',
+    '<div class="app-subtitle">Un workspace privado para importar oportunidades, priorizar dónde aplicar y preparar materiales sin perder trazabilidad.</div>',
     unsafe_allow_html=True,
 )
 
@@ -576,73 +589,157 @@ with metric_cols[2]:
 st.markdown(
     """
     <div class="flow-strip">
-      <div class="flow-step"><strong>1. Captura</strong><span>Scraper o portal scanner</span></div>
-      <div class="flow-step"><strong>2. Import</strong><span>LinkedIn Excel a SQLite</span></div>
-      <div class="flow-step"><strong>3. Ranking</strong><span>Score accionable</span></div>
-      <div class="flow-step"><strong>4. Historial</strong><span>Solo ofertas abiertas</span></div>
+      <div class="flow-step"><strong>Import</strong><span>Excel y APIs a una tabla única</span></div>
+      <div class="flow-step"><strong>Rank</strong><span>Score de velocidad de cierre</span></div>
+      <div class="flow-step"><strong>Review</strong><span>ChatGPT solo cuando hace falta</span></div>
+      <div class="flow-step"><strong>Apply</strong><span>Kit, pipeline e historial</span></div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-tab1, tab2, tab_search, tab5, tab6, tab4 = st.tabs(
-    ["Scraping", "Import LinkedIn", "Search APIs", "Opportunity Ranking", "Portal scanner", "Historial"]
+tab_dashboard, tab2, tab5, tab_review, tab_search, tab6, tab4 = st.tabs(
+    ["Dashboard", "Import", "Ranking", "Needs Review", "Search APIs", "Portal Scanner", "Pipeline"]
 )
+
 # ---------------------------------------------------------------------------
-# TAB 1 â€” SCRAPING
+# DASHBOARD
 # ---------------------------------------------------------------------------
-with tab1:
-    st.subheader("Lanzar el scraper")
-    st.markdown(
-        "Esto ejecuta el scraper de LinkedIn en un proceso aparte. "
-        "Se abrirÃ¡ un navegador real donde tendrÃ¡s que loguearte a mano la primera vez "
-        "(igual que corriÃ©ndolo directo por consola). **Esta pestaÃ±a solo lanza y muestra logs â€” "
-        "no cambia nada de cÃ³mo scrapea.**"
-    )
+with tab_dashboard:
+    st.subheader("Today")
+    st.caption("Una vista rápida de volumen, backlog de revisión y pipeline para decidir dónde poner energía.")
 
-    if not LINKEDIN_SCRAPER.exists():
-        st.error("No encuentro el scraper de LinkedIn dentro de `joborchestrator/scanning/`.")
-    else:
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            lanzar = st.button("â–¶ Iniciar scraping", type="primary")
-        with col2:
-            st.info("Alternativa: corre `python -m joborchestrator.scanning.linkedin` en tu terminal, "
-                    "y usa solo las pestaÃ±as 2 y 3 de aquÃ­.")
+    dashboard_jobs = db.get_job_postings(limit=10000)
+    ranking_versions = db.get_ranking_versions()
+    dashboard_version = SPEED_RANKING_VERSION if SPEED_RANKING_VERSION in ranking_versions else (ranking_versions[0] if ranking_versions else SPEED_RANKING_VERSION)
+    dashboard_ranked = db.get_ranked_jobs(ranking_version=dashboard_version) if ranking_versions else pd.DataFrame()
+    dashboard_history = db.get_historial()
 
-        if lanzar:
-            log_box = st.empty()
-            logs = []
-            proceso = subprocess.Popen(
-                [sys.executable, str(LINKEDIN_SCRAPER)],
-                cwd=str(BASE_DIR),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-            with st.spinner("Scraping en curso... revisa el navegador que se abriÃ³."):
-                for linea in proceso.stdout:
-                    logs.append(linea.rstrip())
-                    log_box.code("\n".join(logs[-40:]), language="text")
-                proceso.wait()
+    if not dashboard_ranked.empty:
+        review_flags = dashboard_ranked["evidence_json"].apply(
+            lambda value: manual_review_status(parse_json_cell(value, {}))
+        )
+        dashboard_ranked = dashboard_ranked.copy()
+        dashboard_ranked["needs_chatgpt_review"] = review_flags.apply(lambda item: item[0])
+        dashboard_ranked["review_reason"] = review_flags.apply(lambda item: item[1])
 
-            if proceso.returncode == 0:
-                st.success("Scraping terminado. Ve a Import LinkedIn para cargar el Excel al ranking store.")
-            else:
-                st.warning(f"El proceso terminÃ³ con cÃ³digo {proceso.returncode}. Revisa el log arriba.")
+    total_jobs = int(len(dashboard_jobs))
+    ranked_count = int(len(dashboard_ranked))
+    apply_candidates = int(
+        dashboard_ranked["decision"].isin(["APPLY_NOW", "APPLY_WITH_TAILORED_CV"]).sum()
+    ) if not dashboard_ranked.empty else 0
+    needs_review_count = int(dashboard_ranked["needs_chatgpt_review"].sum()) if not dashboard_ranked.empty else 0
+    applied_count = int((dashboard_jobs.get("pipeline_status") == "applied").sum()) if not dashboard_jobs.empty and "pipeline_status" in dashboard_jobs else 0
+    shortlisted_count = int((dashboard_jobs.get("pipeline_status") == "shortlisted").sum()) if not dashboard_jobs.empty and "pipeline_status" in dashboard_jobs else 0
+    avg_score = float(dashboard_ranked["final_score"].mean()) if not dashboard_ranked.empty else 0
 
-    st.divider()
-    st.markdown("**Archivos de salida encontrados:**")
-    if SALIDAS_DIR.exists():
-        excels = sorted(SALIDAS_DIR.glob("*.xlsx"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if excels:
-            for p in excels[:5]:
-                st.text(f"ðŸ“„ {p.name}")
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    with k1:
+        st.metric("Opportunities", total_jobs)
+    with k2:
+        st.metric("Ranked", ranked_count)
+    with k3:
+        st.metric("Apply candidates", apply_candidates)
+    with k4:
+        st.metric("Needs review", needs_review_count)
+    with k5:
+        st.metric("Shortlisted", shortlisted_count)
+    with k6:
+        st.metric("Avg score", f"{avg_score:.0f}")
+
+    chart_cols = st.columns(2)
+    with chart_cols[0]:
+        st.markdown("**Decision distribution**")
+        if dashboard_ranked.empty:
+            st.info("Rank jobs to populate this chart.")
         else:
-            st.text("AÃºn no hay .xlsx en salidas_todas_posiciones_raw/")
-    else:
-        st.text("TodavÃ­a no existe la carpeta de salidas (corre el scraper primero).")
+            decision_order = ["APPLY_NOW", "APPLY_WITH_TAILORED_CV", "MAYBE", "SKIP", "AVOID"]
+            decision_counts = (
+                dashboard_ranked["decision"]
+                .value_counts()
+                .reindex(decision_order, fill_value=0)
+                .rename_axis("decision")
+                .reset_index(name="jobs")
+            )
+            st.bar_chart(decision_counts, x="decision", y="jobs", height=260)
+
+    with chart_cols[1]:
+        st.markdown("**Opportunities by source**")
+        if dashboard_jobs.empty:
+            st.info("Import jobs to populate this chart.")
+        else:
+            source_counts = (
+                dashboard_jobs["source"]
+                .fillna("unknown")
+                .value_counts()
+                .head(8)
+                .rename_axis("source")
+                .reset_index(name="jobs")
+            )
+            st.bar_chart(source_counts, x="source", y="jobs", height=260)
+
+    chart_cols_2 = st.columns(2)
+    with chart_cols_2[0]:
+        st.markdown("**Pipeline funnel**")
+        if dashboard_jobs.empty:
+            st.info("No pipeline data yet.")
+        else:
+            pipeline_counts = (
+                dashboard_jobs["pipeline_status"]
+                .fillna("unreviewed")
+                .replace("", "unreviewed")
+                .value_counts()
+                .rename_axis("status")
+                .reset_index(name="jobs")
+            )
+            st.bar_chart(pipeline_counts, x="status", y="jobs", height=240)
+
+    with chart_cols_2[1]:
+        st.markdown("**Score bands**")
+        if dashboard_ranked.empty:
+            st.info("Rank jobs to populate score bands.")
+        else:
+            score_bins = pd.cut(
+                dashboard_ranked["final_score"],
+                bins=[-1, 29, 49, 64, 79, 100],
+                labels=["0-29", "30-49", "50-64", "65-79", "80-100"],
+            )
+            score_counts = score_bins.value_counts().sort_index().rename_axis("score_band").reset_index(name="jobs")
+            st.bar_chart(score_counts, x="score_band", y="jobs", height=240)
+
+    today_cols = st.columns(2)
+    with today_cols[0]:
+        st.markdown("**Top opportunities**")
+        if dashboard_ranked.empty:
+            st.info("No ranked jobs yet.")
+        else:
+            top_jobs = dashboard_ranked[
+                dashboard_ranked["decision"].isin(["APPLY_NOW", "APPLY_WITH_TAILORED_CV", "MAYBE"])
+            ].head(6)
+            st.dataframe(
+                top_jobs[["job_id", "title", "company", "final_score", "decision", "source"]],
+                use_container_width=True,
+                hide_index=True,
+                column_config={"final_score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100)},
+            )
+
+    with today_cols[1]:
+        st.markdown("**Review backlog**")
+        if dashboard_ranked.empty or needs_review_count == 0:
+            st.info("No manual review backlog.")
+        else:
+            review_jobs = dashboard_ranked[dashboard_ranked["needs_chatgpt_review"]].head(6)
+            st.dataframe(
+                review_jobs[["job_id", "title", "company", "final_score", "review_reason"]],
+                use_container_width=True,
+                hide_index=True,
+                column_config={"final_score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100)},
+            )
+
+    if not dashboard_history.empty:
+        st.markdown("**Recently opened**")
+        recent_cols = [c for c in ["titulo", "empresa", "score_total", "fecha_ultima_vista", "aplicado"] if c in dashboard_history.columns]
+        st.dataframe(dashboard_history[recent_cols].head(8), use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------------------------
 # TAB 2 â€” IMPORT LINKEDIN
@@ -1038,15 +1135,86 @@ with tab5:
             source_row["action"] = selected_action
             st.markdown("### Selected action")
             render_ranking_action_panel(source_row, selected_action)
+
+# ---------------------------------------------------------------------------
+# NEEDS REVIEW
+# ---------------------------------------------------------------------------
+with tab_review:
+    st.subheader("Needs Review")
+    st.caption("Cola de rankings con baja confianza o evidencia insuficiente para resolver manualmente con ChatGPT.")
+
+    versions = db.get_ranking_versions()
+    review_version = SPEED_RANKING_VERSION if SPEED_RANKING_VERSION in versions else (versions[0] if versions else SPEED_RANKING_VERSION)
+    review_ranked = db.get_ranked_jobs(ranking_version=review_version) if versions else pd.DataFrame()
+    if review_ranked.empty:
+        st.info("No ranked jobs found yet.")
+    else:
+        review_flags = review_ranked["evidence_json"].apply(
+            lambda value: manual_review_status(parse_json_cell(value, {}))
+        )
+        review_ranked = review_ranked.copy()
+        review_ranked["needs_chatgpt_review"] = review_flags.apply(lambda item: item[0])
+        review_ranked["review_reason"] = review_flags.apply(lambda item: item[1])
+        review_queue = review_ranked[review_ranked["needs_chatgpt_review"]].copy()
+
+        rq1, rq2, rq3 = st.columns(3)
+        with rq1:
+            st.metric("Pending review", len(review_queue))
+        with rq2:
+            st.metric("Avg pending score", f"{review_queue['final_score'].mean():.0f}" if not review_queue.empty else "0")
+        with rq3:
+            st.metric("Ranking version", review_version)
+
+        if review_queue.empty:
+            st.success("No manual ChatGPT review backlog.")
+        else:
+            review_queue.insert(0, "select", False)
+            edited_review = st.data_editor(
+                review_queue[[
+                    "select",
+                    "job_id",
+                    "title",
+                    "company",
+                    "final_score",
+                    "decision",
+                    "review_reason",
+                    "source",
+                    "location",
+                ]],
+                use_container_width=True,
+                hide_index=True,
+                disabled=[
+                    "job_id",
+                    "title",
+                    "company",
+                    "final_score",
+                    "decision",
+                    "review_reason",
+                    "source",
+                    "location",
+                ],
+                column_config={
+                    "select": st.column_config.CheckboxColumn("Select"),
+                    "final_score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100),
+                    "review_reason": st.column_config.TextColumn("Reason"),
+                },
+                key="needs_review_table",
+            )
+            selected_review = edited_review[edited_review["select"]]
+            if selected_review.empty:
+                st.info("Select one job to review it with ChatGPT.")
+            else:
+                selected_job_id = int(selected_review.iloc[0]["job_id"])
+                source_row = review_ranked[review_ranked["job_id"].astype(int) == selected_job_id].iloc[0].copy()
+                render_ranking_action_panel(source_row, "Review ranking with ChatGPT")
 # ---------------------------------------------------------------------------
 # TAB 6 â€” PORTAL SCANNER
 # ---------------------------------------------------------------------------
 with tab6:
-    st.sidebar.markdown("### Scanner")
-    scanner_view = st.sidebar.radio(
+    scanner_view = st.radio(
         "Workspace",
         ["Dashboard", "Sources", "Opportunity Inbox", "Job Detail"],
-        label_visibility="collapsed",
+        horizontal=True,
         key="scanner_workspace",
     )
 
