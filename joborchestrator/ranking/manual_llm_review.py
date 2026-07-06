@@ -95,6 +95,66 @@ def build_manual_review_prompt(job: dict[str, Any], current_ranking: RankingResu
     )
 
 
+def build_application_kit_prompt(job: dict[str, Any], current_ranking: RankingResult) -> str:
+    profile = load_candidate_profile()
+    payload = {
+        "candidate_profile": asdict(profile),
+        "job": _compact_job(job),
+        "current_ranking": result_to_dict(current_ranking),
+        "goal": (
+            "Create truthful, editable application materials for this specific role. "
+            "Do not invent experience, employers, years, degrees, tools, certifications, or achievements."
+        ),
+        "rules": [
+            "Use only candidate profile facts and job evidence.",
+            "Optimize for ATS keyword alignment without overclaiming.",
+            "Recruiter message should be concise and human.",
+            "Cover letter should be specific and not generic.",
+            "ATS CV notes should be actionable sections/bullets, not a fake full CV.",
+            "Autofill notes should include common portal answers and caveats.",
+            "Return only valid JSON. No markdown, no prose outside JSON.",
+        ],
+    }
+    return (
+        "Actua como career copilot estricto para Job Orchestrator.\n"
+        "Genera materiales de aplicacion editables, honestos y optimizados para ATS.\n\n"
+        "Devuelve SOLO un JSON con esta forma exacta:\n"
+        "{\n"
+        '  "recruiter_message": "short LinkedIn/email message",\n'
+        '  "cover_letter": "tailored cover letter",\n'
+        '  "ats_cv_text": "ATS optimized CV notes/bullets/keywords",\n'
+        '  "autofill_notes": "portal autofill answers and notes",\n'
+        '  "keywords_to_emphasize": [],\n'
+        '  "claims_to_avoid": []\n'
+        "}\n\n"
+        "Contexto:\n"
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    )
+
+
+def parse_application_kit_response(response_text: str) -> dict[str, str]:
+    payload = _extract_json_object(response_text)
+    required = ["recruiter_message", "cover_letter", "ats_cv_text", "autofill_notes"]
+    missing = [field for field in required if not str(payload.get(field) or "").strip()]
+    if missing:
+        raise ManualLLMReviewError(f"Faltan campos requeridos: {', '.join(missing)}")
+    keywords = payload.get("keywords_to_emphasize") or []
+    claims_to_avoid = payload.get("claims_to_avoid") or []
+    notes = str(payload["autofill_notes"])
+    if keywords or claims_to_avoid:
+        notes += "\n\nChatGPT review metadata:\n"
+        if keywords:
+            notes += "Keywords to emphasize: " + ", ".join(str(x) for x in keywords) + "\n"
+        if claims_to_avoid:
+            notes += "Claims to avoid: " + ", ".join(str(x) for x in claims_to_avoid) + "\n"
+    return {
+        "recruiter_message": str(payload["recruiter_message"]),
+        "cover_letter": str(payload["cover_letter"]),
+        "ats_cv_text": str(payload["ats_cv_text"]),
+        "autofill_notes": notes,
+    }
+
+
 def parse_manual_review_response(response_text: str, baseline: RankingResult) -> RankingResult:
     payload = _extract_json_object(response_text)
     if not isinstance(payload, dict):

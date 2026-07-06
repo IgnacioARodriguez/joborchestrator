@@ -35,8 +35,10 @@ from joborchestrator.ranking import persistence as ranking_store
 from joborchestrator.ranking.llm_ranker import DEFAULT_LLM_MODEL
 from joborchestrator.ranking.manual_llm_review import (
     ManualLLMReviewError,
+    build_application_kit_prompt,
     build_manual_review_prompt,
     manual_review_status,
+    parse_application_kit_response,
     parse_manual_review_response,
     ranking_from_storage_row,
 )
@@ -75,6 +77,227 @@ def parse_json_cell(value, default):
         return json.loads(value)
     except (TypeError, json.JSONDecodeError):
         return default
+
+
+def chatgpt_prompt_button(prompt: str, key: str, label: str = "Copy prompt and open ChatGPT") -> None:
+    button_id = f"chatgpt_{key}".replace("-", "_")
+    safe_prompt = json.dumps(prompt)
+    components.html(
+        f"""
+        <button id="{button_id}" style="
+            width:100%;
+            border:0;
+            border-radius:8px;
+            padding:10px 14px;
+            background:#111827;
+            color:#ffffff;
+            font-weight:700;
+            cursor:pointer;
+        ">{label}</button>
+        <script>
+          const btn = document.getElementById("{button_id}");
+          btn.addEventListener("click", async () => {{
+            const prompt = {safe_prompt};
+            try {{
+              await navigator.clipboard.writeText(prompt);
+              btn.textContent = "Prompt copied. Opening ChatGPT...";
+            }} catch (err) {{
+              btn.textContent = "Open ChatGPT, then paste the prompt below";
+            }}
+            window.open("https://chatgpt.com/", "_blank", "noopener,noreferrer");
+          }});
+        </script>
+        """,
+        height=48,
+    )
+
+
+RANKING_ACTIONS = [
+    "Review ranking with ChatGPT",
+    "Generate application kit with ChatGPT",
+    "Edit application kit",
+    "Inspect ranking evidence",
+    "Open posting",
+    "Open apply page",
+    "Mark shortlisted",
+    "Mark discarded",
+    "Mark applied",
+]
+
+
+def render_ranking_action_panel(row, selected_action: str) -> None:
+    evidence = parse_json_cell(row.get("evidence_json"), {})
+    scores = parse_json_cell(row.get("scores_json"), {})
+    emphasize = parse_json_cell(row.get("cv_keywords_to_emphasize_json"), [])
+    avoid = parse_json_cell(row.get("cv_keywords_to_avoid_overclaiming_json"), [])
+    job_id = int(row["job_id"])
+    title = row.get("title") or "Untitled role"
+    company = row.get("company") or "Unknown"
+    baseline_ranking = ranking_from_storage_row(row.to_dict() if hasattr(row, "to_dict") else dict(row))
+
+    st.markdown(f"### {company} · {title}")
+    badges = render_decision_badge(row["decision"])
+    if row.get("needs_chatgpt_review"):
+        badges += " " + render_badge("Needs ChatGPT review", "updated")
+    st.markdown(badges, unsafe_allow_html=True)
+    if row.get("review_reason"):
+        st.caption(f"Review reason: {row.get('review_reason')}")
+
+    meta_cols = st.columns(5)
+    with meta_cols[0]:
+        st.metric("Score", int(row["final_score"]))
+    with meta_cols[1]:
+        st.metric("Technical", scores.get("technical_fit", 0))
+    with meta_cols[2]:
+        st.metric("Role", scores.get("role_fit", 0))
+    with meta_cols[3]:
+        st.metric("Confidence", f"{float(row.get('confidence') or 0):.2f}")
+    with meta_cols[4]:
+        st.metric("Risk", scores.get("risk_penalty", 0))
+
+    if selected_action == "Review ranking with ChatGPT":
+        st.markdown("**Manual ChatGPT ranking review**")
+        prompt = build_manual_review_prompt(row.to_dict() if hasattr(row, "to_dict") else dict(row), baseline_ranking)
+        chatgpt_prompt_button(prompt, key=f"rank_review_{job_id}")
+        st.text_area("Prompt", value=prompt, height=220, key=f"manual_prompt_{job_id}")
+        manual_response = st.text_area(
+            "Paste ChatGPT JSON response",
+            height=180,
+            key=f"manual_response_{job_id}",
+            placeholder='{"final_score": 62, "decision": "MAYBE", ...}',
+        )
+        if st.button("Apply ChatGPT ranking review", key=f"apply_manual_review_{job_id}"):
+            try:
+                reviewed = parse_manual_review_response(manual_response, baseline_ranking)
+                db.save_job_ranking(job_id, reviewed)
+                st.success("Ranking updated from manual ChatGPT review.")
+                st.rerun()
+            except ManualLLMReviewError as exc:
+                st.error(str(exc))
+
+    elif selected_action == "Generate application kit with ChatGPT":
+        st.markdown("**Manual ChatGPT application kit**")
+        prompt = build_application_kit_prompt(row.to_dict() if hasattr(row, "to_dict") else dict(row), baseline_ranking)
+        chatgpt_prompt_button(prompt, key=f"kit_review_{job_id}")
+        st.text_area("Prompt", value=prompt, height=220, key=f"kit_prompt_{job_id}")
+        kit_response = st.text_area(
+            "Paste ChatGPT JSON response",
+            height=180,
+            key=f"kit_response_{job_id}",
+            placeholder='{"recruiter_message": "...", "cover_letter": "...", "ats_cv_text": "...", "autofill_notes": "..."}',
+        )
+        if st.button("Apply ChatGPT application kit", key=f"apply_kit_review_{job_id}"):
+            try:
+                kit = parse_application_kit_response(kit_response)
+                db.update_job_application_materials(job_id, **kit)
+                st.success("Application kit updated from ChatGPT.")
+                st.rerun()
+            except ManualLLMReviewError as exc:
+                st.error(str(exc))
+
+    elif selected_action == "Edit application kit":
+        st.markdown("**Application kit**")
+        default_status = row.get("pipeline_status") or "unreviewed"
+        status_options = ["unreviewed", "shortlisted", "discarded", "applied"]
+        if default_status not in status_options:
+            status_options.insert(0, default_status)
+        kit_key = f"kit_{job_id}"
+        if st.button("Generate local draft kit", key=f"generate_{kit_key}"):
+            kit = build_application_kit(row.to_dict() if hasattr(row, "to_dict") else dict(row), emphasize)
+            st.session_state[f"{kit_key}_recruiter_message"] = kit["recruiter_message"]
+            st.session_state[f"{kit_key}_cover_letter"] = kit["cover_letter"]
+            st.session_state[f"{kit_key}_ats_cv_text"] = kit["ats_cv_text"]
+            st.session_state[f"{kit_key}_autofill_notes"] = kit["autofill_notes"]
+
+        selected_status = st.selectbox(
+            "Pipeline status",
+            status_options,
+            index=status_options.index(default_status),
+            key=f"{kit_key}_status",
+        )
+        recruiter_message = st.text_area(
+            "Recruiter message",
+            value=st.session_state.get(f"{kit_key}_recruiter_message", row.get("recruiter_message") or ""),
+            height=110,
+            key=f"{kit_key}_recruiter_message",
+        )
+        cover_letter = st.text_area(
+            "Cover letter",
+            value=st.session_state.get(f"{kit_key}_cover_letter", row.get("cover_letter") or ""),
+            height=180,
+            key=f"{kit_key}_cover_letter",
+        )
+        ats_cv_text = st.text_area(
+            "ATS-optimized CV notes",
+            value=st.session_state.get(f"{kit_key}_ats_cv_text", row.get("ats_cv_text") or ""),
+            height=180,
+            key=f"{kit_key}_ats_cv_text",
+        )
+        autofill_notes = st.text_area(
+            "Autofill / portal answers",
+            value=st.session_state.get(f"{kit_key}_autofill_notes", row.get("autofill_notes") or ""),
+            height=180,
+            key=f"{kit_key}_autofill_notes",
+        )
+        if st.button("Save application kit", key=f"save_{kit_key}"):
+            db.update_job_application_materials(
+                job_id,
+                pipeline_status=selected_status,
+                recruiter_message=recruiter_message,
+                cover_letter=cover_letter,
+                ats_cv_text=ats_cv_text,
+                autofill_notes=autofill_notes,
+            )
+            st.success("Application kit saved.")
+
+    elif selected_action == "Inspect ranking evidence":
+        st.markdown("**Why this score?**")
+        st.write(row.get("reasoning_summary") or "No reasoning available.")
+        st.markdown("**Recommended application angle**")
+        st.write(row.get("recommended_application_angle") or "-")
+        e_cols = st.columns(3)
+        with e_cols[0]:
+            st.markdown("**Strong matches**")
+            st.write(evidence.get("strong_matches", []) or "-")
+            st.markdown("**Partial matches**")
+            st.write(evidence.get("partial_matches", []) or "-")
+        with e_cols[1]:
+            st.markdown("**Missing requirements**")
+            st.write(evidence.get("missing_requirements", []) or "-")
+            st.markdown("**Dealbreakers**")
+            st.write(evidence.get("dealbreakers", []) or "-")
+        with e_cols[2]:
+            st.markdown("**Red flags**")
+            st.write(evidence.get("red_flags", []) or "-")
+            st.markdown("**Nice-to-have matches**")
+            st.write(evidence.get("nice_to_have_matches", []) or "-")
+        st.markdown("**CV keywords to emphasize**")
+        st.write(emphasize or "-")
+        st.markdown("**Do not overclaim**")
+        st.write(avoid or "-")
+
+    elif selected_action == "Open posting":
+        if row.get("url"):
+            open_tracked_job_link("Open posting", row["url"], job_id, key=f"open_posting_ranked_{job_id}")
+        else:
+            st.warning("This job does not have a posting URL.")
+
+    elif selected_action == "Open apply page":
+        if row.get("apply_url"):
+            open_tracked_job_link("Open apply page", row["apply_url"], job_id, key=f"open_apply_ranked_{job_id}")
+        else:
+            st.warning("This job does not have an apply URL.")
+
+    elif selected_action in {"Mark shortlisted", "Mark discarded", "Mark applied"}:
+        status = {
+            "Mark shortlisted": "shortlisted",
+            "Mark discarded": "discarded",
+            "Mark applied": "applied",
+        }[selected_action]
+        if st.button(f"Confirm {status}", key=f"status_{status}_{job_id}"):
+            db.update_job_status(job_id, status)
+            st.success(f"Marked as {status}.")
+            st.rerun()
 
 
 def render_badge(label: str, tone: str = "neutral") -> str:
@@ -750,11 +973,26 @@ with tab5:
                 "ranked_at",
             ]
         ].copy()
-        st.dataframe(
+        table.insert(0, "select", False)
+        table.insert(
+            1,
+            "action",
+            table["needs_chatgpt_review"].apply(
+                lambda value: "Review ranking with ChatGPT" if value else "Generate application kit with ChatGPT"
+            ),
+        )
+        edited_table = st.data_editor(
             table,
             use_container_width=True,
             hide_index=True,
+            disabled=[
+                column
+                for column in table.columns
+                if column not in {"select", "action"}
+            ],
             column_config={
+                "select": st.column_config.CheckboxColumn("Select"),
+                "action": st.column_config.SelectboxColumn("Action", options=RANKING_ACTIONS),
                 "final_score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100),
                 "confidence": st.column_config.NumberColumn("Confidence", format="%.2f"),
                 "needs_chatgpt_review": st.column_config.CheckboxColumn("Needs review"),
@@ -762,158 +1000,19 @@ with tab5:
                 "url": st.column_config.LinkColumn("Posting"),
                 "apply_url": st.column_config.LinkColumn("Apply"),
             },
+            key="ranking_action_table",
         )
-
-        st.markdown("### Ranking details")
-        for _, row in ranked.iterrows():
-            evidence = parse_json_cell(row.get("evidence_json"), {})
-            scores = parse_json_cell(row.get("scores_json"), {})
-            emphasize = parse_json_cell(row.get("cv_keywords_to_emphasize_json"), [])
-            avoid = parse_json_cell(row.get("cv_keywords_to_avoid_overclaiming_json"), [])
-            title = row.get("title") or "Untitled role"
-            review_label = " Â· Needs ChatGPT review" if row.get("needs_chatgpt_review") else ""
-            header = f"{int(row['final_score'])} Â· {row['company']} Â· {title}{review_label}"
-            with st.expander(header, expanded=False):
-                badges = render_decision_badge(row["decision"])
-                if row.get("needs_chatgpt_review"):
-                    badges += " " + render_badge("Needs ChatGPT review", "updated")
-                st.markdown(badges, unsafe_allow_html=True)
-                if row.get("needs_chatgpt_review"):
-                    st.caption(f"Review reason: {row.get('review_reason') or 'Needs review'}")
-                meta_cols = st.columns(4)
-                with meta_cols[0]:
-                    st.metric("Technical", scores.get("technical_fit", 0))
-                with meta_cols[1]:
-                    st.metric("Seniority", scores.get("seniority_fit", 0))
-                with meta_cols[2]:
-                    st.metric("Role", scores.get("role_fit", 0))
-                with meta_cols[3]:
-                    st.metric("Risk penalty", scores.get("risk_penalty", 0))
-
-                st.markdown("**Why this score?**")
-                st.write(row.get("reasoning_summary") or "No reasoning available.")
-                st.markdown("**Recommended application angle**")
-                st.write(row.get("recommended_application_angle") or "-")
-
-                e_cols = st.columns(3)
-                with e_cols[0]:
-                    st.markdown("**Strong matches**")
-                    st.write(evidence.get("strong_matches", []) or "-")
-                    st.markdown("**Partial matches**")
-                    st.write(evidence.get("partial_matches", []) or "-")
-                with e_cols[1]:
-                    st.markdown("**Missing requirements**")
-                    st.write(evidence.get("missing_requirements", []) or "-")
-                    st.markdown("**Dealbreakers**")
-                    st.write(evidence.get("dealbreakers", []) or "-")
-                with e_cols[2]:
-                    st.markdown("**Red flags**")
-                    st.write(evidence.get("red_flags", []) or "-")
-                    st.markdown("**Nice-to-have matches**")
-                    st.write(evidence.get("nice_to_have_matches", []) or "-")
-
-                st.markdown("**CV keywords to emphasize**")
-                st.write(emphasize or "-")
-                st.markdown("**Do not overclaim**")
-                st.write(avoid or "-")
-                link_cols = st.columns(2)
-                with link_cols[0]:
-                    if row.get("url"):
-                        open_tracked_job_link(
-                            "Open posting",
-                            row["url"],
-                            int(row["job_id"]),
-                            key=f"open_posting_ranked_{int(row['job_id'])}",
-                        )
-                with link_cols[1]:
-                    if row.get("apply_url"):
-                        open_tracked_job_link(
-                            "Open apply page",
-                            row["apply_url"],
-                            int(row["job_id"]),
-                            key=f"open_apply_ranked_{int(row['job_id'])}",
-                        )
-
-                st.markdown("**Manual ChatGPT review**")
-                st.caption(
-                    "Use this when you have ChatGPT web but no API key. Copy the prompt, paste ChatGPT's JSON here, and update this ranking."
-                )
-                baseline_ranking = ranking_from_storage_row(row.to_dict())
-                manual_prompt = build_manual_review_prompt(row.to_dict(), baseline_ranking)
-                st.text_area(
-                    "Prompt for ChatGPT",
-                    value=manual_prompt,
-                    height=220,
-                    key=f"manual_prompt_{int(row['job_id'])}",
-                )
-                manual_response = st.text_area(
-                    "Paste ChatGPT JSON response",
-                    height=180,
-                    key=f"manual_response_{int(row['job_id'])}",
-                    placeholder='{"final_score": 62, "decision": "MAYBE", ...}',
-                )
-                if st.button("Apply ChatGPT review", key=f"apply_manual_review_{int(row['job_id'])}"):
-                    try:
-                        reviewed = parse_manual_review_response(manual_response, baseline_ranking)
-                        db.save_job_ranking(int(row["job_id"]), reviewed)
-                        st.success("Ranking updated from manual ChatGPT review.")
-                        st.rerun()
-                    except ManualLLMReviewError as exc:
-                        st.error(str(exc))
-
-                st.markdown("**Application kit**")
-                default_status = row.get("pipeline_status") or "unreviewed"
-                status_options = ["unreviewed", "shortlisted", "discarded", "applied"]
-                if default_status not in status_options:
-                    status_options.insert(0, default_status)
-                kit_key = f"kit_{int(row['job_id'])}"
-                if st.button("Generate draft kit", key=f"generate_{kit_key}"):
-                    kit = build_application_kit(row.to_dict(), emphasize)
-                    st.session_state[f"{kit_key}_recruiter_message"] = kit["recruiter_message"]
-                    st.session_state[f"{kit_key}_cover_letter"] = kit["cover_letter"]
-                    st.session_state[f"{kit_key}_ats_cv_text"] = kit["ats_cv_text"]
-                    st.session_state[f"{kit_key}_autofill_notes"] = kit["autofill_notes"]
-
-                selected_status = st.selectbox(
-                    "Pipeline status",
-                    status_options,
-                    index=status_options.index(default_status),
-                    key=f"{kit_key}_status",
-                )
-                recruiter_message = st.text_area(
-                    "Recruiter message",
-                    value=st.session_state.get(f"{kit_key}_recruiter_message", row.get("recruiter_message") or ""),
-                    height=110,
-                    key=f"{kit_key}_recruiter_message",
-                )
-                cover_letter = st.text_area(
-                    "Cover letter",
-                    value=st.session_state.get(f"{kit_key}_cover_letter", row.get("cover_letter") or ""),
-                    height=180,
-                    key=f"{kit_key}_cover_letter",
-                )
-                ats_cv_text = st.text_area(
-                    "ATS-optimized CV notes",
-                    value=st.session_state.get(f"{kit_key}_ats_cv_text", row.get("ats_cv_text") or ""),
-                    height=180,
-                    key=f"{kit_key}_ats_cv_text",
-                )
-                autofill_notes = st.text_area(
-                    "Autofill / portal answers",
-                    value=st.session_state.get(f"{kit_key}_autofill_notes", row.get("autofill_notes") or ""),
-                    height=180,
-                    key=f"{kit_key}_autofill_notes",
-                )
-                if st.button("Save application kit", key=f"save_{kit_key}"):
-                    db.update_job_application_materials(
-                        int(row["job_id"]),
-                        pipeline_status=selected_status,
-                        recruiter_message=recruiter_message,
-                        cover_letter=cover_letter,
-                        ats_cv_text=ats_cv_text,
-                        autofill_notes=autofill_notes,
-                    )
-                    st.success("Application kit saved.")
+        selected_rows = edited_table[edited_table["select"]]
+        if selected_rows.empty:
+            st.info("Select one row in the table and choose an action from the Action dropdown.")
+        else:
+            selected = selected_rows.iloc[0]
+            selected_job_id = int(selected["job_id"])
+            selected_action = selected["action"]
+            source_row = ranked[ranked["job_id"].astype(int) == selected_job_id].iloc[0].copy()
+            source_row["action"] = selected_action
+            st.markdown("### Selected action")
+            render_ranking_action_panel(source_row, selected_action)
 # ---------------------------------------------------------------------------
 # TAB 6 â€” PORTAL SCANNER
 # ---------------------------------------------------------------------------

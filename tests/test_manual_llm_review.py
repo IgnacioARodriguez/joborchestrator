@@ -7,8 +7,10 @@ import pytest
 
 from joborchestrator.ranking.manual_llm_review import (
     ManualLLMReviewError,
+    build_application_kit_prompt,
     build_manual_review_prompt,
     manual_review_status,
+    parse_application_kit_response,
     parse_manual_review_response,
     ranking_from_storage_row,
 )
@@ -118,6 +120,46 @@ def test_build_manual_review_prompt_includes_job_and_current_ranking() -> None:
     assert "Backend Engineer" in prompt
     assert "current_ranking" in prompt
     assert "Return only valid JSON" in prompt
+
+
+def test_build_application_kit_prompt_includes_material_fields() -> None:
+    prompt = build_application_kit_prompt(
+        {"id": 1, "title": "Backend Engineer", "description_text": "Python APIs"},
+        baseline(),
+    )
+
+    assert "recruiter_message" in prompt
+    assert "cover_letter" in prompt
+    assert "ats_cv_text" in prompt
+    assert "autofill_notes" in prompt
+
+
+def test_parse_application_kit_response_accepts_json_fence() -> None:
+    kit = parse_application_kit_response(
+        """
+        ```json
+        {
+          "recruiter_message": "Hi recruiter",
+          "cover_letter": "Dear team",
+          "ats_cv_text": "Python APIs",
+          "autofill_notes": "Remote: yes",
+          "keywords_to_emphasize": ["Python"],
+          "claims_to_avoid": ["Node"]
+        }
+        ```
+        """
+    )
+
+    assert kit["recruiter_message"] == "Hi recruiter"
+    assert kit["cover_letter"] == "Dear team"
+    assert "Python APIs" in kit["ats_cv_text"]
+    assert "Keywords to emphasize: Python" in kit["autofill_notes"]
+    assert "Claims to avoid: Node" in kit["autofill_notes"]
+
+
+def test_parse_application_kit_response_requires_core_fields() -> None:
+    with pytest.raises(ManualLLMReviewError):
+        parse_application_kit_response('{"recruiter_message": "Hi"}')
 
 
 def test_manual_review_status_maps_reasons_to_user_friendly_text() -> None:
