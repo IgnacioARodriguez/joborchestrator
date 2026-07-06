@@ -4,6 +4,12 @@ from joborchestrator.intelligence.cover_letter_generator import (
     export_cover_letter_pdf,
 )
 from joborchestrator.intelligence.ats_autofill import build_autofill_plan
+from joborchestrator.intelligence.llm_application_materials import (
+    build_application_kit_with_llm,
+    estimate_materials_cost,
+    export_ats_cv_docx_bytes,
+)
+from joborchestrator.intelligence.llm_costs import estimate_ranking_tokens
 
 
 def test_af_evaluation_structure():
@@ -65,3 +71,51 @@ def test_pdf_export_creates_file(tmp_path):
     created = export_cover_letter_pdf("Hello world", output_path)
     assert created is True
     assert output_path.exists()
+
+
+def test_llm_cost_estimates_are_positive():
+    input_tokens, output_tokens = estimate_ranking_tokens(2500)
+
+    assert input_tokens > output_tokens
+    assert estimate_materials_cost(10, model="gpt-5.4-mini") > 0
+    assert estimate_materials_cost(10, model="gpt-5.4-mini", batch=True) < estimate_materials_cost(
+        10,
+        model="gpt-5.4-mini",
+    )
+
+
+def test_llm_application_kit_uses_structured_payload(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    from joborchestrator.intelligence import llm_application_materials
+
+    def fake_call(payload, api_key, model, timeout):
+        assert payload["candidate_profile"]
+        assert payload["job"]["title"] == "Backend Engineer"
+        return {
+            "recruiter_message": "Hi team",
+            "cover_letter": "Dear hiring team",
+            "ats_cv_text": "Python\n- FastAPI APIs",
+            "autofill_notes": "LinkedIn: paste recruiter note",
+        }
+
+    monkeypatch.setattr(llm_application_materials, "_call_openai", fake_call)
+
+    kit = build_application_kit_with_llm(
+        {"title": "Backend Engineer", "company": "Acme", "description_text": "Python APIs"},
+        model="test-model",
+    )
+
+    assert kit["recruiter_message"] == "Hi team"
+    assert "FastAPI" in kit["ats_cv_text"]
+    assert "LinkedIn" in kit["autofill_notes"]
+
+
+def test_ats_cv_docx_export_returns_document_bytes():
+    content = export_ats_cv_docx_bytes(
+        {"title": "Backend Engineer", "company": "Acme"},
+        "Summary\n- Python APIs\n- PostgreSQL",
+    )
+
+    assert content.startswith(b"PK")
+    assert len(content) > 1000

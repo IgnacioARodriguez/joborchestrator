@@ -12,7 +12,7 @@ from joborchestrator.ranking.ranker import RANKING_VERSION, rank_job, result_to_
 from joborchestrator.ranking.requirements_extractor import extract_requirements
 from joborchestrator.ranking.schemas import CandidateProfile, RankingEvidence, RankingResult, RankingScores
 
-DEFAULT_LLM_MODEL = os.getenv("OPENAI_RANKING_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.5"
+DEFAULT_LLM_MODEL = os.getenv("OPENAI_RANKING_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4-mini"
 
 
 class LLMRankingError(RuntimeError):

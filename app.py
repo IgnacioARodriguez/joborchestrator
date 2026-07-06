@@ -23,6 +23,17 @@ from joborchestrator.batching import (
     filtrar_ofertas,
     MIN_DESCRIPCION_LEN_DEFAULT,
 )
+from joborchestrator.intelligence.llm_application_materials import (
+    DEFAULT_MATERIALS_MODEL,
+    LLMMaterialsError,
+    build_application_kit_with_llm,
+    estimate_materials_cost,
+    export_ats_cv_docx_bytes,
+)
+from joborchestrator.intelligence.llm_costs import (
+    estimate_cost,
+    estimate_ranking_tokens,
+)
 from joborchestrator.paths import LINKEDIN_SCRAPER, PROJECT_ROOT, SALIDAS_DIR
 from joborchestrator.storage import persistence as db
 from joborchestrator.intelligence.application_materials import build_application_kit
@@ -296,8 +307,48 @@ def render_ranking_action_panel(row, selected_action: str) -> None:
 
     elif selected_action == "Generate application kit with ChatGPT":
         st.markdown("**Manual ChatGPT application kit**")
-        st.caption("Main flow: copy prompt, open ChatGPT, paste JSON here, then copy the saved materials.")
+        st.caption("API is the fastest path when configured. Manual ChatGPT remains available as a fallback.")
         render_saved_application_shortcuts(row, job_id, "gptkit_saved")
+        api_key_configured = bool(os.getenv("OPENAI_API_KEY"))
+        api_cols = st.columns([1, 1, 2])
+        with api_cols[0]:
+            materials_model = st.text_input(
+                "Materials model",
+                value=DEFAULT_MATERIALS_MODEL,
+                key=f"materials_model_{job_id}",
+                disabled=not api_key_configured,
+            )
+        with api_cols[1]:
+            estimated_materials_cost = estimate_materials_cost(1, model=materials_model)
+            st.metric("Est. API cost", f"${estimated_materials_cost:.3f}")
+        with api_cols[2]:
+            if not api_key_configured:
+                st.warning("Set `OPENAI_API_KEY` to generate the application kit automatically.")
+            else:
+                st.info("Generates recruiter message, cover letter, ATS CV and autofill notes. Nothing is submitted.")
+
+        if st.button(
+            "Generate kit with OpenAI API",
+            key=f"api_kit_review_{job_id}",
+            type="primary",
+            use_container_width=True,
+            disabled=not api_key_configured,
+        ):
+            try:
+                kit = build_application_kit_with_llm(
+                    row.to_dict() if hasattr(row, "to_dict") else dict(row),
+                    baseline_ranking,
+                    model=materials_model,
+                )
+                db.update_job_application_materials(job_id, pipeline_status="shortlisted", **kit)
+                st.success("Application kit generated with API and saved.")
+                st.session_state[f"ranking_selected_action_{job_id}"] = "Edit application kit"
+                st.rerun()
+            except LLMMaterialsError as exc:
+                st.error(str(exc))
+
+        st.divider()
+        st.markdown("**Manual ChatGPT fallback**")
         prompt = build_application_kit_prompt(row.to_dict() if hasattr(row, "to_dict") else dict(row), baseline_ranking)
         chatgpt_prompt_button(prompt, key=f"kit_review_{job_id}")
         st.text_area("Prompt", value=prompt, height=220, key=f"kit_prompt_{job_id}")
@@ -382,6 +433,23 @@ def render_ranking_action_panel(row, selected_action: str) -> None:
             copy_text_button(ats_cv_text, f"edit_ats_{job_id}", "Copy ATS notes")
         with copy_cols[3]:
             copy_text_button(autofill_notes, f"edit_autofill_{job_id}", "Copy autofill")
+
+        if ats_cv_text.strip():
+            try:
+                docx_bytes = export_ats_cv_docx_bytes(
+                    row.to_dict() if hasattr(row, "to_dict") else dict(row),
+                    ats_cv_text,
+                )
+                st.download_button(
+                    "Download ATS CV .docx",
+                    data=docx_bytes,
+                    file_name=f"ats_cv_{job_id}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key=f"download_ats_cv_{job_id}",
+                    use_container_width=True,
+                )
+            except LLMMaterialsError as exc:
+                st.warning(str(exc))
 
     elif selected_action == "Inspect ranking evidence":
         st.markdown("**Why this score?**")
@@ -1106,6 +1174,21 @@ with tab5:
 
     effective_use_llm = use_llm_ranking and bool(os.getenv("OPENAI_API_KEY"))
     target_ranking_version = SPEED_RANKING_VERSION
+
+    all_jobs_for_estimate = db.get_job_postings(limit=10000)
+    total_jobs_for_estimate = len(all_jobs_for_estimate)
+    ranking_input_tokens, ranking_output_tokens = estimate_ranking_tokens(total_jobs_for_estimate)
+    ranking_standard_cost = estimate_cost(ranking_input_tokens, ranking_output_tokens, llm_model, batch=False)
+    ranking_batch_cost = estimate_cost(ranking_input_tokens, ranking_output_tokens, llm_model, batch=True)
+    planning_cols = st.columns(4)
+    with planning_cols[0]:
+        st.metric("Jobs to price", total_jobs_for_estimate)
+    with planning_cols[1]:
+        st.metric("Rank all API", f"${ranking_standard_cost:.2f}")
+    with planning_cols[2]:
+        st.metric("Rank all Batch API", f"${ranking_batch_cost:.2f}")
+    with planning_cols[3]:
+        st.metric("Kit / selected job", f"${estimate_materials_cost(1, DEFAULT_MATERIALS_MODEL):.3f}")
 
     action_cols = st.columns(3)
     with action_cols[0]:
