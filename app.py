@@ -55,6 +55,15 @@ from joborchestrator.ranking.manual_llm_review import (
     parse_manual_review_response,
     ranking_from_storage_row,
 )
+from joborchestrator.ranking.openai_batch import (
+    OpenAIBatchError,
+    create_ranking_batch_jsonl,
+    download_file_content,
+    import_ranking_batch_output,
+    latest_batch_metadata,
+    retrieve_batch,
+    submit_ranking_batch,
+)
 from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
 
 db.init_db()
@@ -1189,6 +1198,105 @@ with tab5:
         st.metric("Rank all Batch API", f"${ranking_batch_cost:.2f}")
     with planning_cols[3]:
         st.metric("Kit / selected job", f"${estimate_materials_cost(1, DEFAULT_MATERIALS_MODEL):.3f}")
+
+    with st.expander("Lowest-cost GPT ranking via OpenAI Batch API", expanded=True):
+        st.caption(
+            "Recommended for raw Excel imports and large queues. It uses OpenAI Batch API pricing, runs async, "
+            "and imports the completed JSONL back into SQLite."
+        )
+        batch_api_key_ready = bool(os.getenv("OPENAI_API_KEY"))
+        batch_plan_cols = st.columns([1, 1, 1, 2])
+        with batch_plan_cols[0]:
+            batch_model = st.text_input("Batch model", value=llm_model, key="openai_batch_model")
+        with batch_plan_cols[1]:
+            batch_limit = st.number_input(
+                "Jobs",
+                min_value=1,
+                max_value=max(1, total_jobs_for_estimate),
+                value=max(1, total_jobs_for_estimate),
+                step=100,
+                key="openai_batch_limit",
+            )
+        with batch_plan_cols[2]:
+            batch_cost = estimate_cost(*estimate_ranking_tokens(int(batch_limit)), batch_model, batch=True)
+            st.metric("Est. Batch cost", f"${batch_cost:.2f}")
+        with batch_plan_cols[3]:
+            if batch_api_key_ready:
+                st.success("OPENAI_API_KEY detected. Batch submission is enabled.")
+            else:
+                st.warning("Set OPENAI_API_KEY before submitting a real Batch API job.")
+
+        confirm_batch = st.text_input(
+            "Type BATCH to submit a paid async ranking job",
+            key="confirm_openai_batch_submit",
+        )
+        batch_submit_cols = st.columns(2)
+        with batch_submit_cols[0]:
+            if st.button(
+                "Create and submit OpenAI Batch ranking",
+                type="primary",
+                use_container_width=True,
+                disabled=not batch_api_key_ready or confirm_batch != "BATCH",
+            ):
+                try:
+                    jobs_for_batch = db.get_job_postings(limit=int(batch_limit))
+                    jsonl_path = create_ranking_batch_jsonl(jobs_for_batch, model=batch_model)
+                    metadata = submit_ranking_batch(jsonl_path)
+                    st.success(
+                        "Batch submitted. "
+                        f"id={metadata.get('id')} status={metadata.get('status')} input_file={metadata.get('input_file_id')}"
+                    )
+                    st.rerun()
+                except OpenAIBatchError as exc:
+                    st.error(str(exc))
+        with batch_submit_cols[1]:
+            st.info("Completion can take up to 24h. You can close the app and check/import later.")
+
+        latest_batch = latest_batch_metadata()
+        default_batch_id = str((latest_batch or {}).get("id") or "")
+        batch_id = st.text_input("Batch id to check/import", value=default_batch_id, key="openai_batch_id")
+        check_cols = st.columns(2)
+        with check_cols[0]:
+            if st.button(
+                "Check batch status",
+                use_container_width=True,
+                disabled=not batch_api_key_ready or not batch_id.strip(),
+            ):
+                try:
+                    metadata = retrieve_batch(batch_id.strip())
+                    st.json(
+                        {
+                            "id": metadata.get("id"),
+                            "status": metadata.get("status"),
+                            "request_counts": metadata.get("request_counts"),
+                            "output_file_id": metadata.get("output_file_id"),
+                            "error_file_id": metadata.get("error_file_id"),
+                        }
+                    )
+                except OpenAIBatchError as exc:
+                    st.error(str(exc))
+        with check_cols[1]:
+            if st.button(
+                "Download and import completed batch",
+                use_container_width=True,
+                disabled=not batch_api_key_ready or not batch_id.strip(),
+            ):
+                try:
+                    metadata = retrieve_batch(batch_id.strip())
+                    if metadata.get("status") != "completed":
+                        st.warning(f"Batch is not completed yet. Current status: {metadata.get('status')}")
+                    elif not metadata.get("output_file_id"):
+                        st.error("Batch completed but has no output_file_id.")
+                    else:
+                        output_text = download_file_content(str(metadata["output_file_id"]))
+                        summary = import_ranking_batch_output(output_text, ranking_version=target_ranking_version)
+                        st.success(
+                            "Imported GPT batch rankings: "
+                            + " · ".join(f"{key}={value}" for key, value in summary.items())
+                        )
+                        st.rerun()
+                except OpenAIBatchError as exc:
+                    st.error(str(exc))
 
     action_cols = st.columns(3)
     with action_cols[0]:

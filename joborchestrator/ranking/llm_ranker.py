@@ -59,7 +59,30 @@ def rank_job_with_llm(
 
 
 def _call_openai_responses(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
-    request_body = {
+    request_body = build_ranking_response_body(payload, model)
+    try:
+        response = httpx.post(
+            "https://api.openai.com/v1/responses",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=request_body,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise LLMRankingError(f"OpenAI ranking request failed: {exc}") from exc
+
+    text = _extract_response_text(response.json())
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise LLMRankingError("OpenAI ranking response was not valid JSON") from exc
+
+
+def build_ranking_response_body(payload: dict[str, Any], model: str) -> dict[str, Any]:
+    return {
         "model": model,
         "store": False,
         "reasoning": {"effort": "low"},
@@ -83,25 +106,6 @@ def _call_openai_responses(payload: dict[str, Any], api_key: str, model: str, ti
             }
         },
     }
-    try:
-        response = httpx.post(
-            "https://api.openai.com/v1/responses",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=request_body,
-            timeout=timeout,
-        )
-        response.raise_for_status()
-    except httpx.HTTPError as exc:
-        raise LLMRankingError(f"OpenAI ranking request failed: {exc}") from exc
-
-    text = _extract_response_text(response.json())
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise LLMRankingError("OpenAI ranking response was not valid JSON") from exc
 
 
 def _extract_response_text(response: dict[str, Any]) -> str:
