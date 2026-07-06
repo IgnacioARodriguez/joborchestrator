@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 Decision = Literal["APPLY_NOW", "APPLY_WITH_TAILORED_CV", "MAYBE", "SKIP", "AVOID"]
 
@@ -53,6 +53,13 @@ class RankingScores:
     application_roi: int
     market_alignment: int
     risk_penalty: int
+    speed_signal: float | None = None
+    technical_readiness: float | None = None
+    central_requirement_coverage: float | None = None
+    role_confidence: float | None = None
+    application_effort_signal: float | None = None
+    data_quality_signal: float | None = None
+    source_reliability_signal: float | None = None
 
     def __post_init__(self) -> None:
         self.technical_fit = clamp(self.technical_fit)
@@ -62,6 +69,18 @@ class RankingScores:
         self.application_roi = clamp(self.application_roi)
         self.market_alignment = clamp(self.market_alignment)
         self.risk_penalty = clamp(self.risk_penalty, 0, 40)
+        for name in [
+            "speed_signal",
+            "technical_readiness",
+            "central_requirement_coverage",
+            "role_confidence",
+            "application_effort_signal",
+            "data_quality_signal",
+            "source_reliability_signal",
+        ]:
+            value = getattr(self, name)
+            if value is not None:
+                setattr(self, name, max(0.0, min(100.0, float(value))))
 
 
 @dataclass(slots=True)
@@ -72,6 +91,11 @@ class RankingEvidence:
     nice_to_have_matches: list[str] = field(default_factory=list)
     dealbreakers: list[str] = field(default_factory=list)
     red_flags: list[str] = field(default_factory=list)
+    central_requirement_coverage: float | None = None
+    central_requirement_thresholds: dict[str, float] = field(default_factory=dict)
+    central_requirements: list[dict[str, Any]] = field(default_factory=list)
+    requires_llm_review: bool = False
+    llm_escalation_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

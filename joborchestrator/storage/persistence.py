@@ -23,8 +23,9 @@ import pandas as pd
 
 from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.normalization import normalize_job_identity, normalize_text
-from joborchestrator.ranking.ranker import RANKING_VERSION, result_to_dict
+from joborchestrator.ranking.ranker import result_to_dict
 from joborchestrator.ranking.schemas import RankingResult
+from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
 from joborchestrator.paths import DB_PATH
 
 BACKUP_DIR_NAME = "backups"
@@ -1056,10 +1057,38 @@ def save_job_ranking(job_id: int, ranking: RankingResult) -> int:
                 ),
             )
             ranking_id = int(cursor.lastrowid)
+        _update_job_posting_ranking_signals(conn, job_id, ranking)
         conn.commit()
         return ranking_id
     finally:
         conn.close()
+
+
+def _update_job_posting_ranking_signals(
+    conn: sqlite3.Connection,
+    job_id: int,
+    ranking: RankingResult,
+) -> None:
+    role_fit = float(ranking.scores.role_fit)
+    requires_llm_review = bool(ranking.evidence.requires_llm_review)
+    role_viable = role_fit >= 55 and ranking.decision not in {"SKIP", "AVOID"} and not requires_llm_review
+    conn.execute(
+        """UPDATE job_postings SET
+               speed_signal = ?,
+               role_viable = ?,
+               application_effort_signal = ?,
+               data_quality_signal = ?,
+               source_reliability_signal = ?
+           WHERE id = ?""",
+        (
+            ranking.scores.speed_signal,
+            int(role_viable),
+            ranking.scores.application_effort_signal,
+            ranking.scores.data_quality_signal,
+            ranking.scores.source_reliability_signal,
+            job_id,
+        ),
+    )
 
 
 def get_ranked_jobs(
@@ -1067,7 +1096,7 @@ def get_ranked_jobs(
     min_score: int | None = None,
     sources: list[str] | None = None,
     with_red_flags: bool | None = None,
-    ranking_version: str = RANKING_VERSION,
+    ranking_version: str = SPEED_RANKING_VERSION,
 ) -> pd.DataFrame:
     conn = _conn()
     try:
@@ -1130,7 +1159,7 @@ def get_ranking_versions() -> list[str]:
         conn.close()
 
 
-def get_unranked_jobs(ranking_version: str = RANKING_VERSION, limit: int = 500) -> pd.DataFrame:
+def get_unranked_jobs(ranking_version: str = SPEED_RANKING_VERSION, limit: int = 500) -> pd.DataFrame:
     conn = _conn()
     try:
         return pd.read_sql_query(

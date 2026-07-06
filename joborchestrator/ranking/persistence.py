@@ -5,8 +5,7 @@ from typing import Iterable
 import pandas as pd
 
 from joborchestrator.ranking.profile import load_candidate_profile
-from joborchestrator.ranking.llm_ranker import rank_job_with_llm
-from joborchestrator.ranking.ranker import RANKING_VERSION, rank_job
+from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION, rank_job_speed
 from joborchestrator.storage import persistence as db
 
 
@@ -19,7 +18,7 @@ def rank_and_save_jobs(
     profile = load_candidate_profile(profile_path)
     summary = {decision: 0 for decision in ["APPLY_NOW", "APPLY_WITH_TAILORED_CV", "MAYBE", "SKIP", "AVOID"]}
     for row in jobs.to_dict("records"):
-        ranking = rank_job_with_llm(row, profile, model=model) if use_llm else rank_job(row, profile)
+        ranking = rank_job_speed(row, profile, use_llm_fallback=use_llm, model=model)
         db.save_job_ranking(int(row["id"]), ranking)
         summary[ranking.decision] += 1
     return summary
@@ -29,7 +28,7 @@ def rank_unranked_jobs(
     limit: int = 500,
     use_llm: bool = False,
     model: str | None = None,
-    ranking_version: str = RANKING_VERSION,
+    ranking_version: str = SPEED_RANKING_VERSION,
 ) -> dict[str, int]:
     jobs = db.get_unranked_jobs(ranking_version=ranking_version, limit=limit)
     return rank_and_save_jobs(jobs, use_llm=use_llm, model=model)

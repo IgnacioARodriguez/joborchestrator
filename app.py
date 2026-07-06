@@ -32,8 +32,8 @@ from joborchestrator.scanning.providers import PROVIDERS
 from joborchestrator.scanning import search_scanner
 from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS, provider_requires_configuration
 from joborchestrator.ranking import persistence as ranking_store
-from joborchestrator.ranking.llm_ranker import DEFAULT_LLM_MODEL, llm_ranking_version
-from joborchestrator.ranking.ranker import RANKING_VERSION
+from joborchestrator.ranking.llm_ranker import DEFAULT_LLM_MODEL
+from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
 
 db.init_db()
 
@@ -620,8 +620,8 @@ with tab4:
 with tab5:
     st.subheader("Opportunity Ranking")
     st.caption(
-        "Structured, explainable ranking based on candidate profile, requirements, risk and application ROI. "
-        f"Current version: `{RANKING_VERSION}`."
+        "Speed-based ranking prioritizing roles where you can close fastest, with structural requirement coverage. "
+        f"Current version: `{SPEED_RANKING_VERSION}`."
     )
 
     llm_cols = st.columns([1, 1, 2])
@@ -633,10 +633,10 @@ with tab5:
         if use_llm_ranking and not os.getenv("OPENAI_API_KEY"):
             st.warning("Set `OPENAI_API_KEY` to enable LLM ranking. Without it, ranking falls back to heuristics.")
         elif use_llm_ranking:
-            st.info("LLM ranking uses structured JSON and saves a separate ranking version.")
+            st.info("LLM is used only as fallback for ambiguous roles or low central requirement coverage.")
 
     effective_use_llm = use_llm_ranking and bool(os.getenv("OPENAI_API_KEY"))
-    target_ranking_version = llm_ranking_version(llm_model) if effective_use_llm else RANKING_VERSION
+    target_ranking_version = SPEED_RANKING_VERSION
 
     action_cols = st.columns(3)
     with action_cols[0]:
