@@ -125,6 +125,34 @@ RANKING_ACTIONS = [
 ]
 
 
+def render_ranking_action_toolbar(job_id: int, default_action: str) -> str:
+    state_key = f"ranking_selected_action_{job_id}"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = default_action
+
+    st.markdown("**Actions**")
+    first_row = st.columns(4)
+    second_row = st.columns(5)
+    action_slots = [
+        (first_row[0], "Review ranking with ChatGPT"),
+        (first_row[1], "Generate application kit with ChatGPT"),
+        (first_row[2], "Edit application kit"),
+        (first_row[3], "Inspect ranking evidence"),
+        (second_row[0], "Open posting"),
+        (second_row[1], "Open apply page"),
+        (second_row[2], "Mark shortlisted"),
+        (second_row[3], "Mark applied"),
+        (second_row[4], "Mark discarded"),
+    ]
+    for column, action in action_slots:
+        with column:
+            button_type = "primary" if st.session_state[state_key] == action else "secondary"
+            if st.button(action, key=f"action_{job_id}_{action}", type=button_type, use_container_width=True):
+                st.session_state[state_key] = action
+                st.rerun()
+    return st.session_state[state_key]
+
+
 def render_ranking_action_panel(row, selected_action: str) -> None:
     evidence = parse_json_cell(row.get("evidence_json"), {})
     scores = parse_json_cell(row.get("scores_json"), {})
@@ -974,13 +1002,6 @@ with tab5:
             ]
         ].copy()
         table.insert(0, "select", False)
-        table.insert(
-            1,
-            "action",
-            table["needs_chatgpt_review"].apply(
-                lambda value: "Review ranking with ChatGPT" if value else "Generate application kit with ChatGPT"
-            ),
-        )
         edited_table = st.data_editor(
             table,
             use_container_width=True,
@@ -988,11 +1009,10 @@ with tab5:
             disabled=[
                 column
                 for column in table.columns
-                if column not in {"select", "action"}
+                if column != "select"
             ],
             column_config={
                 "select": st.column_config.CheckboxColumn("Select"),
-                "action": st.column_config.SelectboxColumn("Action", options=RANKING_ACTIONS),
                 "final_score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100),
                 "confidence": st.column_config.NumberColumn("Confidence", format="%.2f"),
                 "needs_chatgpt_review": st.column_config.CheckboxColumn("Needs review"),
@@ -1004,18 +1024,17 @@ with tab5:
         )
         selected_rows = edited_table[edited_table["select"]]
         if selected_rows.empty:
-            st.info("Select one row in the table. Then choose what to do from the action selector below.")
+            st.info("Select one job in the table to show all available actions.")
         else:
             selected = selected_rows.iloc[0]
             selected_job_id = int(selected["job_id"])
-            table_action = selected["action"]
-            selected_action = st.selectbox(
-                "Action for selected job",
-                RANKING_ACTIONS,
-                index=RANKING_ACTIONS.index(table_action) if table_action in RANKING_ACTIONS else 0,
-                key=f"selected_ranking_action_{selected_job_id}",
+            default_action = (
+                "Review ranking with ChatGPT"
+                if bool(selected.get("needs_chatgpt_review"))
+                else "Generate application kit with ChatGPT"
             )
             source_row = ranked[ranked["job_id"].astype(int) == selected_job_id].iloc[0].copy()
+            selected_action = render_ranking_action_toolbar(selected_job_id, default_action)
             source_row["action"] = selected_action
             st.markdown("### Selected action")
             render_ranking_action_panel(source_row, selected_action)
