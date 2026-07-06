@@ -33,6 +33,12 @@ from joborchestrator.scanning import search_scanner
 from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS, provider_requires_configuration
 from joborchestrator.ranking import persistence as ranking_store
 from joborchestrator.ranking.llm_ranker import DEFAULT_LLM_MODEL
+from joborchestrator.ranking.manual_llm_review import (
+    ManualLLMReviewError,
+    build_manual_review_prompt,
+    parse_manual_review_response,
+    ranking_from_storage_row,
+)
 from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
 
 db.init_db()
@@ -792,6 +798,33 @@ with tab5:
                             int(row["job_id"]),
                             key=f"open_apply_ranked_{int(row['job_id'])}",
                         )
+
+                st.markdown("**Manual ChatGPT review**")
+                st.caption(
+                    "Use this when you have ChatGPT web but no API key. Copy the prompt, paste ChatGPT's JSON here, and update this ranking."
+                )
+                baseline_ranking = ranking_from_storage_row(row.to_dict())
+                manual_prompt = build_manual_review_prompt(row.to_dict(), baseline_ranking)
+                st.text_area(
+                    "Prompt for ChatGPT",
+                    value=manual_prompt,
+                    height=220,
+                    key=f"manual_prompt_{int(row['job_id'])}",
+                )
+                manual_response = st.text_area(
+                    "Paste ChatGPT JSON response",
+                    height=180,
+                    key=f"manual_response_{int(row['job_id'])}",
+                    placeholder='{"final_score": 62, "decision": "MAYBE", ...}',
+                )
+                if st.button("Apply ChatGPT review", key=f"apply_manual_review_{int(row['job_id'])}"):
+                    try:
+                        reviewed = parse_manual_review_response(manual_response, baseline_ranking)
+                        db.save_job_ranking(int(row["job_id"]), reviewed)
+                        st.success("Ranking updated from manual ChatGPT review.")
+                        st.rerun()
+                    except ManualLLMReviewError as exc:
+                        st.error(str(exc))
 
                 st.markdown("**Application kit**")
                 default_status = row.get("pipeline_status") or "unreviewed"
