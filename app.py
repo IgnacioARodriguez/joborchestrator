@@ -32,6 +32,7 @@ from joborchestrator.batching import (
 from joborchestrator.paths import LINKEDIN_SCRAPER, PROJECT_ROOT, SALIDAS_DIR
 from joborchestrator.storage import persistence as db
 from joborchestrator.scanning import scanner as source_scanner
+from joborchestrator.scanning.linkedin_importer import import_linkedin_dataframe_to_job_postings
 from joborchestrator.scanning.providers import PROVIDERS
 from joborchestrator.ranking import persistence as ranking_store
 from joborchestrator.ranking.llm_ranker import DEFAULT_LLM_MODEL, llm_ranking_version
@@ -492,7 +493,13 @@ with tab2:
                 # posterior en la misma semana ya no las vuelve a traer aunque no
                 # llegues a consolidar el ranking.
                 db.registrar_ofertas_vistas(df_filtrado)
+                import_stats = import_linkedin_dataframe_to_job_postings(df_filtrado)
                 st.success(f"{len(lotes)} lotes generados. BajÃ¡ para copiarlos uno por uno.")
+                st.caption(
+                    "Ranking store actualizado desde LinkedIn scraper: "
+                    f"{import_stats['new']} nuevas, {import_stats['updated']} actualizadas, "
+                    f"{import_stats['seen']} sin cambios."
+                )
 
     if st.session_state.lotes:
         st.divider()

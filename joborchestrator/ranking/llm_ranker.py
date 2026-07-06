@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 import httpx
@@ -53,7 +53,7 @@ def rank_job_with_llm(
     try:
         response = _call_openai_responses(payload, key, model_name, timeout)
         result = _ranking_from_payload(response, llm_ranking_version(model_name))
-        return _apply_guards(result)
+        return _apply_guards(result, job)
     except LLMRankingError:
         return heuristic
 
@@ -131,7 +131,7 @@ def _ranking_from_payload(payload: dict[str, Any], ranking_version: str) -> Rank
     )
 
 
-def _apply_guards(result: RankingResult) -> RankingResult:
+def _apply_guards(result: RankingResult, job: Any | None = None) -> RankingResult:
     flags = [*(result.evidence.dealbreakers or []), *(result.evidence.red_flags or [])]
     joined = " ".join(flag.lower() for flag in flags)
     if "unpaid" in joined or "commission-only" in joined or "commission only" in joined:
@@ -144,6 +144,17 @@ def _apply_guards(result: RankingResult) -> RankingResult:
         result.decision = _cap_decision(result.decision, "APPLY_WITH_TAILORED_CV")
     if result.scores.seniority_fit < 35 or result.scores.role_fit < 35:
         result.decision = _cap_decision(result.decision, "MAYBE")
+    if job is not None:
+        data = _job_to_dict(job)
+        parse_confidence = data.get("parse_confidence")
+        if parse_confidence is not None:
+            confidence = float(parse_confidence)
+            if confidence < 0.5:
+                result.decision = _cap_decision(result.decision, "MAYBE")
+                result.final_score = min(result.final_score, 64)
+            elif confidence < 0.65:
+                result.decision = _cap_decision(result.decision, "APPLY_WITH_TAILORED_CV")
+                result.final_score = min(result.final_score, 79)
     return result
 
 
@@ -155,6 +166,8 @@ def _cap_decision(decision: str, max_decision: str) -> str:
 def _job_to_dict(job: Any) -> dict[str, Any]:
     if isinstance(job, dict):
         return job
+    if is_dataclass(job):
+        return asdict(job)
     if hasattr(job, "to_dict"):
         return job.to_dict()
     if hasattr(job, "__dict__"):

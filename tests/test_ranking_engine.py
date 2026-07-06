@@ -137,6 +137,24 @@ def test_technical_solutions_engineer_with_apis_is_medium_fit():
     assert result.decision in {"APPLY_WITH_TAILORED_CV", "MAYBE", "APPLY_NOW"}
 
 
+def test_low_parse_confidence_caps_ranking_decision():
+    job = make_job(
+        "Senior Python Backend Engineer",
+        """
+        Requirements: 4+ years Python, FastAPI, REST APIs, AWS, Docker, SQL.
+        Responsibilities: build backend APIs and own cloud services.
+        """,
+        source="linkedin_scraper",
+    )
+    job["parse_confidence"] = 0.42
+
+    result = rank_job(job, PROFILE)
+
+    assert result.decision in {"MAYBE", "SKIP", "AVOID"}
+    assert result.final_score <= 64
+    assert "Low extraction confidence" in result.evidence.red_flags
+
+
 def test_score_to_decision_mapping():
     assert decision_from_score(85) == "APPLY_NOW"
     assert decision_from_score(70) == "APPLY_WITH_TAILORED_CV"

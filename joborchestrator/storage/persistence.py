@@ -88,6 +88,8 @@ CREATE TABLE IF NOT EXISTS job_postings (
     raw_payload TEXT,
     status TEXT DEFAULT 'seen',
     pipeline_status TEXT,
+    parse_confidence REAL,
+    data_quality_flags TEXT,
     identity_key TEXT,
     UNIQUE(source, company, external_id)
 );
@@ -153,6 +155,10 @@ def _ensure_scanner_columns(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(job_postings)").fetchall()}
     if "pipeline_status" not in columns:
         conn.execute("ALTER TABLE job_postings ADD COLUMN pipeline_status TEXT")
+    if "parse_confidence" not in columns:
+        conn.execute("ALTER TABLE job_postings ADD COLUMN parse_confidence REAL")
+    if "data_quality_flags" not in columns:
+        conn.execute("ALTER TABLE job_postings ADD COLUMN data_quality_flags TEXT")
 
 
 def init_db():
@@ -414,6 +420,7 @@ def update_source_scan_state(source_id: int, status: str, error: str | None = No
 def upsert_job_posting(job: JobPosting, seen_at: str | None = None) -> str:
     now = seen_at or datetime.now().isoformat(timespec="seconds")
     raw_payload = json.dumps(job.raw_payload, ensure_ascii=False, sort_keys=True)
+    data_quality_flags = json.dumps(job.data_quality_flags or [], ensure_ascii=False)
     identity_key = normalize_job_identity(job.title, job.company, job.location)
     conn = _conn()
     try:
@@ -431,8 +438,9 @@ def upsert_job_posting(job: JobPosting, seen_at: str | None = None) -> str:
                        external_id, source, company, title, location, workplace_type, department,
                        url, apply_url, description_html, description_text, salary_min, salary_max,
                        salary_currency, posted_at, first_seen_at, last_seen_at, times_seen,
-                       is_active, content_hash, raw_payload, status, identity_key
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?)""",
+                       is_active, content_hash, raw_payload, status, pipeline_status,
+                       parse_confidence, data_quality_flags, identity_key
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     job.external_id,
                     job.source,
@@ -454,6 +462,9 @@ def upsert_job_posting(job: JobPosting, seen_at: str | None = None) -> str:
                     job.content_hash,
                     raw_payload,
                     status,
+                    None,
+                    job.parse_confidence,
+                    data_quality_flags,
                     identity_key,
                 ),
             )
@@ -465,7 +476,8 @@ def upsert_job_posting(job: JobPosting, seen_at: str | None = None) -> str:
                        url = ?, apply_url = ?, description_html = ?, description_text = ?,
                        salary_min = ?, salary_max = ?, salary_currency = ?, posted_at = ?,
                        last_seen_at = ?, times_seen = times_seen + 1, is_active = 1,
-                       content_hash = ?, raw_payload = ?, status = ?, identity_key = ?
+                       content_hash = ?, raw_payload = ?, status = ?, parse_confidence = ?,
+                       data_quality_flags = ?, identity_key = ?
                    WHERE source = ? AND company = ? AND external_id = ?""",
                 (
                     job.title,
@@ -484,6 +496,8 @@ def upsert_job_posting(job: JobPosting, seen_at: str | None = None) -> str:
                     job.content_hash,
                     raw_payload,
                     status,
+                    job.parse_confidence,
+                    data_quality_flags,
                     identity_key,
                     job.source,
                     job.company,

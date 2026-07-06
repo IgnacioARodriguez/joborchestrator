@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from joborchestrator.ranking.fit_scorer import score_fit
@@ -36,6 +36,7 @@ def rank_job(job: Any, profile: CandidateProfile | None = None) -> RankingResult
         decision = _cap_decision(decision, "APPLY_WITH_TAILORED_CV")
     if scores.seniority_fit < 35 or scores.role_fit < 35:
         decision = _cap_decision(decision, "MAYBE")
+    final_score, decision = _apply_data_quality_guard(job, final_score, decision)
 
     confidence = _estimate_confidence(scores, evidence, role_info)
     summary = _reasoning_summary(scores, evidence, role_info, confidence)
@@ -91,6 +92,31 @@ def result_to_dict(result: RankingResult) -> dict:
 def _cap_decision(decision: str, max_decision: str) -> str:
     order = ["AVOID", "SKIP", "MAYBE", "APPLY_WITH_TAILORED_CV", "APPLY_NOW"]
     return order[min(order.index(decision), order.index(max_decision))]
+
+
+def _apply_data_quality_guard(job: Any, final_score: int, decision: str) -> tuple[int, str]:
+    data = _job_to_dict(job)
+    parse_confidence = data.get("parse_confidence")
+    if parse_confidence is None:
+        return final_score, decision
+    confidence = float(parse_confidence)
+    if confidence < 0.5:
+        return min(final_score, 64), _cap_decision(decision, "MAYBE")
+    if confidence < 0.65:
+        return min(final_score, 79), _cap_decision(decision, "APPLY_WITH_TAILORED_CV")
+    return final_score, decision
+
+
+def _job_to_dict(job: Any) -> dict:
+    if isinstance(job, dict):
+        return job
+    if is_dataclass(job):
+        return asdict(job)
+    if hasattr(job, "to_dict"):
+        return job.to_dict()
+    if hasattr(job, "__dict__"):
+        return vars(job)
+    return {}
 
 
 def _is_critical_dealbreaker(flag: str) -> bool:

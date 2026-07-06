@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from joborchestrator.ranking.schemas import JobRequirements
@@ -54,6 +55,8 @@ def extract_requirements(job: Any) -> JobRequirements:
 def _job_to_dict(job: Any) -> dict:
     if isinstance(job, dict):
         return job
+    if is_dataclass(job):
+        return asdict(job)
     if hasattr(job, "to_dict"):
         return job.to_dict()
     if hasattr(job, "__dict__"):

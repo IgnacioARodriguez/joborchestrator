@@ -28,6 +28,8 @@ class JobPosting:
     content_hash: str | None = None
     raw_payload: dict[str, Any] = field(default_factory=dict)
     status: str = "seen"
+    parse_confidence: float | None = None
+    data_quality_flags: list[str] = field(default_factory=list)
 
     @property
     def stable_key(self) -> tuple[str, str, str]:
@@ -56,4 +58,3 @@ class ScanResult:
     @property
     def found_count(self) -> int:
         return len(self.jobs)
-

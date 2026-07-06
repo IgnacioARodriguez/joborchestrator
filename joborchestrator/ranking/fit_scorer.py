@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from joborchestrator.ranking.risk_detector import detect_risks
@@ -143,10 +144,12 @@ def _score_market_alignment(requirements: JobRequirements, role_info: dict) -> i
 
 
 def _score_opportunity_quality(job: Any, requirements: JobRequirements) -> int:
-    data = job if isinstance(job, dict) else getattr(job, "__dict__", {})
+    data = _job_to_dict(job)
     score = 45
     if data.get("source") in {"greenhouse", "lever", "ashby"}:
         score += 15
+    elif data.get("source") == "linkedin_scraper":
+        score += 6
     if data.get("company"):
         score += 8
     if data.get("location"):
@@ -159,7 +162,26 @@ def _score_opportunity_quality(job: Any, requirements: JobRequirements) -> int:
         score += 7
     if requirements.responsibilities:
         score += 5
+    parse_confidence = data.get("parse_confidence")
+    if parse_confidence is not None:
+        confidence = float(parse_confidence)
+        if confidence >= 0.8:
+            score += 4
+        elif confidence < 0.5:
+            score -= 12
     return _clamp(score)
+
+
+def _job_to_dict(job: Any) -> dict:
+    if isinstance(job, dict):
+        return job
+    if is_dataclass(job):
+        return asdict(job)
+    if hasattr(job, "to_dict"):
+        return job.to_dict()
+    if hasattr(job, "__dict__"):
+        return vars(job)
+    return {}
 
 
 def _clamp(value: float) -> int:

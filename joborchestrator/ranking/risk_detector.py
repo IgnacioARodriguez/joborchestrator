@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from typing import Any
+from dataclasses import asdict, is_dataclass
 
 from joborchestrator.ranking.schemas import CandidateProfile, JobRequirements
 from joborchestrator.scanning.normalization import normalize_text
 
 
 def detect_risks(job: Any, requirements: JobRequirements, profile: CandidateProfile) -> tuple[list[str], int]:
-    data = job if isinstance(job, dict) else getattr(job, "__dict__", {})
+    data = _job_to_dict(job)
     title = data.get("title") or data.get("titulo") or ""
     company = data.get("company") or data.get("empresa") or ""
     description = data.get("description_text") or data.get("description") or data.get("descripcion") or ""
@@ -55,12 +56,28 @@ def detect_risks(job: Any, requirements: JobRequirements, profile: CandidateProf
     if not requirements.tech_stack and any(x in text for x in ["engineer", "developer", "technical"]):
         flags.append("No clear technical stack")
         penalty += 7
+    parse_confidence = data.get("parse_confidence")
+    if parse_confidence is not None and float(parse_confidence) < 0.5:
+        flags.append("Low extraction confidence")
+        penalty += 10
 
     flags.extend(requirements.dealbreakers)
     if requirements.dealbreakers:
         penalty += 25
 
     return _dedupe(flags), min(40, penalty)
+
+
+def _job_to_dict(job: Any) -> dict:
+    if isinstance(job, dict):
+        return job
+    if is_dataclass(job):
+        return asdict(job)
+    if hasattr(job, "to_dict"):
+        return job.to_dict()
+    if hasattr(job, "__dict__"):
+        return vars(job)
+    return {}
 
 
 def _dedupe(values: list[str]) -> list[str]:
