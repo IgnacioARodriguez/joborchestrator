@@ -36,9 +36,11 @@ from joborchestrator.ranking.llm_ranker import DEFAULT_LLM_MODEL
 from joborchestrator.ranking.manual_llm_review import (
     ManualLLMReviewError,
     build_application_kit_prompt,
+    build_manual_batch_review_prompt,
     build_manual_review_prompt,
     manual_review_status,
     parse_application_kit_response,
+    parse_manual_batch_review_response,
     parse_manual_review_response,
     ranking_from_storage_row,
 )
@@ -1183,6 +1185,81 @@ with tab5:
             else:
                 st.info("Jobs exist but no ranking matches this view. Use Rank unranked jobs.")
     else:
+        st.markdown("### GPT batch ranking")
+        st.caption(
+            "Use the current filtered view as a queue. Send a small batch to ChatGPT, paste the JSON response, "
+            "and Job Orchestrator updates the stored rankings."
+        )
+        batch_cols = st.columns([1, 1, 2])
+        with batch_cols[0]:
+            gpt_batch_size = st.number_input(
+                "Batch size",
+                min_value=1,
+                max_value=10,
+                value=5,
+                step=1,
+                help="5 is the safest default for ChatGPT web. Use 8-10 only when descriptions are short.",
+            )
+        with batch_cols[1]:
+            max_offset = max(0, len(ranked) - 1)
+            gpt_batch_offset = st.number_input(
+                "Start at row",
+                min_value=0,
+                max_value=max_offset,
+                value=0,
+                step=int(gpt_batch_size),
+            )
+        with batch_cols[2]:
+            st.info(
+                "Tip: filter the table first, then batch-review the highest-risk APPLY/MAYBE rows before generating kits."
+            )
+
+        batch_size_int = int(gpt_batch_size)
+        batch_offset_int = int(gpt_batch_offset)
+        batch_df = ranked.iloc[batch_offset_int : batch_offset_int + batch_size_int].copy()
+        if batch_df.empty:
+            st.warning("No jobs in this batch window.")
+        else:
+            batch_ids = [int(value) for value in batch_df["job_id"].tolist()]
+            st.caption(f"Batch job_id: {', '.join(str(job_id) for job_id in batch_ids)}")
+            batch_baselines = {
+                int(row["job_id"]): ranking_from_storage_row(row.to_dict())
+                for _, row in batch_df.iterrows()
+            }
+            batch_prompt = build_manual_batch_review_prompt(
+                [row.to_dict() for _, row in batch_df.iterrows()],
+                batch_baselines,
+            )
+            chatgpt_prompt_button(batch_prompt, key=f"batch_rank_{batch_offset_int}_{batch_size_int}")
+            with st.expander("View batch prompt", expanded=False):
+                st.text_area(
+                    "Prompt",
+                    value=batch_prompt,
+                    height=260,
+                    key=f"batch_prompt_{batch_offset_int}_{batch_size_int}",
+                )
+            batch_response = st.text_area(
+                "Paste GPT batch JSON response",
+                height=220,
+                key=f"batch_response_{batch_offset_int}_{batch_size_int}",
+                placeholder='{"rankings":[{"job_id":123,"final_score":41,"decision":"SKIP",...}]}',
+            )
+            if st.button(
+                "Apply GPT batch rankings",
+                key=f"apply_batch_rank_{batch_offset_int}_{batch_size_int}",
+                type="primary",
+                use_container_width=True,
+            ):
+                try:
+                    reviewed_batch = parse_manual_batch_review_response(batch_response, batch_baselines)
+                    for reviewed_job_id, reviewed_ranking in reviewed_batch.items():
+                        db.save_job_ranking(reviewed_job_id, reviewed_ranking)
+                    st.success(f"Updated {len(reviewed_batch)} rankings from GPT batch review.")
+                    st.rerun()
+                except ManualLLMReviewError as exc:
+                    st.error(str(exc))
+
+        st.divider()
         table = ranked[
             [
                 "job_id",

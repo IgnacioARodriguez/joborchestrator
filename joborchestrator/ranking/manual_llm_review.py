@@ -95,6 +95,100 @@ def build_manual_review_prompt(job: dict[str, Any], current_ranking: RankingResu
     )
 
 
+def build_manual_batch_review_prompt(
+    rows: list[dict[str, Any]],
+    current_rankings: dict[int, RankingResult],
+    *,
+    max_description_chars: int = 2800,
+) -> str:
+    profile = load_candidate_profile()
+    jobs = []
+    for row in rows:
+        job_id = int(row.get("job_id") or row.get("id"))
+        compact = _compact_job(row, max_description_chars=max_description_chars)
+        compact["job_id"] = job_id
+        jobs.append(
+            {
+                "job": compact,
+                "current_ranking": result_to_dict(current_rankings[job_id]),
+            }
+        )
+
+    payload = {
+        "candidate_profile": asdict(profile),
+        "ranking_goal": (
+            "Prioritize jobs where the candidate has the highest probability of getting hired quickly. "
+            "This is not a salary, prestige or dream-job ranking. Salary and preference are post-filters."
+        ),
+        "batch_rules": [
+            "Evaluate each job independently; do not let one job contaminate evidence for another.",
+            "Use the current ranking only as a baseline. Correct false positives and false negatives aggressively.",
+            "Central mandatory requirements matter more than generic matches such as Agile, Git, testing or cloud.",
+            "If the dominant central requirements are outside the candidate profile, cap the decision at SKIP.",
+            "Python/Django/FastAPI/Flask/backend/API/integration evidence can support APPLY/MAYBE only when central to the role.",
+            "Adjacent roles such as Technical Consultant or Solutions Engineer are viable only when technical/backend/API transfer is explicit.",
+            "Do not invent skills, years of experience, domains, certifications or languages.",
+            "Keep unpaid, commission-only and critical dealbreakers as hard overrides.",
+            "Return one result per input job_id. Do not omit jobs.",
+            "Return only valid JSON. No markdown, no prose outside JSON.",
+        ],
+        "jobs": jobs,
+    }
+    return (
+        "Actua como evaluador estricto de oportunidades laborales para Job Orchestrator.\n"
+        "Vas a revisar un lote de rankings y devolver correcciones listas para guardar en SQLite.\n\n"
+        "Devuelve SOLO un JSON con esta forma exacta:\n"
+        "{\n"
+        '  "rankings": [\n'
+        "    {\n"
+        '      "job_id": 123,\n'
+        '      "final_score": 0,\n'
+        '      "decision": "APPLY_NOW | APPLY_WITH_TAILORED_CV | MAYBE | SKIP | AVOID",\n'
+        '      "confidence": 0.0,\n'
+        '      "scores": {\n'
+        '        "technical_fit": 0,\n'
+        '        "seniority_fit": 0,\n'
+        '        "role_fit": 0,\n'
+        '        "opportunity_quality": 0,\n'
+        '        "application_roi": 0,\n'
+        '        "market_alignment": 0,\n'
+        '        "risk_penalty": 0,\n'
+        '        "speed_signal": 0,\n'
+        '        "technical_readiness": 0,\n'
+        '        "central_requirement_coverage": 0,\n'
+        '        "role_confidence": 0,\n'
+        '        "application_effort_signal": 0,\n'
+        '        "data_quality_signal": 0,\n'
+        '        "source_reliability_signal": 0\n'
+        "      },\n"
+        '      "evidence": {\n'
+        '        "strong_matches": [],\n'
+        '        "partial_matches": [],\n'
+        '        "missing_requirements": [],\n'
+        '        "nice_to_have_matches": [],\n'
+        '        "dealbreakers": [],\n'
+        '        "red_flags": [],\n'
+        '        "central_requirement_coverage": 0.0,\n'
+        '        "central_requirement_raw_coverage": 0.0,\n'
+        '        "central_requirement_evidence_quality": 0.0,\n'
+        '        "requirement_backed_signal_count": 0,\n'
+        '        "central_requirement_thresholds": {},\n'
+        '        "central_requirements": [],\n'
+        '        "requires_llm_review": false,\n'
+        '        "llm_escalation_reasons": []\n'
+        "      },\n"
+        '      "reasoning_summary": "short explanation",\n'
+        '      "recommended_application_angle": "short positioning",\n'
+        '      "cv_keywords_to_emphasize": [],\n'
+        '      "cv_keywords_to_avoid_overclaiming": []\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        "Contexto del lote:\n"
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    )
+
+
 def build_application_kit_prompt(job: dict[str, Any], current_ranking: RankingResult) -> str:
     profile = load_candidate_profile()
     payload = {
@@ -192,6 +286,40 @@ def parse_manual_review_response(response_text: str, baseline: RankingResult) ->
     )
 
 
+def parse_manual_batch_review_response(
+    response_text: str,
+    baselines: dict[int, RankingResult],
+) -> dict[int, RankingResult]:
+    payload = _extract_json_object(response_text)
+    rankings = payload.get("rankings")
+    if not isinstance(rankings, list):
+        raise ManualLLMReviewError("La respuesta debe contener una lista `rankings`.")
+
+    reviewed: dict[int, RankingResult] = {}
+    unknown_ids: list[int] = []
+    for item in rankings:
+        if not isinstance(item, dict):
+            raise ManualLLMReviewError("Cada item de `rankings` debe ser un objeto JSON.")
+        try:
+            job_id = int(item.get("job_id"))
+        except (TypeError, ValueError) as exc:
+            raise ManualLLMReviewError("Cada ranking debe incluir `job_id` numerico.") from exc
+        baseline = baselines.get(job_id)
+        if baseline is None:
+            unknown_ids.append(job_id)
+            continue
+        reviewed[job_id] = _ranking_from_review_payload(item, baseline)
+
+    if unknown_ids:
+        raise ManualLLMReviewError(f"La respuesta contiene job_id desconocidos: {unknown_ids}")
+    if not reviewed:
+        raise ManualLLMReviewError("No se pudo aplicar ningun ranking del lote.")
+    missing = sorted(set(baselines) - set(reviewed))
+    if missing:
+        raise ManualLLMReviewError(f"Faltan resultados para job_id: {missing}")
+    return reviewed
+
+
 def ranking_from_storage_row(row: dict[str, Any]) -> RankingResult:
     scores = json.loads(row.get("scores_json") or "{}")
     evidence = json.loads(row.get("evidence_json") or "{}")
@@ -206,6 +334,41 @@ def ranking_from_storage_row(row: dict[str, Any]) -> RankingResult:
         cv_keywords_to_emphasize=json.loads(row.get("cv_keywords_to_emphasize_json") or "[]"),
         cv_keywords_to_avoid_overclaiming=json.loads(row.get("cv_keywords_to_avoid_overclaiming_json") or "[]"),
         ranking_version=row.get("ranking_version") or SPEED_RANKING_VERSION,
+    )
+
+
+def _ranking_from_review_payload(payload: dict[str, Any], baseline: RankingResult) -> RankingResult:
+    decision = payload.get("decision", baseline.decision)
+    if decision not in VALID_DECISIONS:
+        raise ManualLLMReviewError(f"Decision invalida: {decision}")
+
+    scores_payload = asdict(baseline.scores)
+    scores_payload.update(payload.get("scores") or {})
+    evidence_payload = asdict(baseline.evidence)
+    evidence_payload.update(payload.get("evidence") or {})
+    evidence_payload["requires_llm_review"] = False
+    reasons = list(evidence_payload.get("llm_escalation_reasons") or [])
+    if "manual_chatgpt_review_applied" not in reasons:
+        reasons.append("manual_chatgpt_review_applied")
+    if "manual_chatgpt_batch_review_applied" not in reasons:
+        reasons.append("manual_chatgpt_batch_review_applied")
+    evidence_payload["llm_escalation_reasons"] = reasons
+
+    return RankingResult(
+        final_score=_int_between(payload.get("final_score", baseline.final_score), 0, 100, "final_score"),
+        decision=decision,
+        confidence=_float_between(payload.get("confidence", baseline.confidence), 0.0, 1.0, "confidence"),
+        scores=RankingScores(**scores_payload),
+        evidence=RankingEvidence(**evidence_payload),
+        reasoning_summary=str(payload.get("reasoning_summary") or baseline.reasoning_summary),
+        recommended_application_angle=str(
+            payload.get("recommended_application_angle") or baseline.recommended_application_angle
+        ),
+        cv_keywords_to_emphasize=list(payload.get("cv_keywords_to_emphasize") or baseline.cv_keywords_to_emphasize),
+        cv_keywords_to_avoid_overclaiming=list(
+            payload.get("cv_keywords_to_avoid_overclaiming") or baseline.cv_keywords_to_avoid_overclaiming
+        ),
+        ranking_version=SPEED_RANKING_VERSION,
     )
 
 
@@ -229,7 +392,7 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     return parsed
 
 
-def _compact_job(job: dict[str, Any]) -> dict[str, Any]:
+def _compact_job(job: dict[str, Any], *, max_description_chars: int = 8000) -> dict[str, Any]:
     keys = [
         "id",
         "title",
@@ -247,8 +410,8 @@ def _compact_job(job: dict[str, Any]) -> dict[str, Any]:
     ]
     compact = {key: job.get(key) for key in keys if job.get(key) is not None}
     description = str(compact.get("description_text") or "")
-    if len(description) > 8000:
-        compact["description_text"] = description[:8000] + "\n[truncated]"
+    if len(description) > max_description_chars:
+        compact["description_text"] = description[:max_description_chars] + "\n[truncated]"
     return compact
 
 

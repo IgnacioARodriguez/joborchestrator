@@ -8,9 +8,11 @@ import pytest
 from joborchestrator.ranking.manual_llm_review import (
     ManualLLMReviewError,
     build_application_kit_prompt,
+    build_manual_batch_review_prompt,
     build_manual_review_prompt,
     manual_review_status,
     parse_application_kit_response,
+    parse_manual_batch_review_response,
     parse_manual_review_response,
     ranking_from_storage_row,
 )
@@ -120,6 +122,68 @@ def test_build_manual_review_prompt_includes_job_and_current_ranking() -> None:
     assert "Backend Engineer" in prompt
     assert "current_ranking" in prompt
     assert "Return only valid JSON" in prompt
+
+
+def test_build_manual_batch_review_prompt_includes_all_job_ids() -> None:
+    rows = [
+        {"job_id": 1, "title": "Backend Engineer", "description_text": "Python APIs"},
+        {"job_id": 2, "title": "C++ Engineer", "description_text": "C++ Qt " * 2000},
+    ]
+    prompt = build_manual_batch_review_prompt(rows, {1: baseline(), 2: baseline()}, max_description_chars=120)
+
+    assert '"job_id": 1' in prompt
+    assert '"job_id": 2' in prompt
+    assert "Return one result per input job_id" in prompt
+    assert "[truncated]" in prompt
+
+
+def test_parse_manual_batch_review_response_updates_each_baseline() -> None:
+    response = """
+    {
+      "rankings": [
+        {
+          "job_id": 1,
+          "final_score": 41,
+          "decision": "SKIP",
+          "confidence": 0.87,
+          "scores": {"technical_fit": 44, "technical_readiness": 46},
+          "evidence": {"red_flags": ["Dominant central requirements are outside profile"]},
+          "reasoning_summary": "IoT and Java/Spring are dominant missing requirements.",
+          "recommended_application_angle": "Skip for speed-focused search.",
+          "cv_keywords_to_emphasize": ["Python"],
+          "cv_keywords_to_avoid_overclaiming": ["IoT", "Java", "Spring Boot"]
+        },
+        {
+          "job_id": 2,
+          "final_score": 47,
+          "decision": "SKIP",
+          "confidence": 0.82,
+          "scores": {"technical_fit": 48, "technical_readiness": 49},
+          "evidence": {"red_flags": ["C++ and Qt are central"]},
+          "reasoning_summary": "C++/Qt role with secondary Python.",
+          "recommended_application_angle": "Do not prioritize.",
+          "cv_keywords_to_emphasize": ["Python", "AWS"],
+          "cv_keywords_to_avoid_overclaiming": ["C++", "Qt"]
+        }
+      ]
+    }
+    """
+
+    results = parse_manual_batch_review_response(response, {1: baseline(), 2: baseline()})
+
+    assert set(results) == {1, 2}
+    assert results[1].final_score == 41
+    assert results[2].final_score == 47
+    assert results[1].evidence.requires_llm_review is False
+    assert "manual_chatgpt_batch_review_applied" in results[1].evidence.llm_escalation_reasons
+
+
+def test_parse_manual_batch_review_response_requires_complete_batch() -> None:
+    with pytest.raises(ManualLLMReviewError, match="Faltan resultados"):
+        parse_manual_batch_review_response(
+            '{"rankings":[{"job_id":1,"decision":"SKIP"}]}',
+            {1: baseline(), 2: baseline()},
+        )
 
 
 def test_build_application_kit_prompt_includes_material_fields() -> None:
