@@ -24,9 +24,17 @@ HARD_MARKERS = [
     "proven experience",
     "hands-on",
     "solid experience",
+    "experience with",
+    "experience in",
+    "requisitos",
+    "experiencia con",
+    "experiencia en",
+    "imprescindible",
+    "obligatorio",
+    "obligatoria",
 ]
-NICE_MARKERS = ["nice to have", "bonus", "preferred", "familiarity", "plus", "optional", "desirable"]
-RESP_MARKERS = ["responsibilities", "what you will do", "you will", "day to day", "role"]
+NICE_MARKERS = ["nice to have", "bonus", "preferred", "familiarity", "plus", "optional", "desirable", "valorable", "deseable"]
+RESP_MARKERS = ["responsibilities", "what you will do", "you will", "day to day", "role", "funciones", "responsabilidades"]
 STOP_TERMS = {
     "engineer",
     "developer",
@@ -48,6 +56,8 @@ STOP_TERMS = {
     "skills",
     "requirement",
     "requirements",
+    "requisito",
+    "requisitos",
     "responsibility",
     "responsibilities",
     "required",
@@ -90,6 +100,35 @@ STOP_TERMS = {
     "about",
     "company",
     "meet",
+    "group",
+    "working",
+    "challenge",
+    "health",
+    "location",
+    "detalles",
+    "buscamos",
+    "buscando",
+    "estamos",
+    "ofrecen",
+    "ofrecemos",
+    "tareas",
+    "quieres",
+    "cuentas",
+    "si",
+    "desde",
+    "tus",
+    "tu",
+    "nos",
+    "nuestro",
+    "nuestros",
+    "nuestra",
+    "nuestras",
+    "desarrollo",
+    "desarrollando",
+    "experiencia",
+    "colaborar",
+    "esta",
+    "y o",
     "work",
     "english",
     "spanish",
@@ -204,22 +243,19 @@ def _extract_requirement_signals(
     active_section = "body"
     for line in _split_lines(description):
         norm = normalize_text(line)
-        if any(marker in norm for marker in HARD_MARKERS):
-            active_section = "hard_requirements"
-        elif any(marker in norm for marker in NICE_MARKERS):
-            active_section = "nice_to_have"
-        elif any(marker in norm for marker in RESP_MARKERS):
-            active_section = "responsibilities"
+        line_section = _line_section(norm, active_section)
+        if _is_section_heading(line, norm):
+            active_section = line_section
 
         terms = _extract_terms(line)
         for index, term in enumerate(terms):
             base = 0.16
-            evidence = [f"section:{active_section}"]
-            if active_section == "hard_requirements":
+            evidence = [f"section:{line_section}"]
+            if line_section == "hard_requirements":
                 base += 0.24
-            elif active_section == "responsibilities":
+            elif line_section == "responsibilities":
                 base += 0.12
-            elif active_section == "nice_to_have":
+            elif line_section == "nice_to_have":
                 base -= 0.14
 
             if any(marker in norm for marker in HARD_MARKERS):
@@ -228,7 +264,7 @@ def _extract_requirement_signals(
             if any(marker in norm for marker in NICE_MARKERS):
                 base -= 0.18
                 evidence.append("optional_language")
-            if index < 5 and active_section in {"hard_requirements", "responsibilities"}:
+            if index < 5 and line_section in {"hard_requirements", "responsibilities"}:
                 base += 0.10
                 evidence.append("early_in_section")
             if _usage_context(term, norm):
@@ -240,7 +276,7 @@ def _extract_requirement_signals(
                 term,
                 base,
                 position,
-                active_section,
+                line_section,
                 *evidence,
                 excluded_terms=excluded_terms,
             )
@@ -365,6 +401,22 @@ def _source_field_terms(data: dict[str, Any]) -> set[str]:
 
 def _split_lines(text: str) -> list[str]:
     return [line.strip(" -*•\t") for line in str(text).splitlines() if line.strip()]
+
+
+def _line_section(norm_line: str, active_section: str) -> str:
+    if any(marker in norm_line for marker in NICE_MARKERS):
+        return "nice_to_have"
+    if any(marker in norm_line for marker in HARD_MARKERS):
+        return "hard_requirements"
+    if any(marker in norm_line for marker in RESP_MARKERS):
+        return "responsibilities"
+    return active_section if active_section != "hard_requirements" else "body"
+
+
+def _is_section_heading(line: str, norm_line: str) -> bool:
+    word_count = len(norm_line.split())
+    heading_like = word_count <= 8 or line.rstrip().endswith(":")
+    return heading_like and any(marker in norm_line for marker in [*HARD_MARKERS, *NICE_MARKERS, *RESP_MARKERS])
 
 
 def _usage_context(term: str, norm_line: str) -> bool:

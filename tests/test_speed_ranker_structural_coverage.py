@@ -165,6 +165,49 @@ def test_collaborating_with_product_managers_does_not_reclassify_backend_role() 
     assert "Product Manager" not in result.recommended_application_angle
 
 
+def test_viable_python_fullstack_role_gets_manual_review_floor() -> None:
+    result = rank_job_speed(
+        {
+            "title": "FullStack (Python/React)",
+            "company": "Acme",
+            "source": "linkedin_scraper",
+            "location": "Hybrid",
+            "description_text": (
+                "We are looking for a developer to build internal tools. "
+                "Experience with Python, FastAPI, React and REST APIs. "
+                "You will integrate services and maintain backend APIs."
+            ),
+        },
+        profile(),
+    )
+
+    assert result.scores.technical_readiness >= 50
+    assert result.scores.role_fit >= 55
+    assert result.evidence.central_requirement_coverage >= LLM_REVIEW_COVERAGE_THRESHOLD
+    assert result.decision in {"MAYBE", "APPLY_WITH_TAILORED_CV", "APPLY_NOW"}
+
+
+def test_requirement_section_does_not_bleed_into_company_boilerplate() -> None:
+    result = rank_job_speed(
+        {
+            "title": "Hardware Engineer Internship",
+            "company": "Acme",
+            "source": "linkedin_scraper",
+            "location": "Onsite",
+            "description_text": (
+                "Requirements: enrolled in an electronics degree. "
+                "Working at Acme means joining a global automotive group with health benefits."
+            ),
+        },
+        profile(),
+    )
+
+    central_terms = {item["term"] for item in result.evidence.central_requirements}
+    assert "group" not in central_terms
+    assert "working" not in central_terms
+    assert "health" not in central_terms
+
+
 def test_save_speed_ranking_updates_job_posting_cached_signals(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()

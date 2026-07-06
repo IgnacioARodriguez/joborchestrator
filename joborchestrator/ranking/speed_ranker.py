@@ -65,6 +65,13 @@ def rank_job_speed(
         central.coverage,
         data_quality_signal,
     )
+    decision, final_score = _apply_viable_review_floor(
+        decision,
+        final_score,
+        technical_readiness,
+        role_fit,
+        central.coverage,
+    )
 
     escalation_reasons = list(central.escalation_reasons)
     if role_confidence < 0.55:
@@ -169,6 +176,24 @@ def _apply_speed_gates(
         return _cap_decision(decision, "MAYBE"), min(final_score, 64)
     if data_quality_signal < 50:
         return _cap_decision(decision, "MAYBE"), min(final_score, 64)
+    return decision, final_score
+
+
+def _apply_viable_review_floor(
+    decision: str,
+    final_score: int,
+    technical_readiness: float,
+    role_fit: float,
+    coverage: float,
+) -> tuple[str, int]:
+    if (
+        decision in {"SKIP", "AVOID"}
+        and final_score >= 45
+        and technical_readiness >= 50
+        and role_fit >= 55
+        and coverage >= LLM_REVIEW_COVERAGE_THRESHOLD
+    ):
+        return "MAYBE", max(final_score, 50)
     return decision, final_score
 
 
