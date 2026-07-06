@@ -90,6 +90,10 @@ CREATE TABLE IF NOT EXISTS job_postings (
     pipeline_status TEXT,
     parse_confidence REAL,
     data_quality_flags TEXT,
+    recruiter_message TEXT,
+    cover_letter TEXT,
+    ats_cv_text TEXT,
+    autofill_notes TEXT,
     identity_key TEXT,
     UNIQUE(source, company, external_id)
 );
@@ -159,6 +163,14 @@ def _ensure_scanner_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE job_postings ADD COLUMN parse_confidence REAL")
     if "data_quality_flags" not in columns:
         conn.execute("ALTER TABLE job_postings ADD COLUMN data_quality_flags TEXT")
+    if "recruiter_message" not in columns:
+        conn.execute("ALTER TABLE job_postings ADD COLUMN recruiter_message TEXT")
+    if "cover_letter" not in columns:
+        conn.execute("ALTER TABLE job_postings ADD COLUMN cover_letter TEXT")
+    if "ats_cv_text" not in columns:
+        conn.execute("ALTER TABLE job_postings ADD COLUMN ats_cv_text TEXT")
+    if "autofill_notes" not in columns:
+        conn.execute("ALTER TABLE job_postings ADD COLUMN autofill_notes TEXT")
 
 
 def init_db():
@@ -615,6 +627,39 @@ def update_job_status(job_id: int, status: str) -> None:
         conn.close()
 
 
+def update_job_application_materials(
+    job_id: int,
+    *,
+    pipeline_status: str | None = None,
+    recruiter_message: str | None = None,
+    cover_letter: str | None = None,
+    ats_cv_text: str | None = None,
+    autofill_notes: str | None = None,
+) -> None:
+    conn = _conn()
+    try:
+        conn.execute(
+            """UPDATE job_postings SET
+                   pipeline_status = ?,
+                   recruiter_message = ?,
+                   cover_letter = ?,
+                   ats_cv_text = ?,
+                   autofill_notes = ?
+               WHERE id = ?""",
+            (
+                pipeline_status,
+                recruiter_message,
+                cover_letter,
+                ats_cv_text,
+                autofill_notes,
+                job_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_scanner_overview() -> dict:
     conn = _conn()
     try:
@@ -756,6 +801,8 @@ def get_ranked_jobs(
                 jp.id AS job_id, jp.title, jp.company, jp.location, jp.source, jp.url,
                 jp.apply_url, jp.description_text, jp.department, jp.workplace_type,
                 jp.first_seen_at, jp.last_seen_at, jp.status AS scan_status, jp.pipeline_status,
+                jp.recruiter_message, jp.cover_letter, jp.ats_cv_text, jp.autofill_notes,
+                jp.parse_confidence, jp.data_quality_flags,
                 jr.final_score, jr.decision, jr.confidence, jr.scores_json, jr.evidence_json,
                 jr.reasoning_summary, jr.recommended_application_angle,
                 jr.cv_keywords_to_emphasize_json, jr.cv_keywords_to_avoid_overclaiming_json,

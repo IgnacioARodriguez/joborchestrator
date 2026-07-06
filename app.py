@@ -31,6 +31,7 @@ from joborchestrator.batching import (
 )
 from joborchestrator.paths import LINKEDIN_SCRAPER, PROJECT_ROOT, SALIDAS_DIR
 from joborchestrator.storage import persistence as db
+from joborchestrator.intelligence.application_materials import build_application_kit
 from joborchestrator.scanning import scanner as source_scanner
 from joborchestrator.scanning.linkedin_importer import import_linkedin_dataframe_to_job_postings
 from joborchestrator.scanning.providers import PROVIDERS
@@ -818,7 +819,22 @@ with tab5:
         else:
             st.info("Jobs exist but no ranking matches this view. Use Rank unranked jobs.")
     else:
-        table = ranked[["job_id", "title", "company", "source", "location", "final_score", "decision", "confidence", "ranked_at"]].copy()
+        table = ranked[
+            [
+                "job_id",
+                "title",
+                "company",
+                "source",
+                "location",
+                "final_score",
+                "decision",
+                "pipeline_status",
+                "url",
+                "apply_url",
+                "confidence",
+                "ranked_at",
+            ]
+        ].copy()
         st.dataframe(
             table,
             use_container_width=True,
@@ -826,6 +842,8 @@ with tab5:
             column_config={
                 "final_score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100),
                 "confidence": st.column_config.NumberColumn("Confidence", format="%.2f"),
+                "url": st.column_config.LinkColumn("Posting"),
+                "apply_url": st.column_config.LinkColumn("Apply"),
             },
         )
 
@@ -875,8 +893,67 @@ with tab5:
                 st.write(emphasize or "-")
                 st.markdown("**Do not overclaim**")
                 st.write(avoid or "-")
-                if row.get("url"):
-                    st.link_button("Open posting", row["url"])
+                link_cols = st.columns(2)
+                with link_cols[0]:
+                    if row.get("url"):
+                        st.link_button("Open posting", row["url"], use_container_width=True)
+                with link_cols[1]:
+                    if row.get("apply_url"):
+                        st.link_button("Open apply page", row["apply_url"], use_container_width=True)
+
+                st.markdown("**Application kit**")
+                default_status = row.get("pipeline_status") or "unreviewed"
+                status_options = ["unreviewed", "shortlisted", "discarded", "applied"]
+                if default_status not in status_options:
+                    status_options.insert(0, default_status)
+                kit_key = f"kit_{int(row['job_id'])}"
+                if st.button("Generate draft kit", key=f"generate_{kit_key}"):
+                    kit = build_application_kit(row.to_dict(), emphasize)
+                    st.session_state[f"{kit_key}_recruiter_message"] = kit["recruiter_message"]
+                    st.session_state[f"{kit_key}_cover_letter"] = kit["cover_letter"]
+                    st.session_state[f"{kit_key}_ats_cv_text"] = kit["ats_cv_text"]
+                    st.session_state[f"{kit_key}_autofill_notes"] = kit["autofill_notes"]
+
+                selected_status = st.selectbox(
+                    "Pipeline status",
+                    status_options,
+                    index=status_options.index(default_status),
+                    key=f"{kit_key}_status",
+                )
+                recruiter_message = st.text_area(
+                    "Recruiter message",
+                    value=st.session_state.get(f"{kit_key}_recruiter_message", row.get("recruiter_message") or ""),
+                    height=110,
+                    key=f"{kit_key}_recruiter_message",
+                )
+                cover_letter = st.text_area(
+                    "Cover letter",
+                    value=st.session_state.get(f"{kit_key}_cover_letter", row.get("cover_letter") or ""),
+                    height=180,
+                    key=f"{kit_key}_cover_letter",
+                )
+                ats_cv_text = st.text_area(
+                    "ATS-optimized CV notes",
+                    value=st.session_state.get(f"{kit_key}_ats_cv_text", row.get("ats_cv_text") or ""),
+                    height=180,
+                    key=f"{kit_key}_ats_cv_text",
+                )
+                autofill_notes = st.text_area(
+                    "Autofill / portal answers",
+                    value=st.session_state.get(f"{kit_key}_autofill_notes", row.get("autofill_notes") or ""),
+                    height=180,
+                    key=f"{kit_key}_autofill_notes",
+                )
+                if st.button("Save application kit", key=f"save_{kit_key}"):
+                    db.update_job_application_materials(
+                        int(row["job_id"]),
+                        pipeline_status=selected_status,
+                        recruiter_message=recruiter_message,
+                        cover_letter=cover_letter,
+                        ats_cv_text=ats_cv_text,
+                        autofill_notes=autofill_notes,
+                    )
+                    st.success("Application kit saved.")
 # ---------------------------------------------------------------------------
 # TAB 6 â€” PORTAL SCANNER
 # ---------------------------------------------------------------------------

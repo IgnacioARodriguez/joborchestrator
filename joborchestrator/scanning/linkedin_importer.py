@@ -47,6 +47,16 @@ def linkedin_row_to_job_posting(row: dict[str, Any]) -> JobPosting | None:
     title = _text(first_value(normalized.get("title"), normalized.get("titulo"), normalized.get("puesto")))
     company = _text(first_value(normalized.get("company"), normalized.get("empresa")))
     url = _text(first_value(normalized.get("url"), normalized.get("job_url"), normalized.get("link")))
+    apply_url = _text(
+        first_value(
+            normalized.get("apply_url"),
+            normalized.get("application_url"),
+            normalized.get("portal_url"),
+            normalized.get("url_portal"),
+            normalized.get("solicitud_url"),
+            url,
+        )
+    )
     external_id = extract_linkedin_external_id(normalized, url=url, title=title, company=company)
 
     if not external_id or not title or not company:
@@ -70,10 +80,10 @@ def linkedin_row_to_job_posting(row: dict[str, Any]) -> JobPosting | None:
         workplace_type=workplace_type,
         department=None,
         url=url,
-        apply_url=url,
+        apply_url=apply_url,
         description_text=description,
         posted_at=posted_at,
-        content_hash=compute_content_hash(title, company, location, description, url),
+        content_hash=compute_content_hash(title, company, location, description, apply_url),
         raw_payload=raw_payload,
         parse_confidence=parse_confidence,
         data_quality_flags=flags,

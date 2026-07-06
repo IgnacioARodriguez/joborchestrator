@@ -59,3 +59,26 @@ def test_company_source_upsert(tmp_path, monkeypatch):
     assert len(sources) == 1
     assert sources.iloc[0]["company_name"] == "Acme Labs"
     assert sources.iloc[0]["enabled"] == 0
+
+
+def test_application_materials_are_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+
+    db.update_job_application_materials(
+        job_id,
+        pipeline_status="shortlisted",
+        recruiter_message="Hello recruiter",
+        cover_letter="Dear team",
+        ats_cv_text="Python, APIs",
+        autofill_notes="why_join: strong fit",
+    )
+
+    stored = db.get_job_posting(job_id)
+    assert stored["pipeline_status"] == "shortlisted"
+    assert stored["recruiter_message"] == "Hello recruiter"
+    assert stored["cover_letter"] == "Dear team"
+    assert stored["ats_cv_text"] == "Python, APIs"
+    assert stored["autofill_notes"] == "why_join: strong fit"
