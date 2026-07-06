@@ -1004,11 +1004,17 @@ with tab5:
         )
         selected_rows = edited_table[edited_table["select"]]
         if selected_rows.empty:
-            st.info("Select one row in the table and choose an action from the Action dropdown.")
+            st.info("Select one row in the table. Then choose what to do from the action selector below.")
         else:
             selected = selected_rows.iloc[0]
             selected_job_id = int(selected["job_id"])
-            selected_action = selected["action"]
+            table_action = selected["action"]
+            selected_action = st.selectbox(
+                "Action for selected job",
+                RANKING_ACTIONS,
+                index=RANKING_ACTIONS.index(table_action) if table_action in RANKING_ACTIONS else 0,
+                key=f"selected_ranking_action_{selected_job_id}",
+            )
             source_row = ranked[ranked["job_id"].astype(int) == selected_job_id].iloc[0].copy()
             source_row["action"] = selected_action
             st.markdown("### Selected action")
