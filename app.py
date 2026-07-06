@@ -29,6 +29,8 @@ from joborchestrator.intelligence.application_materials import build_application
 from joborchestrator.scanning import scanner as source_scanner
 from joborchestrator.scanning.linkedin_importer import import_linkedin_dataframe_to_job_postings
 from joborchestrator.scanning.providers import PROVIDERS
+from joborchestrator.scanning import search_scanner
+from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS, provider_requires_configuration
 from joborchestrator.ranking import persistence as ranking_store
 from joborchestrator.ranking.llm_ranker import DEFAULT_LLM_MODEL, llm_ranking_version
 from joborchestrator.ranking.ranker import RANKING_VERSION
@@ -316,8 +318,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab1, tab2, tab5, tab6, tab4 = st.tabs(
-    ["Scraping", "Import LinkedIn", "Opportunity Ranking", "Portal scanner", "Historial"]
+tab1, tab2, tab_search, tab5, tab6, tab4 = st.tabs(
+    ["Scraping", "Import LinkedIn", "Search APIs", "Opportunity Ranking", "Portal scanner", "Historial"]
 )
 # ---------------------------------------------------------------------------
 # TAB 1 â€” SCRAPING
@@ -431,6 +433,92 @@ with tab2:
                     "Ranking store actualizado desde LinkedIn scraper: "
                     f"{import_stats['new']} nuevas, {import_stats['updated']} actualizadas, "
                     f"{import_stats['seen']} sin cambios."
+                )
+
+# ---------------------------------------------------------------------------
+# TAB 3 — SEARCH APIS
+# ---------------------------------------------------------------------------
+with tab_search:
+    st.subheader("Search APIs")
+    st.caption(
+        "Busca oportunidades por keyword/location en agregadores públicos y guarda todo en `job_postings`."
+    )
+
+    default_queries = "\n".join(
+        [
+            "software developer",
+            "software engineer",
+            "backend developer",
+            "python developer",
+            "technical consultant",
+            "solutions engineer",
+        ]
+    )
+    query_text = st.text_area("Keywords", value=default_queries, height=150)
+    search_cols = st.columns([2, 1, 1, 1])
+    with search_cols[0]:
+        location = st.text_input("Location", value="Spain")
+    with search_cols[1]:
+        remote = st.checkbox("Include remote/EU", value=True)
+    with search_cols[2]:
+        max_pages = st.number_input("Pages/provider", min_value=1, max_value=5, value=1, step=1)
+    with search_cols[3]:
+        search_concurrency = st.number_input("Concurrency", min_value=1, max_value=8, value=4, step=1)
+
+    provider_options = sorted(SEARCH_PROVIDERS.keys())
+    default_providers = [provider for provider in ["arbeitnow", "remotive", "adzuna"] if provider in provider_options]
+    selected_search_providers = st.multiselect(
+        "Providers",
+        provider_options,
+        default=default_providers,
+    )
+    missing_config = [provider for provider in selected_search_providers if provider_requires_configuration(provider)]
+    if missing_config:
+        st.warning(
+            "Providers requiring env vars will be skipped/fail until configured: "
+            + ", ".join(missing_config)
+            + ". Adzuna needs ADZUNA_APP_ID and ADZUNA_APP_KEY."
+        )
+
+    if st.button("Search job APIs", type="primary"):
+        queries = [line.strip() for line in query_text.splitlines() if line.strip()]
+        if not queries:
+            st.error("Add at least one keyword.")
+        elif not selected_search_providers:
+            st.error("Select at least one provider.")
+        else:
+            with st.spinner("Searching aggregators..."):
+                results = asyncio.run(
+                    search_scanner.search_jobs_concurrently(
+                        selected_search_providers,
+                        queries,
+                        location=location.strip() or None,
+                        remote=remote,
+                        max_pages=int(max_pages),
+                        max_concurrency=int(search_concurrency),
+                    )
+                )
+            if not results:
+                st.info("No search tasks were run.")
+            else:
+                summary_rows = [
+                    {
+                        "provider": result.source_type,
+                        "query": result.company_name,
+                        "found": result.found_count,
+                        "new": len(result.new_jobs),
+                        "updated": len(result.updated_jobs),
+                        "seen": len(result.unchanged_jobs),
+                        "errors": "; ".join(result.errors),
+                        "seconds": result.duration_seconds,
+                    }
+                    for result in results
+                ]
+                st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+                st.success(
+                    f"Search complete: {sum(row['new'] for row in summary_rows)} nuevas, "
+                    f"{sum(row['updated'] for row in summary_rows)} actualizadas, "
+                    f"{sum(row['seen'] for row in summary_rows)} sin cambios."
                 )
 
 # ---------------------------------------------------------------------------

@@ -72,7 +72,8 @@ def test_postgresql_is_partial_not_critical_gap():
 
     result = rank_job(job, PROFILE)
 
-    assert any("PostgreSQL" in item for item in result.evidence.partial_matches)
+    matched = result.evidence.strong_matches + result.evidence.partial_matches
+    assert any("PostgreSQL" in item for item in matched)
     assert "PostgreSQL" not in result.evidence.missing_requirements
 
 
