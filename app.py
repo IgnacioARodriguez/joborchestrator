@@ -1189,6 +1189,7 @@ with tab5:
                 "title",
                 "company",
                 "source",
+                "workplace_type",
                 "location",
                 "final_score",
                 "decision",
@@ -1201,6 +1202,29 @@ with tab5:
                 "ranked_at",
             ]
         ].copy()
+        table["where"] = (
+            table["workplace_type"].fillna("").astype(str).str.strip()
+            + " "
+            + table["location"].fillna("").astype(str).str.strip()
+        ).str.strip()
+        table = table.drop(columns=["workplace_type", "location"])
+        ordered_cols = [
+            "job_id",
+            "title",
+            "company",
+            "source",
+            "where",
+            "final_score",
+            "decision",
+            "needs_chatgpt_review",
+            "review_reason",
+            "pipeline_status",
+            "url",
+            "apply_url",
+            "confidence",
+            "ranked_at",
+        ]
+        table = table[ordered_cols]
         table.insert(0, "select", False)
         edited_table = st.data_editor(
             table,
@@ -1215,6 +1239,7 @@ with tab5:
                 "select": st.column_config.CheckboxColumn("Select"),
                 "final_score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100),
                 "confidence": st.column_config.NumberColumn("Confidence", format="%.2f"),
+                "where": st.column_config.TextColumn("Location / mode"),
                 "needs_chatgpt_review": st.column_config.CheckboxColumn("Needs review"),
                 "review_reason": st.column_config.TextColumn("Review reason"),
                 "url": st.column_config.LinkColumn("Posting"),
