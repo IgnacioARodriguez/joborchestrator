@@ -95,6 +95,30 @@ def test_application_materials_are_saved(tmp_path, monkeypatch):
     assert stored["autofill_notes"] == "why_join: strong fit"
 
 
+def test_application_material_update_preserves_unspecified_fields(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+
+    db.update_job_application_materials(
+        job_id,
+        pipeline_status="shortlisted",
+        recruiter_message="Initial recruiter",
+        cover_letter="Initial cover",
+        ats_cv_text="Initial ATS",
+        autofill_notes="Initial autofill",
+    )
+    db.update_job_application_materials(job_id, cover_letter="Updated cover")
+
+    stored = db.get_job_posting(job_id)
+    assert stored["pipeline_status"] == "shortlisted"
+    assert stored["recruiter_message"] == "Initial recruiter"
+    assert stored["cover_letter"] == "Updated cover"
+    assert stored["ats_cv_text"] == "Initial ATS"
+    assert stored["autofill_notes"] == "Initial autofill"
+
+
 def test_opening_job_posting_registers_legacy_history(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()
@@ -135,6 +159,22 @@ def test_opening_ranked_job_posting_copies_score_to_legacy_history(tmp_path, mon
     assert row["fit_seniority"] == ranking.scores.seniority_fit
     assert row["transferibilidad"] == ranking.scores.role_fit
     assert row["razon_breve"] == ranking.reasoning_summary
+
+
+def test_marking_job_posting_applied_syncs_legacy_history_when_opened(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+
+    db.registrar_job_posting_abierta(job_id)
+    db.update_job_status(job_id, "applied")
+
+    stored = db.get_job_posting(job_id)
+    historial = db.get_historial()
+    assert stored["pipeline_status"] == "applied"
+    assert int(historial.iloc[0]["aplicado"]) == 1
+    assert historial.iloc[0]["fecha_aplicado"]
 
 
 def test_speed_ranking_migration_is_additive_and_backfills(tmp_path, monkeypatch):

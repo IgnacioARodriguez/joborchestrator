@@ -792,7 +792,18 @@ def get_job_posting(job_id: int) -> dict | None:
 def update_job_status(job_id: int, status: str) -> None:
     conn = _conn()
     try:
+        row = conn.execute("SELECT external_id FROM job_postings WHERE id = ?", (job_id,)).fetchone()
         conn.execute("UPDATE job_postings SET pipeline_status = ? WHERE id = ?", (status, job_id))
+        if row is not None and status in {"applied", "discarded", "shortlisted"}:
+            aplicado = 1 if status == "applied" else 0
+            fecha = datetime.now().isoformat(timespec="seconds") if status == "applied" else None
+            conn.execute(
+                """UPDATE ofertas
+                   SET aplicado = ?,
+                       fecha_aplicado = COALESCE(?, fecha_aplicado)
+                   WHERE id = ?""",
+                (aplicado, fecha, row["external_id"]),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -917,11 +928,11 @@ def update_job_application_materials(
     try:
         conn.execute(
             """UPDATE job_postings SET
-                   pipeline_status = ?,
-                   recruiter_message = ?,
-                   cover_letter = ?,
-                   ats_cv_text = ?,
-                   autofill_notes = ?
+                   pipeline_status = COALESCE(?, pipeline_status),
+                   recruiter_message = COALESCE(?, recruiter_message),
+                   cover_letter = COALESCE(?, cover_letter),
+                   ats_cv_text = COALESCE(?, ats_cv_text),
+                   autofill_notes = COALESCE(?, autofill_notes)
                WHERE id = ?""",
             (
                 pipeline_status,

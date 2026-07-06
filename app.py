@@ -112,7 +112,39 @@ def chatgpt_prompt_button(prompt: str, key: str, label: str = "Copy prompt and o
     )
 
 
+def copy_text_button(text: str, key: str, label: str) -> None:
+    button_id = f"copy_{key}".replace("-", "_").replace(" ", "_")
+    safe_text = json.dumps(text or "")
+    components.html(
+        f"""
+        <button id="{button_id}" style="
+            width:100%;
+            border:1px solid #e5e7eb;
+            border-radius:8px;
+            padding:9px 12px;
+            background:#ffffff;
+            color:#111827;
+            font-weight:650;
+            cursor:pointer;
+        ">{label}</button>
+        <script>
+          const btn = document.getElementById("{button_id}");
+          btn.addEventListener("click", async () => {{
+            try {{
+              await navigator.clipboard.writeText({safe_text});
+              btn.textContent = "Copied";
+            }} catch (err) {{
+              btn.textContent = "Copy failed";
+            }}
+          }});
+        </script>
+        """,
+        height=44,
+    )
+
+
 RANKING_ACTIONS = [
+    "Prep apply pack",
     "Review ranking with ChatGPT",
     "Generate application kit with ChatGPT",
     "Edit application kit",
@@ -134,11 +166,11 @@ def render_ranking_action_toolbar(job_id: int, default_action: str) -> str:
     first_row = st.columns(4)
     second_row = st.columns(5)
     action_slots = [
-        (first_row[0], "Review ranking with ChatGPT", "GPT review"),
+        (first_row[0], "Prep apply pack", "Prep pack"),
         (first_row[1], "Generate application kit with ChatGPT", "GPT kit"),
-        (first_row[2], "Edit application kit", "Edit kit"),
-        (first_row[3], "Inspect ranking evidence", "Evidence"),
-        (second_row[0], "Open posting", "Posting"),
+        (first_row[2], "Review ranking with ChatGPT", "GPT review"),
+        (first_row[3], "Edit application kit", "Edit kit"),
+        (second_row[0], "Inspect ranking evidence", "Evidence"),
         (second_row[1], "Open apply page", "Apply page"),
         (second_row[2], "Mark shortlisted", "Shortlist"),
         (second_row[3], "Mark applied", "Applied"),
@@ -183,7 +215,51 @@ def render_ranking_action_panel(row, selected_action: str) -> None:
     with meta_cols[4]:
         st.metric("Risk", scores.get("risk_penalty", 0))
 
-    if selected_action == "Review ranking with ChatGPT":
+    if selected_action == "Prep apply pack":
+        st.markdown("**Prep apply pack**")
+        st.caption("One click creates local draft materials, marks the job as shortlisted, and gives you copy/open actions.")
+        existing_has_kit = any(
+            str(row.get(field) or "").strip()
+            for field in ["recruiter_message", "cover_letter", "ats_cv_text", "autofill_notes"]
+        )
+        if st.button(
+            "Prepare pack and shortlist",
+            key=f"prep_pack_{job_id}",
+            type="primary",
+            use_container_width=True,
+        ):
+            kit = build_application_kit(row.to_dict() if hasattr(row, "to_dict") else dict(row), emphasize)
+            db.update_job_application_materials(
+                job_id,
+                pipeline_status="shortlisted",
+                recruiter_message=kit["recruiter_message"],
+                cover_letter=kit["cover_letter"],
+                ats_cv_text=kit["ats_cv_text"],
+                autofill_notes=kit["autofill_notes"],
+            )
+            st.success("Apply pack prepared and job shortlisted.")
+            st.rerun()
+
+        if existing_has_kit:
+            st.info("This job already has saved materials. Use the copy buttons below or open Edit kit.")
+            copy_cols = st.columns(4)
+            with copy_cols[0]:
+                copy_text_button(row.get("recruiter_message") or "", f"recruiter_{job_id}", "Copy recruiter msg")
+            with copy_cols[1]:
+                copy_text_button(row.get("cover_letter") or "", f"cover_{job_id}", "Copy cover letter")
+            with copy_cols[2]:
+                copy_text_button(row.get("ats_cv_text") or "", f"ats_{job_id}", "Copy ATS notes")
+            with copy_cols[3]:
+                copy_text_button(row.get("autofill_notes") or "", f"autofill_{job_id}", "Copy autofill")
+            link_cols = st.columns(2)
+            with link_cols[0]:
+                if row.get("apply_url"):
+                    open_tracked_job_link("Open apply page", row["apply_url"], job_id, key=f"prep_open_apply_{job_id}")
+            with link_cols[1]:
+                if row.get("url"):
+                    open_tracked_job_link("Open posting", row["url"], job_id, key=f"prep_open_posting_{job_id}")
+
+    elif selected_action == "Review ranking with ChatGPT":
         st.markdown("**Manual ChatGPT ranking review**")
         prompt = build_manual_review_prompt(row.to_dict() if hasattr(row, "to_dict") else dict(row), baseline_ranking)
         chatgpt_prompt_button(prompt, key=f"rank_review_{job_id}")
@@ -217,7 +293,7 @@ def render_ranking_action_panel(row, selected_action: str) -> None:
         if st.button("Apply ChatGPT application kit", key=f"apply_kit_review_{job_id}"):
             try:
                 kit = parse_application_kit_response(kit_response)
-                db.update_job_application_materials(job_id, **kit)
+                db.update_job_application_materials(job_id, pipeline_status="shortlisted", **kit)
                 st.success("Application kit updated from ChatGPT.")
                 st.rerun()
             except ManualLLMReviewError as exc:
@@ -277,6 +353,17 @@ def render_ranking_action_panel(row, selected_action: str) -> None:
                 autofill_notes=autofill_notes,
             )
             st.success("Application kit saved.")
+
+        st.markdown("**Quick copy**")
+        copy_cols = st.columns(4)
+        with copy_cols[0]:
+            copy_text_button(recruiter_message, f"edit_recruiter_{job_id}", "Copy recruiter msg")
+        with copy_cols[1]:
+            copy_text_button(cover_letter, f"edit_cover_{job_id}", "Copy cover letter")
+        with copy_cols[2]:
+            copy_text_button(ats_cv_text, f"edit_ats_{job_id}", "Copy ATS notes")
+        with copy_cols[3]:
+            copy_text_button(autofill_notes, f"edit_autofill_{job_id}", "Copy autofill")
 
     elif selected_action == "Inspect ranking evidence":
         st.markdown("**Why this score?**")
@@ -1128,7 +1215,7 @@ with tab5:
             default_action = (
                 "Review ranking with ChatGPT"
                 if bool(selected.get("needs_chatgpt_review"))
-                else "Generate application kit with ChatGPT"
+                else "Prep apply pack"
             )
             source_row = ranked[ranked["job_id"].astype(int) == selected_job_id].iloc[0].copy()
             selected_action = render_ranking_action_toolbar(selected_job_id, default_action)
