@@ -8,18 +8,10 @@ from joborchestrator.scanning.normalization import normalize_text
 
 def classify_role(job: Any, requirements: JobRequirements) -> dict:
     data = job if isinstance(job, dict) else getattr(job, "__dict__", {})
-    text = normalize_text(
-        " ".join(
-            str(x)
-            for x in [
-                data.get("title") or data.get("titulo"),
-                data.get("description_text") or data.get("description") or data.get("descripcion"),
-                " ".join(requirements.role_signals),
-                " ".join(requirements.tech_stack),
-            ]
-            if x
-        )
-    )
+    title_text = normalize_text(data.get("title") or data.get("titulo"))
+    body_text = normalize_text(data.get("description_text") or data.get("description") or data.get("descripcion"))
+    signal_text = normalize_text(" ".join(requirements.role_signals + requirements.tech_stack))
+    text = normalize_text(" ".join(x for x in [title_text, body_text, signal_text] if x))
 
     scores = {
         "Backend Engineer": 0,
@@ -37,31 +29,40 @@ def classify_role(job: Any, requirements: JobRequirements) -> dict:
         "Other": 1,
     }
 
-    if "python" in text:
+    _score_if(scores, title_text, ["python"], "Python Developer", 34)
+    _score_if(scores, title_text, ["python"], "Backend Engineer", 18)
+    if "python" in body_text or "python" in signal_text:
         scores["Python Developer"] += 30
         scores["Backend Engineer"] += 15
-    if any(x in text for x in ["backend", "api", "fastapi", "django", "flask", "rest"]):
-        scores["Backend Engineer"] += 35
-    if any(x in text for x in ["react", "typescript", "frontend", "vue", "angular"]):
+
+    _score_if(scores, title_text, ["backend", "api", "fastapi", "django", "flask", "rest"], "Backend Engineer", 44)
+    _score_if(scores, body_text + " " + signal_text, ["backend", "api", "fastapi", "django", "flask", "rest"], "Backend Engineer", 28)
+
+    if any(x in title_text for x in ["react", "typescript", "frontend", "vue", "angular"]):
+        scores["Frontend Engineer"] += 36
+        if any(x in text for x in ["python", "django", "fastapi", "backend"]):
+            scores["Full Stack Engineer"] += 38
+    elif any(x in body_text or x in signal_text for x in ["react", "typescript", "frontend", "vue", "angular"]):
         scores["Frontend Engineer"] += 25
         if any(x in text for x in ["python", "django", "fastapi", "backend"]):
             scores["Full Stack Engineer"] += 35
-    if any(x in text for x in ["data engineer", "etl", "pipeline", "airflow", "warehouse"]):
-        scores["Data Engineer"] += 35
-    if any(x in text for x in ["llm", "machine learning", "ml engineer", "ai engineer", "rag"]):
-        scores["ML/AI Engineer"] += 35
-    if any(x in text for x in ["devops", "platform", "terraform", "kubernetes", "sre"]):
-        scores["DevOps/Platform Engineer"] += 35
-    if "qa" in text or "test automation" in text:
-        scores["QA/Automation Engineer"] += 35
-    if any(x in text for x in ["solutions engineer", "solution engineer", "customer integration", "technical consulting", "implementation"]):
-        scores["Solutions Engineer"] += 40
-    if "technical consultant" in text or "consultant" in text:
-        scores["Technical Consultant"] += 35
-    if "product manager" in text:
-        scores["Product Manager"] += 40
-    if any(x in text for x in ["sales", "account executive", "presales", "pre sales"]):
-        scores["Sales/Pre-sales"] += 30
+
+    _score_if(scores, title_text, ["data engineer", "etl", "pipeline", "airflow", "warehouse"], "Data Engineer", 44)
+    _score_if(scores, body_text + " " + signal_text, ["data engineer", "etl", "pipeline", "airflow", "warehouse"], "Data Engineer", 28)
+    _score_if(scores, title_text, ["llm", "machine learning", "ml engineer", "ai engineer", "rag"], "ML/AI Engineer", 44)
+    _score_if(scores, body_text + " " + signal_text, ["llm", "machine learning", "ml engineer", "ai engineer", "rag"], "ML/AI Engineer", 28)
+    _score_if(scores, title_text, ["devops", "platform", "terraform", "kubernetes", "sre"], "DevOps/Platform Engineer", 44)
+    _score_if(scores, body_text + " " + signal_text, ["devops", "platform", "terraform", "kubernetes", "sre"], "DevOps/Platform Engineer", 28)
+    _score_if(scores, title_text, ["qa", "test automation"], "QA/Automation Engineer", 44)
+    _score_if(scores, body_text + " " + signal_text, ["qa", "test automation"], "QA/Automation Engineer", 28)
+    _score_if(scores, title_text, ["solutions engineer", "solution engineer", "customer integration", "technical consulting", "implementation"], "Solutions Engineer", 50)
+    _score_if(scores, body_text + " " + signal_text, ["solutions engineer", "solution engineer", "customer integration", "technical consulting", "implementation"], "Solutions Engineer", 28)
+    _score_if(scores, title_text, ["technical consultant", "consultant"], "Technical Consultant", 46)
+    _score_if(scores, body_text + " " + signal_text, ["technical consultant", "consultant"], "Technical Consultant", 24)
+    _score_if(scores, title_text, ["product manager"], "Product Manager", 52)
+    _score_if(scores, body_text, ["product manager"], "Product Manager", 10)
+    _score_if(scores, title_text, ["sales", "account executive", "presales", "pre sales"], "Sales/Pre-sales", 44)
+    _score_if(scores, body_text + " " + signal_text, ["sales", "account executive", "presales", "pre sales"], "Sales/Pre-sales", 24)
 
     primary = max(scores, key=scores.get)
     sorted_roles = sorted(scores.items(), key=lambda item: item[1], reverse=True)
@@ -74,3 +75,8 @@ def classify_role(job: Any, requirements: JobRequirements) -> dict:
         "confidence": round(confidence, 2),
         "reason": f"Detected signals for {primary}: {', '.join(requirements.role_signals[:6]) or 'title/description only'}",
     }
+
+
+def _score_if(scores: dict[str, int], text: str, needles: list[str], role: str, points: int) -> None:
+    if any(needle in text for needle in needles):
+        scores[role] += points

@@ -92,6 +92,9 @@ class RankingEvidence:
     dealbreakers: list[str] = field(default_factory=list)
     red_flags: list[str] = field(default_factory=list)
     central_requirement_coverage: float | None = None
+    central_requirement_raw_coverage: float | None = None
+    central_requirement_evidence_quality: float | None = None
+    requirement_backed_signal_count: int | None = None
     central_requirement_thresholds: dict[str, float] = field(default_factory=dict)
     central_requirements: list[dict[str, Any]] = field(default_factory=list)
     requires_llm_review: bool = False

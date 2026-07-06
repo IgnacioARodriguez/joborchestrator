@@ -79,6 +79,9 @@ def rank_job_speed(
         dealbreakers=legacy_evidence.dealbreakers,
         red_flags=[*legacy_evidence.red_flags, *_coverage_flags(central.coverage, role_confidence)],
         central_requirement_coverage=central.coverage,
+        central_requirement_raw_coverage=central.raw_coverage,
+        central_requirement_evidence_quality=central.evidence_quality,
+        requirement_backed_signal_count=central.requirement_backed_signal_count,
         central_requirement_thresholds=central.thresholds,
         central_requirements=[signal.to_dict() for signal in central.central_signals],
         requires_llm_review=requires_llm,
@@ -231,6 +234,9 @@ def _merge_llm_fallback(
     llm_result.scores.data_quality_signal = speed_result.scores.data_quality_signal
     llm_result.scores.source_reliability_signal = speed_result.scores.source_reliability_signal
     llm_result.evidence.central_requirement_coverage = evidence.central_requirement_coverage
+    llm_result.evidence.central_requirement_raw_coverage = evidence.central_requirement_raw_coverage
+    llm_result.evidence.central_requirement_evidence_quality = evidence.central_requirement_evidence_quality
+    llm_result.evidence.requirement_backed_signal_count = evidence.requirement_backed_signal_count
     llm_result.evidence.central_requirement_thresholds = evidence.central_requirement_thresholds
     llm_result.evidence.central_requirements = evidence.central_requirements
     llm_result.evidence.requires_llm_review = True

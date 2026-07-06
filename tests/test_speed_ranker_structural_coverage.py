@@ -108,6 +108,63 @@ def test_python_backend_role_keeps_high_central_requirement_coverage() -> None:
     assert result.evidence.requires_llm_review is False
 
 
+def test_location_terms_do_not_become_central_requirements() -> None:
+    result = rank_job_speed(
+        {
+            "title": "Backend Engineer - Remote, Spain",
+            "company": "Acme",
+            "source": "linkedin_scraper",
+            "location": "Remote, Spain",
+            "description_text": (
+                "Requirements: Must have strong experience in Python, FastAPI, REST APIs and PostgreSQL."
+            ),
+        },
+        profile(),
+    )
+
+    central_terms = {item["term"] for item in result.evidence.central_requirements}
+    assert "remote" not in central_terms
+    assert "spain" not in central_terms
+    assert result.evidence.central_requirement_coverage >= 0.65
+
+
+def test_title_only_role_match_does_not_create_perfect_coverage() -> None:
+    result = rank_job_speed(
+        {
+            "title": "Senior Backend Engineer",
+            "company": "Acme",
+            "source": "linkedin_scraper",
+            "location": "Remote",
+            "description_text": "About the company. We are growing our engineering team.",
+        },
+        profile(),
+    )
+
+    assert result.evidence.central_requirement_coverage < LLM_REVIEW_COVERAGE_THRESHOLD
+    assert result.evidence.requires_llm_review is True
+    assert "insufficient_requirement_backed_evidence" in result.evidence.llm_escalation_reasons
+
+
+def test_collaborating_with_product_managers_does_not_reclassify_backend_role() -> None:
+    result = rank_job_speed(
+        {
+            "title": "Senior Backend Engineer",
+            "company": "Acme",
+            "source": "linkedin_scraper",
+            "location": "Remote",
+            "description_text": (
+                "What You Will Do: Design, develop, and maintain scalable backend services using Java and Spring Boot. "
+                "Build and evolve RESTful APIs. Collaborate closely with frontend engineers, product managers, "
+                "and designers to deliver end-to-end solutions."
+            ),
+        },
+        profile(),
+    )
+
+    assert result.scores.role_fit >= 35
+    assert "Product Manager" not in result.recommended_application_angle
+
+
 def test_save_speed_ranking_updates_job_posting_cached_signals(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()

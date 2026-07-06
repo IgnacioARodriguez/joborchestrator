@@ -12,6 +12,7 @@ CENTRALITY_THRESHOLD = 0.65
 LOW_COVERAGE_THRESHOLD = 0.20
 LLM_REVIEW_COVERAGE_THRESHOLD = 0.35
 TOP_CENTRAL_REQUIREMENTS = 8
+MIN_REQUIREMENT_BACKED_SIGNALS = 2
 
 HARD_MARKERS = [
     "required",
@@ -56,6 +57,17 @@ STOP_TERMS = {
     "your",
     "our",
     "we",
+    "it",
+    "its",
+    "as",
+    "at",
+    "in",
+    "on",
+    "of",
+    "to",
+    "the",
+    "a",
+    "an",
     "by",
     "and",
     "or",
@@ -65,14 +77,39 @@ STOP_TERMS = {
     "that",
     "with",
     "using",
+    "what",
+    "will",
+    "do",
     "build",
     "design",
     "maintain",
     "implement",
     "development",
+    "job",
+    "description",
+    "about",
+    "company",
+    "meet",
     "work",
     "english",
     "spanish",
+    "de",
+    "del",
+    "la",
+    "las",
+    "el",
+    "los",
+    "un",
+    "una",
+    "para",
+    "por",
+    "con",
+    "sin",
+    "sobre",
+    "como",
+    "que",
+    "en",
+    "te",
 }
 
 
@@ -94,6 +131,9 @@ class RequirementSignal:
 @dataclass(slots=True)
 class CentralCoverageResult:
     coverage: float
+    raw_coverage: float
+    evidence_quality: float
+    requirement_backed_signal_count: int
     matched_weight: float
     total_weight: float
     central_signals: list[RequirementSignal]
@@ -107,15 +147,21 @@ def analyze_central_requirements(job: Any, profile: CandidateProfile) -> Central
     data = _job_to_dict(job)
     title = str(data.get("title") or data.get("titulo") or "")
     description = str(data.get("description_text") or data.get("description") or data.get("descripcion") or "")
-    signals = _extract_requirement_signals(title, description)
+    excluded_terms = _source_field_terms(data)
+    signals = _extract_requirement_signals(title, description, excluded_terms=excluded_terms)
     _attach_profile_matches(signals, profile)
     central = _select_central_signals(signals)
 
     total_weight = sum(signal.centrality for signal in central)
     matched_weight = sum(signal.centrality for signal in central if signal.match_type in {"strong", "partial", "weak"})
-    coverage = round(matched_weight / total_weight, 3) if total_weight else 0.0
+    raw_coverage = matched_weight / total_weight if total_weight else 0.0
+    requirement_backed_count = sum(1 for signal in central if _has_requirement_backing(signal))
+    evidence_quality = min(1.0, requirement_backed_count / MIN_REQUIREMENT_BACKED_SIGNALS)
+    coverage = round(raw_coverage * evidence_quality, 3)
 
     reasons: list[str] = []
+    if evidence_quality < 1.0:
+        reasons.append("insufficient_requirement_backed_evidence")
     if coverage < LOW_COVERAGE_THRESHOLD:
         reasons.append("central_requirement_coverage_below_low_threshold")
     elif coverage < LLM_REVIEW_COVERAGE_THRESHOLD:
@@ -123,6 +169,9 @@ def analyze_central_requirements(job: Any, profile: CandidateProfile) -> Central
 
     return CentralCoverageResult(
         coverage=coverage,
+        raw_coverage=round(raw_coverage, 3),
+        evidence_quality=round(evidence_quality, 3),
+        requirement_backed_signal_count=requirement_backed_count,
         matched_weight=round(matched_weight, 3),
         total_weight=round(total_weight, 3),
         central_signals=central,
@@ -132,17 +181,24 @@ def analyze_central_requirements(job: Any, profile: CandidateProfile) -> Central
             "low_coverage_threshold": LOW_COVERAGE_THRESHOLD,
             "llm_review_coverage_threshold": LLM_REVIEW_COVERAGE_THRESHOLD,
             "top_central_requirements": float(TOP_CENTRAL_REQUIREMENTS),
+            "min_requirement_backed_signals": float(MIN_REQUIREMENT_BACKED_SIGNALS),
         },
         requires_llm_review=coverage < LLM_REVIEW_COVERAGE_THRESHOLD,
         escalation_reasons=reasons,
     )
 
 
-def _extract_requirement_signals(title: str, description: str) -> list[RequirementSignal]:
+def _extract_requirement_signals(
+    title: str,
+    description: str,
+    *,
+    excluded_terms: set[str] | None = None,
+) -> list[RequirementSignal]:
+    excluded_terms = excluded_terms or set()
     accumulator: dict[str, dict[str, Any]] = {}
     position = 0
     for term in _extract_terms(title):
-        _add_signal(accumulator, term, 0.66, position, "title", "appears_in_title")
+        _add_signal(accumulator, term, 0.48, position, "title", "appears_in_title", excluded_terms=excluded_terms)
         position += 1
 
     active_section = "body"
@@ -179,7 +235,15 @@ def _extract_requirement_signals(title: str, description: str) -> list[Requireme
                 base += 0.08
                 evidence.append("usage_context")
 
-            _add_signal(accumulator, term, base, position, active_section, *evidence)
+            _add_signal(
+                accumulator,
+                term,
+                base,
+                position,
+                active_section,
+                *evidence,
+                excluded_terms=excluded_terms,
+            )
             position += 1
 
     signals = []
@@ -234,9 +298,10 @@ def _add_signal(
     position: int,
     section: str,
     *evidence: str,
+    excluded_terms: set[str] | None = None,
 ) -> None:
     key = normalize_text(term)
-    if not key:
+    if not key or key in (excluded_terms or set()):
         return
     data = accumulator.setdefault(
         key,
@@ -267,10 +332,35 @@ def _attach_profile_matches(signals: list[RequirementSignal], profile: Candidate
 
 
 def _select_central_signals(signals: list[RequirementSignal]) -> list[RequirementSignal]:
-    selected = [signal for signal in signals if signal.centrality >= CENTRALITY_THRESHOLD]
+    selected = [
+        signal
+        for signal in signals
+        if signal.centrality >= CENTRALITY_THRESHOLD and _has_requirement_backing(signal)
+    ]
     if selected:
         return selected[:TOP_CENTRAL_REQUIREMENTS]
-    return signals[:TOP_CENTRAL_REQUIREMENTS]
+    return [signal for signal in signals if signal.centrality > 0.05][:TOP_CENTRAL_REQUIREMENTS]
+
+
+def _has_requirement_backing(signal: RequirementSignal) -> bool:
+    return any(section in {"hard_requirements", "responsibilities", "body"} for section in signal.sections)
+
+
+def _source_field_terms(data: dict[str, Any]) -> set[str]:
+    fields = [
+        data.get("company"),
+        data.get("location") or data.get("ubicacion"),
+        data.get("workplace_type") or data.get("modalidad"),
+        data.get("source"),
+    ]
+    terms: set[str] = set()
+    for field in fields:
+        for term in _extract_terms(str(field or "")):
+            terms.add(normalize_text(term))
+        norm = normalize_text(field)
+        if norm:
+            terms.add(norm)
+    return terms
 
 
 def _split_lines(text: str) -> list[str]:
