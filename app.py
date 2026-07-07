@@ -64,6 +64,12 @@ from joborchestrator.ranking.openai_batch import (
     retrieve_batch,
     submit_ranking_batch,
 )
+from joborchestrator.ranking.nvidia_ranker import (
+    DEFAULT_NVIDIA_MODEL,
+    NvidiaRankingError,
+    nvidia_api_key,
+    rank_jobs_with_nvidia,
+)
 from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
 
 db.init_db()
@@ -1198,6 +1204,93 @@ with tab5:
         st.metric("Rank all Batch API", f"${ranking_batch_cost:.2f}")
     with planning_cols[3]:
         st.metric("Kit / selected job", f"${estimate_materials_cost(1, DEFAULT_MATERIALS_MODEL):.3f}")
+
+    with st.expander("Free/credits-first ranking via NVIDIA", expanded=True):
+        st.caption(
+            "Use this first for personal use. It sends local chunks to NVIDIA's OpenAI-compatible chat API, "
+            "saves every successful ranking to SQLite, and can be resumed."
+        )
+        nvidia_ready = bool(nvidia_api_key())
+        nvidia_cols = st.columns([1, 1, 1, 1, 2])
+        with nvidia_cols[0]:
+            nvidia_model = st.text_input("NVIDIA model", value=DEFAULT_NVIDIA_MODEL, key="nvidia_model")
+        with nvidia_cols[1]:
+            nvidia_request_batch_size = st.number_input(
+                "Jobs/request",
+                min_value=1,
+                max_value=10,
+                value=5,
+                step=1,
+                key="nvidia_request_batch_size",
+                help="Smaller is more reliable. 5 is a good default for JSON quality.",
+            )
+        with nvidia_cols[2]:
+            nvidia_jobs_per_click = st.number_input(
+                "Jobs/click",
+                min_value=1,
+                max_value=250,
+                value=50,
+                step=25,
+                key="nvidia_jobs_per_click",
+                help="How many jobs to process before the UI returns control.",
+            )
+        with nvidia_cols[3]:
+            nvidia_offset = st.number_input(
+                "Offset",
+                min_value=0,
+                max_value=max(0, total_jobs_for_estimate - 1),
+                value=0,
+                step=int(nvidia_jobs_per_click),
+                key="nvidia_offset",
+            )
+        with nvidia_cols[4]:
+            if nvidia_ready:
+                st.success("NVIDIA_API_KEY/NIM_API_KEY detected. Use this before paid OpenAI.")
+            else:
+                st.warning("Set NVIDIA_API_KEY or NIM_API_KEY to use NVIDIA free/credits ranking.")
+
+        nvidia_overwrite = st.checkbox(
+            "Overwrite current ranking version",
+            value=True,
+            key="nvidia_overwrite_rankings",
+            help="Turn this on to replace the bad heuristic rankings. Turn it off to rank only missing rows.",
+        )
+        nvidia_confirm = st.text_input(
+            "Type NVIDIA to run this chunk",
+            key="confirm_nvidia_ranking",
+        )
+        if st.button(
+            "Rank chunk with NVIDIA",
+            type="primary",
+            use_container_width=True,
+            disabled=not nvidia_ready or nvidia_confirm != "NVIDIA",
+        ):
+            try:
+                if nvidia_overwrite:
+                    jobs_for_nvidia = db.get_job_postings(limit=int(nvidia_offset) + int(nvidia_jobs_per_click))
+                    jobs_for_nvidia = jobs_for_nvidia.iloc[int(nvidia_offset) : int(nvidia_offset) + int(nvidia_jobs_per_click)]
+                else:
+                    jobs_for_nvidia = db.get_unranked_jobs(
+                        ranking_version=target_ranking_version,
+                        limit=int(nvidia_jobs_per_click),
+                    )
+                if jobs_for_nvidia.empty:
+                    st.info("No jobs to rank in this NVIDIA chunk.")
+                else:
+                    with st.spinner("Ranking chunk with NVIDIA..."):
+                        summary = rank_jobs_with_nvidia(
+                            jobs_for_nvidia,
+                            model=nvidia_model,
+                            request_batch_size=int(nvidia_request_batch_size),
+                            ranking_version=target_ranking_version,
+                        )
+                    st.success(
+                        "NVIDIA ranking saved: "
+                        + " · ".join(f"{key}={value}" for key, value in summary.items())
+                    )
+                    st.rerun()
+            except NvidiaRankingError as exc:
+                st.error(str(exc))
 
     with st.expander("Lowest-cost GPT ranking via OpenAI Batch API", expanded=True):
         st.caption(
