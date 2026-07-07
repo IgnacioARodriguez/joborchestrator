@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import asyncio
 from dataclasses import asdict
 from typing import Any
 
@@ -35,6 +36,32 @@ def rank_jobs_with_nvidia(
     *,
     model: str = DEFAULT_NVIDIA_MODEL,
     request_batch_size: int = 5,
+    max_concurrency: int = 1,
+    ranking_version: str = SPEED_RANKING_VERSION,
+    api_key: str | None = None,
+    base_url: str = NVIDIA_BASE_URL,
+    timeout: float = 90.0,
+) -> dict[str, int]:
+    return asyncio.run(
+        rank_jobs_with_nvidia_async(
+            jobs,
+            model=model,
+            request_batch_size=request_batch_size,
+            max_concurrency=max_concurrency,
+            ranking_version=ranking_version,
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+        )
+    )
+
+
+async def rank_jobs_with_nvidia_async(
+    jobs: pd.DataFrame,
+    *,
+    model: str = DEFAULT_NVIDIA_MODEL,
+    request_batch_size: int = 5,
+    max_concurrency: int = 3,
     ranking_version: str = SPEED_RANKING_VERSION,
     api_key: str | None = None,
     base_url: str = NVIDIA_BASE_URL,
@@ -55,12 +82,32 @@ def rank_jobs_with_nvidia(
         "AVOID": 0,
     }
     records = jobs.to_dict("records")
-    for start in range(0, len(records), request_batch_size):
-        batch = records[start : start + request_batch_size]
+    batches = [records[start : start + request_batch_size] for start in range(0, len(records), request_batch_size)]
+    semaphore = asyncio.Semaphore(max(1, int(max_concurrency)))
+    timeout_config = httpx.Timeout(timeout)
+
+    async with httpx.AsyncClient(timeout=timeout_config) as client:
+        tasks = [
+            _rank_nvidia_batch_async(
+                batch,
+                model=model,
+                api_key=key,
+                base_url=base_url,
+                timeout=timeout,
+                semaphore=semaphore,
+                client=client,
+            )
+            for batch in batches
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for batch, result in zip(batches, results, strict=True):
         summary["processed"] += len(batch)
+        if isinstance(result, Exception):
+            summary["failed"] += len(batch)
+            continue
         try:
-            response_payload = _call_nvidia_batch(batch, model=model, api_key=key, base_url=base_url, timeout=timeout)
-            rankings = response_payload.get("rankings")
+            rankings = result.get("rankings")
             if not isinstance(rankings, list):
                 raise NvidiaRankingError("NVIDIA response did not include `rankings` list.")
             by_id = {int(item["job_id"]): item for item in rankings if isinstance(item, dict) and item.get("job_id")}
@@ -118,7 +165,63 @@ def _call_nvidia_batch(
     timeout: float,
 ) -> dict[str, Any]:
     payload = build_nvidia_ranking_payload(jobs)
-    body = {
+    body = _nvidia_chat_body(payload, model)
+    response = httpx.post(
+        f"{base_url.rstrip('/')}/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json=body,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    content = response.json()["choices"][0]["message"]["content"]
+    return _extract_json_object(content)
+
+
+async def _rank_nvidia_batch_async(
+    jobs: list[dict[str, Any]],
+    *,
+    model: str,
+    api_key: str,
+    base_url: str,
+    timeout: float,
+    semaphore: asyncio.Semaphore,
+    client: httpx.AsyncClient,
+) -> dict[str, Any]:
+    async with semaphore:
+        return await _call_nvidia_batch_async(
+            jobs,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            client=client,
+        )
+
+
+async def _call_nvidia_batch_async(
+    jobs: list[dict[str, Any]],
+    *,
+    model: str,
+    api_key: str,
+    base_url: str,
+    timeout: float,
+    client: httpx.AsyncClient,
+) -> dict[str, Any]:
+    payload = build_nvidia_ranking_payload(jobs)
+    body = _nvidia_chat_body(payload, model)
+    response = await client.post(
+        f"{base_url.rstrip('/')}/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json=body,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    content = response.json()["choices"][0]["message"]["content"]
+    return _extract_json_object(content)
+
+
+def _nvidia_chat_body(payload: dict[str, Any], model: str) -> dict[str, Any]:
+    return {
         "model": model,
         "temperature": 0,
         "top_p": 0.95,
@@ -141,15 +244,6 @@ def _call_nvidia_batch(
             },
         ],
     }
-    response = httpx.post(
-        f"{base_url.rstrip('/')}/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json=body,
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-    return _extract_json_object(content)
 
 
 def _response_contract() -> str:

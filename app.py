@@ -1211,7 +1211,7 @@ with tab5:
             "saves every successful ranking to SQLite, and can be resumed."
         )
         nvidia_ready = bool(nvidia_api_key())
-        nvidia_cols = st.columns([1, 1, 1, 1, 2])
+        nvidia_cols = st.columns([1, 1, 1, 1, 1, 2])
         with nvidia_cols[0]:
             nvidia_model = st.text_input("NVIDIA model", value=DEFAULT_NVIDIA_MODEL, key="nvidia_model")
         with nvidia_cols[1]:
@@ -1225,6 +1225,16 @@ with tab5:
                 help="Smaller is more reliable. 5 is a good default for JSON quality.",
             )
         with nvidia_cols[2]:
+            nvidia_concurrency = st.number_input(
+                "Concurrent requests",
+                min_value=1,
+                max_value=8,
+                value=3,
+                step=1,
+                key="nvidia_concurrency",
+                help="Start with 3. Increase if NVIDIA does not rate-limit; decrease on 429/503 errors.",
+            )
+        with nvidia_cols[3]:
             nvidia_jobs_per_click = st.number_input(
                 "Jobs/click",
                 min_value=1,
@@ -1234,7 +1244,7 @@ with tab5:
                 key="nvidia_jobs_per_click",
                 help="How many jobs to process before the UI returns control.",
             )
-        with nvidia_cols[3]:
+        with nvidia_cols[4]:
             nvidia_offset = st.number_input(
                 "Offset",
                 min_value=0,
@@ -1243,7 +1253,7 @@ with tab5:
                 step=int(nvidia_jobs_per_click),
                 key="nvidia_offset",
             )
-        with nvidia_cols[4]:
+        with nvidia_cols[5]:
             if nvidia_ready:
                 st.success("NVIDIA_API_KEY/NIM_API_KEY detected. Use this before paid OpenAI.")
             else:
@@ -1282,6 +1292,7 @@ with tab5:
                             jobs_for_nvidia,
                             model=nvidia_model,
                             request_batch_size=int(nvidia_request_batch_size),
+                            max_concurrency=int(nvidia_concurrency),
                             ranking_version=target_ranking_version,
                         )
                     st.success(

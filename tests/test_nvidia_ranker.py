@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 
 import pandas as pd
 
@@ -8,6 +9,7 @@ from joborchestrator.ranking import nvidia_ranker
 from joborchestrator.ranking.nvidia_ranker import (
     DEFAULT_NVIDIA_MODEL,
     build_nvidia_ranking_payload,
+    rank_jobs_with_nvidia_async,
     rank_jobs_with_nvidia,
 )
 
@@ -39,7 +41,7 @@ def test_rank_jobs_with_nvidia_saves_each_ranking(monkeypatch):
     )
     saved = {}
 
-    def fake_call(batch, **kwargs):
+    async def fake_call(batch, **kwargs):
         return {
             "rankings": [
                 _ranking_payload(1, 82, "APPLY_NOW"),
@@ -52,7 +54,7 @@ def test_rank_jobs_with_nvidia_saves_each_ranking(monkeypatch):
         return 1
 
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
-    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch", fake_call)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
     monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", fake_save)
 
     summary = rank_jobs_with_nvidia(jobs, request_batch_size=2)
@@ -63,6 +65,38 @@ def test_rank_jobs_with_nvidia_saves_each_ranking(monkeypatch):
     assert summary["SKIP"] == 1
     assert saved[1].final_score == 82
     assert "nvidia_ranking_applied" in saved[1].evidence.llm_escalation_reasons
+
+
+def test_rank_jobs_with_nvidia_async_runs_batches_concurrently(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {"id": 1, "title": "Backend Engineer", "company": "Acme", "description_text": "Python"},
+            {"id": 2, "title": "API Engineer", "company": "Acme", "description_text": "FastAPI"},
+            {"id": 3, "title": "C++ Engineer", "company": "Widgets", "description_text": "C++ Qt"},
+        ]
+    )
+    saved = {}
+    active = 0
+    max_active = 0
+
+    async def fake_call(batch, **kwargs):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return {"rankings": [_ranking_payload(int(row["id"]), 80, "APPLY_NOW") for row in batch]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
+
+    summary = asyncio.run(rank_jobs_with_nvidia_async(jobs, request_batch_size=1, max_concurrency=2))
+
+    assert summary["processed"] == 3
+    assert summary["saved"] == 3
+    assert max_active == 2
+    assert set(saved) == {1, 2, 3}
 
 
 def test_call_nvidia_batch_uses_chat_completions(monkeypatch):
