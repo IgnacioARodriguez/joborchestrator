@@ -30,10 +30,6 @@ from joborchestrator.intelligence.llm_application_materials import (
     estimate_materials_cost,
     export_ats_cv_docx_bytes,
 )
-from joborchestrator.intelligence.llm_costs import (
-    estimate_cost,
-    estimate_ranking_tokens,
-)
 from joborchestrator.paths import LINKEDIN_SCRAPER, PROJECT_ROOT, SALIDAS_DIR
 from joborchestrator.storage import persistence as db
 from joborchestrator.intelligence.application_materials import build_application_kit
@@ -42,27 +38,8 @@ from joborchestrator.scanning.linkedin_importer import import_linkedin_dataframe
 from joborchestrator.scanning.providers import PROVIDERS
 from joborchestrator.scanning import search_scanner
 from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS, provider_requires_configuration
-from joborchestrator.ranking import persistence as ranking_store
-from joborchestrator.ranking.llm_ranker import DEFAULT_LLM_MODEL
 from joborchestrator.ranking.manual_llm_review import (
-    ManualLLMReviewError,
-    build_application_kit_prompt,
-    build_manual_batch_review_prompt,
-    build_manual_review_prompt,
-    manual_review_status,
-    parse_application_kit_response,
-    parse_manual_batch_review_response,
-    parse_manual_review_response,
     ranking_from_storage_row,
-)
-from joborchestrator.ranking.openai_batch import (
-    OpenAIBatchError,
-    create_ranking_batch_jsonl,
-    download_file_content,
-    import_ranking_batch_output,
-    latest_batch_metadata,
-    retrieve_batch,
-    submit_ranking_batch,
 )
 from joborchestrator.ranking.nvidia_ranker import (
     DEFAULT_NVIDIA_MODEL,
@@ -107,39 +84,6 @@ def parse_json_cell(value, default):
         return default
 
 
-def chatgpt_prompt_button(prompt: str, key: str, label: str = "Copy prompt and open ChatGPT") -> None:
-    button_id = f"chatgpt_{key}".replace("-", "_")
-    safe_prompt = json.dumps(prompt)
-    components.html(
-        f"""
-        <button id="{button_id}" style="
-            width:100%;
-            border:0;
-            border-radius:8px;
-            padding:10px 14px;
-            background:#111827;
-            color:#ffffff;
-            font-weight:700;
-            cursor:pointer;
-        ">{label}</button>
-        <script>
-          const btn = document.getElementById("{button_id}");
-          btn.addEventListener("click", async () => {{
-            const prompt = {safe_prompt};
-            try {{
-              await navigator.clipboard.writeText(prompt);
-              btn.textContent = "Prompt copied. Opening ChatGPT...";
-            }} catch (err) {{
-              btn.textContent = "Open ChatGPT, then paste the prompt below";
-            }}
-            window.open("https://chatgpt.com/", "_blank", "noopener,noreferrer");
-          }});
-        </script>
-        """,
-        height=48,
-    )
-
-
 def copy_text_button(text: str, key: str, label: str) -> None:
     button_id = f"copy_{key}".replace("-", "_").replace(" ", "_")
     safe_text = json.dumps(text or "")
@@ -172,8 +116,7 @@ def copy_text_button(text: str, key: str, label: str) -> None:
 
 
 RANKING_ACTIONS = [
-    "Generate application kit with ChatGPT",
-    "Review ranking with ChatGPT",
+    "Generate application kit",
     "Edit application kit",
     "Inspect ranking evidence",
     "Open posting",
@@ -191,13 +134,12 @@ def render_ranking_action_toolbar(job_id: int, default_action: str) -> str:
         st.session_state[state_key] = default_action
 
     st.markdown("**Actions**")
-    first_row = st.columns(4)
+    first_row = st.columns(3)
     second_row = st.columns(5)
     action_slots = [
-        (first_row[0], "Generate application kit with ChatGPT", "GPT kit"),
-        (first_row[1], "Review ranking with ChatGPT", "GPT review"),
-        (first_row[2], "Edit application kit", "Edit/copy kit"),
-        (first_row[3], "Prep apply pack", "Local draft"),
+        (first_row[0], "Generate application kit", "Kit"),
+        (first_row[1], "Edit application kit", "Edit/copy kit"),
+        (first_row[2], "Prep apply pack", "Local draft"),
         (second_row[0], "Open apply page", "Apply page"),
         (second_row[1], "Open posting", "Posting"),
         (second_row[2], "Mark applied", "Applied"),
@@ -253,11 +195,7 @@ def render_ranking_action_panel(row, selected_action: str) -> None:
 
     st.markdown(f"### {company} · {title}")
     badges = render_decision_badge(row["decision"])
-    if row.get("needs_chatgpt_review"):
-        badges += " " + render_badge("Needs ChatGPT review", "updated")
     st.markdown(badges, unsafe_allow_html=True)
-    if row.get("review_reason"):
-        st.caption(f"Review reason: {row.get('review_reason')}")
 
     meta_cols = st.columns(5)
     with meta_cols[0]:
@@ -300,29 +238,9 @@ def render_ranking_action_panel(row, selected_action: str) -> None:
             st.info("This job already has saved materials. Use the copy buttons below or open Edit kit.")
             render_saved_application_shortcuts(row, job_id, "prep")
 
-    elif selected_action == "Review ranking with ChatGPT":
-        st.markdown("**Manual ChatGPT ranking review**")
-        prompt = build_manual_review_prompt(row.to_dict() if hasattr(row, "to_dict") else dict(row), baseline_ranking)
-        chatgpt_prompt_button(prompt, key=f"rank_review_{job_id}")
-        st.text_area("Prompt", value=prompt, height=220, key=f"manual_prompt_{job_id}")
-        manual_response = st.text_area(
-            "Paste ChatGPT JSON response",
-            height=180,
-            key=f"manual_response_{job_id}",
-            placeholder='{"final_score": 62, "decision": "MAYBE", ...}',
-        )
-        if st.button("Apply ChatGPT ranking review", key=f"apply_manual_review_{job_id}"):
-            try:
-                reviewed = parse_manual_review_response(manual_response, baseline_ranking)
-                db.save_job_ranking(job_id, reviewed)
-                st.success("Ranking updated from manual ChatGPT review.")
-                st.rerun()
-            except ManualLLMReviewError as exc:
-                st.error(str(exc))
-
-    elif selected_action == "Generate application kit with ChatGPT":
-        st.markdown("**Manual ChatGPT application kit**")
-        st.caption("API is the fastest path when configured. Manual ChatGPT remains available as a fallback.")
+    elif selected_action == "Generate application kit":
+        st.markdown("**Application kit**")
+        st.caption("Generate materials with API and save them locally. Nothing is submitted automatically.")
         render_saved_application_shortcuts(row, job_id, "gptkit_saved")
         api_key_configured = bool(os.getenv("OPENAI_API_KEY"))
         api_cols = st.columns([1, 1, 2])
@@ -360,27 +278,6 @@ def render_ranking_action_panel(row, selected_action: str) -> None:
                 st.session_state[f"ranking_selected_action_{job_id}"] = "Edit application kit"
                 st.rerun()
             except LLMMaterialsError as exc:
-                st.error(str(exc))
-
-        st.divider()
-        st.markdown("**Manual ChatGPT fallback**")
-        prompt = build_application_kit_prompt(row.to_dict() if hasattr(row, "to_dict") else dict(row), baseline_ranking)
-        chatgpt_prompt_button(prompt, key=f"kit_review_{job_id}")
-        st.text_area("Prompt", value=prompt, height=220, key=f"kit_prompt_{job_id}")
-        kit_response = st.text_area(
-            "Paste ChatGPT JSON response",
-            height=180,
-            key=f"kit_response_{job_id}",
-            placeholder='{"recruiter_message": "...", "cover_letter": "...", "ats_cv_text": "...", "autofill_notes": "..."}',
-        )
-        if st.button("Apply ChatGPT application kit", key=f"apply_kit_review_{job_id}"):
-            try:
-                kit = parse_application_kit_response(kit_response)
-                db.update_job_application_materials(job_id, pipeline_status="shortlisted", **kit)
-                st.success("Application kit updated from ChatGPT.")
-                st.session_state[f"ranking_selected_action_{job_id}"] = "Edit application kit"
-                st.rerun()
-            except ManualLLMReviewError as exc:
                 st.error(str(exc))
 
     elif selected_action == "Edit application kit":
@@ -778,16 +675,16 @@ st.markdown(
     """
     <div class="flow-strip">
       <div class="flow-step"><strong>Import</strong><span>Excel y APIs a una tabla única</span></div>
-      <div class="flow-step"><strong>Rank</strong><span>Score de velocidad de cierre</span></div>
-      <div class="flow-step"><strong>Review</strong><span>ChatGPT solo cuando hace falta</span></div>
+      <div class="flow-step"><strong>Rank</strong><span>NVIDIA LLM sobre texto crudo</span></div>
+      <div class="flow-step"><strong>Reset</strong><span>Borrar rankings y recalcular limpio</span></div>
       <div class="flow-step"><strong>Apply</strong><span>Kit, pipeline e historial</span></div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-tab_dashboard, tab2, tab5, tab_review, tab_search, tab6, tab4 = st.tabs(
-    ["Dashboard", "Import", "Ranking", "Needs Review", "Search APIs", "Portal Scanner", "Pipeline"]
+tab_dashboard, tab2, tab5, tab_search, tab6, tab4 = st.tabs(
+    ["Dashboard", "Import", "Ranking", "Search APIs", "Portal Scanner", "Pipeline"]
 )
 
 # ---------------------------------------------------------------------------
@@ -803,20 +700,12 @@ with tab_dashboard:
     dashboard_ranked = db.get_ranked_jobs(ranking_version=dashboard_version) if ranking_versions else pd.DataFrame()
     dashboard_history = db.get_historial()
 
-    if not dashboard_ranked.empty:
-        review_flags = dashboard_ranked["evidence_json"].apply(
-            lambda value: manual_review_status(parse_json_cell(value, {}))
-        )
-        dashboard_ranked = dashboard_ranked.copy()
-        dashboard_ranked["needs_chatgpt_review"] = review_flags.apply(lambda item: item[0])
-        dashboard_ranked["review_reason"] = review_flags.apply(lambda item: item[1])
-
     total_jobs = int(len(dashboard_jobs))
     ranked_count = int(len(dashboard_ranked))
     apply_candidates = int(
         dashboard_ranked["decision"].isin(["APPLY_NOW", "APPLY_WITH_TAILORED_CV"]).sum()
     ) if not dashboard_ranked.empty else 0
-    needs_review_count = int(dashboard_ranked["needs_chatgpt_review"].sum()) if not dashboard_ranked.empty else 0
+    maybe_count = int((dashboard_ranked["decision"] == "MAYBE").sum()) if not dashboard_ranked.empty else 0
     applied_count = int((dashboard_jobs.get("pipeline_status") == "applied").sum()) if not dashboard_jobs.empty and "pipeline_status" in dashboard_jobs else 0
     shortlisted_count = int((dashboard_jobs.get("pipeline_status") == "shortlisted").sum()) if not dashboard_jobs.empty and "pipeline_status" in dashboard_jobs else 0
     avg_score = float(dashboard_ranked["final_score"].mean()) if not dashboard_ranked.empty else 0
@@ -829,7 +718,7 @@ with tab_dashboard:
     with k3:
         st.metric("Apply candidates", apply_candidates)
     with k4:
-        st.metric("Needs review", needs_review_count)
+        st.metric("Maybe", maybe_count)
     with k5:
         st.metric("Shortlisted", shortlisted_count)
     with k6:
@@ -912,13 +801,13 @@ with tab_dashboard:
             )
 
     with today_cols[1]:
-        st.markdown("**Review backlog**")
-        if dashboard_ranked.empty or needs_review_count == 0:
-            st.info("No manual review backlog.")
+        st.markdown("**Maybe queue**")
+        if dashboard_ranked.empty or maybe_count == 0:
+            st.info("No MAYBE jobs.")
         else:
-            review_jobs = dashboard_ranked[dashboard_ranked["needs_chatgpt_review"]].head(6)
+            maybe_jobs = dashboard_ranked[dashboard_ranked["decision"] == "MAYBE"].head(6)
             st.dataframe(
-                review_jobs[["job_id", "title", "company", "final_score", "review_reason"]],
+                maybe_jobs[["job_id", "title", "company", "final_score", "source"]],
                 use_container_width=True,
                 hide_index=True,
                 column_config={"final_score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100)},
@@ -1172,38 +1061,49 @@ with tab4:
 with tab5:
     st.subheader("Opportunity Ranking")
     st.caption(
-        "Speed-based ranking prioritizing roles where you can close fastest, with structural requirement coverage. "
+        "LLM ranking sobre texto crudo. Usa NVIDIA primero para evitar mezclar resultados heurísticos. "
         f"Current version: `{SPEED_RANKING_VERSION}`."
     )
 
-    llm_cols = st.columns([1, 1, 2])
-    with llm_cols[0]:
-        use_llm_ranking = st.checkbox("Use LLM enhancement", value=False)
-    with llm_cols[1]:
-        llm_model = st.text_input("LLM model", value=DEFAULT_LLM_MODEL, disabled=not use_llm_ranking)
-    with llm_cols[2]:
-        if use_llm_ranking and not os.getenv("OPENAI_API_KEY"):
-            st.warning("Set `OPENAI_API_KEY` to enable LLM ranking. Without it, ranking falls back to heuristics.")
-        elif use_llm_ranking:
-            st.info("LLM is used only as fallback for ambiguous roles or low central requirement coverage.")
-
-    effective_use_llm = use_llm_ranking and bool(os.getenv("OPENAI_API_KEY"))
     target_ranking_version = SPEED_RANKING_VERSION
 
     all_jobs_for_estimate = db.get_job_postings(limit=10000)
     total_jobs_for_estimate = len(all_jobs_for_estimate)
-    ranking_input_tokens, ranking_output_tokens = estimate_ranking_tokens(total_jobs_for_estimate)
-    ranking_standard_cost = estimate_cost(ranking_input_tokens, ranking_output_tokens, llm_model, batch=False)
-    ranking_batch_cost = estimate_cost(ranking_input_tokens, ranking_output_tokens, llm_model, batch=True)
     planning_cols = st.columns(4)
     with planning_cols[0]:
-        st.metric("Jobs to price", total_jobs_for_estimate)
+        st.metric("Jobs loaded", total_jobs_for_estimate)
     with planning_cols[1]:
-        st.metric("Rank all API", f"${ranking_standard_cost:.2f}")
+        st.metric("Ranking version", target_ranking_version)
     with planning_cols[2]:
-        st.metric("Rank all Batch API", f"${ranking_batch_cost:.2f}")
+        st.metric("NVIDIA mode", "free/credits")
     with planning_cols[3]:
         st.metric("Kit / selected job", f"${estimate_materials_cost(1, DEFAULT_MATERIALS_MODEL):.3f}")
+
+    with st.expander("Reset rankings before reranking", expanded=False):
+        st.warning(
+            "Use this when you want a clean rerank. It deletes stored rankings for the current version so the table "
+            "cannot mix old heuristic scores with NVIDIA rankings."
+        )
+        reset_scope = st.radio(
+            "Delete scope",
+            ["Current ranking version only", "All ranking versions"],
+            horizontal=True,
+            key="delete_ranking_scope",
+        )
+        confirm_delete_rankings = st.text_input(
+            "Type DELETE RANKINGS to confirm",
+            key="confirm_delete_rankings",
+        )
+        if st.button(
+            "Delete stored rankings",
+            disabled=confirm_delete_rankings != "DELETE RANKINGS",
+            use_container_width=True,
+        ):
+            deleted = db.delete_job_rankings(
+                target_ranking_version if reset_scope == "Current ranking version only" else None
+            )
+            st.success(f"Deleted {deleted} ranking rows. Run NVIDIA ranking next.")
+            st.rerun()
 
     with st.expander("Free/credits-first ranking via NVIDIA", expanded=True):
         st.caption(
@@ -1303,132 +1203,13 @@ with tab5:
             except NvidiaRankingError as exc:
                 st.error(str(exc))
 
-    with st.expander("Lowest-cost GPT ranking via OpenAI Batch API", expanded=True):
-        st.caption(
-            "Recommended for raw Excel imports and large queues. It uses OpenAI Batch API pricing, runs async, "
-            "and imports the completed JSONL back into SQLite."
-        )
-        batch_api_key_ready = bool(os.getenv("OPENAI_API_KEY"))
-        batch_plan_cols = st.columns([1, 1, 1, 2])
-        with batch_plan_cols[0]:
-            batch_model = st.text_input("Batch model", value=llm_model, key="openai_batch_model")
-        with batch_plan_cols[1]:
-            batch_limit = st.number_input(
-                "Jobs",
-                min_value=1,
-                max_value=max(1, total_jobs_for_estimate),
-                value=max(1, total_jobs_for_estimate),
-                step=100,
-                key="openai_batch_limit",
-            )
-        with batch_plan_cols[2]:
-            batch_cost = estimate_cost(*estimate_ranking_tokens(int(batch_limit)), batch_model, batch=True)
-            st.metric("Est. Batch cost", f"${batch_cost:.2f}")
-        with batch_plan_cols[3]:
-            if batch_api_key_ready:
-                st.success("OPENAI_API_KEY detected. Batch submission is enabled.")
-            else:
-                st.warning("Set OPENAI_API_KEY before submitting a real Batch API job.")
-
-        confirm_batch = st.text_input(
-            "Type BATCH to submit a paid async ranking job",
-            key="confirm_openai_batch_submit",
-        )
-        batch_submit_cols = st.columns(2)
-        with batch_submit_cols[0]:
-            if st.button(
-                "Create and submit OpenAI Batch ranking",
-                type="primary",
-                use_container_width=True,
-                disabled=not batch_api_key_ready or confirm_batch != "BATCH",
-            ):
-                try:
-                    jobs_for_batch = db.get_job_postings(limit=int(batch_limit))
-                    jsonl_path = create_ranking_batch_jsonl(jobs_for_batch, model=batch_model)
-                    metadata = submit_ranking_batch(jsonl_path)
-                    st.success(
-                        "Batch submitted. "
-                        f"id={metadata.get('id')} status={metadata.get('status')} input_file={metadata.get('input_file_id')}"
-                    )
-                    st.rerun()
-                except OpenAIBatchError as exc:
-                    st.error(str(exc))
-        with batch_submit_cols[1]:
-            st.info("Completion can take up to 24h. You can close the app and check/import later.")
-
-        latest_batch = latest_batch_metadata()
-        default_batch_id = str((latest_batch or {}).get("id") or "")
-        batch_id = st.text_input("Batch id to check/import", value=default_batch_id, key="openai_batch_id")
-        check_cols = st.columns(2)
-        with check_cols[0]:
-            if st.button(
-                "Check batch status",
-                use_container_width=True,
-                disabled=not batch_api_key_ready or not batch_id.strip(),
-            ):
-                try:
-                    metadata = retrieve_batch(batch_id.strip())
-                    st.json(
-                        {
-                            "id": metadata.get("id"),
-                            "status": metadata.get("status"),
-                            "request_counts": metadata.get("request_counts"),
-                            "output_file_id": metadata.get("output_file_id"),
-                            "error_file_id": metadata.get("error_file_id"),
-                        }
-                    )
-                except OpenAIBatchError as exc:
-                    st.error(str(exc))
-        with check_cols[1]:
-            if st.button(
-                "Download and import completed batch",
-                use_container_width=True,
-                disabled=not batch_api_key_ready or not batch_id.strip(),
-            ):
-                try:
-                    metadata = retrieve_batch(batch_id.strip())
-                    if metadata.get("status") != "completed":
-                        st.warning(f"Batch is not completed yet. Current status: {metadata.get('status')}")
-                    elif not metadata.get("output_file_id"):
-                        st.error("Batch completed but has no output_file_id.")
-                    else:
-                        output_text = download_file_content(str(metadata["output_file_id"]))
-                        summary = import_ranking_batch_output(output_text, ranking_version=target_ranking_version)
-                        st.success(
-                            "Imported GPT batch rankings: "
-                            + " · ".join(f"{key}={value}" for key, value in summary.items())
-                        )
-                        st.rerun()
-                except OpenAIBatchError as exc:
-                    st.error(str(exc))
-
-    action_cols = st.columns(3)
-    with action_cols[0]:
-        if st.button("Rank unranked jobs", type="primary", use_container_width=True):
-            with st.spinner("Ranking unranked opportunities..."):
-                summary = ranking_store.rank_unranked_jobs(
-                    use_llm=effective_use_llm,
-                    model=llm_model,
-                    ranking_version=target_ranking_version,
-                )
-            st.success(" Â· ".join(f"{count} {decision}" for decision, count in summary.items()))
-            st.rerun()
-    with action_cols[1]:
-        if st.button("Re-rank all jobs", use_container_width=True):
-            with st.spinner("Re-ranking all stored opportunities..."):
-                summary = ranking_store.rerank_all_jobs(use_llm=effective_use_llm, model=llm_model)
-            st.success(" Â· ".join(f"{count} {decision}" for decision, count in summary.items()))
-            st.rerun()
-    with action_cols[2]:
-        st.info("Rankings are stored in SQLite and versioned, so algorithm changes can be recalculated.")
-
     st.divider()
     versions = db.get_ranking_versions()
     if target_ranking_version not in versions:
         versions = [target_ranking_version, *versions]
     selected_ranking_version = st.selectbox("Ranking version", versions)
 
-    filter_cols = st.columns([2, 1, 1, 1, 1])
+    filter_cols = st.columns([2, 1, 1, 1])
     with filter_cols[0]:
         decisions = st.multiselect(
             "Decision",
@@ -1443,9 +1224,6 @@ with tab5:
         sources = st.multiselect("Source", available_sources)
     with filter_cols[3]:
         flags_mode = st.selectbox("Red flags", ["Any", "With flags", "No flags"])
-    with filter_cols[4]:
-        only_needs_review = st.checkbox("Needs ChatGPT review")
-
     with_red_flags = None
     if flags_mode == "With flags":
         with_red_flags = True
@@ -1461,100 +1239,15 @@ with tab5:
     )
 
     if not ranked.empty:
-        review_flags = ranked["evidence_json"].apply(
-            lambda value: manual_review_status(parse_json_cell(value, {}))
-        )
         ranked = ranked.copy()
-        ranked["needs_chatgpt_review"] = review_flags.apply(lambda item: item[0])
-        ranked["review_reason"] = review_flags.apply(lambda item: item[1])
-        if only_needs_review:
-            ranked = ranked[ranked["needs_chatgpt_review"]]
 
     if ranked.empty:
-        if only_needs_review:
-            st.info("No rankings in this view need manual ChatGPT review.")
+        unranked = db.get_unranked_jobs(limit=1)
+        if unranked.empty:
+            st.info("No scanner jobs found yet. Import or scan jobs first.")
         else:
-            unranked = db.get_unranked_jobs(limit=1)
-            if unranked.empty:
-                st.info("No scanner jobs found yet. Add ATS sources in Portal scanner and run a scan first.")
-            else:
-                st.info("Jobs exist but no ranking matches this view. Use Rank unranked jobs.")
+            st.info("Jobs exist but no ranking matches this view. Run NVIDIA ranking or adjust filters.")
     else:
-        st.markdown("### GPT batch ranking")
-        st.caption(
-            "Use the current filtered view as a queue. Send a small batch to ChatGPT, paste the JSON response, "
-            "and Job Orchestrator updates the stored rankings."
-        )
-        batch_cols = st.columns([1, 1, 2])
-        with batch_cols[0]:
-            gpt_batch_size = st.number_input(
-                "Batch size",
-                min_value=1,
-                max_value=10,
-                value=5,
-                step=1,
-                help="5 is the safest default for ChatGPT web. Use 8-10 only when descriptions are short.",
-            )
-        with batch_cols[1]:
-            max_offset = max(0, len(ranked) - 1)
-            gpt_batch_offset = st.number_input(
-                "Start at row",
-                min_value=0,
-                max_value=max_offset,
-                value=0,
-                step=int(gpt_batch_size),
-            )
-        with batch_cols[2]:
-            st.info(
-                "Tip: filter the table first, then batch-review the highest-risk APPLY/MAYBE rows before generating kits."
-            )
-
-        batch_size_int = int(gpt_batch_size)
-        batch_offset_int = int(gpt_batch_offset)
-        batch_df = ranked.iloc[batch_offset_int : batch_offset_int + batch_size_int].copy()
-        if batch_df.empty:
-            st.warning("No jobs in this batch window.")
-        else:
-            batch_ids = [int(value) for value in batch_df["job_id"].tolist()]
-            st.caption(f"Batch job_id: {', '.join(str(job_id) for job_id in batch_ids)}")
-            batch_baselines = {
-                int(row["job_id"]): ranking_from_storage_row(row.to_dict())
-                for _, row in batch_df.iterrows()
-            }
-            batch_prompt = build_manual_batch_review_prompt(
-                [row.to_dict() for _, row in batch_df.iterrows()],
-                batch_baselines,
-            )
-            chatgpt_prompt_button(batch_prompt, key=f"batch_rank_{batch_offset_int}_{batch_size_int}")
-            with st.expander("View batch prompt", expanded=False):
-                st.text_area(
-                    "Prompt",
-                    value=batch_prompt,
-                    height=260,
-                    key=f"batch_prompt_{batch_offset_int}_{batch_size_int}",
-                )
-            batch_response = st.text_area(
-                "Paste GPT batch JSON response",
-                height=220,
-                key=f"batch_response_{batch_offset_int}_{batch_size_int}",
-                placeholder='{"rankings":[{"job_id":123,"final_score":41,"decision":"SKIP",...}]}',
-            )
-            if st.button(
-                "Apply GPT batch rankings",
-                key=f"apply_batch_rank_{batch_offset_int}_{batch_size_int}",
-                type="primary",
-                use_container_width=True,
-            ):
-                try:
-                    reviewed_batch = parse_manual_batch_review_response(batch_response, batch_baselines)
-                    for reviewed_job_id, reviewed_ranking in reviewed_batch.items():
-                        db.save_job_ranking(reviewed_job_id, reviewed_ranking)
-                    st.success(f"Updated {len(reviewed_batch)} rankings from GPT batch review.")
-                    st.rerun()
-                except ManualLLMReviewError as exc:
-                    st.error(str(exc))
-
-        st.divider()
         table = ranked[
             [
                 "job_id",
@@ -1565,8 +1258,6 @@ with tab5:
                 "location",
                 "final_score",
                 "decision",
-                "needs_chatgpt_review",
-                "review_reason",
                 "pipeline_status",
                 "url",
                 "apply_url",
@@ -1588,8 +1279,6 @@ with tab5:
             "where",
             "final_score",
             "decision",
-            "needs_chatgpt_review",
-            "review_reason",
             "pipeline_status",
             "url",
             "apply_url",
@@ -1612,8 +1301,6 @@ with tab5:
                 "final_score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100),
                 "confidence": st.column_config.NumberColumn("Confidence", format="%.2f"),
                 "where": st.column_config.TextColumn("Location / mode"),
-                "needs_chatgpt_review": st.column_config.CheckboxColumn("Needs review"),
-                "review_reason": st.column_config.TextColumn("Review reason"),
                 "url": st.column_config.LinkColumn("Posting"),
                 "apply_url": st.column_config.LinkColumn("Apply"),
             },
@@ -1625,88 +1312,13 @@ with tab5:
         else:
             selected = selected_rows.iloc[0]
             selected_job_id = int(selected["job_id"])
-            default_action = (
-                "Review ranking with ChatGPT"
-                if bool(selected.get("needs_chatgpt_review"))
-                else "Generate application kit with ChatGPT"
-            )
+            default_action = "Generate application kit"
             source_row = ranked[ranked["job_id"].astype(int) == selected_job_id].iloc[0].copy()
             selected_action = render_ranking_action_toolbar(selected_job_id, default_action)
             source_row["action"] = selected_action
             st.markdown("### Selected action")
             render_ranking_action_panel(source_row, selected_action)
 
-# ---------------------------------------------------------------------------
-# NEEDS REVIEW
-# ---------------------------------------------------------------------------
-with tab_review:
-    st.subheader("Needs Review")
-    st.caption("Cola de rankings con baja confianza o evidencia insuficiente para resolver manualmente con ChatGPT.")
-
-    versions = db.get_ranking_versions()
-    review_version = SPEED_RANKING_VERSION if SPEED_RANKING_VERSION in versions else (versions[0] if versions else SPEED_RANKING_VERSION)
-    review_ranked = db.get_ranked_jobs(ranking_version=review_version) if versions else pd.DataFrame()
-    if review_ranked.empty:
-        st.info("No ranked jobs found yet.")
-    else:
-        review_flags = review_ranked["evidence_json"].apply(
-            lambda value: manual_review_status(parse_json_cell(value, {}))
-        )
-        review_ranked = review_ranked.copy()
-        review_ranked["needs_chatgpt_review"] = review_flags.apply(lambda item: item[0])
-        review_ranked["review_reason"] = review_flags.apply(lambda item: item[1])
-        review_queue = review_ranked[review_ranked["needs_chatgpt_review"]].copy()
-
-        rq1, rq2, rq3 = st.columns(3)
-        with rq1:
-            st.metric("Pending review", len(review_queue))
-        with rq2:
-            st.metric("Avg pending score", f"{review_queue['final_score'].mean():.0f}" if not review_queue.empty else "0")
-        with rq3:
-            st.metric("Ranking version", review_version)
-
-        if review_queue.empty:
-            st.success("No manual ChatGPT review backlog.")
-        else:
-            review_queue.insert(0, "select", False)
-            edited_review = st.data_editor(
-                review_queue[[
-                    "select",
-                    "job_id",
-                    "title",
-                    "company",
-                    "final_score",
-                    "decision",
-                    "review_reason",
-                    "source",
-                    "location",
-                ]],
-                use_container_width=True,
-                hide_index=True,
-                disabled=[
-                    "job_id",
-                    "title",
-                    "company",
-                    "final_score",
-                    "decision",
-                    "review_reason",
-                    "source",
-                    "location",
-                ],
-                column_config={
-                    "select": st.column_config.CheckboxColumn("Select"),
-                    "final_score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100),
-                    "review_reason": st.column_config.TextColumn("Reason"),
-                },
-                key="needs_review_table",
-            )
-            selected_review = edited_review[edited_review["select"]]
-            if selected_review.empty:
-                st.info("Select one job to review it with ChatGPT.")
-            else:
-                selected_job_id = int(selected_review.iloc[0]["job_id"])
-                source_row = review_ranked[review_ranked["job_id"].astype(int) == selected_job_id].iloc[0].copy()
-                render_ranking_action_panel(source_row, "Review ranking with ChatGPT")
 # ---------------------------------------------------------------------------
 # TAB 6 â€” PORTAL SCANNER
 # ---------------------------------------------------------------------------

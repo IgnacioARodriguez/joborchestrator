@@ -1075,6 +1075,32 @@ def save_job_ranking(job_id: int, ranking: RankingResult) -> int:
         conn.close()
 
 
+def delete_job_rankings(ranking_version: str | None = None) -> int:
+    conn = _conn()
+    try:
+        if ranking_version:
+            cursor = conn.execute("DELETE FROM job_rankings WHERE ranking_version = ?", (ranking_version,))
+        else:
+            cursor = conn.execute("DELETE FROM job_rankings")
+        deleted = int(cursor.rowcount if cursor.rowcount is not None else 0)
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(job_postings)").fetchall()}
+        reset_columns = [
+            "speed_signal",
+            "role_viable",
+            "duplicate_of_job_id",
+            "application_effort_signal",
+            "data_quality_signal",
+            "source_reliability_signal",
+        ]
+        assignments = [f"{column} = NULL" for column in reset_columns if column in columns]
+        if assignments:
+            conn.execute(f"UPDATE job_postings SET {', '.join(assignments)}")
+        conn.commit()
+        return deleted
+    finally:
+        conn.close()
+
+
 def _update_job_posting_ranking_signals(
     conn: sqlite3.Connection,
     job_id: int,

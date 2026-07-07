@@ -161,6 +161,29 @@ def test_opening_ranked_job_posting_copies_score_to_legacy_history(tmp_path, mon
     assert row["razon_breve"] == ranking.reasoning_summary
 
 
+def test_delete_job_rankings_clears_current_rankings(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(
+        make_job(description="Requirements: Python, FastAPI, REST APIs, AWS. Responsibilities: build backend APIs."),
+        seen_at="2026-01-01T10:00:00",
+    )
+    stored = db.get_job_postings(limit=10).iloc[0]
+    job_id = int(stored["id"])
+    ranking = rank_job(stored.to_dict())
+    db.save_job_ranking(job_id, ranking)
+
+    assert len(db.get_ranked_jobs(ranking_version=ranking.ranking_version)) == 1
+
+    deleted = db.delete_job_rankings(ranking.ranking_version)
+
+    assert deleted == 1
+    assert db.get_ranked_jobs(ranking_version=ranking.ranking_version).empty
+    refreshed = db.get_job_posting(job_id)
+    assert refreshed["speed_signal"] is None
+    assert refreshed["role_viable"] is None
+
+
 def test_marking_job_posting_applied_syncs_legacy_history_when_opened(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()
