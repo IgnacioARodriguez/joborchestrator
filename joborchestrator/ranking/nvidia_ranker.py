@@ -18,7 +18,7 @@ NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.
 DEFAULT_NVIDIA_MODEL = (
     os.getenv("NVIDIA_RANKING_MODEL")
     or os.getenv("NVIDIA_MODEL")
-    or "nvidia/nemotron-3-super-49b-v1"
+    or "nvidia/llama-3.3-nemotron-super-49b-v1"
 )
 
 
@@ -121,7 +121,11 @@ def _call_nvidia_batch(
     body = {
         "model": model,
         "temperature": 0,
+        "top_p": 0.95,
         "max_tokens": 4096,
+        "frequency_penalty": 0,
+        "presence_penalty": 0,
+        "stream": False,
         "response_format": {"type": "json_object"},
         "messages": [
             {

@@ -5,7 +5,11 @@ import json
 import pandas as pd
 
 from joborchestrator.ranking import nvidia_ranker
-from joborchestrator.ranking.nvidia_ranker import build_nvidia_ranking_payload, rank_jobs_with_nvidia
+from joborchestrator.ranking.nvidia_ranker import (
+    DEFAULT_NVIDIA_MODEL,
+    build_nvidia_ranking_payload,
+    rank_jobs_with_nvidia,
+)
 
 
 def test_build_nvidia_ranking_payload_compacts_jobs():
@@ -96,7 +100,16 @@ def test_call_nvidia_batch_uses_chat_completions(monkeypatch):
     assert payload["rankings"][0]["job_id"] == 1
     assert calls[0][0] == "https://integrate.api.nvidia.com/v1/chat/completions"
     assert calls[0][1]["json"]["model"] == "test-model"
+    assert calls[0][1]["json"]["temperature"] == 0
+    assert calls[0][1]["json"]["top_p"] == 0.95
+    assert calls[0][1]["json"]["frequency_penalty"] == 0
+    assert calls[0][1]["json"]["presence_penalty"] == 0
+    assert calls[0][1]["json"]["stream"] is False
     assert calls[0][1]["json"]["response_format"] == {"type": "json_object"}
+
+
+def test_default_nvidia_model_matches_nvidia_snippet():
+    assert DEFAULT_NVIDIA_MODEL == "nvidia/llama-3.3-nemotron-super-49b-v1"
 
 
 def _ranking_payload(job_id: int, score: int, decision: str) -> dict:
