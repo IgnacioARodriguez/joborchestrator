@@ -18,6 +18,7 @@ from joborchestrator.ranking.nvidia_ranker import (
 def profile_payload() -> dict:
     return {
         "target_roles": ["Backend Engineer"],
+        "role_aliases": {"Backend Engineer": ["API Engineer"]},
         "skills": [{"name": "Python", "category": "Programming", "level": "strong"}],
         "real_experience_years": 4,
     }
@@ -42,6 +43,7 @@ def test_build_nvidia_ranking_payload_compacts_jobs(monkeypatch):
     assert "[truncated]" in payload["jobs"][0]["description_text"]
     assert "candidate_profile" in payload
     assert payload["candidate_profile"]["strong_skills"] == ["Python"]
+    assert payload["candidate_profile"]["role_aliases"] == {"Backend Engineer": ["API Engineer"]}
 
 
 def test_build_nvidia_ranking_payload_requires_profile(monkeypatch):

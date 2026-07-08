@@ -43,6 +43,7 @@ const EMPTY_PROFILE: CandidateProfile = {
   headline: "",
   target_roles: [],
   secondary_roles: [],
+  role_aliases: {},
   skills: [],
   industries: [],
   preferred_locations: [],
@@ -85,6 +86,9 @@ export function ProfileScreen() {
   const [busy, setBusy] = useState<"load" | "cv" | "save" | null>("load")
   const [operation, setOperation] = useState<OperationRun | null>(null)
   const [skillCatalog, setSkillCatalog] = useState<SkillCatalogItem[]>([])
+  const [newTargetRole, setNewTargetRole] = useState("")
+  const [newSecondaryRole, setNewSecondaryRole] = useState("")
+  const [aliasDrafts, setAliasDrafts] = useState<Record<string, string>>({})
 
   useEffect(() => {
     let cancelled = false
@@ -215,6 +219,59 @@ export function ProfileScreen() {
     }))
   }
 
+  function addRole(field: "target_roles" | "secondary_roles", value: string) {
+    const role = value.trim()
+    if (!role) return
+    setProfile((current) => {
+      const exists = [...current.target_roles, ...current.secondary_roles].some(
+        (item) => item.toLowerCase() === role.toLowerCase(),
+      )
+      if (exists) return current
+      return { ...current, [field]: [...current[field], role] }
+    })
+    if (field === "target_roles") setNewTargetRole("")
+    else setNewSecondaryRole("")
+  }
+
+  function removeRole(field: "target_roles" | "secondary_roles", role: string) {
+    setProfile((current) => {
+      const aliases = { ...(current.role_aliases ?? {}) }
+      delete aliases[role]
+      return {
+        ...current,
+        [field]: current[field].filter((item) => item !== role),
+        role_aliases: aliases,
+      }
+    })
+  }
+
+  function addRoleAlias(role: string) {
+    const alias = (aliasDrafts[role] ?? "").trim()
+    if (!alias) return
+    setProfile((current) => {
+      const existing = current.role_aliases?.[role] ?? []
+      if (existing.some((item) => item.toLowerCase() === alias.toLowerCase())) return current
+      return {
+        ...current,
+        role_aliases: {
+          ...(current.role_aliases ?? {}),
+          [role]: [...existing, alias],
+        },
+      }
+    })
+    setAliasDrafts((current) => ({ ...current, [role]: "" }))
+  }
+
+  function removeRoleAlias(role: string, alias: string) {
+    setProfile((current) => ({
+      ...current,
+      role_aliases: {
+        ...(current.role_aliases ?? {}),
+        [role]: (current.role_aliases?.[role] ?? []).filter((item) => item !== alias),
+      },
+    }))
+  }
+
   async function importCv() {
     if (!cvFile) return
     setBusy("cv")
@@ -337,24 +394,97 @@ export function ProfileScreen() {
             Suggested roles
           </CardTitle>
           <CardDescription className="text-xs">
-            AI suggestions based on the CV. Edit them to steer ranking.
+            Add roles and variants. Ranking treats variants as equivalent labels.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <div className="flex flex-wrap gap-1.5">
-            {profile.target_roles.map((role) => (
-              <Badge key={role}>{role}</Badge>
-            ))}
-            {profile.secondary_roles.map((role) => (
-              <Badge key={role} variant="secondary">
-                {role}
-              </Badge>
-            ))}
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            <div className="flex gap-2">
+              <Input
+                value={newTargetRole}
+                placeholder="Add target role"
+                onChange={(event) => setNewTargetRole(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") addRole("target_roles", newTargetRole)
+                }}
+              />
+              <Button size="icon" variant="outline" onClick={() => addRole("target_roles", newTargetRole)}>
+                <Plus className="size-4" />
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                value={newSecondaryRole}
+                placeholder="Add adjacent role"
+                onChange={(event) => setNewSecondaryRole(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") addRole("secondary_roles", newSecondaryRole)
+                }}
+              />
+              <Button size="icon" variant="outline" onClick={() => addRole("secondary_roles", newSecondaryRole)}>
+                <Plus className="size-4" />
+              </Button>
+            </div>
           </div>
           {profile.suggested_roles_reasoning && (
             <p className="text-xs leading-relaxed text-muted-foreground">
               {profile.suggested_roles_reasoning}
             </p>
+          )}
+          {[...profile.target_roles, ...profile.secondary_roles].length === 0 ? (
+            <p className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
+              Add a role or upload a CV to get AI suggestions.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {[
+                ...profile.target_roles.map((role) => ({ role, field: "target_roles" as const })),
+                ...profile.secondary_roles.map((role) => ({ role, field: "secondary_roles" as const })),
+              ].map(({ role, field }) => (
+                <div key={`${field}-${role}`} className="flex flex-col gap-2 rounded-lg border border-border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <Badge variant={field === "target_roles" ? "default" : "secondary"}>{role}</Badge>
+                    <Button
+                      aria-label={`Remove ${role}`}
+                      size="icon-sm"
+                      variant="ghost"
+                      onClick={() => removeRole(field, role)}
+                    >
+                      <X className="size-3.5" />
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(profile.role_aliases?.[role] ?? []).map((alias) => (
+                      <Badge key={alias} variant="outline">
+                        {alias}
+                        <button
+                          className="ml-1 text-muted-foreground hover:text-foreground"
+                          onClick={() => removeRoleAlias(role, alias)}
+                          type="button"
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      value={aliasDrafts[role] ?? ""}
+                      placeholder="Add variant or translation"
+                      onChange={(event) =>
+                        setAliasDrafts((current) => ({ ...current, [role]: event.target.value }))
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") addRoleAlias(role)
+                      }}
+                    />
+                    <Button size="icon" variant="outline" onClick={() => addRoleAlias(role)}>
+                      <Plus className="size-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>
@@ -379,17 +509,9 @@ export function ProfileScreen() {
             }
           />
           <Textarea
-            value={lines(profile.target_roles)}
-            onChange={(event) => patch({ target_roles: listFromText(event.target.value) })}
-            placeholder="Target roles, one per line"
-            className="min-h-24 text-xs"
-          />
-          <Textarea
-            value={lines(profile.secondary_roles)}
-            onChange={(event) =>
-              patch({ secondary_roles: listFromText(event.target.value) })
-            }
-            placeholder="Secondary roles, one per line"
+            value={lines(profile.industries)}
+            onChange={(event) => patch({ industries: listFromText(event.target.value) })}
+            placeholder="Industries or domains, one per line"
             className="min-h-24 text-xs"
           />
           <Textarea

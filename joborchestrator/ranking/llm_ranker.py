@@ -46,7 +46,8 @@ def rank_job_with_llm(
         "heuristic_ranking": result_to_dict(heuristic),
         "instructions": {
             "goal": "Improve the ranking by reading nuanced job context while preserving explainability.",
-            "presales_rule": "Technical pre-sales, solutions engineering, implementation, APIs and integrations are valid adjacent opportunities for this developer profile. Pure sales is not.",
+            "adjacent_roles_rule": "Adjacent, translated or industry-specific role labels are viable when the job text supports transfer from the candidate profile.",
+            "role_aliases": "Treat role_aliases as equivalent labels for user-defined roles, not as extra candidate skills.",
             "safety": "Do not invent candidate skills. Mark uncertain or adjacent skills as partial matches.",
         },
     }

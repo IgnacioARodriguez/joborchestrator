@@ -145,6 +145,7 @@ export interface CandidateProfile {
   headline: string
   target_roles: string[]
   secondary_roles: string[]
+  role_aliases: Record<string, string[]>
   skills: ProfileSkill[]
   industries: string[]
   preferred_locations: string[]

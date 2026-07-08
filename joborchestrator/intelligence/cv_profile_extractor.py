@@ -125,6 +125,7 @@ def normalize_profile_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "headline": str(payload.get("headline") or "").strip(),
         "target_roles": _clean_list(payload.get("target_roles")),
         "secondary_roles": _clean_list(payload.get("secondary_roles")),
+        "role_aliases": _clean_role_aliases(payload.get("role_aliases")),
         "skills": skills,
         "industries": _clean_list(payload.get("industries")),
         "preferred_locations": _clean_list(payload.get("preferred_locations")),
@@ -142,6 +143,7 @@ def profile_payload_to_candidate_profile(profile: dict[str, Any]) -> dict[str, A
     return {
         "target_roles": _clean_list(profile.get("target_roles")),
         "secondary_roles": _clean_list(profile.get("secondary_roles")),
+        "role_aliases": _clean_role_aliases(profile.get("role_aliases")),
         "strong_skills": [skill["name"] for skill in skills if skill.get("level") == "strong"],
         "medium_skills": [skill["name"] for skill in skills if skill.get("level") == "medium"],
         "weak_skills": [skill["name"] for skill in skills if skill.get("level") == "weak"],
@@ -222,6 +224,18 @@ def _clean_list(value: Any) -> list[str]:
         if text and key not in seen:
             cleaned.append(text)
             seen.add(key)
+    return cleaned
+
+
+def _clean_role_aliases(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    cleaned: dict[str, list[str]] = {}
+    for role, aliases in value.items():
+        role_name = str(role or "").strip()
+        values = _clean_list(aliases)
+        if role_name and values:
+            cleaned[role_name] = values
     return cleaned
 
 

@@ -16,6 +16,7 @@ def clamp(value: float, low: int = 0, high: int = 100) -> int:
 class CandidateProfile:
     target_roles: list[str] = field(default_factory=list)
     secondary_roles: list[str] = field(default_factory=list)
+    role_aliases: dict[str, list[str]] = field(default_factory=dict)
     strong_skills: list[str] = field(default_factory=list)
     medium_skills: list[str] = field(default_factory=list)
     weak_skills: list[str] = field(default_factory=list)

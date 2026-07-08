@@ -16,6 +16,7 @@ def test_profile_payload_to_candidate_profile_groups_skills_by_level() -> None:
                 {"name": "React", "category": "Frontend", "level": "medium"},
                 {"name": "Terraform", "category": "Cloud", "level": "weak"},
             ],
+            "role_aliases": {"Presales Engineer": ["Pre-sales Engineer", "Consultor preventa", ""]},
             "real_experience_years": 4,
         }
     )
@@ -26,6 +27,7 @@ def test_profile_payload_to_candidate_profile_groups_skills_by_level() -> None:
     assert candidate["strong_skills"] == ["Python"]
     assert candidate["medium_skills"] == ["React"]
     assert candidate["weak_skills"] == ["Terraform"]
+    assert candidate["role_aliases"] == {"Presales Engineer": ["Pre-sales Engineer", "Consultor preventa"]}
     assert candidate["real_experience_years"] == 4
 
 

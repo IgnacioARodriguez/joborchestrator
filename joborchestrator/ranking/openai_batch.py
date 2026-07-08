@@ -63,8 +63,8 @@ def create_ranking_batch_jsonl(
                         "cloud, testing or communication cannot rescue a job whose main stack/domain is outside the profile."
                     ),
                     "adjacent_roles_rule": (
-                        "Technical Consultant, Presales and Solutions Engineer roles are viable only when backend/API/"
-                        "integration transfer is explicit. Pure sales is not viable."
+                        "Adjacent, translated or industry-specific role labels are viable when the job text supports "
+                        "transfer from the candidate profile and user-defined role aliases."
                     ),
                     "hard_overrides": "Unpaid, commission-only and critical dealbreakers cap the job at AVOID/SKIP.",
                     "return_only_json": True,
