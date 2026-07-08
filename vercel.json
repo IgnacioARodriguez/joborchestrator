@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "if [ -d dashboard ]; then npm --prefix dashboard ci; elif [ -f package.json ]; then npm ci; fi",
-  "buildCommand": "if [ -d dashboard ]; then npm --prefix dashboard run build && cp -R dashboard/.next .next; elif [ -f package.json ]; then npm run build; fi",
+  "installCommand": "if [ -f dashboard/package.json ]; then npm --prefix dashboard ci; elif [ -f package.json ]; then npm ci; fi",
+  "buildCommand": "if [ -f dashboard/package.json ]; then npm --prefix dashboard run build && cp -R dashboard/.next .next; elif [ -f package.json ]; then npm run build; fi",
   "outputDirectory": ".next",
   "functions": {
     "api/index.py": {

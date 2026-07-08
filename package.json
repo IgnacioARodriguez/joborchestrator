@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "packageManager": "npm@11.12.1",
+  "engines": {
+    "node": ">=20 <26",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "build": "npm --prefix dashboard run build",
+    "dev": "npm --prefix dashboard run dev",
+    "lint": "npm --prefix dashboard run lint",
+    "typecheck": "npm --prefix dashboard run typecheck"
+  }
+}
