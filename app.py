@@ -43,9 +43,7 @@ from joborchestrator.ranking.manual_llm_review import (
 )
 from joborchestrator.ranking.nvidia_ranker import (
     DEFAULT_NVIDIA_MODEL,
-    NvidiaRankingError,
     nvidia_api_key,
-    rank_jobs_with_nvidia,
 )
 from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
 
@@ -1166,79 +1164,81 @@ with tab5:
             help="Turn this on to replace the bad heuristic rankings. Turn it off to rank only missing rows.",
         )
         nvidia_confirm = st.text_input(
-            "Type NVIDIA to run this chunk",
+            "Type NVIDIA to enqueue this ranking job",
             key="confirm_nvidia_ranking",
         )
-        if st.button(
-            "Rank chunk with NVIDIA",
-            type="primary",
-            use_container_width=True,
-            disabled=not nvidia_ready or nvidia_confirm != "NVIDIA",
-        ):
-            try:
+        queue_cols = st.columns([1, 1])
+        with queue_cols[0]:
+            if st.button(
+                "Create NVIDIA ranking job",
+                type="primary",
+                use_container_width=True,
+                disabled=not nvidia_ready or nvidia_confirm != "NVIDIA",
+            ):
                 if nvidia_overwrite:
                     jobs_for_nvidia = db.get_job_postings(limit=int(nvidia_offset) + int(nvidia_jobs_per_click))
-                    jobs_for_nvidia = jobs_for_nvidia.iloc[int(nvidia_offset) : int(nvidia_offset) + int(nvidia_jobs_per_click)]
+                    jobs_for_nvidia = jobs_for_nvidia.iloc[
+                        int(nvidia_offset) : int(nvidia_offset) + int(nvidia_jobs_per_click)
+                    ]
                 else:
                     jobs_for_nvidia = db.get_unranked_jobs(
                         ranking_version=target_ranking_version,
                         limit=int(nvidia_jobs_per_click),
                     )
                 if jobs_for_nvidia.empty:
-                    st.info("No jobs to rank in this NVIDIA chunk.")
+                    st.info("No jobs to enqueue for this NVIDIA ranking job.")
                 else:
-                    total_jobs_to_rank = len(jobs_for_nvidia)
-                    total_batches = max(
-                        1,
-                        (total_jobs_to_rank + int(nvidia_request_batch_size) - 1)
-                        // int(nvidia_request_batch_size),
+                    ranking_job_id = db.create_ranking_job(
+                        provider="nvidia",
+                        model=nvidia_model,
+                        ranking_version=target_ranking_version,
+                        job_ids=[int(job_id) for job_id in jobs_for_nvidia["id"].tolist()],
+                        request_batch_size=int(nvidia_request_batch_size),
+                        max_concurrency=int(nvidia_concurrency),
                     )
-                    progress_bar = st.progress(0, text="Starting NVIDIA ranking...")
-                    progress_status = st.empty()
-                    progress_metrics = st.empty()
-
-                    def update_nvidia_progress(done_batches: int, batch_count: int, progress_summary: dict[str, int]) -> None:
-                        processed = int(progress_summary.get("processed", 0))
-                        saved = int(progress_summary.get("saved", 0))
-                        failed = int(progress_summary.get("failed", 0))
-                        progress = min(1.0, done_batches / max(1, batch_count))
-                        progress_bar.progress(
-                            progress,
-                            text=(
-                                f"NVIDIA ranking {done_batches}/{batch_count} batches · "
-                                f"{processed}/{total_jobs_to_rank} jobs processed"
-                            ),
-                        )
-                        progress_status.info(
-                            f"Running with {int(nvidia_concurrency)} concurrent requests, "
-                            f"{int(nvidia_request_batch_size)} jobs/request."
-                        )
-                        progress_metrics.markdown(
-                            f"**Saved:** {saved} · **Failed:** {failed} · "
-                            f"**APPLY_NOW:** {progress_summary.get('APPLY_NOW', 0)} · "
-                            f"**TAILORED:** {progress_summary.get('APPLY_WITH_TAILORED_CV', 0)} · "
-                            f"**MAYBE:** {progress_summary.get('MAYBE', 0)} · "
-                            f"**SKIP:** {progress_summary.get('SKIP', 0)} · "
-                            f"**AVOID:** {progress_summary.get('AVOID', 0)}"
-                        )
-
-                    with st.spinner("Ranking chunk with NVIDIA..."):
-                        summary = rank_jobs_with_nvidia(
-                            jobs_for_nvidia,
-                            model=nvidia_model,
-                            request_batch_size=int(nvidia_request_batch_size),
-                            max_concurrency=int(nvidia_concurrency),
-                            ranking_version=target_ranking_version,
-                            progress_callback=update_nvidia_progress,
-                        )
-                    progress_bar.progress(1.0, text=f"NVIDIA ranking complete · {total_batches}/{total_batches} batches")
                     st.success(
-                        "NVIDIA ranking saved: "
-                        + " · ".join(f"{key}={value}" for key, value in summary.items())
+                        f"Queued ranking job #{ranking_job_id} with {len(jobs_for_nvidia)} jobs. "
+                        "Start the local worker to process it."
                     )
                     st.rerun()
-            except NvidiaRankingError as exc:
-                st.error(str(exc))
+        with queue_cols[1]:
+            if st.button("Start local ranking worker", use_container_width=True, disabled=not nvidia_ready):
+                subprocess.Popen(  # noqa: S603 - local trusted worker command.
+                    [sys.executable, "-m", "joborchestrator.ranking.worker"],
+                    cwd=str(PROJECT_ROOT),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                st.success("Local ranking worker started in the background.")
+
+        worker_command = f"{sys.executable} -m joborchestrator.ranking.worker"
+        st.code(worker_command, language="powershell")
+        st.caption(
+            "The worker processes queued jobs even if this browser tab closes. "
+            "If the PC sleeps or the worker process stops, queued jobs remain resumable."
+        )
+
+        ranking_jobs = db.list_ranking_jobs(limit=10)
+        if not ranking_jobs.empty:
+            st.markdown("#### Ranking jobs")
+            for _, job_row in ranking_jobs.iterrows():
+                total_items = int(job_row["total_items"] or 0)
+                processed_items = int(job_row["processed_items"] or 0)
+                progress = processed_items / total_items if total_items else 0
+                status_label = str(job_row["status"]).upper()
+                progress_text = (
+                    f"#{int(job_row['id'])} · {status_label} · "
+                    f"{processed_items}/{total_items} processed · "
+                    f"{int(job_row['saved_items'] or 0)} saved · {int(job_row['failed_items'] or 0)} failed"
+                )
+                st.progress(min(1.0, progress), text=progress_text)
+                if job_row["error"]:
+                    st.error(str(job_row["error"]))
+                if job_row["status"] in {"queued", "running"}:
+                    if st.button(f"Cancel job #{int(job_row['id'])}", key=f"cancel_ranking_job_{int(job_row['id'])}"):
+                        db.cancel_ranking_job(int(job_row["id"]))
+                        st.rerun()
 
     st.divider()
     versions = db.get_ranking_versions()

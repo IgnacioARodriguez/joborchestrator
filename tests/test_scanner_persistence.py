@@ -184,6 +184,33 @@ def test_delete_job_rankings_clears_current_rankings(tmp_path, monkeypatch):
     assert refreshed["role_viable"] is None
 
 
+def test_create_and_cancel_ranking_job(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+
+    ranking_job_id = db.create_ranking_job(
+        provider="nvidia",
+        model="nvidia/test",
+        ranking_version="test-v1",
+        job_ids=[job_id, job_id],
+        request_batch_size=5,
+        max_concurrency=2,
+    )
+
+    queued = db.get_ranking_job(ranking_job_id)
+    assert queued["status"] == "queued"
+    assert queued["total_items"] == 1
+    assert len(db.get_queued_ranking_items(ranking_job_id, limit=10)) == 1
+
+    db.cancel_ranking_job(ranking_job_id)
+
+    cancelled = db.get_ranking_job(ranking_job_id)
+    assert cancelled["status"] == "cancelled"
+    assert db.get_queued_ranking_items(ranking_job_id, limit=10).empty
+
+
 def test_marking_job_posting_applied_syncs_legacy_history_when_opened(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()
