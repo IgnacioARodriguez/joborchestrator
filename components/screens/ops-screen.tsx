@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  Upload,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -84,6 +85,7 @@ export function OpsScreen() {
   const [location, setLocation] = useState("Spain")
   const [busy, setBusy] = useState<string | null>(null)
   const [results, setResults] = useState<ScanResult[]>([])
+  const [linkedinFile, setLinkedinFile] = useState<File | null>(null)
 
   async function loadOps() {
     try {
@@ -117,6 +119,11 @@ export function OpsScreen() {
       await refresh()
       await loadOps()
       return value
+    } catch (e) {
+      toast.error("Operation failed", {
+        description: e instanceof Error ? e.message : "Backend request failed.",
+      })
+      return undefined
     } finally {
       setBusy(null)
     }
@@ -152,19 +159,26 @@ export function OpsScreen() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
             <LinkIcon className="size-4 text-primary" />
-            LinkedIn scraper import
+            LinkedIn Excel import
           </CardTitle>
           <CardDescription className="text-xs">
-            Imports the latest Excel produced by the existing local LinkedIn
-            scraper.
+            Uploads an Excel file exported by the local LinkedIn scraper into
+            the cloud database.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-col gap-3">
+          <Input
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={(event) => setLinkedinFile(event.target.files?.[0] ?? null)}
+          />
           <Button
-            disabled={busy !== null}
+            disabled={busy !== null || !linkedinFile}
             onClick={() =>
               void runAction("linkedin", async () => {
-                const res = await api.importLatestLinkedIn()
+                if (!linkedinFile) return
+                const res = await api.importLinkedInExcel(linkedinFile)
+                setLinkedinFile(null)
                 toast.success("LinkedIn imported", {
                   description: `${res.file}: ${res.import_stats.new ?? 0} new, ${
                     res.import_stats.updated ?? 0
@@ -173,8 +187,8 @@ export function OpsScreen() {
               })
             }
           >
-            <LinkIcon data-icon="inline-start" />
-            Import latest LinkedIn Excel
+            <Upload data-icon="inline-start" />
+            Upload and import Excel
           </Button>
         </CardContent>
       </Card>

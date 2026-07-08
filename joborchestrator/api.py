@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -239,6 +240,26 @@ def import_latest_linkedin(min_description_len: int = MIN_DESCRIPCION_LEN_DEFAUL
     filtered, stats = filtrar_ofertas(df, min_descripcion_len=min_description_len)
     import_stats = import_linkedin_dataframe_to_job_postings(filtered)
     return {"file": files[0].name, "filter_stats": stats, "import_stats": import_stats}
+
+
+@app.post("/api/linkedin/import-excel")
+async def import_linkedin_excel(
+    file: UploadFile = File(...),
+    min_description_len: int = MIN_DESCRIPCION_LEN_DEFAULT,
+) -> dict[str, Any]:
+    filename = file.filename or "linkedin.xlsx"
+    if not filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Upload a LinkedIn Excel file (.xlsx or .xls).")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    try:
+        df = pd.read_excel(BytesIO(content))
+        filtered, stats = filtrar_ofertas(df, min_descripcion_len=min_description_len)
+        import_stats = import_linkedin_dataframe_to_job_postings(filtered)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not import Excel: {exc}") from exc
+    return {"file": filename, "filter_stats": stats, "import_stats": import_stats}
 
 
 @app.post("/api/ranking/jobs")
