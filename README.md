@@ -26,11 +26,33 @@ evitar mezclar dependencias con otro Python:
 run_app.bat
 ```
 
+## Dashboard Next.js
+
+El prototipo web generado con V0 vive en `dashboard/`. Es una app Next.js
+mobile-first con datos mock para ranking, revision manual, pipeline e import.
+
+```bash
+cd dashboard
+npm install
+npm run dev
+```
+
+La interfaz se abre normalmente en `http://localhost:3000`.
+
+Comandos utiles:
+
+```bash
+npm run build
+npm run lint
+npm run typecheck
+```
+
 ## Estructura
 
 ```text
 joborchestrator/
 ├── app.py
+├── dashboard/
 ├── portals.yml
 ├── requirements.txt
 ├── pyproject.toml

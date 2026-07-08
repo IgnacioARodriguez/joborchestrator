@@ -39,3 +39,6 @@ dist/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Local frontend dev logs
+dashboard-dev.*.log
