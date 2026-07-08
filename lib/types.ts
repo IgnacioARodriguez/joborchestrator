@@ -117,6 +117,31 @@ export interface RankingJobRecord {
   error?: string | null
 }
 
+export type SkillLevel = "strong" | "medium" | "weak"
+
+export interface ProfileSkill {
+  name: string
+  category: string
+  level: SkillLevel
+  evidence: string
+}
+
+export interface CandidateProfile {
+  schema_version: number
+  headline: string
+  target_roles: string[]
+  secondary_roles: string[]
+  skills: ProfileSkill[]
+  industries: string[]
+  preferred_locations: string[]
+  preferred_work_modes: string[]
+  dealbreakers: string[]
+  avoid_roles: string[]
+  real_experience_years: number
+  notes: string
+  suggested_roles_reasoning: string
+}
+
 export const DECISION_ORDER: Decision[] = [
   "APPLY_NOW",
   "APPLY_WITH_TAILORED_CV",

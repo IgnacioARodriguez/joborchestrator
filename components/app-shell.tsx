@@ -7,6 +7,7 @@ import { NAV_ITEMS, type Section } from "@/lib/nav"
 import { DashboardScreen } from "@/components/screens/dashboard-screen"
 import { RankingScreen } from "@/components/screens/ranking-screen"
 import { PipelineScreen } from "@/components/screens/pipeline-screen"
+import { ProfileScreen } from "@/components/screens/profile-screen"
 import { OpsScreen } from "@/components/screens/ops-screen"
 import { JobDetailDrawer } from "@/components/job-detail-drawer"
 
@@ -14,6 +15,7 @@ const SECTION_TITLES: Record<Section, string> = {
   dashboard: "Dashboard",
   ranking: "Ranking",
   pipeline: "Pipeline",
+  profile: "Profile",
   ops: "Operations",
 }
 
@@ -83,6 +85,7 @@ export function AppShell() {
             {section === "pipeline" && (
               <PipelineScreen onOpenJob={setOpenJobId} />
             )}
+            {section === "profile" && <ProfileScreen />}
             {section === "ops" && <OpsScreen />}
           </main>
         </div>

@@ -1,5 +1,6 @@
 import type {
   CompanySource,
+  CandidateProfile,
   JobPosting,
   PipelineStatus,
   RankingJobRecord,
@@ -35,6 +36,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   async getJobs() {
     return request<{ jobs: JobPosting[]; ranking_versions: string[] }>("/api/jobs")
+  },
+
+  async getProfile() {
+    return request<{ profile: CandidateProfile | null }>("/api/profile")
+  },
+
+  async saveProfile(profile: CandidateProfile) {
+    return request<{ profile: CandidateProfile }>("/api/profile", {
+      method: "PUT",
+      body: JSON.stringify({ profile }),
+    })
+  },
+
+  async importProfileCv(file: File) {
+    const formData = new FormData()
+    formData.append("file", file)
+    return request<{ profile: CandidateProfile }>("/api/profile/import-cv", {
+      method: "POST",
+      body: formData,
+    })
   },
 
   async setPipelineStatus(id: string, status: PipelineStatus) {

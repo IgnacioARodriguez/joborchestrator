@@ -20,6 +20,7 @@ TABLES = [
     "job_rankings",
     "ranking_jobs",
     "ranking_job_items",
+    "app_settings",
 ]
 
 

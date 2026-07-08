@@ -182,6 +182,12 @@ CREATE TABLE IF NOT EXISTS ranking_job_items (
 
 CREATE INDEX IF NOT EXISTS idx_ranking_jobs_status ON ranking_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_ranking_job_items_job_status ON ranking_job_items(ranking_job_id, status);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -336,6 +342,43 @@ def init_db():
     conn = _conn()
     conn.commit()
     conn.close()
+
+
+def get_app_setting(key: str, fallback: object | None = None) -> object | None:
+    conn = _conn()
+    try:
+        row = conn.execute("SELECT value_json FROM app_settings WHERE key = ?", (key,)).fetchone()
+        if not row:
+            return fallback
+        return json.loads(row["value_json"])
+    finally:
+        conn.close()
+
+
+def set_app_setting(key: str, value: object) -> None:
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = _conn()
+    try:
+        conn.execute(
+            """INSERT INTO app_settings (key, value_json, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET
+                   value_json = excluded.value_json,
+                   updated_at = excluded.updated_at""",
+            (key, json.dumps(value, ensure_ascii=False), now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_candidate_profile_payload() -> dict | None:
+    value = get_app_setting("candidate_profile")
+    return value if isinstance(value, dict) else None
+
+
+def save_candidate_profile_payload(profile: dict) -> None:
+    set_app_setting("candidate_profile", profile)
 
 
 def add_company_source(

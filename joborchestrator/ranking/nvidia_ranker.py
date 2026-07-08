@@ -12,8 +12,10 @@ import pandas as pd
 
 from joborchestrator.ranking.llm_ranker import _apply_guards, _ranking_from_payload
 from joborchestrator.ranking.profile import load_candidate_profile
+from joborchestrator.ranking.schemas import CandidateProfile
 from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
 from joborchestrator.storage import persistence as db
+from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
 
 NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1"
 DEFAULT_NVIDIA_MODEL = (
@@ -113,7 +115,12 @@ async def rank_jobs_with_nvidia_async(
 
 
 def build_nvidia_ranking_payload(jobs: list[dict[str, Any]]) -> dict[str, Any]:
-    profile = load_candidate_profile()
+    profile_payload = db.get_candidate_profile_payload()
+    profile = (
+        CandidateProfile(**profile_payload_to_candidate_profile(profile_payload))
+        if profile_payload
+        else load_candidate_profile()
+    )
     return {
         "candidate_profile": asdict(profile),
         "ranking_goal": (

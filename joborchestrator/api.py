@@ -17,6 +17,12 @@ from joborchestrator.api_dto import (
 )
 from joborchestrator.batching import MIN_DESCRIPCION_LEN_DEFAULT, filtrar_ofertas
 from joborchestrator.intelligence.application_materials import build_application_kit
+from joborchestrator.intelligence.cv_profile_extractor import (
+    CVProfileError,
+    build_profile_from_cv_text,
+    extract_text_from_cv,
+    normalize_profile_payload,
+)
 from joborchestrator.intelligence.llm_application_materials import (
     DEFAULT_MATERIALS_MODEL,
     LLMMaterialsError,
@@ -92,6 +98,10 @@ class MaterialsPayload(BaseModel):
     shortlist: bool = True
 
 
+class ProfilePayload(BaseModel):
+    profile: dict[str, Any]
+
+
 def _job_for_materials(job_id: int) -> tuple[dict[str, Any], dict[str, Any] | None]:
     job = db.get_job_posting(job_id)
     if not job:
@@ -118,6 +128,33 @@ def startup() -> None:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/profile")
+def get_profile() -> dict[str, Any]:
+    return {"profile": db.get_candidate_profile_payload()}
+
+
+@app.put("/api/profile")
+def save_profile(payload: ProfilePayload) -> dict[str, Any]:
+    profile = normalize_profile_payload(payload.profile)
+    db.save_candidate_profile_payload(profile)
+    return {"profile": profile}
+
+
+@app.post("/api/profile/import-cv")
+async def import_profile_cv(file: UploadFile = File(...)) -> dict[str, Any]:
+    filename = file.filename or "cv"
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded CV is empty.")
+    try:
+        cv_text = extract_text_from_cv(filename, content)
+        profile = build_profile_from_cv_text(cv_text)
+        db.save_candidate_profile_payload(profile)
+    except CVProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"profile": profile}
 
 
 @app.get("/api/jobs")
