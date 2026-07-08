@@ -41,10 +41,16 @@ Set these environment variables in Vercel:
 ```text
 TURSO_DATABASE_URL=libsql://...
 TURSO_AUTH_TOKEN=...
+NVIDIA_API_KEY=...
+CANDIDATE_PROFILE_YAML=<contents of candidate_profile.yml>
 ```
 
 Local development still uses `job_tracker.db` unless those Turso variables are
 present.
+
+`candidate_profile.yml` is intentionally ignored by Git. In production, paste
+the YAML contents into `CANDIDATE_PROFILE_YAML` so NVIDIA ranking receives the
+same candidate profile used locally.
 
 The scraper can remain local and push imported jobs into the remote database via
 the API once the Vercel deployment has the Turso variables configured.
