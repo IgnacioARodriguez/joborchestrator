@@ -22,6 +22,12 @@ playwright install chromium
 npm install
 ```
 
+Copy the local environment template and fill your keys once:
+
+```bash
+copy .env.example .env
+```
+
 ## Run Locally
 
 Start the API:
@@ -147,6 +153,7 @@ python -m joborchestrator.ranking.worker --once
 Ignored local/runtime files include:
 
 - `.venv/`
+- `.env`
 - `job_tracker.db`
 - `data/*` except `data/.gitkeep`
 - Python caches and test caches

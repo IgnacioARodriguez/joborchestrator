@@ -55,6 +55,11 @@ CV in the dashboard, keep `run_worker.bat` running locally, and the worker will
 read queued operations from Turso, call NVIDIA, save the profile, and write logs
 to `logs/worker.log`.
 
+For local worker/API usage, copy `.env.example` to `.env` and fill the same
+`TURSO_*` and `NVIDIA_API_KEY` values. The Python app loads `.env`
+automatically; Vercel still needs its own environment variables configured in
+the project settings.
+
 The scraper can remain local and push imported jobs into the remote database via
 the API once the Vercel deployment has the Turso variables configured.
 
