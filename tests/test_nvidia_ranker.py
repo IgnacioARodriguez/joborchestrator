@@ -44,6 +44,9 @@ def test_build_nvidia_ranking_payload_compacts_jobs(monkeypatch):
     assert "candidate_profile" in payload
     assert payload["candidate_profile"]["strong_skills"] == ["Python"]
     assert payload["candidate_profile"]["role_aliases"] == {"Backend Engineer": ["API Engineer"]}
+    assert payload["ranking_goal"]
+    assert "scoring_rubric" in payload
+    assert any("role_aliases" in rule for rule in payload["rules"])
 
 
 def test_build_nvidia_ranking_payload_requires_profile(monkeypatch):

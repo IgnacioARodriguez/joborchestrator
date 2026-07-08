@@ -11,6 +11,7 @@ import httpx
 import pandas as pd
 
 from joborchestrator.ranking.llm_ranker import _apply_guards, _ranking_from_payload
+from joborchestrator.ranking.ranking_rules import NVIDIA_EXTRA_RULES, RANKING_GOAL, RANKING_RULES, SCORING_RUBRIC
 from joborchestrator.ranking.schemas import CandidateProfile
 from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
 from joborchestrator.storage import persistence as db
@@ -120,21 +121,9 @@ def build_nvidia_ranking_payload(jobs: list[dict[str, Any]]) -> dict[str, Any]:
     profile = CandidateProfile(**profile_payload_to_candidate_profile(profile_payload))
     return {
         "candidate_profile": asdict(profile),
-        "ranking_goal": (
-            "Prioritize jobs where the candidate has the highest probability of getting hired quickly. "
-            "This is not a salary, prestige or dream-job ranking."
-        ),
-        "rules": [
-            "Evaluate each job independently.",
-            "Use raw job text as source of truth; do not invent candidate skills or job requirements.",
-            "Central mandatory requirements dominate the score.",
-            "Generic matches such as Git, Agile, cloud, testing or communication cannot rescue a job whose main stack/domain is outside the profile.",
-            "Adjacent, translated or industry-specific role labels are viable when the job text supports transfer from the candidate profile.",
-            "Treat role_aliases as equivalent labels for the same user-defined role; do not treat aliases as extra skills.",
-            "Pure sales, unrelated domains, unpaid, commission-only or critical dealbreakers must be capped at SKIP/AVOID.",
-            "Return one result for every input job_id.",
-            "Return only valid JSON. No markdown.",
-        ],
+        "ranking_goal": RANKING_GOAL,
+        "rules": [*RANKING_RULES, *NVIDIA_EXTRA_RULES],
+        "scoring_rubric": SCORING_RUBRIC,
         "jobs": [_compact_job(row) for row in jobs],
     }
 

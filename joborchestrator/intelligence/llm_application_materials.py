@@ -54,10 +54,12 @@ def build_application_kit_with_llm(
         "rules": [
             "Do not invent employers, degrees, certifications, years of experience, tools or projects.",
             "Use job requirements as keywords only when the candidate can truthfully claim or position adjacent experience.",
-            "Recruiter messages must be concise and human: one LinkedIn connection note and one longer InMail/email variant.",
+            "Recruiter messages must be concise and human. Include a LinkedIn connection note under 300 characters and a longer InMail/email variant.",
+            "Output language should match the job posting language unless the user profile clearly indicates otherwise.",
             "ATS CV text should be a focused one-page CV draft/section set, not generic advice.",
-            "Cover letter can be empty only if the job clearly does not need one; otherwise provide a concise tailored letter.",
+            "Cover letter can be empty only when application context clearly does not need one; otherwise provide a concise tailored letter.",
             "Autofill notes should include copy-paste answers for common portal questions and caveats for claims to avoid.",
+            "List risk_flags for unsupported claims, adjacency framing, or user facts to double-check.",
             "Return only JSON matching the schema.",
         ],
     }
@@ -146,12 +148,16 @@ def _materials_schema() -> dict[str, Any]:
             "cover_letter",
             "ats_cv_text",
             "autofill_notes",
+            "risk_flags",
+            "keywords_used",
         ],
         "properties": {
             "recruiter_message": {"type": "string"},
             "cover_letter": {"type": "string"},
             "ats_cv_text": {"type": "string"},
             "autofill_notes": {"type": "string"},
+            "risk_flags": {"type": "array", "items": {"type": "string"}},
+            "keywords_used": {"type": "array", "items": {"type": "string"}},
         },
     }
 

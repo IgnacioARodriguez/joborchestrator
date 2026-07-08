@@ -51,9 +51,11 @@ def build_profile_from_cv_text(
         ),
         "rules": [
             "Infer likely target roles from evidence in the CV, not from stereotypes.",
-            "Categorize skills by domain, for example Programming, Backend, Cloud, Data, Product, Leadership, Languages, Tools, or another clear category.",
-            "Assign each skill level as strong, medium, or weak based on evidence strength.",
+            "Use a maximum of 8 top-level skill domains. Prefer stable domain names users can reuse.",
+            "Assign skill.level using this rubric: strong = explicit usage in 2+ contexts or outcomes/metrics; medium = mentioned with one concrete context; weak = keyword/list item with no usage context.",
             "Do not invent employers, degrees, years, or seniority.",
+            "Populate dealbreakers and preferred_locations only when explicitly stated. Return empty arrays when not stated.",
+            "Include evidence for every skill and industry. Mark ambiguity in extraction_notes instead of resolving silently.",
             "Prefer concise labels users can edit later.",
             "Return only JSON.",
         ],
@@ -135,6 +137,8 @@ def normalize_profile_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "real_experience_years": _number(payload.get("real_experience_years"), 0.0),
         "notes": str(payload.get("notes") or "").strip(),
         "suggested_roles_reasoning": str(payload.get("suggested_roles_reasoning") or "").strip(),
+        "extraction_notes": _clean_list(payload.get("extraction_notes")),
+        "confidence": _confidence(payload.get("confidence")),
     }
 
 
@@ -267,4 +271,11 @@ def _profile_shape() -> dict[str, Any]:
         "avoid_roles": ["roles the profile appears poorly suited for"],
         "real_experience_years": 0,
         "notes": "truthful notes for job ranking",
+        "extraction_notes": ["ambiguities the user should review manually"],
+        "confidence": "high | medium | low",
     }
+
+
+def _confidence(value: Any) -> str:
+    confidence = str(value or "medium").strip().lower()
+    return confidence if confidence in {"high", "medium", "low"} else "medium"

@@ -1,66 +1,62 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
+import re
 
 
-def build_professional_cover_letter(job: Dict[str, Any], profile: str, tone: str = "confident") -> str:
-    """Generate a more polished cover letter draft for direct use."""
+def build_professional_cover_letter(
+    job: dict[str, Any],
+    profile: dict[str, Any] | str,
+    tone: str = "confident",
+) -> str:
+    """Generate a conservative, profile-backed cover letter draft."""
     title = job.get("title") or "the role"
     company = job.get("company") or "the company"
-    description = job.get("description") or ""
-    keywords = [k for k in ["python", "backend", "api", "aws", "postgres", "leadership", "mentoring"] if k in description.lower()]
-    if not keywords:
-        keywords = ["software delivery", "technical ownership"]
+    profile_summary = _profile_summary(profile)
+    keywords = _profile_keywords(profile)
 
     opening = f"Dear Hiring Team,\n\nI am excited to apply for the {title} position at {company}."
     body = (
-        f"My background in {', '.join(keywords)} and my experience delivering reliable, scalable products "
-        f"make me a strong fit for this opportunity. I enjoy building pragmatic solutions, collaborating "
-        f"with cross-functional teams, and taking ownership of end-to-end delivery."
+        f"My background includes {profile_summary}. "
+        f"The areas I would emphasize for this opportunity are {', '.join(keywords) if keywords else 'the experience documented in my profile'}. "
+        "I would focus on making the application truthful, specific to the role, and grounded in evidence from my work."
     )
     closer = (
-        f"I would welcome the opportunity to discuss how I can contribute to {company} and help drive impact "
-        f"in this role. Thank you for your time and consideration."
+        f"I would welcome the opportunity to discuss how my experience can contribute to {company}. "
+        "Thank you for your time and consideration."
     )
 
     if tone == "warm":
-        body = body.replace("strong fit", "natural fit")
-        closer = closer.replace("would welcome", "would be delighted to")
+        closer = closer.replace("would welcome", "would be delighted to have")
 
-    signature = profile.splitlines()[0] if profile else "Your Name"
-    return f"{opening}\n\n{body}\n\n{closer}\n\nBest regards,\n{signature}"
+    return f"{opening}\n\n{body}\n\n{closer}\n\nBest regards"
 
 
-def build_cover_letter_payload(job: Dict[str, Any], profile: str) -> Dict[str, Any]:
-    """Create a structured payload for an advanced cover letter workflow."""
+def build_cover_letter_payload(job: dict[str, Any], profile: dict[str, Any] | str) -> dict[str, Any]:
+    """Create a structured payload for a cover letter workflow."""
     title = job.get("title") or "Role"
     company = job.get("company") or "the company"
-    description = job.get("description") or ""
-
-    keywords = []
-    for token in ["python", "backend", "api", "aws", "postgres", "leadership", "mentoring"]:
-        if token in description.lower():
-            keywords.append(token)
+    keywords = _profile_keywords(profile)
 
     research_summary = (
-        f"Research summary for {company}: focus on product, engineering maturity, and role context."
+        f"Research summary for {company}: review product, team context, market, and role-specific needs before final use."
     )
 
     return {
         "job": job,
         "profile": profile,
         "research_summary": research_summary,
-        "keyword_alignment": keywords or ["backend", "delivery"],
+        "keyword_alignment": keywords,
         "angle_prompts": {
-            "why": f"Why am I a strong fit for {title} at {company}?",
-            "problems": "What business or product problems would I solve?",
-            "approach": "How would I approach delivery and collaboration?",
-            "tone": "What tone fits this company and role?",
+            "why": f"Why is this profile a truthful fit for {title} at {company}?",
+            "problems": "What business, product, operational, or domain problems would this candidate help solve?",
+            "approach": "How would this candidate approach delivery and collaboration?",
+            "tone": "What tone fits this company, role, and application channel?",
         },
         "approval_gate": {
             "ready_for_review": True,
-            "review_prompt": "Review the draft, adjust the tone, and confirm whether the experience and keywords are well reflected.",
+            "review_prompt": "Review the draft, adjust tone, and confirm every claim is supported by the candidate profile.",
         },
         "draft": build_professional_cover_letter(job, profile),
         "professional_template": {
@@ -71,7 +67,7 @@ def build_cover_letter_payload(job: Dict[str, Any], profile: str) -> Dict[str, A
 
 
 def export_cover_letter_pdf(text: str, output_path: str | Path) -> bool:
-    """Export simple text content to PDF using reportlab with a more polished layout."""
+    """Export simple text content to PDF using reportlab with a polished layout."""
     try:
         from reportlab.lib.pagesizes import letter
         from reportlab.pdfgen import canvas
@@ -97,3 +93,33 @@ def export_cover_letter_pdf(text: str, output_path: str | Path) -> bool:
     c.drawString(40, 40, "Generated by Job Orchestrator")
     c.save()
     return path.exists()
+
+
+def _profile_summary(profile: dict[str, Any] | str) -> str:
+    if isinstance(profile, str):
+        return profile.splitlines()[0] if profile.strip() else "the experience documented in my profile"
+    headline = str(profile.get("headline") or "").strip()
+    roles = [str(role) for role in [*profile.get("target_roles", []), *profile.get("secondary_roles", [])] if str(role).strip()]
+    if headline and roles:
+        return f"{headline}, with target alignment toward {', '.join(roles[:3])}"
+    if headline:
+        return headline
+    if roles:
+        return f"target alignment toward {', '.join(roles[:3])}"
+    return "the experience documented in my profile"
+
+
+def _profile_keywords(profile: dict[str, Any] | str) -> list[str]:
+    if isinstance(profile, str):
+        stopwords = {"with", "and", "the", "for", "from", "that", "this", "have", "experience"}
+        words = []
+        for word in re.findall(r"[A-Za-z][A-Za-z0-9+#.-]{2,}", profile):
+            key = word.lower()
+            if key not in stopwords and key not in {item.lower() for item in words}:
+                words.append(word)
+        return words[:6]
+    return [
+        str(skill.get("name") or "").strip()
+        for skill in profile.get("skills") or []
+        if isinstance(skill, dict) and str(skill.get("name") or "").strip()
+    ][:6]

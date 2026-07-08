@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from joborchestrator.ranking.profile import load_candidate_profile
+from joborchestrator.ranking.ranking_rules import OPENAI_INSTRUCTIONS
 from joborchestrator.ranking.ranker import RANKING_VERSION, rank_job, result_to_dict
 from joborchestrator.ranking.requirements_extractor import extract_requirements
 from joborchestrator.ranking.schemas import CandidateProfile, RankingEvidence, RankingResult, RankingScores
@@ -44,12 +45,7 @@ def rank_job_with_llm(
         "job": _job_to_dict(job),
         "extracted_requirements": asdict(requirements),
         "heuristic_ranking": result_to_dict(heuristic),
-        "instructions": {
-            "goal": "Improve the ranking by reading nuanced job context while preserving explainability.",
-            "adjacent_roles_rule": "Adjacent, translated or industry-specific role labels are viable when the job text supports transfer from the candidate profile.",
-            "role_aliases": "Treat role_aliases as equivalent labels for user-defined roles, not as extra candidate skills.",
-            "safety": "Do not invent candidate skills. Mark uncertain or adjacent skills as partial matches.",
-        },
+        "instructions": OPENAI_INSTRUCTIONS,
     }
     try:
         response = _call_openai_responses(payload, key, model_name, timeout)

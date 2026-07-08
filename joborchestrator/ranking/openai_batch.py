@@ -21,6 +21,7 @@ from joborchestrator.ranking.llm_ranker import (
     build_ranking_response_body,
 )
 from joborchestrator.ranking.profile import load_candidate_profile
+from joborchestrator.ranking.ranking_rules import OPENAI_BATCH_INSTRUCTIONS
 from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
 from joborchestrator.storage import persistence as db
 
@@ -51,24 +52,8 @@ def create_ranking_batch_jsonl(
             payload = {
                 "profile": profile_payload,
                 "job": _compact_job(row, max_description_chars=max_description_chars),
-                "ranking_goal": (
-                    "Prioritize jobs where the candidate has the highest probability of getting hired quickly. "
-                    "This is not a salary, prestige or dream-job ranking."
-                ),
-                "instructions": {
-                    "evaluate_from_raw_job_text": True,
-                    "do_not_use_heuristic_as_truth": True,
-                    "central_requirements_rule": (
-                        "Central mandatory requirements must dominate the score. Generic matches such as Git, Agile, "
-                        "cloud, testing or communication cannot rescue a job whose main stack/domain is outside the profile."
-                    ),
-                    "adjacent_roles_rule": (
-                        "Adjacent, translated or industry-specific role labels are viable when the job text supports "
-                        "transfer from the candidate profile and user-defined role aliases."
-                    ),
-                    "hard_overrides": "Unpaid, commission-only and critical dealbreakers cap the job at AVOID/SKIP.",
-                    "return_only_json": True,
-                },
+                "ranking_goal": OPENAI_BATCH_INSTRUCTIONS["ranking_goal"],
+                "instructions": OPENAI_BATCH_INSTRUCTIONS,
             }
             line = {
                 "custom_id": f"job_ranking_{job_id}",

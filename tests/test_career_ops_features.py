@@ -9,6 +9,10 @@ from joborchestrator.intelligence.llm_application_materials import (
     estimate_materials_cost,
     export_ats_cv_docx_bytes,
 )
+from joborchestrator.intelligence.application_materials import (
+    ApplicationMaterialsError,
+    build_application_kit,
+)
 from joborchestrator.intelligence.llm_costs import estimate_ranking_tokens
 
 
@@ -66,6 +70,45 @@ def test_autofill_plan_contains_contextual_answers():
     assert "resume" in plan["field_mappings"]
 
 
+def test_heuristic_application_kit_requires_dynamic_profile(monkeypatch):
+    from joborchestrator.intelligence import application_materials
+
+    monkeypatch.setattr(application_materials.db, "get_candidate_profile_payload", lambda: None)
+
+    try:
+        build_application_kit({"title": "Account Manager", "company": "Acme"})
+    except ApplicationMaterialsError as exc:
+        assert "No candidate profile configured" in str(exc)
+    else:
+        raise AssertionError("Expected ApplicationMaterialsError")
+
+
+def test_heuristic_application_kit_uses_profile_skills(monkeypatch):
+    from joborchestrator.intelligence import application_materials
+
+    monkeypatch.setattr(
+        application_materials.db,
+        "get_candidate_profile_payload",
+        lambda: {
+            "headline": "Customer success specialist",
+            "target_roles": ["Customer Success Manager"],
+            "skills": [
+                {"name": "Onboarding", "category": "Customer Success", "level": "strong"},
+                {"name": "Renewals", "category": "Revenue", "level": "medium"},
+            ],
+        },
+    )
+
+    kit = build_application_kit(
+        {"title": "Customer Success Manager", "company": "Acme", "description_text": "Onboarding and renewals"},
+        keywords=["Onboarding", "Python"],
+    )
+
+    assert "Customer success specialist" in kit["cover_letter"]
+    assert "Onboarding" in kit["ats_cv_text"]
+    assert "Python" not in kit["ats_cv_text"]
+
+
 def test_pdf_export_creates_file(tmp_path):
     output_path = tmp_path / "cover_letter.pdf"
     created = export_cover_letter_pdf("Hello world", output_path)
@@ -97,6 +140,8 @@ def test_llm_application_kit_uses_structured_payload(monkeypatch):
             "cover_letter": "Dear hiring team",
             "ats_cv_text": "Python\n- FastAPI APIs",
             "autofill_notes": "LinkedIn: paste recruiter note",
+            "risk_flags": [],
+            "keywords_used": ["Python"],
         }
 
     monkeypatch.setattr(llm_application_materials, "_call_openai", fake_call)

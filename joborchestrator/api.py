@@ -16,7 +16,7 @@ from joborchestrator.api_dto import (
     scan_result_dto,
 )
 from joborchestrator.batching import MIN_DESCRIPCION_LEN_DEFAULT, filtrar_ofertas
-from joborchestrator.intelligence.application_materials import build_application_kit
+from joborchestrator.intelligence.application_materials import ApplicationMaterialsError, build_application_kit
 from joborchestrator.intelligence.cv_profile_extractor import (
     CVProfileError,
     extract_text_from_cv,
@@ -220,7 +220,7 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
             )
         else:
             kit = build_application_kit(job, keywords=keywords)
-    except LLMMaterialsError as exc:
+    except (ApplicationMaterialsError, LLMMaterialsError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     db.update_job_application_materials(

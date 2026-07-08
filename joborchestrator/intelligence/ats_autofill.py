@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from typing import Dict, Any
+from typing import Any
 
 
-def build_ats_form_responses(job: Dict[str, Any], ats_type: str = "greenhouse") -> Dict[str, Any]:
-    """Generate structured answers for common ATS application questions."""
+def build_ats_form_responses(
+    job: dict[str, Any],
+    profile: dict[str, Any] | None = None,
+    ats_type: str = "greenhouse",
+) -> dict[str, Any]:
+    """Generate conservative answers for common ATS application questions."""
     title = job.get("title") or "the role"
     company = job.get("company") or "the company"
     description = job.get("description") or ""
+    profile_summary = _profile_summary(profile)
 
     return {
         "ats_type": ats_type.lower(),
@@ -15,54 +20,60 @@ def build_ats_form_responses(job: Dict[str, Any], ats_type: str = "greenhouse") 
             {
                 "field": "why_work_here",
                 "question": f"Why do you want to work at {company}?",
-                "answer": f"I am excited by the chance to contribute to {company} in a role that combines product impact, technical depth, and continuous learning.",
+                "answer": f"I am interested in {company} because this role appears aligned with {profile_summary}.",
             },
             {
                 "field": "tell_us_about_yourself",
                 "question": "Tell us about yourself",
-                "answer": f"I am a software engineer with experience building reliable backend systems and delivering products in {title.lower()} contexts.",
+                "answer": f"My profile is focused on {profile_summary}, and I am interested in roles where that experience can create practical impact.",
             },
             {
                 "field": "relevant_experience",
                 "question": "What experience is most relevant to this role?",
-                "answer": description[:220] if description else "I bring hands-on experience building scalable systems, collaborating across teams, and owning delivery end to end.",
+                "answer": _relevant_experience_answer(description, profile),
             },
             {
                 "field": "motivation",
                 "question": "What motivates you in this role?",
-                "answer": "I am motivated by solving meaningful problems, improving product reliability, and helping teams ship with confidence.",
+                "answer": "I am motivated by work where I can apply my documented strengths, learn quickly, and contribute reliably to the team.",
             },
         ],
     }
 
 
-def build_autofill_plan(job: Dict[str, Any], ats_type: str = "greenhouse") -> Dict[str, Any]:
+def build_autofill_plan(
+    job: dict[str, Any],
+    profile: dict[str, Any] | None = None,
+    ats_type: str = "greenhouse",
+) -> dict[str, Any]:
     """Build a lightweight autofill plan for supported ATS providers."""
     title = job.get("title") or "Role"
     company = job.get("company") or "the company"
-    description = job.get("description") or ""
+    profile_summary = _profile_summary(profile)
 
     questions = [
         {
             "field": "why_join",
             "question": f"Why are you interested in {title} at {company}?",
-            "answer": f"I want to help {company} build reliable products and improve technical delivery.",
+            "answer": f"This role appears aligned with {profile_summary}, and I would tailor my application around evidence-backed fit.",
         },
         {
             "field": "experience",
             "question": "What experience is most relevant to this position?",
-            "answer": "I have hands-on experience building backend services, APIs, and leading delivery with a pragmatic approach.",
+            "answer": _relevant_experience_answer(str(job.get("description") or ""), profile),
         },
     ]
 
-    if "lead" in description.lower() or "mentor" in description.lower():
-        questions.append({
-            "field": "leadership",
-            "question": "How have you led others or influenced delivery?",
-            "answer": "I have mentored engineers and improved engineering quality through clear standards and collaboration.",
-        })
+    if _has_leadership_profile(profile):
+        questions.append(
+            {
+                "field": "leadership",
+                "question": "How have you led others or influenced delivery?",
+                "answer": "My profile includes leadership or mentoring signals; I would answer with a concrete example from my real experience.",
+            }
+        )
 
-    responses = build_ats_form_responses(job, ats_type=ats_type)
+    responses = build_ats_form_responses(job, profile=profile, ats_type=ats_type)
 
     return {
         "ats_type": ats_type.lower(),
@@ -77,3 +88,41 @@ def build_autofill_plan(job: Dict[str, Any], ats_type: str = "greenhouse") -> Di
         "form_responses": responses["responses"],
         "copy_paste_block": "\n".join(f"{q['field']}: {q['answer']}" for q in questions),
     }
+
+
+def _profile_summary(profile: dict[str, Any] | None) -> str:
+    if not profile:
+        return "the experience documented in my candidate profile"
+    headline = str(profile.get("headline") or "").strip()
+    skills = [
+        str(skill.get("name") or "").strip()
+        for skill in profile.get("skills") or []
+        if isinstance(skill, dict) and str(skill.get("name") or "").strip()
+    ]
+    if headline and skills:
+        return f"{headline}, especially {', '.join(skills[:4])}"
+    if headline:
+        return headline
+    if skills:
+        return ", ".join(skills[:4])
+    return "the experience documented in my candidate profile"
+
+
+def _relevant_experience_answer(description: str, profile: dict[str, Any] | None) -> str:
+    summary = _profile_summary(profile)
+    if description:
+        return f"I would connect this role's requirements to {summary}, using only examples I can support from my real experience."
+    return f"I would highlight concrete examples from {summary}, without adding unsupported claims."
+
+
+def _has_leadership_profile(profile: dict[str, Any] | None) -> bool:
+    if not profile:
+        return False
+    text = " ".join(
+        [
+            str(profile.get("headline") or ""),
+            str(profile.get("notes") or ""),
+            " ".join(str(skill.get("name") or "") for skill in profile.get("skills") or [] if isinstance(skill, dict)),
+        ]
+    ).lower()
+    return any(term in text for term in ["lead", "leader", "leadership", "mentor", "mentoring", "manager"])
