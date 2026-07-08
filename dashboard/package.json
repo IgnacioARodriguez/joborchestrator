@@ -2,6 +2,11 @@
   "name": "job-orchestrator-dashboard",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "npm@11.12.1",
+  "engines": {
+    "node": ">=20 <26",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
