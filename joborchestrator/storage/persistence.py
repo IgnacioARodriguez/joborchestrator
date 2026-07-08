@@ -430,6 +430,40 @@ def list_skill_catalog() -> list[dict[str, object]]:
         conn.close()
 
 
+def add_skill_catalog_item(category: str, name: str) -> dict[str, object]:
+    clean_category = category.strip() or "General"
+    clean_name = name.strip()
+    if not clean_name:
+        raise ValueError("Skill name is required.")
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = _conn()
+    try:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort FROM skill_catalog WHERE category = ?",
+            (clean_category,),
+        ).fetchone()
+        sort_order = int(row["next_sort"] if row else 0)
+        cursor = conn.execute(
+            """INSERT OR IGNORE INTO skill_catalog (category, name, sort_order, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (clean_category, clean_name, sort_order, now, now),
+        )
+        conn.commit()
+        existing = conn.execute(
+            """SELECT id, category, name, sort_order
+               FROM skill_catalog
+               WHERE category = ? AND lower(name) = lower(?)
+               ORDER BY id DESC
+               LIMIT 1""",
+            (clean_category, clean_name),
+        ).fetchone()
+        if existing:
+            return dict(existing)
+        return {"id": _last_insert_id(conn, cursor), "category": clean_category, "name": clean_name, "sort_order": sort_order}
+    finally:
+        conn.close()
+
+
 def _seed_skill_catalog(conn: sqlite3.Connection | db_connection.LibsqlConnection) -> None:
     existing = conn.execute("SELECT 1 FROM skill_catalog LIMIT 1").fetchone()
     if existing:

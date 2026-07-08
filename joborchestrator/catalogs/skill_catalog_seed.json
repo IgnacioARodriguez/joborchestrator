@@ -1,0 +1,15 @@
+{
+  "Programming": ["Python", "JavaScript", "TypeScript", "SQL", "Node.js", "Java", "C#", "Go"],
+  "Backend": ["FastAPI", "Django", "Django REST Framework", "Flask", "REST APIs", "GraphQL", "Microservices", "API Integrations"],
+  "Frontend": ["React", "Next.js", "HTML", "CSS", "Tailwind CSS", "Design Systems", "Accessibility"],
+  "Database": ["PostgreSQL", "MongoDB", "MySQL", "Redis", "SQLite", "Aurora", "RDS", "DocumentDB"],
+  "Cloud": ["AWS", "AWS Lambda", "S3", "EC2", "Azure", "GCP", "Serverless"],
+  "DevOps": ["Docker", "Kubernetes", "Terraform", "CI/CD", "GitHub Actions", "Monitoring", "Linux"],
+  "Data & Analytics": ["ETL", "Airflow", "Pandas", "Data Pipelines", "Analytics", "Machine Learning", "LLM", "Reporting", "Dashboards"],
+  "Product & Project": ["Product Discovery", "Stakeholder Management", "Requirements Analysis", "Roadmapping", "Prioritization", "Project Planning"],
+  "Sales & Customer": ["Presales", "Solution Selling", "Discovery Calls", "Demos", "CRM", "Account Management", "Customer Success", "Negotiation"],
+  "Operations": ["Process Improvement", "Documentation", "Vendor Management", "Budgeting", "Forecasting", "Compliance"],
+  "Leadership": ["Mentoring", "Technical Leadership", "Code Review", "Agile", "Cross-functional Collaboration", "Team Management"],
+  "Communication": ["Public Speaking", "Executive Communication", "Training", "Facilitation", "Writing"],
+  "Languages": ["English", "Spanish", "French", "German"]
+}

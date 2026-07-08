@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-DEFAULT_SKILL_CATALOG: dict[str, list[str]] = {
-    "Programming": ["Python", "JavaScript", "TypeScript", "SQL", "Node.js", "Java", "C#", "Go"],
-    "Backend": ["FastAPI", "Django", "Django REST Framework", "Flask", "REST APIs", "GraphQL", "Microservices", "API Integrations"],
-    "Frontend": ["React", "Next.js", "HTML", "CSS", "Tailwind CSS", "Design Systems", "Accessibility"],
-    "Database": ["PostgreSQL", "MongoDB", "MySQL", "Redis", "SQLite", "Aurora", "RDS", "DocumentDB"],
-    "Cloud": ["AWS", "AWS Lambda", "S3", "EC2", "Azure", "GCP", "Serverless"],
-    "DevOps": ["Docker", "Kubernetes", "Terraform", "CI/CD", "GitHub Actions", "Monitoring", "Linux"],
-    "Data": ["ETL", "Airflow", "Pandas", "Data Pipelines", "Analytics", "Machine Learning", "LLM"],
-    "Messaging": ["Celery", "RabbitMQ", "Kafka", "Async Processing", "Task Queues"],
-    "Product": ["Product Discovery", "Stakeholder Management", "Requirements Analysis", "Roadmapping"],
-    "Leadership": ["Mentoring", "Technical Leadership", "Code Review", "Agile", "Cross-functional Collaboration"],
-    "Languages": ["English", "Spanish", "French", "German"],
-}
+import json
+from pathlib import Path
+
+SEED_PATH = Path(__file__).with_name("catalogs") / "skill_catalog_seed.json"
+
+
+def load_default_skill_catalog() -> dict[str, list[str]]:
+    with SEED_PATH.open("r", encoding="utf-8") as file:
+        payload = json.load(file)
+    return {
+        str(category): [str(skill) for skill in skills]
+        for category, skills in payload.items()
+        if isinstance(skills, list)
+    }
+
+
+DEFAULT_SKILL_CATALOG: dict[str, list[str]] = load_default_skill_catalog()

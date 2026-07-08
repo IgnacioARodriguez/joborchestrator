@@ -57,6 +57,13 @@ export const api = {
     return request<{ skills: SkillCatalogItem[] }>("/api/profile/skill-catalog")
   },
 
+  async addSkillCatalogItem(input: { category: string; name: string }) {
+    return request<{ skill: SkillCatalogItem; skills: SkillCatalogItem[] }>("/api/profile/skill-catalog", {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  },
+
   async importProfileCv(file: File) {
     const formData = new FormData()
     formData.append("file", file)

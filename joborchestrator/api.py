@@ -102,6 +102,11 @@ class ProfilePayload(BaseModel):
     profile: dict[str, Any]
 
 
+class SkillCatalogPayload(BaseModel):
+    category: str = "General"
+    name: str
+
+
 def _job_for_materials(job_id: int) -> tuple[dict[str, Any], dict[str, Any] | None]:
     job = db.get_job_posting(job_id)
     if not job:
@@ -145,6 +150,15 @@ def save_profile(payload: ProfilePayload) -> dict[str, Any]:
 @app.get("/api/profile/skill-catalog")
 def get_skill_catalog() -> dict[str, Any]:
     return {"skills": db.list_skill_catalog()}
+
+
+@app.post("/api/profile/skill-catalog")
+def add_skill_catalog_item(payload: SkillCatalogPayload) -> dict[str, Any]:
+    try:
+        skill = db.add_skill_catalog_item(payload.category, payload.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"skill": skill, "skills": db.list_skill_catalog()}
 
 
 @app.post("/api/profile/import-cv")

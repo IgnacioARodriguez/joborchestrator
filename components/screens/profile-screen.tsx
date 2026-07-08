@@ -88,6 +88,8 @@ export function ProfileScreen() {
   const [skillCatalog, setSkillCatalog] = useState<SkillCatalogItem[]>([])
   const [newTargetRole, setNewTargetRole] = useState("")
   const [newSecondaryRole, setNewSecondaryRole] = useState("")
+  const [newCatalogSkill, setNewCatalogSkill] = useState("")
+  const [newCatalogCategory, setNewCatalogCategory] = useState("General")
   const [aliasDrafts, setAliasDrafts] = useState<Record<string, string>>({})
 
   useEffect(() => {
@@ -230,6 +232,22 @@ export function ProfileScreen() {
       ],
     }
     await persistProfile(nextProfile, `${skill.name} added`)
+  }
+
+  async function addCustomCatalogSkill() {
+    const name = newCatalogSkill.trim()
+    const category = newCatalogCategory.trim() || "General"
+    if (!name) return
+    try {
+      const response = await api.addSkillCatalogItem({ category, name })
+      setSkillCatalog(response.skills)
+      setNewCatalogSkill("")
+      await addSkill({ name: response.skill.name, category: response.skill.category })
+    } catch (e) {
+      toast.error("Could not add skill", {
+        description: e instanceof Error ? e.message : "Backend request failed.",
+      })
+    }
   }
 
   async function removeSkill(index: number) {
@@ -620,6 +638,32 @@ export function ProfileScreen() {
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   Add known skills without asking AI to infer them again.
                 </p>
+              </div>
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_auto]">
+                <Input
+                  value={newCatalogSkill}
+                  placeholder="Add skill"
+                  onChange={(event) => setNewCatalogSkill(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void addCustomCatalogSkill()
+                  }}
+                />
+                <Input
+                  value={newCatalogCategory}
+                  placeholder="Category"
+                  onChange={(event) => setNewCatalogCategory(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void addCustomCatalogSkill()
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  disabled={!newCatalogSkill.trim()}
+                  onClick={() => void addCustomCatalogSkill()}
+                >
+                  <Plus data-icon="inline-start" />
+                  Add
+                </Button>
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {groupedCatalog.map(([category, skills]) => (

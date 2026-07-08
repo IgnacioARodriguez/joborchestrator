@@ -5,7 +5,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from joborchestrator.ranking.schemas import JobRequirements
-from joborchestrator.ranking.skill_taxonomy import find_skills
+from joborchestrator.ranking.skill_catalog import find_skills
 from joborchestrator.scanning.normalization import normalize_text
 
 HARD_MARKERS = ["must have", "required", "requirements", "you have", "minimum qualifications", "qualifications"]

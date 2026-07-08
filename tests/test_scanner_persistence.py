@@ -229,6 +229,19 @@ def test_skill_catalog_is_seeded(tmp_path, monkeypatch):
 
     database_skills = [item for item in catalog if item["category"] == "Database"]
     assert {item["name"] for item in database_skills} >= {"PostgreSQL", "MongoDB", "Redis"}
+    sales_skills = [item for item in catalog if item["category"] == "Sales & Customer"]
+    assert {item["name"] for item in sales_skills} >= {"Presales", "Demos", "Negotiation"}
+
+
+def test_skill_catalog_can_be_extended(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+
+    skill = db.add_skill_catalog_item("Legal", "Contract Review")
+
+    assert skill["category"] == "Legal"
+    assert skill["name"] == "Contract Review"
+    assert any(item["name"] == "Contract Review" for item in db.list_skill_catalog())
 
 
 def test_speed_ranking_migration_is_additive_and_backfills(tmp_path, monkeypatch):
