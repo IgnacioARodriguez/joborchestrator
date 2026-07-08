@@ -67,6 +67,7 @@ def build_profile_from_cv_text(
         json={
             "model": model,
             "temperature": 0.1,
+            "response_format": {"type": "json_object"},
             "messages": [
                 {
                     "role": "system",
@@ -180,12 +181,27 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     if not match:
         raise CVProfileError("AI response did not include a JSON object.")
     try:
-        parsed = json.loads(match.group(0))
+        parsed = _loads_lenient_json(match.group(0))
     except json.JSONDecodeError as exc:
         raise CVProfileError(f"AI response JSON was invalid: {exc}") from exc
     if not isinstance(parsed, dict):
         raise CVProfileError("AI response JSON must be an object.")
     return parsed
+
+
+def _loads_lenient_json(raw: str) -> dict[str, Any]:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        repaired = _repair_common_json_issues(raw)
+        return json.loads(repaired)
+
+
+def _repair_common_json_issues(raw: str) -> str:
+    repaired = raw.strip()
+    repaired = re.sub(r",(\s*[}\]])", r"\1", repaired)
+    repaired = re.sub(r"(?<!\\)'([^'\\]*(?:\\.[^'\\]*)*)'", lambda m: json.dumps(m.group(1)), repaired)
+    return repaired
 
 
 def _clean_list(value: Any) -> list[str]:
