@@ -261,7 +261,6 @@ def _ranking_payload(job_id: int, score: int, decision: str) -> dict:
             "application_roi": score,
             "market_alignment": score,
             "risk_penalty": 5,
-            "speed_signal": score,
             "technical_readiness": score,
             "central_requirement_coverage": score,
             "role_confidence": score,

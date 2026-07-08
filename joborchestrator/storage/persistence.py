@@ -11,8 +11,8 @@ import pandas as pd
 
 from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.normalization import normalize_job_identity, normalize_text
-from joborchestrator.ranking.ranker import result_to_dict
 from joborchestrator.ranking.schemas import RankingResult
+from joborchestrator.ranking.serialization import result_to_dict
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.paths import DB_PATH
 from joborchestrator.profile_skill_catalog import DEFAULT_SKILL_CATALOG

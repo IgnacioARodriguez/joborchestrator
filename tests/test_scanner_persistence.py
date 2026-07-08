@@ -3,7 +3,7 @@ import sqlite3
 from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.normalization import compute_content_hash
 from joborchestrator.storage import persistence as db
-from joborchestrator.ranking.ranker import rank_job
+from joborchestrator.ranking.schemas import RankingEvidence, RankingResult, RankingScores
 
 
 def make_job(title: str = "Backend Engineer", description: str = "Build APIs") -> JobPosting:
@@ -21,6 +21,29 @@ def make_job(title: str = "Backend Engineer", description: str = "Build APIs") -
         posted_at_confidence="medium",
         content_hash=content_hash,
         raw_payload={"id": "job-1", "title": title},
+    )
+
+
+def make_ranking(ranking_version: str = "ranking_v1.1.0-nvidia") -> RankingResult:
+    return RankingResult(
+        final_score=81,
+        decision="APPLY_NOW",
+        confidence=0.88,
+        scores=RankingScores(
+            technical_fit=82,
+            seniority_fit=75,
+            role_fit=80,
+            opportunity_quality=70,
+            application_roi=85,
+            market_alignment=70,
+            risk_penalty=2,
+        ),
+        evidence=RankingEvidence(strong_matches=["Python", "FastAPI"]),
+        reasoning_summary="Synthetic LLM ranking for persistence tests.",
+        recommended_application_angle="Emphasize Python APIs.",
+        cv_keywords_to_emphasize=["Python", "FastAPI"],
+        cv_keywords_to_avoid_overclaiming=[],
+        ranking_version=ranking_version,
     )
 
 
@@ -128,7 +151,7 @@ def test_delete_job_rankings_clears_current_rankings(tmp_path, monkeypatch):
     )
     stored = db.get_job_postings(limit=10).iloc[0]
     job_id = int(stored["id"])
-    ranking = rank_job(stored.to_dict())
+    ranking = make_ranking()
     db.save_job_ranking(job_id, ranking)
 
     assert len(db.get_ranked_jobs(ranking_version=ranking.ranking_version)) == 1

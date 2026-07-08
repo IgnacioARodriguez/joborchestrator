@@ -29,7 +29,9 @@ def test_llm_ranking_uses_structured_payload(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
     def fake_call(payload, api_key, model, timeout):
-        assert payload["heuristic_ranking"]
+        assert "heuristic_ranking" not in payload
+        assert payload["profile"]
+        assert payload["extracted_requirements"]
         return {
             "final_score": 78,
             "decision": "APPLY_WITH_TAILORED_CV",

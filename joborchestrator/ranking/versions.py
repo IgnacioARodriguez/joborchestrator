@@ -3,6 +3,7 @@ from __future__ import annotations
 SPEED_RANKING_VERSION = "ranking_v1.1.0-speed"
 NVIDIA_RANKING_VERSION = "ranking_v1.1.0-nvidia"
 LEGACY_HEURISTIC_RANKING_VERSION = "ranking_v1.0.0"
+OPENAI_RANKING_VERSION_BASE = "ranking_v1.1.0-openai"
 
 RANKING_VERSION_PRIORITY = {
     NVIDIA_RANKING_VERSION: 0,

@@ -9,9 +9,9 @@ import httpx
 
 from joborchestrator.ranking.profile import load_candidate_profile
 from joborchestrator.ranking.ranking_rules import OPENAI_INSTRUCTIONS
-from joborchestrator.ranking.ranker import RANKING_VERSION, rank_job, result_to_dict
 from joborchestrator.ranking.requirements_extractor import extract_requirements
 from joborchestrator.ranking.schemas import CandidateProfile, RankingEvidence, RankingResult, RankingScores
+from joborchestrator.ranking.versions import OPENAI_RANKING_VERSION_BASE
 
 DEFAULT_LLM_MODEL = os.getenv("OPENAI_RANKING_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4-mini"
 
@@ -22,7 +22,7 @@ class LLMRankingError(RuntimeError):
 
 def llm_ranking_version(model: str | None = None) -> str:
     safe_model = (model or DEFAULT_LLM_MODEL).replace(":", "_").replace("/", "_")
-    return f"{RANKING_VERSION}+llm:{safe_model}"
+    return f"{OPENAI_RANKING_VERSION_BASE}:{safe_model}"
 
 
 def rank_job_with_llm(
@@ -33,7 +33,6 @@ def rank_job_with_llm(
     timeout: float = 45.0,
 ) -> RankingResult:
     profile = profile or load_candidate_profile()
-    heuristic = rank_job(job, profile)
     key = api_key or os.getenv("OPENAI_API_KEY")
     if not key:
         raise LLMRankingError("OPENAI_API_KEY is required to rank jobs with OpenAI.")
@@ -44,7 +43,6 @@ def rank_job_with_llm(
         "profile": asdict(profile),
         "job": _job_to_dict(job),
         "extracted_requirements": asdict(requirements),
-        "heuristic_ranking": result_to_dict(heuristic),
         "instructions": OPENAI_INSTRUCTIONS,
     }
     response = _call_openai_responses(payload, key, model_name, timeout)
@@ -85,7 +83,7 @@ def build_ranking_response_body(payload: dict[str, Any], model: str) -> dict[str
                 "content": (
                     "You are a strict job-ranking evaluator. Return only the requested structured JSON. "
                     "Score the opportunity for this candidate, not generic attractiveness. "
-                    "Use the heuristic ranking as a baseline, but correct it when the job text supports a better conclusion."
+                    "Use the candidate profile, extracted requirements, and job text as the source of truth."
                 ),
             },
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -126,38 +124,6 @@ def _ranking_from_payload(payload: dict[str, Any], ranking_version: str) -> Rank
         cv_keywords_to_avoid_overclaiming=payload["cv_keywords_to_avoid_overclaiming"],
         ranking_version=ranking_version,
     )
-
-
-def _apply_guards(result: RankingResult, job: Any | None = None) -> RankingResult:
-    flags = [*(result.evidence.dealbreakers or []), *(result.evidence.red_flags or [])]
-    joined = " ".join(flag.lower() for flag in flags)
-    if "unpaid" in joined or "commission-only" in joined or "commission only" in joined:
-        result.decision = "AVOID"
-        result.final_score = min(result.final_score, 25)
-    elif any(term in joined for term in ["relocation", "visa", "manual qa"]):
-        result.decision = _cap_decision(result.decision, "SKIP")
-        result.final_score = min(result.final_score, 45)
-    if result.scores.technical_fit < 40:
-        result.decision = _cap_decision(result.decision, "APPLY_WITH_TAILORED_CV")
-    if result.scores.seniority_fit < 35 or result.scores.role_fit < 35:
-        result.decision = _cap_decision(result.decision, "MAYBE")
-    if job is not None:
-        data = _job_to_dict(job)
-        parse_confidence = data.get("parse_confidence")
-        if parse_confidence is not None:
-            confidence = float(parse_confidence)
-            if confidence < 0.5:
-                result.decision = _cap_decision(result.decision, "MAYBE")
-                result.final_score = min(result.final_score, 64)
-            elif confidence < 0.65:
-                result.decision = _cap_decision(result.decision, "APPLY_WITH_TAILORED_CV")
-                result.final_score = min(result.final_score, 79)
-    return result
-
-
-def _cap_decision(decision: str, max_decision: str) -> str:
-    order = ["AVOID", "SKIP", "MAYBE", "APPLY_WITH_TAILORED_CV", "APPLY_NOW"]
-    return order[min(order.index(decision), order.index(max_decision))]
 
 
 def _job_to_dict(job: Any) -> dict[str, Any]:

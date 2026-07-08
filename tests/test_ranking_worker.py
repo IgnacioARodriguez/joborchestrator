@@ -1,5 +1,5 @@
 from joborchestrator.ranking import worker
-from joborchestrator.ranking.ranker import rank_job
+from joborchestrator.ranking.schemas import RankingEvidence, RankingResult, RankingScores
 from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.normalization import compute_content_hash
 from joborchestrator.storage import persistence as db
@@ -20,6 +20,29 @@ def make_job(title: str = "Backend Engineer", description: str = "Build APIs") -
     )
 
 
+def make_ranking(ranking_version: str) -> RankingResult:
+    return RankingResult(
+        final_score=82,
+        decision="APPLY_NOW",
+        confidence=0.9,
+        scores=RankingScores(
+            technical_fit=82,
+            seniority_fit=80,
+            role_fit=84,
+            opportunity_quality=75,
+            application_roi=88,
+            market_alignment=70,
+            risk_penalty=2,
+        ),
+        evidence=RankingEvidence(strong_matches=["APIs"]),
+        reasoning_summary="Synthetic LLM ranking for worker persistence.",
+        recommended_application_angle="Emphasize API delivery.",
+        cv_keywords_to_emphasize=["APIs"],
+        cv_keywords_to_avoid_overclaiming=[],
+        ranking_version=ranking_version,
+    )
+
+
 def test_worker_processes_queued_nvidia_job(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()
@@ -37,8 +60,7 @@ def test_worker_processes_queued_nvidia_job(tmp_path, monkeypatch):
 
     def fake_rank_jobs_with_nvidia(jobs, **kwargs):
         for _, row in jobs.iterrows():
-            ranking = rank_job(row.to_dict())
-            ranking.ranking_version = kwargs["ranking_version"]
+            ranking = make_ranking(kwargs["ranking_version"])
             db.save_job_ranking(int(row["id"]), ranking)
         return {"processed": len(jobs), "saved": len(jobs), "failed": 0}
 

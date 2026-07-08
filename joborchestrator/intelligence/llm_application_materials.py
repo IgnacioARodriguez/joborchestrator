@@ -10,7 +10,7 @@ import httpx
 
 from joborchestrator.intelligence.llm_costs import estimate_application_kit_tokens, estimate_cost
 from joborchestrator.ranking.profile import load_candidate_profile
-from joborchestrator.ranking.ranker import result_to_dict
+from joborchestrator.ranking.serialization import result_to_dict
 
 DEFAULT_MATERIALS_MODEL = os.getenv("OPENAI_MATERIALS_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4-mini"
 
