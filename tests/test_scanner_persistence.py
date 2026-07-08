@@ -198,6 +198,16 @@ def test_operation_run_lifecycle(tmp_path, monkeypatch):
     assert completed["output_json"] == {"profile_saved": True}
 
 
+def test_skill_catalog_is_seeded(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+
+    catalog = db.list_skill_catalog()
+
+    database_skills = [item for item in catalog if item["category"] == "Database"]
+    assert {item["name"] for item in database_skills} >= {"PostgreSQL", "MongoDB", "Redis"}
+
+
 def test_speed_ranking_migration_is_additive_and_backfills(tmp_path, monkeypatch):
     db_path = tmp_path / "legacy.db"
     conn = sqlite3.connect(db_path)

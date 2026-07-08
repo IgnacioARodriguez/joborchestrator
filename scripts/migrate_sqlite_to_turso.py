@@ -22,6 +22,7 @@ TABLES = [
     "ranking_job_items",
     "app_settings",
     "operation_runs",
+    "skill_catalog",
 ]
 
 
@@ -49,7 +50,14 @@ def main() -> int:
             target.commit()
 
         copied = {}
+        source_tables = {
+            row["name"]
+            for row in source.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
         for table in TABLES:
+            if table not in source_tables:
+                copied[table] = "missing"
+                continue
             rows = source.execute(f"SELECT * FROM {table}").fetchall()
             if not rows:
                 copied[table] = 0

@@ -133,6 +133,13 @@ export interface ProfileSkill {
   evidence: string
 }
 
+export interface SkillCatalogItem {
+  id: number
+  category: string
+  name: string
+  sort_order: number
+}
+
 export interface CandidateProfile {
   schema_version: number
   headline: string

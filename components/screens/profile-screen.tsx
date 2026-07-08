@@ -4,9 +4,11 @@ import { useEffect, useMemo, useState } from "react"
 import {
   BriefcaseBusiness,
   LoaderCircle,
+  Plus,
   Save,
   Sparkles,
   Upload,
+  X,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
@@ -28,7 +30,13 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
-import type { CandidateProfile, OperationRun, ProfileSkill, SkillLevel } from "@/lib/types"
+import type {
+  CandidateProfile,
+  OperationRun,
+  ProfileSkill,
+  SkillCatalogItem,
+  SkillLevel,
+} from "@/lib/types"
 
 const EMPTY_PROFILE: CandidateProfile = {
   schema_version: 1,
@@ -67,11 +75,16 @@ function LoadingIcon() {
   return <LoaderCircle className="size-4 animate-spin" data-icon="inline-start" />
 }
 
+function skillKey(name: string) {
+  return name.trim().toLowerCase()
+}
+
 export function ProfileScreen() {
   const [profile, setProfile] = useState<CandidateProfile>(EMPTY_PROFILE)
   const [cvFile, setCvFile] = useState<File | null>(null)
   const [busy, setBusy] = useState<"load" | "cv" | "save" | null>("load")
   const [operation, setOperation] = useState<OperationRun | null>(null)
+  const [skillCatalog, setSkillCatalog] = useState<SkillCatalogItem[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -79,6 +92,8 @@ export function ProfileScreen() {
       try {
         const response = await api.getProfile()
         if (!cancelled && response.profile) setProfile(response.profile)
+        const catalog = await api.getSkillCatalog()
+        if (!cancelled) setSkillCatalog(catalog.skills)
         const latest = await api.getLatestOperation("cv_profile_import")
         if (
           !cancelled &&
@@ -151,6 +166,16 @@ export function ProfileScreen() {
     return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))
   }, [profile.skills])
 
+  const groupedCatalog = useMemo(() => {
+    const selected = new Set(profile.skills.map((skill) => skillKey(skill.name)))
+    const groups = new Map<string, SkillCatalogItem[]>()
+    for (const skill of skillCatalog) {
+      if (selected.has(skillKey(skill.name))) continue
+      groups.set(skill.category, [...(groups.get(skill.category) ?? []), skill])
+    }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))
+  }, [profile.skills, skillCatalog])
+
   function patch(update: Partial<CandidateProfile>) {
     setProfile((current) => ({ ...current, ...update }))
   }
@@ -161,6 +186,32 @@ export function ProfileScreen() {
       skills: current.skills.map((skill, i) =>
         i === index ? { ...skill, ...update } : skill,
       ),
+    }))
+  }
+
+  function addSkill(skill: Pick<ProfileSkill, "name" | "category">, level: SkillLevel = "medium") {
+    const key = skillKey(skill.name)
+    setProfile((current) => {
+      if (current.skills.some((item) => skillKey(item.name) === key)) return current
+      return {
+        ...current,
+        skills: [
+          ...current.skills,
+          {
+            name: skill.name,
+            category: skill.category || "General",
+            level,
+            evidence: "Added manually.",
+          },
+        ],
+      }
+    })
+  }
+
+  function removeSkill(index: number) {
+    setProfile((current) => ({
+      ...current,
+      skills: current.skills.filter((_, i) => i !== index),
     }))
   }
 
@@ -358,7 +409,7 @@ export function ProfileScreen() {
         <CardHeader>
           <CardTitle className="text-sm">Skills</CardTitle>
           <CardDescription className="text-xs">
-            Edit each detected skill level. Strong skills carry the most ranking weight.
+            Edit each detected skill level. Add missing skills from the catalog.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -376,7 +427,7 @@ export function ProfileScreen() {
                     return (
                       <div
                         key={`${skill.name}-${index}`}
-                        className="grid grid-cols-1 gap-2 rounded-lg border border-border p-2 text-xs md:grid-cols-[1fr_8rem]"
+                        className="grid grid-cols-1 gap-2 rounded-lg border border-border p-2 text-xs md:grid-cols-[1fr_8rem_2rem]"
                       >
                         <div className="min-w-0">
                           <p className="font-medium text-foreground">{skill.name}</p>
@@ -405,12 +456,50 @@ export function ProfileScreen() {
                             )}
                           </SelectContent>
                         </Select>
+                        <Button
+                          aria-label={`Remove ${skill.name}`}
+                          size="icon-sm"
+                          variant="ghost"
+                          onClick={() => removeSkill(index)}
+                        >
+                          <X className="size-3.5" />
+                        </Button>
                       </div>
                     )
                   })}
                 </div>
               </section>
             ))
+          )}
+          {groupedCatalog.length > 0 && (
+            <section className="flex flex-col gap-3 border-t pt-4">
+              <div>
+                <h3 className="text-xs font-semibold text-foreground">Skill suggestions</h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Add known skills without asking AI to infer them again.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {groupedCatalog.map(([category, skills]) => (
+                  <div key={category} className="flex flex-col gap-2 rounded-lg border border-border p-3">
+                    <p className="text-xs font-semibold text-foreground">{category}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {skills.map((skill) => (
+                        <Button
+                          key={skill.id}
+                          size="xs"
+                          variant="outline"
+                          onClick={() => addSkill(skill)}
+                        >
+                          <Plus className="size-3" data-icon="inline-start" />
+                          {skill.name}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
         </CardContent>
       </Card>

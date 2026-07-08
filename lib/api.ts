@@ -7,6 +7,7 @@ import type {
   PipelineStatus,
   RankingJobRecord,
   ScanResult,
+  SkillCatalogItem,
 } from "./types"
 
 const API_BASE =
@@ -53,6 +54,10 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ profile }),
     })
+  },
+
+  async getSkillCatalog() {
+    return request<{ skills: SkillCatalogItem[] }>("/api/profile/skill-catalog")
   },
 
   async importProfileCv(file: File) {

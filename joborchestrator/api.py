@@ -142,6 +142,11 @@ def save_profile(payload: ProfilePayload) -> dict[str, Any]:
     return {"profile": profile}
 
 
+@app.get("/api/profile/skill-catalog")
+def get_skill_catalog() -> dict[str, Any]:
+    return {"skills": db.list_skill_catalog()}
+
+
 @app.post("/api/profile/import-cv")
 async def import_profile_cv(file: UploadFile = File(...)) -> dict[str, Any]:
     filename = file.filename or "cv"

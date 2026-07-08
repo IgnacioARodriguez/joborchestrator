@@ -15,6 +15,7 @@ from joborchestrator.ranking.ranker import result_to_dict
 from joborchestrator.ranking.schemas import RankingResult
 from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
 from joborchestrator.paths import DB_PATH
+from joborchestrator.profile_skill_catalog import DEFAULT_SKILL_CATALOG
 from joborchestrator.storage import db_connection
 
 BACKUP_DIR_NAME = "backups"
@@ -207,6 +208,18 @@ CREATE TABLE IF NOT EXISTS operation_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_operation_runs_status ON operation_runs(status, created_at);
+
+CREATE TABLE IF NOT EXISTS skill_catalog (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL,
+    name TEXT NOT NULL,
+    sort_order INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(category, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_skill_catalog_category ON skill_catalog(category, sort_order, name);
 """
 
 
@@ -221,6 +234,7 @@ def _conn():
         if _scanner_migration_needed(conn):
             backup_database("before_speed_ranking_migration")
         _ensure_scanner_columns(conn)
+        _seed_skill_catalog(conn)
         _backfill_speed_ranking_columns(conn)
         conn.commit()
         _SCHEMA_READY = True
@@ -401,6 +415,33 @@ def get_candidate_profile_payload() -> dict | None:
 
 def save_candidate_profile_payload(profile: dict) -> None:
     set_app_setting("candidate_profile", profile)
+
+
+def list_skill_catalog() -> list[dict[str, object]]:
+    conn = _conn()
+    try:
+        rows = conn.execute(
+            """SELECT id, category, name, sort_order
+               FROM skill_catalog
+               ORDER BY category COLLATE NOCASE ASC, sort_order ASC, name COLLATE NOCASE ASC"""
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def _seed_skill_catalog(conn: sqlite3.Connection | db_connection.LibsqlConnection) -> None:
+    existing = conn.execute("SELECT 1 FROM skill_catalog LIMIT 1").fetchone()
+    if existing:
+        return
+    now = datetime.now().isoformat(timespec="seconds")
+    for category, skills in DEFAULT_SKILL_CATALOG.items():
+        for index, skill in enumerate(skills):
+            conn.execute(
+                """INSERT OR IGNORE INTO skill_catalog (category, name, sort_order, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (category, skill, index, now, now),
+            )
 
 
 def create_operation(operation_type: str, input_payload: dict, progress_message: str | None = None) -> int:
