@@ -99,6 +99,35 @@ def test_rank_jobs_with_nvidia_async_runs_batches_concurrently(monkeypatch):
     assert set(saved) == {1, 2, 3}
 
 
+def test_rank_jobs_with_nvidia_reports_progress(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {"id": 1, "title": "Backend Engineer", "company": "Acme", "description_text": "Python"},
+            {"id": 2, "title": "API Engineer", "company": "Acme", "description_text": "FastAPI"},
+        ]
+    )
+    progress_events = []
+
+    async def fake_call(batch, **kwargs):
+        await asyncio.sleep(0)
+        return {"rankings": [_ranking_payload(int(row["id"]), 80, "APPLY_NOW") for row in batch]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: 1)
+
+    summary = rank_jobs_with_nvidia(
+        jobs,
+        request_batch_size=1,
+        max_concurrency=2,
+        progress_callback=lambda done, total, current: progress_events.append((done, total, current["saved"])),
+    )
+
+    assert summary["saved"] == 2
+    assert progress_events[-1] == (2, 2, 2)
+    assert len(progress_events) == 2
+
+
 def test_call_nvidia_batch_uses_chat_completions(monkeypatch):
     calls = []
 

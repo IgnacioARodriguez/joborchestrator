@@ -1187,6 +1187,41 @@ with tab5:
                 if jobs_for_nvidia.empty:
                     st.info("No jobs to rank in this NVIDIA chunk.")
                 else:
+                    total_jobs_to_rank = len(jobs_for_nvidia)
+                    total_batches = max(
+                        1,
+                        (total_jobs_to_rank + int(nvidia_request_batch_size) - 1)
+                        // int(nvidia_request_batch_size),
+                    )
+                    progress_bar = st.progress(0, text="Starting NVIDIA ranking...")
+                    progress_status = st.empty()
+                    progress_metrics = st.empty()
+
+                    def update_nvidia_progress(done_batches: int, batch_count: int, progress_summary: dict[str, int]) -> None:
+                        processed = int(progress_summary.get("processed", 0))
+                        saved = int(progress_summary.get("saved", 0))
+                        failed = int(progress_summary.get("failed", 0))
+                        progress = min(1.0, done_batches / max(1, batch_count))
+                        progress_bar.progress(
+                            progress,
+                            text=(
+                                f"NVIDIA ranking {done_batches}/{batch_count} batches · "
+                                f"{processed}/{total_jobs_to_rank} jobs processed"
+                            ),
+                        )
+                        progress_status.info(
+                            f"Running with {int(nvidia_concurrency)} concurrent requests, "
+                            f"{int(nvidia_request_batch_size)} jobs/request."
+                        )
+                        progress_metrics.markdown(
+                            f"**Saved:** {saved} · **Failed:** {failed} · "
+                            f"**APPLY_NOW:** {progress_summary.get('APPLY_NOW', 0)} · "
+                            f"**TAILORED:** {progress_summary.get('APPLY_WITH_TAILORED_CV', 0)} · "
+                            f"**MAYBE:** {progress_summary.get('MAYBE', 0)} · "
+                            f"**SKIP:** {progress_summary.get('SKIP', 0)} · "
+                            f"**AVOID:** {progress_summary.get('AVOID', 0)}"
+                        )
+
                     with st.spinner("Ranking chunk with NVIDIA..."):
                         summary = rank_jobs_with_nvidia(
                             jobs_for_nvidia,
@@ -1194,7 +1229,9 @@ with tab5:
                             request_batch_size=int(nvidia_request_batch_size),
                             max_concurrency=int(nvidia_concurrency),
                             ranking_version=target_ranking_version,
+                            progress_callback=update_nvidia_progress,
                         )
+                    progress_bar.progress(1.0, text=f"NVIDIA ranking complete · {total_batches}/{total_batches} batches")
                     st.success(
                         "NVIDIA ranking saved: "
                         + " · ".join(f"{key}={value}" for key, value in summary.items())

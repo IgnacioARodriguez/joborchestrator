@@ -5,7 +5,7 @@ import os
 import re
 import asyncio
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 import pandas as pd
@@ -41,6 +41,7 @@ def rank_jobs_with_nvidia(
     api_key: str | None = None,
     base_url: str = NVIDIA_BASE_URL,
     timeout: float = 90.0,
+    progress_callback: Callable[[int, int, dict[str, int]], None] | None = None,
 ) -> dict[str, int]:
     return asyncio.run(
         rank_jobs_with_nvidia_async(
@@ -52,6 +53,7 @@ def rank_jobs_with_nvidia(
             api_key=api_key,
             base_url=base_url,
             timeout=timeout,
+            progress_callback=progress_callback,
         )
     )
 
@@ -66,6 +68,7 @@ async def rank_jobs_with_nvidia_async(
     api_key: str | None = None,
     base_url: str = NVIDIA_BASE_URL,
     timeout: float = 90.0,
+    progress_callback: Callable[[int, int, dict[str, int]], None] | None = None,
 ) -> dict[str, int]:
     key = api_key or nvidia_api_key()
     if not key:
@@ -88,7 +91,7 @@ async def rank_jobs_with_nvidia_async(
 
     async with httpx.AsyncClient(timeout=timeout_config) as client:
         tasks = [
-            _rank_nvidia_batch_async(
+            _rank_nvidia_batch_with_context_async(
                 batch,
                 model=model,
                 api_key=key,
@@ -99,38 +102,13 @@ async def rank_jobs_with_nvidia_async(
             )
             for batch in batches
         ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    for batch, result in zip(batches, results, strict=True):
-        summary["processed"] += len(batch)
-        if isinstance(result, Exception):
-            summary["failed"] += len(batch)
-            continue
-        try:
-            rankings = result.get("rankings")
-            if not isinstance(rankings, list):
-                raise NvidiaRankingError("NVIDIA response did not include `rankings` list.")
-            by_id = {int(item["job_id"]): item for item in rankings if isinstance(item, dict) and item.get("job_id")}
-            expected_ids = [int(row.get("id") or row.get("job_id")) for row in batch]
-            missing = sorted(set(expected_ids) - set(by_id))
-            if missing:
-                raise NvidiaRankingError(f"NVIDIA response is missing job_id: {missing}")
-
-            for row in batch:
-                job_id = int(row.get("id") or row.get("job_id"))
-                ranking = _ranking_from_payload(by_id[job_id], ranking_version)
-                ranking.evidence.requires_llm_review = False
-                reasons = list(ranking.evidence.llm_escalation_reasons or [])
-                if "nvidia_ranking_applied" not in reasons:
-                    reasons.append("nvidia_ranking_applied")
-                ranking.evidence.llm_escalation_reasons = reasons
-                ranking = _apply_guards(ranking, row)
-                ranking.ranking_version = ranking_version
-                db.save_job_ranking(job_id, ranking)
-                summary["saved"] += 1
-                summary[ranking.decision] += 1
-        except (KeyError, ValueError, json.JSONDecodeError, httpx.HTTPError, NvidiaRankingError):
-            summary["failed"] += len(batch)
+        completed_batches = 0
+        for task in asyncio.as_completed(tasks):
+            batch, result = await task
+            completed_batches += 1
+            _apply_nvidia_batch_result(batch, result, ranking_version, summary)
+            if progress_callback:
+                progress_callback(completed_batches, len(batches), dict(summary))
     return summary
 
 
@@ -198,6 +176,31 @@ async def _rank_nvidia_batch_async(
         )
 
 
+async def _rank_nvidia_batch_with_context_async(
+    jobs: list[dict[str, Any]],
+    *,
+    model: str,
+    api_key: str,
+    base_url: str,
+    timeout: float,
+    semaphore: asyncio.Semaphore,
+    client: httpx.AsyncClient,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | Exception]:
+    try:
+        result = await _rank_nvidia_batch_async(
+            jobs,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            semaphore=semaphore,
+            client=client,
+        )
+        return jobs, result
+    except Exception as exc:  # noqa: BLE001 - batch-level failures are summarized, not raised.
+        return jobs, exc
+
+
 async def _call_nvidia_batch_async(
     jobs: list[dict[str, Any]],
     *,
@@ -218,6 +221,43 @@ async def _call_nvidia_batch_async(
     response.raise_for_status()
     content = response.json()["choices"][0]["message"]["content"]
     return _extract_json_object(content)
+
+
+def _apply_nvidia_batch_result(
+    batch: list[dict[str, Any]],
+    result: dict[str, Any] | Exception,
+    ranking_version: str,
+    summary: dict[str, int],
+) -> None:
+    summary["processed"] += len(batch)
+    if isinstance(result, Exception):
+        summary["failed"] += len(batch)
+        return
+    try:
+        rankings = result.get("rankings")
+        if not isinstance(rankings, list):
+            raise NvidiaRankingError("NVIDIA response did not include `rankings` list.")
+        by_id = {int(item["job_id"]): item for item in rankings if isinstance(item, dict) and item.get("job_id")}
+        expected_ids = [int(row.get("id") or row.get("job_id")) for row in batch]
+        missing = sorted(set(expected_ids) - set(by_id))
+        if missing:
+            raise NvidiaRankingError(f"NVIDIA response is missing job_id: {missing}")
+
+        for row in batch:
+            job_id = int(row.get("id") or row.get("job_id"))
+            ranking = _ranking_from_payload(by_id[job_id], ranking_version)
+            ranking.evidence.requires_llm_review = False
+            reasons = list(ranking.evidence.llm_escalation_reasons or [])
+            if "nvidia_ranking_applied" not in reasons:
+                reasons.append("nvidia_ranking_applied")
+            ranking.evidence.llm_escalation_reasons = reasons
+            ranking = _apply_guards(ranking, row)
+            ranking.ranking_version = ranking_version
+            db.save_job_ranking(job_id, ranking)
+            summary["saved"] += 1
+            summary[ranking.decision] += 1
+    except (KeyError, ValueError, json.JSONDecodeError, httpx.HTTPError, NvidiaRankingError):
+        summary["failed"] += len(batch)
 
 
 def _nvidia_chat_body(payload: dict[str, Any], model: str) -> dict[str, Any]:
