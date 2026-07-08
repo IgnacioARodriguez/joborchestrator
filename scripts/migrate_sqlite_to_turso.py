@@ -21,6 +21,7 @@ TABLES = [
     "ranking_jobs",
     "ranking_job_items",
     "app_settings",
+    "operation_runs",
 ]
 
 

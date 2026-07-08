@@ -2,7 +2,7 @@
 
 This repository is prepared for Vercel/v0 deployment with:
 
-- Next.js dashboard built from `dashboard/`
+- Next.js dashboard built from the repository root
 - FastAPI entrypoint at `api/index.py`
 - Same-origin API calls in production
 
@@ -11,12 +11,15 @@ This repository is prepared for Vercel/v0 deployment with:
 - Dashboard hosting.
 - FastAPI serverless endpoints.
 - ATS/search HTTP scans that finish inside function limits.
-- Ranking/material generation endpoints if the required API keys are configured.
+- Ranking/material generation endpoints if the required API keys are configured
+  and the operation finishes inside function limits.
+- Queuing CV profile imports into Turso.
 
 ## What Does Not Fully Work As-Is
 
 - Persistent local SQLite: Vercel Functions do not provide durable local disk.
 - Long-running background workers: serverless functions are request-scoped.
+- CV profile extraction should be processed by the local worker on your PC.
 - LinkedIn Playwright scraper: it needs a local browser/session and should remain
   a local/manual ingestion step.
 
@@ -42,15 +45,15 @@ Set these environment variables in Vercel:
 TURSO_DATABASE_URL=libsql://...
 TURSO_AUTH_TOKEN=...
 NVIDIA_API_KEY=...
-CANDIDATE_PROFILE_YAML=<contents of candidate_profile.yml>
 ```
 
 Local development still uses `job_tracker.db` unless those Turso variables are
 present.
 
-`candidate_profile.yml` is intentionally ignored by Git. In production, paste
-the YAML contents into `CANDIDATE_PROFILE_YAML` so NVIDIA ranking receives the
-same candidate profile used locally.
+The candidate profile is stored in the `app_settings` table in Turso. Upload a
+CV in the dashboard, keep `run_worker.bat` running locally, and the worker will
+read queued operations from Turso, call NVIDIA, save the profile, and write logs
+to `logs/worker.log`.
 
 The scraper can remain local and push imported jobs into the remote database via
 the API once the Vercel deployment has the Turso variables configured.

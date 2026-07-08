@@ -42,6 +42,11 @@ class LibsqlCursor:
     def rowcount(self) -> int:
         return int(getattr(self._cursor, "rowcount", -1))
 
+    @property
+    def lastrowid(self) -> int | None:
+        value = getattr(self._cursor, "lastrowid", None)
+        return int(value) if value is not None else None
+
     def _wrap(self, row: Iterable[Any]) -> NamedRow:
         columns = [column[0] for column in self.description or []]
         return NamedRow(row, columns)

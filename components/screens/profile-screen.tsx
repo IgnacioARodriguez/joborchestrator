@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
-import type { CandidateProfile, ProfileSkill, SkillLevel } from "@/lib/types"
+import type { CandidateProfile, OperationRun, ProfileSkill, SkillLevel } from "@/lib/types"
 
 const EMPTY_PROFILE: CandidateProfile = {
   schema_version: 1,
@@ -71,6 +71,7 @@ export function ProfileScreen() {
   const [profile, setProfile] = useState<CandidateProfile>(EMPTY_PROFILE)
   const [cvFile, setCvFile] = useState<File | null>(null)
   const [busy, setBusy] = useState<"load" | "cv" | "save" | null>("load")
+  const [operation, setOperation] = useState<OperationRun | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -78,6 +79,14 @@ export function ProfileScreen() {
       try {
         const response = await api.getProfile()
         if (!cancelled && response.profile) setProfile(response.profile)
+        const latest = await api.getLatestOperation("cv_profile_import")
+        if (
+          !cancelled &&
+          latest.operation &&
+          ["queued", "running"].includes(latest.operation.status)
+        ) {
+          setOperation(latest.operation)
+        }
       } catch (e) {
         toast.error("Could not load profile", {
           description: e instanceof Error ? e.message : "Backend request failed.",
@@ -91,6 +100,47 @@ export function ProfileScreen() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!operation || !["queued", "running"].includes(operation.status)) return
+    let stopped = false
+    let timer: number | undefined
+    const poll = async () => {
+      try {
+        const response = await api.getOperation(operation.id)
+        if (stopped) return
+        setOperation(response.operation)
+        if (response.operation.status === "completed") {
+          const profileResponse = await api.getProfile()
+          if (!stopped && profileResponse.profile) {
+            setProfile(profileResponse.profile)
+            toast.success("Profile ready", {
+              description: "The local worker finished reading your CV.",
+            })
+          }
+          return
+        }
+        if (response.operation.status === "failed") {
+          toast.error("CV analysis failed", {
+            description: response.operation.error ?? "Check local worker logs.",
+          })
+          return
+        }
+        timer = window.setTimeout(poll, 2500)
+      } catch (e) {
+        if (!stopped) {
+          toast.error("Could not check operation", {
+            description: e instanceof Error ? e.message : "Backend request failed.",
+          })
+        }
+      }
+    }
+    timer = window.setTimeout(poll, 1000)
+    return () => {
+      stopped = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [operation])
 
   const groupedSkills = useMemo(() => {
     const groups = new Map<string, ProfileSkill[]>()
@@ -119,10 +169,11 @@ export function ProfileScreen() {
     setBusy("cv")
     try {
       const response = await api.importProfileCv(cvFile)
-      setProfile(response.profile)
+      const op = await api.getOperation(response.operation_id)
+      setOperation(op.operation)
       setCvFile(null)
-      toast.success("CV analyzed", {
-        description: `${response.profile.skills.length} skills detected.`,
+      toast.success("CV queued", {
+        description: "Keep the local worker running on your PC.",
       })
     } catch (e) {
       toast.error("Could not analyze CV", {
@@ -161,15 +212,44 @@ export function ProfileScreen() {
             <div>
               <p className="text-sm font-medium text-foreground">
                 {busy === "cv"
-                  ? "Reading your CV with AI"
+                  ? "Queueing CV analysis"
                   : busy === "save"
                     ? "Saving profile"
                     : "Loading profile"}
               </p>
               <p className="text-xs text-muted-foreground">
                 {busy === "cv"
-                  ? "Extracting roles, skills, categories, and evidence."
+                  ? "Preparing your CV text for the local worker."
                   : "Keeping your ranking profile in sync."}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {operation && ["queued", "running", "failed"].includes(operation.status) && (
+        <Card className="border-primary/20 bg-primary/5 xl:col-span-2">
+          <CardContent className="flex items-center gap-3 p-4">
+            <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              {operation.status === "failed" ? (
+                <span className="text-sm font-semibold">!</span>
+              ) : (
+                <LoaderCircle className="size-5 animate-spin" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-foreground">
+                {operation.status === "queued"
+                  ? "Waiting for local worker"
+                  : operation.status === "running"
+                    ? "Local worker is analyzing your CV"
+                    : "CV analysis failed"}
+              </p>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {operation.status === "failed"
+                  ? operation.error || "Check logs/worker.log on your PC."
+                  : operation.progress_message ||
+                    "Start run_worker.bat on your PC to process this task."}
               </p>
             </div>
           </CardContent>
@@ -183,7 +263,7 @@ export function ProfileScreen() {
             CV Loader
           </CardTitle>
           <CardDescription className="text-xs">
-            Upload a CV and let AI build an editable ranking profile.
+            Upload a CV, then the local worker reads it with AI and saves an editable profile.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -194,7 +274,7 @@ export function ProfileScreen() {
           />
           <Button disabled={!cvFile || busy !== null} onClick={() => void importCv()}>
             {busy === "cv" ? <LoadingIcon /> : <Sparkles data-icon="inline-start" />}
-            {busy === "cv" ? "Analyzing CV" : "Analyze CV"}
+            {busy === "cv" ? "Queueing CV" : "Analyze CV"}
           </Button>
         </CardContent>
       </Card>

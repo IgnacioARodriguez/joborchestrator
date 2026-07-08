@@ -44,6 +44,7 @@ Thumbs.db
 # Local frontend dev logs
 dashboard-dev.*.log
 api-dev.*.log
+logs/
 
 # v0 sandbox internal files
 __v0_runtime_loader.js

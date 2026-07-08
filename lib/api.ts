@@ -3,6 +3,7 @@ import type {
   CandidateProfile,
   JobPosting,
   JobsMeta,
+  OperationRun,
   PipelineStatus,
   RankingJobRecord,
   ScanResult,
@@ -57,10 +58,19 @@ export const api = {
   async importProfileCv(file: File) {
     const formData = new FormData()
     formData.append("file", file)
-    return request<{ profile: CandidateProfile }>("/api/profile/import-cv", {
+    return request<{ operation_id: number; status: string }>("/api/profile/import-cv", {
       method: "POST",
       body: formData,
     })
+  },
+
+  async getOperation(id: number) {
+    return request<{ operation: OperationRun }>(`/api/operations/${id}`)
+  },
+
+  async getLatestOperation(type?: string) {
+    const query = type ? `?type=${encodeURIComponent(type)}` : ""
+    return request<{ operation: OperationRun | null }>(`/api/operations/latest${query}`)
   },
 
   async setPipelineStatus(id: string, status: PipelineStatus) {

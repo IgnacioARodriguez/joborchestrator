@@ -5,8 +5,10 @@ opportunities.
 
 The active product is:
 
-- **FastAPI backend** over the existing Python core and local SQLite database.
-- **Next.js dashboard** as the main user interface.
+- **FastAPI backend** over the existing Python core and SQLite/Turso storage.
+- **Next.js dashboard** as the main user interface, built from the repository root.
+- **Local Python worker** for long-running AI tasks that should not run inside
+  Vercel serverless time limits.
 - **Python core** for LinkedIn import, ATS scans, search API scans, NVIDIA LLM
   ranking, and application material generation.
 
@@ -17,7 +19,6 @@ The old Streamlit app has been removed from the active codebase.
 ```bash
 pip install -r requirements.txt
 playwright install chromium
-cd dashboard
 npm install
 ```
 
@@ -38,8 +39,14 @@ python -m uvicorn joborchestrator.api:app --host 127.0.0.1 --port 8000 --reload
 Start the dashboard:
 
 ```bash
-cd dashboard
 npm run dev
+```
+
+Start the local worker when you want to process queued long-running tasks such
+as CV profile extraction:
+
+```bash
+run_worker.bat
 ```
 
 Open:
@@ -57,8 +64,9 @@ The repo includes a Vercel entrypoint:
 
 See [VERCEL_DEPLOYMENT.md](./VERCEL_DEPLOYMENT.md) for limits and the production storage path. Short version:
 
-- Vercel/v0 can host the dashboard and FastAPI functions.
+- Vercel/v0 can host the dashboard and short FastAPI functions.
 - Local SQLite is not durable on Vercel.
+- Long AI tasks are queued in Turso and processed by `run_worker.bat` on your PC.
 - The LinkedIn Playwright scraper should remain local/manual or move to a
   separate worker.
 - For real remote use, configure Turso/libSQL via `TURSO_DATABASE_URL` and
@@ -68,9 +76,13 @@ See [VERCEL_DEPLOYMENT.md](./VERCEL_DEPLOYMENT.md) for limits and the production
 
 ```text
 joborchestrator/
-|-- dashboard/                 # Next.js UI
+|-- app/                       # Active Next.js app routes
+|-- components/                # Active dashboard components
+|-- lib/                       # Active dashboard API client and types
+|-- dashboard/                 # Legacy v0 duplicate, not used by root build
 |-- joborchestrator/
 |   |-- api.py                 # FastAPI adapter for the dashboard
+|   |-- worker.py              # Local operation worker
 |   |-- scanning/              # LinkedIn importer, ATS providers, search APIs
 |   |-- ranking/               # Ranking models, rankers, NVIDIA worker
 |   |-- intelligence/          # Application materials and supporting signals
@@ -78,10 +90,10 @@ joborchestrator/
 |   |-- batching.py            # LinkedIn Excel filtering utilities
 |   `-- paths.py               # Shared local paths
 |-- tests/                     # Python tests
-|-- candidate_profile.yml      # Local candidate ranking profile, ignored by Git
 |-- job_tracker.db             # Local SQLite database, ignored by Git
 |-- requirements.txt
-`-- run_api.bat
+|-- run_api.bat
+`-- run_worker.bat
 ```
 
 ## Dashboard Capabilities
@@ -106,10 +118,16 @@ python -m pytest
 Dashboard checks:
 
 ```bash
-cd dashboard
 npm run lint
 npm run typecheck
 npm run build
+```
+
+Local operation worker:
+
+```bash
+python -m joborchestrator.worker --once
+python -m joborchestrator.worker
 ```
 
 LinkedIn scraper:
@@ -132,4 +150,4 @@ Ignored local/runtime files include:
 - `job_tracker.db`
 - `data/*` except `data/.gitkeep`
 - Python caches and test caches
-- local dev logs
+- local dev and worker logs

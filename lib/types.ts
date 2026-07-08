@@ -149,6 +149,24 @@ export interface CandidateProfile {
   suggested_roles_reasoning: string
 }
 
+export type OperationStatus = "queued" | "running" | "completed" | "failed" | "cancelled"
+
+export interface OperationRun {
+  id: number
+  type: string
+  status: OperationStatus
+  progress_message?: string | null
+  input_json?: Record<string, unknown> | null
+  output_json?: Record<string, unknown> | null
+  error?: string | null
+  attempts: number
+  claimed_by?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
 export const DECISION_ORDER: Decision[] = [
   "APPLY_NOW",
   "APPLY_WITH_TAILORED_CV",

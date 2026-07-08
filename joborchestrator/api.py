@@ -19,7 +19,6 @@ from joborchestrator.batching import MIN_DESCRIPCION_LEN_DEFAULT, filtrar_oferta
 from joborchestrator.intelligence.application_materials import build_application_kit
 from joborchestrator.intelligence.cv_profile_extractor import (
     CVProfileError,
-    build_profile_from_cv_text,
     extract_text_from_cv,
     normalize_profile_payload,
 )
@@ -151,11 +150,27 @@ async def import_profile_cv(file: UploadFile = File(...)) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Uploaded CV is empty.")
     try:
         cv_text = extract_text_from_cv(filename, content)
-        profile = build_profile_from_cv_text(cv_text)
-        db.save_candidate_profile_payload(profile)
     except CVProfileError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"profile": profile}
+    operation_id = db.create_operation(
+        "cv_profile_import",
+        {"filename": filename, "cv_text": cv_text},
+        "Queued. Waiting for your local worker.",
+    )
+    return {"operation_id": operation_id, "status": "queued"}
+
+
+@app.get("/api/operations/latest")
+def latest_operation(type: str | None = None) -> dict[str, Any]:
+    return {"operation": db.get_latest_operation(type)}
+
+
+@app.get("/api/operations/{operation_id}")
+def get_operation(operation_id: int) -> dict[str, Any]:
+    operation = db.get_operation(operation_id)
+    if not operation:
+        raise HTTPException(status_code=404, detail="Operation not found")
+    return {"operation": operation}
 
 
 @app.get("/api/jobs")

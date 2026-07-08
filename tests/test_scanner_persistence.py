@@ -169,6 +169,35 @@ def test_create_and_cancel_ranking_job(tmp_path, monkeypatch):
     assert db.get_queued_ranking_items(ranking_job_id, limit=10).empty
 
 
+def test_operation_run_lifecycle(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+
+    operation_id = db.create_operation(
+        "cv_profile_import",
+        {"filename": "cv.pdf", "cv_text": "Python backend engineer"},
+        "Queued.",
+    )
+
+    queued = db.get_operation(operation_id)
+    assert queued["status"] == "queued"
+    assert queued["input_json"]["filename"] == "cv.pdf"
+
+    claimed = db.claim_next_operation("worker-1", ["cv_profile_import"])
+    assert claimed["id"] == operation_id
+    assert claimed["status"] == "running"
+    assert claimed["claimed_by"] == "worker-1"
+
+    db.update_operation_progress(operation_id, "Saving profile.")
+    running = db.get_operation(operation_id)
+    assert running["progress_message"] == "Saving profile."
+
+    db.complete_operation(operation_id, {"profile_saved": True}, "Profile ready.")
+    completed = db.get_operation(operation_id)
+    assert completed["status"] == "completed"
+    assert completed["output_json"] == {"profile_saved": True}
+
+
 def test_speed_ranking_migration_is_additive_and_backfills(tmp_path, monkeypatch):
     db_path = tmp_path / "legacy.db"
     conn = sqlite3.connect(db_path)
