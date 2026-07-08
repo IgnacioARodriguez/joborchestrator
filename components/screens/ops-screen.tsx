@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react"
 import {
   BriefcaseBusiness,
+  CheckCircle2,
   DatabaseZap,
   LinkIcon,
+  LoaderCircle,
   Play,
   Plus,
   RefreshCw,
@@ -41,6 +43,54 @@ const DEFAULT_QUERIES = [
   "python developer",
   "solutions engineer",
 ].join("\n")
+
+function operationCopy(name: string | null) {
+  if (!name) return null
+  if (name.startsWith("ranking-")) {
+    return {
+      title: "Ranking jobs with NVIDIA",
+      detail: "The LLM is reading job descriptions and comparing them against your profile.",
+    }
+  }
+  const copy: Record<string, { title: string; detail: string }> = {
+    "refresh-jobs": {
+      title: "Refreshing opportunities",
+      detail: "Pulling the latest jobs and ranking data from the backend.",
+    },
+    "refresh-ops": {
+      title: "Refreshing operations",
+      detail: "Checking scanner sources, ranking jobs, and backend status.",
+    },
+    linkedin: {
+      title: "Importing LinkedIn Excel",
+      detail: "Uploading the spreadsheet, filtering rows, and saving new opportunities.",
+    },
+    source: {
+      title: "Saving ATS source",
+      detail: "Adding the company portal so it can be scanned later.",
+    },
+    ats: {
+      title: "Scanning ATS portals",
+      detail: "Contacting enabled company portals and saving new or updated jobs.",
+    },
+    search: {
+      title: "Searching public job APIs",
+      detail: "Running keyword searches and storing matching opportunities.",
+    },
+    ranking: {
+      title: "Queueing NVIDIA ranking",
+      detail: "Preparing unranked jobs for LLM evaluation.",
+    },
+  }
+  return copy[name] ?? {
+    title: "Working on it",
+    detail: "The backend is processing the request.",
+  }
+}
+
+function LoadingIcon() {
+  return <LoaderCircle className="size-4 animate-spin" data-icon="inline-start" />
+}
 
 function ResultList({ results }: { results: ScanResult[] }) {
   if (results.length === 0) return null
@@ -84,8 +134,12 @@ export function OpsScreen() {
   const [queries, setQueries] = useState(DEFAULT_QUERIES)
   const [location, setLocation] = useState("Spain")
   const [busy, setBusy] = useState<string | null>(null)
+  const [busyDetail, setBusyDetail] = useState("")
+  const [busyStartedAt, setBusyStartedAt] = useState<number | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [results, setResults] = useState<ScanResult[]>([])
   const [linkedinFile, setLinkedinFile] = useState<File | null>(null)
+  const busyCopy = operationCopy(busy)
 
   async function loadOps() {
     try {
@@ -112,10 +166,24 @@ export function OpsScreen() {
     return () => window.clearTimeout(timer)
   }, [])
 
+  useEffect(() => {
+    if (!busyStartedAt) {
+      return
+    }
+    const interval = window.setInterval(() => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - busyStartedAt) / 1000)))
+    }, 500)
+    return () => window.clearInterval(interval)
+  }, [busyStartedAt])
+
   async function runAction<T>(name: string, fn: () => Promise<T>) {
     setBusy(name)
+    setBusyDetail(operationCopy(name)?.detail ?? "The backend is processing the request.")
+    setBusyStartedAt(Date.now())
+    setElapsedSeconds(0)
     try {
       const value = await fn()
+      setBusyDetail("Finishing up and refreshing the dashboard data.")
       await refresh()
       await loadOps()
       return value
@@ -126,11 +194,35 @@ export function OpsScreen() {
       return undefined
     } finally {
       setBusy(null)
+      setBusyDetail("")
+      setBusyStartedAt(null)
+      setElapsedSeconds(0)
     }
   }
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1fr]">
+      {busyCopy && (
+        <Card className="border-primary/20 bg-primary/5 xl:col-span-2">
+          <CardContent className="flex items-center gap-3 p-4">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <LoaderCircle className="size-5 animate-spin" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-foreground">
+                {busyCopy.title}
+              </p>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {busyDetail || busyCopy.detail}
+              </p>
+            </div>
+            <span className="hidden rounded-md border border-primary/20 bg-background px-2 py-1 text-xs tabular-nums text-muted-foreground sm:inline-flex">
+              {elapsedSeconds}s
+            </span>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
@@ -144,13 +236,29 @@ export function OpsScreen() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => void refresh()}>
-            <RefreshCw data-icon="inline-start" />
-            Refresh jobs
+          <Button
+            variant="outline"
+            disabled={busy !== null}
+            onClick={() => void runAction("refresh-jobs", refresh)}
+          >
+            {busy === "refresh-jobs" ? (
+              <LoadingIcon />
+            ) : (
+              <RefreshCw data-icon="inline-start" />
+            )}
+            {busy === "refresh-jobs" ? "Refreshing jobs" : "Refresh jobs"}
           </Button>
-          <Button variant="outline" onClick={() => void loadOps()}>
-            <RefreshCw data-icon="inline-start" />
-            Refresh ops
+          <Button
+            variant="outline"
+            disabled={busy !== null}
+            onClick={() => void runAction("refresh-ops", loadOps)}
+          >
+            {busy === "refresh-ops" ? (
+              <LoadingIcon />
+            ) : (
+              <RefreshCw data-icon="inline-start" />
+            )}
+            {busy === "refresh-ops" ? "Refreshing ops" : "Refresh ops"}
           </Button>
         </CardContent>
       </Card>
@@ -187,8 +295,12 @@ export function OpsScreen() {
               })
             }
           >
-            <Upload data-icon="inline-start" />
-            Upload and import Excel
+            {busy === "linkedin" ? (
+              <LoadingIcon />
+            ) : (
+              <Upload data-icon="inline-start" />
+            )}
+            {busy === "linkedin" ? "Importing Excel" : "Upload and import Excel"}
           </Button>
         </CardContent>
       </Card>
@@ -245,10 +357,14 @@ export function OpsScreen() {
                   setCompanyRef("")
                   toast.success("Source saved")
                 })
-              }
-            >
-              <Plus data-icon="inline-start" />
-              Add source
+            }
+          >
+              {busy === "source" ? (
+                <LoadingIcon />
+              ) : (
+                <Plus data-icon="inline-start" />
+              )}
+              {busy === "source" ? "Saving source" : "Add source"}
             </Button>
             <Button
               disabled={busy !== null || sources.length === 0}
@@ -260,8 +376,12 @@ export function OpsScreen() {
                 })
               }
             >
-              <Play data-icon="inline-start" />
-              Scan enabled ATS
+              {busy === "ats" ? (
+                <LoadingIcon />
+              ) : (
+                <Play data-icon="inline-start" />
+              )}
+              {busy === "ats" ? "Scanning ATS" : "Scan enabled ATS"}
             </Button>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -308,8 +428,12 @@ export function OpsScreen() {
               })
             }
           >
-            <Search data-icon="inline-start" />
-            Run search APIs
+            {busy === "search" ? (
+              <LoadingIcon />
+            ) : (
+              <Search data-icon="inline-start" />
+            )}
+            {busy === "search" ? "Searching APIs" : "Run search APIs"}
           </Button>
         </CardContent>
       </Card>
@@ -342,8 +466,12 @@ export function OpsScreen() {
                 })
               }
             >
-              <Sparkles data-icon="inline-start" />
-              Queue unranked jobs
+              {busy === "ranking" ? (
+                <LoadingIcon />
+              ) : (
+                <Sparkles data-icon="inline-start" />
+              )}
+              {busy === "ranking" ? "Queueing jobs" : "Queue unranked jobs"}
             </Button>
           </div>
           <div className="flex flex-col gap-2">
@@ -372,8 +500,14 @@ export function OpsScreen() {
                     })
                   }
                 >
-                  <Play data-icon="inline-start" />
-                  Run once
+                  {busy === `ranking-${job.id}` ? (
+                    <LoadingIcon />
+                  ) : job.status === "completed" ? (
+                    <CheckCircle2 data-icon="inline-start" />
+                  ) : (
+                    <Play data-icon="inline-start" />
+                  )}
+                  {busy === `ranking-${job.id}` ? "Ranking" : "Run once"}
                 </Button>
               </div>
             ))}
