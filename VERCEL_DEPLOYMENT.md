@@ -33,12 +33,29 @@ only for smoke tests, not real use.
 
 ## Production-Ready Free/Low-Cost Path
 
-To keep this running remotely, replace SQLite persistence with a serverless
-database from Vercel Marketplace or another free tier provider, for example:
+Use Turso/libSQL from the Vercel Marketplace. Turso is SQLite-compatible, so the
+app can keep the current SQL model without a full Postgres rewrite.
 
-- Neon Postgres
-- Supabase Postgres
-- Upstash
+Set these environment variables in Vercel:
 
-The dashboard can stay on Vercel/v0. The scraper can remain local and push
-imported jobs into the remote database via an authenticated API endpoint.
+```text
+TURSO_DATABASE_URL=libsql://...
+TURSO_AUTH_TOKEN=...
+```
+
+Local development still uses `job_tracker.db` unless those Turso variables are
+present.
+
+The scraper can remain local and push imported jobs into the remote database via
+the API once the Vercel deployment has the Turso variables configured.
+
+## Migrating Local Data To Turso
+
+After creating the Turso database and setting `TURSO_DATABASE_URL` /
+`TURSO_AUTH_TOKEN` locally, run:
+
+```bash
+python scripts/migrate_sqlite_to_turso.py --source job_tracker.db --replace
+```
+
+This copies the active tables from your local SQLite database to Turso.

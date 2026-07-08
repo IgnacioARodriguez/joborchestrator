@@ -61,8 +61,8 @@ See [VERCEL_DEPLOYMENT.md](./VERCEL_DEPLOYMENT.md) for limits and the production
 - Local SQLite is not durable on Vercel.
 - The LinkedIn Playwright scraper should remain local/manual or move to a
   separate worker.
-- For real remote use, migrate persistence to Neon/Supabase/another serverless
-  database.
+- For real remote use, configure Turso/libSQL via `TURSO_DATABASE_URL` and
+  `TURSO_AUTH_TOKEN`.
 
 ## Main Structure
 

@@ -15,6 +15,7 @@ from joborchestrator.ranking.ranker import result_to_dict
 from joborchestrator.ranking.schemas import RankingResult
 from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
 from joborchestrator.paths import DB_PATH
+from joborchestrator.storage import db_connection
 
 BACKUP_DIR_NAME = "backups"
 SPEED_RANKING_MIGRATION_COLUMNS = {
@@ -185,10 +186,10 @@ CREATE INDEX IF NOT EXISTS idx_ranking_job_items_job_status ON ranking_job_items
 
 
 def _conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout = 5000")
-    conn.execute("PRAGMA journal_mode = WAL")
+    conn = db_connection.connect(DB_PATH)
+    if not getattr(conn, "is_cloud", False):
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCANNER_SCHEMA)
     if _scanner_migration_needed(conn):
         backup_database("before_speed_ranking_migration")
@@ -318,6 +319,19 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
     return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
 
 
+def _read_sql_query(
+    query: str,
+    conn: sqlite3.Connection | db_connection.LibsqlConnection,
+    params: list[object] | tuple[object, ...] | None = None,
+) -> pd.DataFrame:
+    if not getattr(conn, "is_cloud", False):
+        return pd.read_sql_query(query, conn, params=params)
+
+    cursor = conn.execute(query, params or ())
+    columns = [column[0] for column in cursor.description or []]
+    return pd.DataFrame(cursor.fetchall(), columns=columns)
+
+
 def init_db():
     conn = _conn()
     conn.commit()
@@ -360,7 +374,7 @@ def list_company_sources(enabled_only: bool = False) -> pd.DataFrame:
         if enabled_only:
             query += " WHERE enabled = 1"
         query += " ORDER BY enabled DESC, company_name ASC"
-        return pd.read_sql_query(query, conn)
+        return _read_sql_query(query, conn)
     finally:
         conn.close()
 
@@ -602,7 +616,7 @@ def get_job_postings(statuses: list[str] | None = None, limit: int = 200) -> pd.
             params.extend(statuses)
         query += " ORDER BY last_seen_at DESC LIMIT ?"
         params.append(limit)
-        return pd.read_sql_query(query, conn, params=params)
+        return _read_sql_query(query, conn, params=params)
     finally:
         conn.close()
 
@@ -693,7 +707,7 @@ def get_scanner_overview() -> dict:
 def get_recent_scan_errors(limit: int = 5) -> pd.DataFrame:
     conn = _conn()
     try:
-        return pd.read_sql_query(
+        return _read_sql_query(
             """SELECT company_name, provider, error, finished_at
                FROM scan_events
                WHERE status = 'error'
@@ -709,7 +723,7 @@ def get_recent_scan_errors(limit: int = 5) -> pd.DataFrame:
 def get_recent_scan_events(limit: int = 20) -> pd.DataFrame:
     conn = _conn()
     try:
-        return pd.read_sql_query(
+        return _read_sql_query(
             """SELECT *
                FROM scan_events
                ORDER BY finished_at DESC
@@ -890,7 +904,7 @@ def get_ranked_jobs(
               END,
               jr.final_score DESC
         """
-        return pd.read_sql_query(query, conn, params=params)
+        return _read_sql_query(query, conn, params=params)
     finally:
         conn.close()
 
@@ -909,7 +923,7 @@ def get_ranking_versions() -> list[str]:
 def get_unranked_jobs(ranking_version: str = SPEED_RANKING_VERSION, limit: int = 500) -> pd.DataFrame:
     conn = _conn()
     try:
-        return pd.read_sql_query(
+        return _read_sql_query(
             """SELECT jp.*
                FROM job_postings jp
                LEFT JOIN job_rankings jr
@@ -970,7 +984,7 @@ def create_ranking_job(
 def list_ranking_jobs(limit: int = 20) -> pd.DataFrame:
     conn = _conn()
     try:
-        return pd.read_sql_query(
+        return _read_sql_query(
             """SELECT *
                FROM ranking_jobs
                ORDER BY created_at DESC
@@ -1102,7 +1116,7 @@ def complete_ranking_job_if_done(ranking_job_id: int) -> None:
 def get_queued_ranking_items(ranking_job_id: int, limit: int = 100) -> pd.DataFrame:
     conn = _conn()
     try:
-        return pd.read_sql_query(
+        return _read_sql_query(
             """SELECT
                    rji.id AS ranking_job_item_id,
                    jp.*
@@ -1239,4 +1253,3 @@ def _ranking_job_item_counts(conn: sqlite3.Connection, ranking_job_id: int) -> d
         "failed": counts.get("failed", 0),
         "cancelled": counts.get("cancelled", 0),
     }
-
