@@ -10,6 +10,7 @@ from joborchestrator.ranking.openai_batch import (
     import_ranking_batch_output,
     submit_ranking_batch,
 )
+from joborchestrator.ranking.llm_ranker import llm_ranking_version
 
 
 def test_create_ranking_batch_jsonl_uses_responses_endpoint(tmp_path):
@@ -119,4 +120,5 @@ def test_import_ranking_batch_output_saves_rankings(monkeypatch):
     assert summary["saved"] == 1
     assert summary["APPLY_NOW"] == 1
     assert saved[123].final_score == 81
+    assert saved[123].ranking_version == llm_ranking_version(openai_batch.DEFAULT_LLM_MODEL)
     assert "openai_batch_ranking_applied" in saved[123].evidence.llm_escalation_reasons

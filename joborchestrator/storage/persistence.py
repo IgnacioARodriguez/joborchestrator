@@ -13,7 +13,7 @@ from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.normalization import normalize_job_identity, normalize_text
 from joborchestrator.ranking.ranker import result_to_dict
 from joborchestrator.ranking.schemas import RankingResult
-from joborchestrator.ranking.versions import SPEED_RANKING_VERSION
+from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.paths import DB_PATH
 from joborchestrator.profile_skill_catalog import DEFAULT_SKILL_CATALOG
 from joborchestrator.storage import db_connection
@@ -1137,7 +1137,7 @@ def get_ranked_jobs(
     min_score: int | None = None,
     sources: list[str] | None = None,
     with_red_flags: bool | None = None,
-    ranking_version: str = SPEED_RANKING_VERSION,
+    ranking_version: str = NVIDIA_RANKING_VERSION,
 ) -> pd.DataFrame:
     conn = _conn()
     try:
@@ -1200,7 +1200,7 @@ def get_ranking_versions() -> list[str]:
         conn.close()
 
 
-def get_unranked_jobs(ranking_version: str = SPEED_RANKING_VERSION, limit: int = 500) -> pd.DataFrame:
+def get_unranked_jobs(ranking_version: str = NVIDIA_RANKING_VERSION, limit: int = 500) -> pd.DataFrame:
     conn = _conn()
     try:
         return _read_sql_query(

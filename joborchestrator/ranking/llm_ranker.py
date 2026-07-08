@@ -36,7 +36,7 @@ def rank_job_with_llm(
     heuristic = rank_job(job, profile)
     key = api_key or os.getenv("OPENAI_API_KEY")
     if not key:
-        return heuristic
+        raise LLMRankingError("OPENAI_API_KEY is required to rank jobs with OpenAI.")
 
     model_name = model or DEFAULT_LLM_MODEL
     requirements = extract_requirements(job)
@@ -47,12 +47,8 @@ def rank_job_with_llm(
         "heuristic_ranking": result_to_dict(heuristic),
         "instructions": OPENAI_INSTRUCTIONS,
     }
-    try:
-        response = _call_openai_responses(payload, key, model_name, timeout)
-        result = _ranking_from_payload(response, llm_ranking_version(model_name))
-        return _apply_guards(result, job)
-    except LLMRankingError:
-        return heuristic
+    response = _call_openai_responses(payload, key, model_name, timeout)
+    return _ranking_from_payload(response, llm_ranking_version(model_name))
 
 
 def _call_openai_responses(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:

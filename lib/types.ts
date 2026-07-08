@@ -86,6 +86,13 @@ export interface JobsMeta {
   db_mode: "sqlite" | "turso" | string
 }
 
+export interface JobsResponse {
+  jobs: JobPosting[]
+  ranking_versions: string[]
+  selected_ranking_version?: string | null
+  meta?: JobsMeta
+}
+
 export interface CompanySource {
   id: number
   provider: string

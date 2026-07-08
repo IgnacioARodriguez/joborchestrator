@@ -29,7 +29,7 @@ from joborchestrator.intelligence.llm_application_materials import (
 )
 from joborchestrator.paths import SALIDAS_DIR
 from joborchestrator.ranking.nvidia_ranker import DEFAULT_NVIDIA_MODEL
-from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
+from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION, filter_llm_ranking_versions, is_heuristic_ranking_version
 from joborchestrator.ranking.worker import run_worker_once
 from joborchestrator.scanning import scanner as source_scanner
 from joborchestrator.scanning import search_scanner
@@ -179,13 +179,17 @@ def get_operation(operation_id: int) -> dict[str, Any]:
 
 
 @app.get("/api/jobs")
-def list_jobs(limit: int | None = None) -> dict[str, Any]:
+def list_jobs(limit: int | None = None, ranking_version: str | None = None) -> dict[str, Any]:
+    if ranking_version and is_heuristic_ranking_version(ranking_version):
+        raise HTTPException(status_code=400, detail="Heuristic rankings are no longer supported in the dashboard.")
     jobs = db.get_job_postings(limit=limit)
-    rankings = latest_rankings_by_job_id()
+    rankings = latest_rankings_by_job_id(ranking_version)
+    ranking_versions = filter_llm_ranking_versions(db.get_ranking_versions())
     total = db.count_job_postings()
     return {
         "jobs": [job_dto(row, rankings.get(int(row["id"]))) for row in jobs.to_dict("records")],
-        "ranking_versions": db.get_ranking_versions(),
+        "ranking_versions": ranking_versions,
+        "selected_ranking_version": ranking_version or (ranking_versions[0] if ranking_versions else None),
         "meta": {
             "total": total,
             "returned": len(jobs),

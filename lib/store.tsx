@@ -21,7 +21,10 @@ interface StoreValue {
   loading: boolean
   backendOnline: boolean
   jobsMeta: JobsMeta | null
-  refresh: () => Promise<void>
+  rankingVersions: string[]
+  selectedRankingVersion: string | null
+  setSelectedRankingVersion: (version: string) => void
+  refresh: (rankingVersion?: string | null) => Promise<void>
   getJob: (id: string) => JobPosting | undefined
   setPipelineStatus: (id: string, status: PipelineStatus) => void
   markOpened: (id: string) => void
@@ -35,12 +38,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [backendOnline, setBackendOnline] = useState(false)
   const [jobsMeta, setJobsMeta] = useState<JobsMeta | null>(null)
+  const [rankingVersions, setRankingVersions] = useState<string[]>([])
+  const [selectedRankingVersion, setSelectedRankingVersionState] =
+    useState<string | null>(null)
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (rankingVersion?: string | null) => {
     setLoading(true)
     try {
-      const data = await api.getJobs()
+      const data = await api.getJobs(rankingVersion ?? selectedRankingVersion)
       setJobs(data.jobs)
+      setRankingVersions(data.ranking_versions)
+      setSelectedRankingVersionState(
+        data.selected_ranking_version ?? data.ranking_versions[0] ?? null,
+      )
       setJobsMeta(data.meta ?? null)
       setBackendOnline(true)
     } catch {
@@ -50,6 +60,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false)
     }
+  }, [selectedRankingVersion])
+
+  const setSelectedRankingVersion = useCallback((version: string) => {
+    setSelectedRankingVersionState(version)
   }, [])
 
   useEffect(() => {
@@ -110,6 +124,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       loading,
       backendOnline,
       jobsMeta,
+      rankingVersions,
+      selectedRankingVersion,
+      setSelectedRankingVersion,
       refresh,
       getJob,
       setPipelineStatus,
@@ -121,6 +138,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       loading,
       backendOnline,
       jobsMeta,
+      rankingVersions,
+      selectedRankingVersion,
+      setSelectedRankingVersion,
       refresh,
       getJob,
       setPipelineStatus,

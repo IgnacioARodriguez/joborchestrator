@@ -15,14 +15,13 @@ from joborchestrator.paths import DATA_DIR
 from joborchestrator.ranking.llm_ranker import (
     DEFAULT_LLM_MODEL,
     LLMRankingError,
-    _apply_guards,
     _extract_response_text,
     _ranking_from_payload,
     build_ranking_response_body,
+    llm_ranking_version,
 )
 from joborchestrator.ranking.profile import load_candidate_profile
 from joborchestrator.ranking.ranking_rules import OPENAI_BATCH_INSTRUCTIONS
-from joborchestrator.ranking.versions import SPEED_RANKING_VERSION
 from joborchestrator.storage import persistence as db
 
 OPENAI_BATCH_DIR = DATA_DIR / "openai_batches"
@@ -143,7 +142,8 @@ def download_file_content(file_id: str, *, api_key: str | None = None, timeout: 
     return response.text
 
 
-def import_ranking_batch_output(output_jsonl: str, *, ranking_version: str = SPEED_RANKING_VERSION) -> dict[str, int]:
+def import_ranking_batch_output(output_jsonl: str, *, ranking_version: str | None = None) -> dict[str, int]:
+    version = ranking_version or llm_ranking_version(DEFAULT_LLM_MODEL)
     summary = {
         "processed": 0,
         "saved": 0,
@@ -168,14 +168,13 @@ def import_ranking_batch_output(output_jsonl: str, *, ranking_version: str = SPE
             if status_code >= 400:
                 raise LLMRankingError(f"Batch item failed with status {status_code}: {body}")
             payload = json.loads(_extract_response_text(body))
-            ranking = _ranking_from_payload(payload, ranking_version)
+            ranking = _ranking_from_payload(payload, version)
             ranking.evidence.requires_llm_review = False
             reasons = list(ranking.evidence.llm_escalation_reasons or [])
             if "openai_batch_ranking_applied" not in reasons:
                 reasons.append("openai_batch_ranking_applied")
             ranking.evidence.llm_escalation_reasons = reasons
-            ranking = _apply_guards(ranking, db.get_job_posting(job_id))
-            ranking.ranking_version = ranking_version
+            ranking.ranking_version = version
             db.save_job_ranking(job_id, ranking)
             summary["saved"] += 1
             summary[ranking.decision] += 1

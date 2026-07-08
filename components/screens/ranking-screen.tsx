@@ -35,6 +35,16 @@ type SortKey = "score" | "newest" | "lastseen"
 
 const ATS_SOURCES = ["Greenhouse", "Lever", "Ashby"]
 
+function rankingVersionLabel(version: string): string {
+  const normalized = version.toLowerCase()
+  if (normalized.includes("nvidia")) return "NVIDIA"
+  if (normalized.includes("openai") || normalized.includes("+llm:")) {
+    const model = version.split(":").pop()?.replaceAll("_", "/")
+    return model ? `OpenAI ${model}` : "OpenAI"
+  }
+  return version
+}
+
 function matchesFilter(job: JobPosting, key: FilterKey): boolean {
   switch (key) {
     case "apply":
@@ -58,7 +68,12 @@ export function RankingScreen({
 }: {
   onOpenJob: (id: string) => void
 }) {
-  const { jobs } = useStore()
+  const {
+    jobs,
+    rankingVersions,
+    selectedRankingVersion,
+    setSelectedRankingVersion,
+  } = useStore()
   const [query, setQuery] = useState("")
   const [active, setActive] = useState<Set<FilterKey>>(new Set())
   const [sort, setSort] = useState<SortKey>("score")
@@ -118,6 +133,24 @@ export function RankingScreen({
             aria-label="Search jobs"
           />
         </div>
+        <Select
+          value={selectedRankingVersion ?? ""}
+          onValueChange={(version) => {
+            if (version) setSelectedRankingVersion(version)
+          }}
+          disabled={rankingVersions.length === 0}
+        >
+          <SelectTrigger className="w-full sm:w-52">
+            <SelectValue placeholder="No LLM ranking" />
+          </SelectTrigger>
+          <SelectContent>
+            {rankingVersions.map((version) => (
+              <SelectItem key={version} value={version}>
+                {rankingVersionLabel(version)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
           <SelectTrigger className="w-full sm:w-40">
             <SlidersHorizontal className="size-4 text-muted-foreground" />
@@ -155,6 +188,9 @@ export function RankingScreen({
 
       <p className="text-xs text-muted-foreground">
         {results.length} {results.length === 1 ? "job" : "jobs"}
+        {selectedRankingVersion
+          ? ` ranked with ${rankingVersionLabel(selectedRankingVersion)}`
+          : " without an LLM ranking yet"}
       </p>
 
       {results.length === 0 ? (

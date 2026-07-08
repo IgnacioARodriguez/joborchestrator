@@ -2,8 +2,7 @@
 
 from joborchestrator.ranking.profile import load_candidate_profile
 from joborchestrator.ranking.ranker import rank_job, rank_jobs
-from joborchestrator.ranking.speed_ranker import rank_job_speed
-from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION, SPEED_RANKING_VERSION
+from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.ranking.schemas import (
     CandidateProfile,
     JobRequirements,
@@ -20,8 +19,6 @@ __all__ = [
     "RankingScores",
     "load_candidate_profile",
     "rank_job",
-    "rank_job_speed",
     "rank_jobs",
     "NVIDIA_RANKING_VERSION",
-    "SPEED_RANKING_VERSION",
 ]

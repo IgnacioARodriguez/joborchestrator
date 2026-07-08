@@ -2,7 +2,7 @@ import type {
   CompanySource,
   CandidateProfile,
   JobPosting,
-  JobsMeta,
+  JobsResponse,
   OperationRun,
   PipelineStatus,
   RankingJobRecord,
@@ -37,12 +37,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  async getJobs() {
-    return request<{
-      jobs: JobPosting[]
-      ranking_versions: string[]
-      meta?: JobsMeta
-    }>("/api/jobs")
+  async getJobs(rankingVersion?: string | null) {
+    const query = rankingVersion ? `?ranking_version=${encodeURIComponent(rankingVersion)}` : ""
+    return request<JobsResponse>(`/api/jobs${query}`)
   },
 
   async getProfile() {

@@ -1,6 +1,5 @@
 from joborchestrator.ranking import llm_ranker
-from joborchestrator.ranking.llm_ranker import llm_ranking_version, rank_job_with_llm
-from joborchestrator.ranking.ranker import RANKING_VERSION
+from joborchestrator.ranking.llm_ranker import LLMRankingError, llm_ranking_version, rank_job_with_llm
 
 
 def make_job():
@@ -15,13 +14,15 @@ def make_job():
     }
 
 
-def test_llm_ranking_falls_back_without_api_key(monkeypatch):
+def test_llm_ranking_requires_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    result = rank_job_with_llm(make_job(), model="test-model")
-
-    assert result.ranking_version == RANKING_VERSION
-    assert 0 <= result.final_score <= 100
+    try:
+        rank_job_with_llm(make_job(), model="test-model")
+    except LLMRankingError as exc:
+        assert "OPENAI_API_KEY" in str(exc)
+    else:
+        raise AssertionError("Expected LLMRankingError")
 
 
 def test_llm_ranking_uses_structured_payload(monkeypatch):
