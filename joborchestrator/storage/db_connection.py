@@ -116,5 +116,9 @@ def connect(db_path: str | Path) -> sqlite3.Connection | LibsqlConnection:
     return conn
 
 
+def connection_mode() -> str:
+    return "turso" if os.getenv("TURSO_DATABASE_URL") else "sqlite"
+
+
 def _split_sql_script(script: str) -> list[str]:
     return [statement.strip() for statement in script.split(";") if statement.strip()]

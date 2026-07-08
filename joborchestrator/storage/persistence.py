@@ -648,7 +648,22 @@ def record_scan_event(
         conn.close()
 
 
-def get_job_postings(statuses: list[str] | None = None, limit: int = 200) -> pd.DataFrame:
+def count_job_postings(statuses: list[str] | None = None) -> int:
+    conn = _conn()
+    try:
+        params: list[object] = []
+        query = "SELECT COUNT(*) AS count FROM job_postings"
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            query += f" WHERE status IN ({placeholders})"
+            params.extend(statuses)
+        row = conn.execute(query, params).fetchone()
+        return int(row["count"] if row else 0)
+    finally:
+        conn.close()
+
+
+def get_job_postings(statuses: list[str] | None = None, limit: int | None = 200) -> pd.DataFrame:
     conn = _conn()
     try:
         params: list[object] = []
@@ -657,8 +672,10 @@ def get_job_postings(statuses: list[str] | None = None, limit: int = 200) -> pd.
             placeholders = ",".join("?" for _ in statuses)
             query += f" WHERE status IN ({placeholders})"
             params.extend(statuses)
-        query += " ORDER BY last_seen_at DESC LIMIT ?"
-        params.append(limit)
+        query += " ORDER BY last_seen_at DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
         return _read_sql_query(query, conn, params=params)
     finally:
         conn.close()

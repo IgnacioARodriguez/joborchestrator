@@ -1,9 +1,10 @@
 "use client"
 
-import { useState } from "react"
-import { Compass } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Compass, LoaderCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { NAV_ITEMS, type Section } from "@/lib/nav"
+import { useStore } from "@/lib/store"
 import { DashboardScreen } from "@/components/screens/dashboard-screen"
 import { RankingScreen } from "@/components/screens/ranking-screen"
 import { PipelineScreen } from "@/components/screens/pipeline-screen"
@@ -17,6 +18,58 @@ const SECTION_TITLES: Record<Section, string> = {
   pipeline: "Pipeline",
   profile: "Profile",
   ops: "Operations",
+}
+
+function DataLoadingBanner() {
+  const { loading, backendOnline, jobs, jobsMeta } = useStore()
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    if (!loading) {
+      return
+    }
+    const startedAt = Date.now()
+    const timer = window.setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedAt) / 1000))
+    }, 500)
+    return () => window.clearInterval(timer)
+  }, [loading])
+
+  if (!loading && backendOnline && jobs.length > 0) {
+    return (
+      <div className="mb-4 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        Loaded {jobsMeta?.returned ?? jobs.length} opportunities
+        {jobsMeta?.total && jobsMeta.total !== (jobsMeta.returned ?? jobs.length)
+          ? ` of ${jobsMeta.total}`
+          : ""}
+        {jobsMeta?.db_mode ? ` from ${jobsMeta.db_mode}` : ""}.
+      </div>
+    )
+  }
+
+  if (!loading) return null
+
+  const detail =
+    elapsed >= 8
+      ? "Still syncing from the cloud database. Cold starts can take a moment after deploy."
+      : "Loading opportunities from the backend."
+
+  return (
+    <div className="mb-4 flex items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <LoaderCircle className="size-4 animate-spin" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-foreground">
+          Loading opportunities
+        </p>
+        <p className="text-xs text-muted-foreground">{detail}</p>
+      </div>
+      <span className="hidden rounded-md border border-primary/20 bg-background px-2 py-1 text-xs tabular-nums text-muted-foreground sm:inline-flex">
+        {elapsed}s
+      </span>
+    </div>
+  )
 }
 
 export function AppShell() {
@@ -78,6 +131,7 @@ export function AppShell() {
           </header>
 
           <main className="flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-10">
+            <DataLoadingBanner />
             {section === "dashboard" && (
               <DashboardScreen onOpenJob={setOpenJobId} onNavigate={navigate} />
             )}

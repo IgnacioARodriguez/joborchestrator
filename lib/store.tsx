@@ -11,6 +11,7 @@ import {
 } from "react"
 import type {
   JobPosting,
+  JobsMeta,
   PipelineStatus,
 } from "./types"
 import { api } from "./api"
@@ -19,6 +20,7 @@ interface StoreValue {
   jobs: JobPosting[]
   loading: boolean
   backendOnline: boolean
+  jobsMeta: JobsMeta | null
   refresh: () => Promise<void>
   getJob: (id: string) => JobPosting | undefined
   setPipelineStatus: (id: string, status: PipelineStatus) => void
@@ -32,16 +34,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [jobs, setJobs] = useState<JobPosting[]>([])
   const [loading, setLoading] = useState(true)
   const [backendOnline, setBackendOnline] = useState(false)
+  const [jobsMeta, setJobsMeta] = useState<JobsMeta | null>(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
       const data = await api.getJobs()
       setJobs(data.jobs)
+      setJobsMeta(data.meta ?? null)
       setBackendOnline(true)
     } catch {
       setBackendOnline(false)
       setJobs([])
+      setJobsMeta(null)
     } finally {
       setLoading(false)
     }
@@ -104,6 +109,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       jobs,
       loading,
       backendOnline,
+      jobsMeta,
       refresh,
       getJob,
       setPipelineStatus,
@@ -114,6 +120,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       jobs,
       loading,
       backendOnline,
+      jobsMeta,
       refresh,
       getJob,
       setPipelineStatus,

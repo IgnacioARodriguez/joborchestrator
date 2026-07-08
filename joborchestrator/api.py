@@ -37,6 +37,7 @@ from joborchestrator.scanning import search_scanner
 from joborchestrator.scanning.linkedin_importer import import_linkedin_dataframe_to_job_postings
 from joborchestrator.scanning.providers import PROVIDERS
 from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS
+from joborchestrator.storage import db_connection
 from joborchestrator.storage import persistence as db
 
 
@@ -158,12 +159,19 @@ async def import_profile_cv(file: UploadFile = File(...)) -> dict[str, Any]:
 
 
 @app.get("/api/jobs")
-def list_jobs(limit: int = 2000) -> dict[str, Any]:
+def list_jobs(limit: int | None = None) -> dict[str, Any]:
     jobs = db.get_job_postings(limit=limit)
     rankings = latest_rankings_by_job_id()
+    total = db.count_job_postings()
     return {
         "jobs": [job_dto(row, rankings.get(int(row["id"]))) for row in jobs.to_dict("records")],
         "ranking_versions": db.get_ranking_versions(),
+        "meta": {
+            "total": total,
+            "returned": len(jobs),
+            "limited": limit is not None and len(jobs) < total,
+            "db_mode": db_connection.connection_mode(),
+        },
     }
 
 

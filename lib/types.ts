@@ -79,6 +79,13 @@ export interface JobPosting {
   materials: ApplicationMaterials
 }
 
+export interface JobsMeta {
+  total: number
+  returned: number
+  limited: boolean
+  db_mode: "sqlite" | "turso" | string
+}
+
 export interface CompanySource {
   id: number
   provider: string
