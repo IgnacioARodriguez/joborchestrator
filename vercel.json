@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "if [ -f dashboard/package.json ]; then npm --prefix dashboard ci; elif [ -f package.json ]; then npm ci; fi",
-  "buildCommand": "if [ -f dashboard/package.json ]; then npm --prefix dashboard run build && cp -R dashboard/.next .next; elif [ -f package.json ]; then npm run build; fi",
-  "outputDirectory": ".next",
+  "installCommand": "npm --prefix dashboard ci",
+  "buildCommand": "npm --prefix dashboard run build",
+  "framework": "nextjs",
   "functions": {
     "api/index.py": {
       "maxDuration": 60
