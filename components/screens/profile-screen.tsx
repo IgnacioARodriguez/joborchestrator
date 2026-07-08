@@ -184,92 +184,112 @@ export function ProfileScreen() {
     setProfile((current) => ({ ...current, ...update }))
   }
 
-  function updateSkill(index: number, update: Partial<ProfileSkill>) {
-    setProfile((current) => ({
-      ...current,
-      skills: current.skills.map((skill, i) =>
+  async function persistProfile(nextProfile: CandidateProfile, successMessage?: string) {
+    setProfile(nextProfile)
+    setBusy("save")
+    try {
+      const response = await api.saveProfile(nextProfile)
+      setProfile(response.profile)
+      if (successMessage) {
+        toast.success(successMessage, {
+          description: "Profile changes are saved.",
+        })
+      }
+    } catch (e) {
+      toast.error("Could not save profile", {
+        description: e instanceof Error ? e.message : "Backend request failed.",
+      })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function updateSkill(index: number, update: Partial<ProfileSkill>) {
+    const nextProfile = {
+      ...profile,
+      skills: profile.skills.map((skill, i) =>
         i === index ? { ...skill, ...update } : skill,
       ),
-    }))
+    }
+    await persistProfile(nextProfile)
   }
 
-  function addSkill(skill: Pick<ProfileSkill, "name" | "category">, level: SkillLevel = "medium") {
+  async function addSkill(skill: Pick<ProfileSkill, "name" | "category">, level: SkillLevel = "medium") {
     const key = skillKey(skill.name)
-    setProfile((current) => {
-      if (current.skills.some((item) => skillKey(item.name) === key)) return current
-      return {
-        ...current,
-        skills: [
-          ...current.skills,
-          {
-            name: skill.name,
-            category: skill.category || "General",
-            level,
-            evidence: "Added manually.",
-          },
-        ],
-      }
-    })
+    if (profile.skills.some((item) => skillKey(item.name) === key)) return
+    const nextProfile = {
+      ...profile,
+      skills: [
+        ...profile.skills,
+        {
+          name: skill.name,
+          category: skill.category || "General",
+          level,
+          evidence: "Added manually.",
+        },
+      ],
+    }
+    await persistProfile(nextProfile, `${skill.name} added`)
   }
 
-  function removeSkill(index: number) {
-    setProfile((current) => ({
-      ...current,
-      skills: current.skills.filter((_, i) => i !== index),
-    }))
+  async function removeSkill(index: number) {
+    const skillName = profile.skills[index]?.name ?? "Skill"
+    const nextProfile = {
+      ...profile,
+      skills: profile.skills.filter((_, i) => i !== index),
+    }
+    await persistProfile(nextProfile, `${skillName} removed`)
   }
 
-  function addRole(field: "target_roles" | "secondary_roles", value: string) {
+  async function addRole(field: "target_roles" | "secondary_roles", value: string) {
     const role = value.trim()
     if (!role) return
-    setProfile((current) => {
-      const exists = [...current.target_roles, ...current.secondary_roles].some(
-        (item) => item.toLowerCase() === role.toLowerCase(),
-      )
-      if (exists) return current
-      return { ...current, [field]: [...current[field], role] }
-    })
+    const exists = [...profile.target_roles, ...profile.secondary_roles].some(
+      (item) => item.toLowerCase() === role.toLowerCase(),
+    )
+    if (exists) return
+    const nextProfile = { ...profile, [field]: [...profile[field], role] }
     if (field === "target_roles") setNewTargetRole("")
     else setNewSecondaryRole("")
+    await persistProfile(nextProfile, `${role} added`)
   }
 
-  function removeRole(field: "target_roles" | "secondary_roles", role: string) {
-    setProfile((current) => {
-      const aliases = { ...(current.role_aliases ?? {}) }
-      delete aliases[role]
-      return {
-        ...current,
-        [field]: current[field].filter((item) => item !== role),
-        role_aliases: aliases,
-      }
-    })
+  async function removeRole(field: "target_roles" | "secondary_roles", role: string) {
+    const aliases = { ...(profile.role_aliases ?? {}) }
+    delete aliases[role]
+    const nextProfile = {
+      ...profile,
+      [field]: profile[field].filter((item) => item !== role),
+      role_aliases: aliases,
+    }
+    await persistProfile(nextProfile, `${role} removed`)
   }
 
-  function addRoleAlias(role: string) {
+  async function addRoleAlias(role: string) {
     const alias = (aliasDrafts[role] ?? "").trim()
     if (!alias) return
-    setProfile((current) => {
-      const existing = current.role_aliases?.[role] ?? []
-      if (existing.some((item) => item.toLowerCase() === alias.toLowerCase())) return current
-      return {
-        ...current,
-        role_aliases: {
-          ...(current.role_aliases ?? {}),
-          [role]: [...existing, alias],
-        },
-      }
-    })
+    const existing = profile.role_aliases?.[role] ?? []
+    if (existing.some((item) => item.toLowerCase() === alias.toLowerCase())) return
+    const nextProfile = {
+      ...profile,
+      role_aliases: {
+        ...(profile.role_aliases ?? {}),
+        [role]: [...existing, alias],
+      },
+    }
     setAliasDrafts((current) => ({ ...current, [role]: "" }))
+    await persistProfile(nextProfile, `${alias} added`)
   }
 
-  function removeRoleAlias(role: string, alias: string) {
-    setProfile((current) => ({
-      ...current,
+  async function removeRoleAlias(role: string, alias: string) {
+    const nextProfile = {
+      ...profile,
       role_aliases: {
-        ...(current.role_aliases ?? {}),
-        [role]: (current.role_aliases?.[role] ?? []).filter((item) => item !== alias),
+        ...(profile.role_aliases ?? {}),
+        [role]: (profile.role_aliases?.[role] ?? []).filter((item) => item !== alias),
       },
-    }))
+    }
+    await persistProfile(nextProfile, `${alias} removed`)
   }
 
   async function importCv() {
@@ -405,10 +425,10 @@ export function ProfileScreen() {
                 placeholder="Add target role"
                 onChange={(event) => setNewTargetRole(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") addRole("target_roles", newTargetRole)
+                  if (event.key === "Enter") void addRole("target_roles", newTargetRole)
                 }}
               />
-              <Button size="icon" variant="outline" onClick={() => addRole("target_roles", newTargetRole)}>
+              <Button size="icon" variant="outline" onClick={() => void addRole("target_roles", newTargetRole)}>
                 <Plus className="size-4" />
               </Button>
             </div>
@@ -418,10 +438,10 @@ export function ProfileScreen() {
                 placeholder="Add adjacent role"
                 onChange={(event) => setNewSecondaryRole(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") addRole("secondary_roles", newSecondaryRole)
+                  if (event.key === "Enter") void addRole("secondary_roles", newSecondaryRole)
                 }}
               />
-              <Button size="icon" variant="outline" onClick={() => addRole("secondary_roles", newSecondaryRole)}>
+              <Button size="icon" variant="outline" onClick={() => void addRole("secondary_roles", newSecondaryRole)}>
                 <Plus className="size-4" />
               </Button>
             </div>
@@ -448,7 +468,7 @@ export function ProfileScreen() {
                       aria-label={`Remove ${role}`}
                       size="icon-sm"
                       variant="ghost"
-                      onClick={() => removeRole(field, role)}
+                      onClick={() => void removeRole(field, role)}
                     >
                       <X className="size-3.5" />
                     </Button>
@@ -459,7 +479,7 @@ export function ProfileScreen() {
                         {alias}
                         <button
                           className="ml-1 text-muted-foreground hover:text-foreground"
-                          onClick={() => removeRoleAlias(role, alias)}
+                          onClick={() => void removeRoleAlias(role, alias)}
                           type="button"
                         >
                           <X className="size-3" />
@@ -475,10 +495,10 @@ export function ProfileScreen() {
                         setAliasDrafts((current) => ({ ...current, [role]: event.target.value }))
                       }
                       onKeyDown={(event) => {
-                        if (event.key === "Enter") addRoleAlias(role)
+                        if (event.key === "Enter") void addRoleAlias(role)
                       }}
                     />
-                    <Button size="icon" variant="outline" onClick={() => addRoleAlias(role)}>
+                    <Button size="icon" variant="outline" onClick={() => void addRoleAlias(role)}>
                       <Plus className="size-4" />
                     </Button>
                   </div>
@@ -562,7 +582,7 @@ export function ProfileScreen() {
                         <Select
                           value={skill.level}
                           onValueChange={(value) =>
-                            updateSkill(index, { level: value as SkillLevel })
+                            void updateSkill(index, { level: value as SkillLevel })
                           }
                         >
                           <SelectTrigger>
@@ -582,7 +602,7 @@ export function ProfileScreen() {
                           aria-label={`Remove ${skill.name}`}
                           size="icon-sm"
                           variant="ghost"
-                          onClick={() => removeSkill(index)}
+                          onClick={() => void removeSkill(index)}
                         >
                           <X className="size-3.5" />
                         </Button>
@@ -611,7 +631,7 @@ export function ProfileScreen() {
                           key={skill.id}
                           size="xs"
                           variant="outline"
-                          onClick={() => addSkill(skill)}
+                          onClick={() => void addSkill(skill)}
                         >
                           <Plus className="size-3" data-icon="inline-start" />
                           {skill.name}
