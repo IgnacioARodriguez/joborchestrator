@@ -8,13 +8,24 @@ import pandas as pd
 from joborchestrator.ranking import nvidia_ranker
 from joborchestrator.ranking.nvidia_ranker import (
     DEFAULT_NVIDIA_MODEL,
+    NvidiaRankingError,
     build_nvidia_ranking_payload,
     rank_jobs_with_nvidia_async,
     rank_jobs_with_nvidia,
 )
 
 
-def test_build_nvidia_ranking_payload_compacts_jobs():
+def profile_payload() -> dict:
+    return {
+        "target_roles": ["Backend Engineer"],
+        "skills": [{"name": "Python", "category": "Programming", "level": "strong"}],
+        "real_experience_years": 4,
+    }
+
+
+def test_build_nvidia_ranking_payload_compacts_jobs(monkeypatch):
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+
     payload = build_nvidia_ranking_payload(
         [
             {
@@ -30,6 +41,18 @@ def test_build_nvidia_ranking_payload_compacts_jobs():
     assert payload["jobs"][0]["title"] == "Backend Engineer"
     assert "[truncated]" in payload["jobs"][0]["description_text"]
     assert "candidate_profile" in payload
+    assert payload["candidate_profile"]["strong_skills"] == ["Python"]
+
+
+def test_build_nvidia_ranking_payload_requires_profile(monkeypatch):
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", lambda: None)
+
+    try:
+        build_nvidia_ranking_payload([{"id": 1, "title": "Backend Engineer"}])
+    except NvidiaRankingError as exc:
+        assert "No candidate profile configured" in str(exc)
+    else:
+        raise AssertionError("Expected NvidiaRankingError")
 
 
 def test_rank_jobs_with_nvidia_saves_each_ranking(monkeypatch):
@@ -54,6 +77,7 @@ def test_rank_jobs_with_nvidia_saves_each_ranking(monkeypatch):
         return 1
 
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
     monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", fake_save)
 
@@ -88,6 +112,7 @@ def test_rank_jobs_with_nvidia_async_runs_batches_concurrently(monkeypatch):
         return {"rankings": [_ranking_payload(int(row["id"]), 80, "APPLY_NOW") for row in batch]}
 
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
     monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
 
@@ -113,6 +138,7 @@ def test_rank_jobs_with_nvidia_reports_progress(monkeypatch):
         return {"rankings": [_ranking_payload(int(row["id"]), 80, "APPLY_NOW") for row in batch]}
 
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
     monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: 1)
 
@@ -151,6 +177,7 @@ def test_call_nvidia_batch_uses_chat_completions(monkeypatch):
         return FakeResponse()
 
     monkeypatch.setattr(nvidia_ranker.httpx, "post", fake_post)
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
 
     payload = nvidia_ranker._call_nvidia_batch(
         [{"id": 1, "title": "Backend Engineer", "description_text": "Python"}],

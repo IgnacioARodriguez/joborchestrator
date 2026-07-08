@@ -11,7 +11,6 @@ import httpx
 import pandas as pd
 
 from joborchestrator.ranking.llm_ranker import _apply_guards, _ranking_from_payload
-from joborchestrator.ranking.profile import load_candidate_profile
 from joborchestrator.ranking.schemas import CandidateProfile
 from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
 from joborchestrator.storage import persistence as db
@@ -116,11 +115,9 @@ async def rank_jobs_with_nvidia_async(
 
 def build_nvidia_ranking_payload(jobs: list[dict[str, Any]]) -> dict[str, Any]:
     profile_payload = db.get_candidate_profile_payload()
-    profile = (
-        CandidateProfile(**profile_payload_to_candidate_profile(profile_payload))
-        if profile_payload
-        else load_candidate_profile()
-    )
+    if not profile_payload:
+        raise NvidiaRankingError("No candidate profile configured. Upload a CV in Profile before running NVIDIA ranking.")
+    profile = CandidateProfile(**profile_payload_to_candidate_profile(profile_payload))
     return {
         "candidate_profile": asdict(profile),
         "ranking_goal": (

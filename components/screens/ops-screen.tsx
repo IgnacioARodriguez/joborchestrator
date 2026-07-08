@@ -125,6 +125,7 @@ function ResultList({ results }: { results: ScanResult[] }) {
 export function OpsScreen() {
   const { refresh, backendOnline, jobs } = useStore()
   const [sources, setSources] = useState<CompanySource[]>([])
+  const [hasProfile, setHasProfile] = useState(false)
   const [providers, setProviders] = useState<string[]>([])
   const [searchProviders, setSearchProviders] = useState<string[]>([])
   const [rankingJobs, setRankingJobs] = useState<RankingJobRecord[]>([])
@@ -147,7 +148,9 @@ export function OpsScreen() {
         api.getSources(),
         api.getRankingJobs(),
       ])
+      const profileData = await api.getProfile()
       setSources(sourceData.sources)
+      setHasProfile(Boolean(profileData.profile))
       setProviders(sourceData.providers)
       setSearchProviders(sourceData.search_providers)
       setProvider(sourceData.providers[0] ?? "greenhouse")
@@ -445,13 +448,15 @@ export function OpsScreen() {
             NVIDIA LLM ranking
           </CardTitle>
           <CardDescription className="text-xs">
-            Queues unranked jobs for the existing NVIDIA ranking worker.
+            {hasProfile
+              ? "Queues unranked jobs for the existing NVIDIA ranking worker."
+              : "Upload and save a profile before running NVIDIA ranking."}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-wrap gap-2">
             <Button
-              disabled={busy !== null}
+              disabled={busy !== null || !hasProfile}
               onClick={() =>
                 void runAction("ranking", async () => {
                   const res = await api.createRankingJob({
@@ -471,8 +476,13 @@ export function OpsScreen() {
               ) : (
                 <Sparkles data-icon="inline-start" />
               )}
-              {busy === "ranking" ? "Queueing jobs" : "Queue unranked jobs"}
+            {busy === "ranking" ? "Queueing jobs" : "Queue unranked jobs"}
             </Button>
+            {!hasProfile && (
+              <p className="flex items-center text-xs text-muted-foreground">
+                Profile required for NVIDIA ranking.
+              </p>
+            )}
           </div>
           <div className="flex flex-col gap-2">
             {rankingJobs.slice(0, 5).map((job) => (
@@ -492,12 +502,17 @@ export function OpsScreen() {
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={busy !== null || !["queued", "running"].includes(job.status)}
+                  disabled={busy !== null || !hasProfile || !["queued", "running"].includes(job.status)}
+                  aria-disabled={!hasProfile}
                   onClick={() =>
-                    void runAction(`ranking-${job.id}`, async () => {
-                      await api.runRankingJobOnce(job.id)
-                      toast.success(`Processed ranking job #${job.id}`)
-                    })
+                    hasProfile
+                      ? void runAction(`ranking-${job.id}`, async () => {
+                          await api.runRankingJobOnce(job.id)
+                          toast.success(`Processed ranking job #${job.id}`)
+                        })
+                      : toast.error("Profile required", {
+                          description: "Upload a CV in Profile before running NVIDIA ranking.",
+                        })
                   }
                 >
                   {busy === `ranking-${job.id}` ? (

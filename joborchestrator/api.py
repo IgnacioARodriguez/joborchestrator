@@ -301,6 +301,8 @@ async def import_linkedin_excel(
 
 @app.post("/api/ranking/jobs")
 def create_ranking_job(payload: RankingJobPayload) -> dict[str, Any]:
+    if not db.get_candidate_profile_payload():
+        raise HTTPException(status_code=400, detail="No candidate profile configured. Upload a CV in Profile before running NVIDIA ranking.")
     job_ids = payload.job_ids
     if not job_ids:
         unranked = db.get_unranked_jobs(ranking_version=payload.ranking_version, limit=payload.limit)
@@ -324,6 +326,8 @@ def create_ranking_job(payload: RankingJobPayload) -> dict[str, Any]:
 
 @app.post("/api/ranking/jobs/{ranking_job_id}/run-once")
 def run_ranking_job_once(ranking_job_id: int) -> dict[str, Any]:
+    if not db.get_candidate_profile_payload():
+        raise HTTPException(status_code=400, detail="No candidate profile configured. Upload a CV in Profile before running NVIDIA ranking.")
     return {"processed": run_worker_once(ranking_job_id=ranking_job_id)}
 
 
