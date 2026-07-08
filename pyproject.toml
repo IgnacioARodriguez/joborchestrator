@@ -1,3 +1,21 @@
+[project]
+name = "joborchestrator"
+version = "0.1.0"
+description = "Job Orchestrator FastAPI backend and ranking pipeline."
+requires-python = ">=3.11"
+dependencies = [
+    "pandas",
+    "openpyxl",
+    "playwright",
+    "httpx>=0.24.0",
+    "pyyaml>=6.0",
+    "reportlab>=4.0",
+    "python-docx>=1.1",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "libsql>=0.1.11",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
