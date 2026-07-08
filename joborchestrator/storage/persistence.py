@@ -15,8 +15,8 @@ from joborchestrator.ranking.schemas import RankingResult
 from joborchestrator.ranking.serialization import result_to_dict
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.paths import DB_PATH
-from joborchestrator.profile_skill_catalog import DEFAULT_SKILL_CATALOG
 from joborchestrator.storage import db_connection
+from joborchestrator.storage import operations_repository, settings_repository, skill_catalog_repository
 
 BACKUP_DIR_NAME = "backups"
 SPEED_RANKING_MIGRATION_COLUMNS = {
@@ -234,7 +234,7 @@ def _conn():
         if _scanner_migration_needed(conn):
             backup_database("before_speed_ranking_migration")
         _ensure_scanner_columns(conn)
-        _seed_skill_catalog(conn)
+        skill_catalog_repository.seed_skill_catalog(conn)
         _backfill_speed_ranking_columns(conn)
         conn.commit()
         _SCHEMA_READY = True
@@ -381,127 +381,35 @@ def init_db():
 
 
 def get_app_setting(key: str, fallback: object | None = None) -> object | None:
-    conn = _conn()
-    try:
-        row = conn.execute("SELECT value_json FROM app_settings WHERE key = ?", (key,)).fetchone()
-        if not row:
-            return fallback
-        return json.loads(row["value_json"])
-    finally:
-        conn.close()
+    return settings_repository.get_app_setting(_conn, key, fallback)
 
 
 def set_app_setting(key: str, value: object) -> None:
-    now = datetime.now().isoformat(timespec="seconds")
-    conn = _conn()
-    try:
-        conn.execute(
-            """INSERT INTO app_settings (key, value_json, updated_at)
-               VALUES (?, ?, ?)
-               ON CONFLICT(key) DO UPDATE SET
-                   value_json = excluded.value_json,
-                   updated_at = excluded.updated_at""",
-            (key, json.dumps(value, ensure_ascii=False), now),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    settings_repository.set_app_setting(_conn, key, value)
 
 
 def get_candidate_profile_payload() -> dict | None:
-    value = get_app_setting("candidate_profile")
-    return value if isinstance(value, dict) else None
+    return settings_repository.get_candidate_profile_payload(_conn)
 
 
 def save_candidate_profile_payload(profile: dict) -> None:
-    set_app_setting("candidate_profile", profile)
+    settings_repository.save_candidate_profile_payload(_conn, profile)
 
 
 def list_skill_catalog() -> list[dict[str, object]]:
-    conn = _conn()
-    try:
-        rows = conn.execute(
-            """SELECT id, category, name, sort_order
-               FROM skill_catalog
-               ORDER BY category COLLATE NOCASE ASC, sort_order ASC, name COLLATE NOCASE ASC"""
-        ).fetchall()
-        return [dict(row) for row in rows]
-    finally:
-        conn.close()
+    return skill_catalog_repository.list_skill_catalog(_conn)
 
 
 def add_skill_catalog_item(category: str, name: str) -> dict[str, object]:
-    clean_category = category.strip() or "General"
-    clean_name = name.strip()
-    if not clean_name:
-        raise ValueError("Skill name is required.")
-    now = datetime.now().isoformat(timespec="seconds")
-    conn = _conn()
-    try:
-        row = conn.execute(
-            "SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort FROM skill_catalog WHERE category = ?",
-            (clean_category,),
-        ).fetchone()
-        sort_order = int(row["next_sort"] if row else 0)
-        cursor = conn.execute(
-            """INSERT OR IGNORE INTO skill_catalog (category, name, sort_order, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (clean_category, clean_name, sort_order, now, now),
-        )
-        conn.commit()
-        existing = conn.execute(
-            """SELECT id, category, name, sort_order
-               FROM skill_catalog
-               WHERE category = ? AND lower(name) = lower(?)
-               ORDER BY id DESC
-               LIMIT 1""",
-            (clean_category, clean_name),
-        ).fetchone()
-        if existing:
-            return dict(existing)
-        return {"id": _last_insert_id(conn, cursor), "category": clean_category, "name": clean_name, "sort_order": sort_order}
-    finally:
-        conn.close()
-
-
-def _seed_skill_catalog(conn: sqlite3.Connection | db_connection.LibsqlConnection) -> None:
-    existing = conn.execute("SELECT 1 FROM skill_catalog LIMIT 1").fetchone()
-    if existing:
-        return
-    now = datetime.now().isoformat(timespec="seconds")
-    for category, skills in DEFAULT_SKILL_CATALOG.items():
-        for index, skill in enumerate(skills):
-            conn.execute(
-                """INSERT OR IGNORE INTO skill_catalog (category, name, sort_order, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (category, skill, index, now, now),
-            )
+    return skill_catalog_repository.add_skill_catalog_item(_conn, category, name)
 
 
 def create_operation(operation_type: str, input_payload: dict, progress_message: str | None = None) -> int:
-    now = datetime.now().isoformat(timespec="seconds")
-    conn = _conn()
-    try:
-        cursor = conn.execute(
-            """INSERT INTO operation_runs (
-                   type, status, progress_message, input_json, attempts,
-                   created_at, updated_at
-               ) VALUES (?, 'queued', ?, ?, 0, ?, ?)""",
-            (operation_type, progress_message, json.dumps(input_payload, ensure_ascii=False), now, now),
-        )
-        conn.commit()
-        return _last_insert_id(conn, cursor)
-    finally:
-        conn.close()
+    return operations_repository.create_operation(_conn, operation_type, input_payload, progress_message)
 
 
 def get_operation(operation_id: int) -> dict | None:
-    conn = _conn()
-    try:
-        row = conn.execute("SELECT * FROM operation_runs WHERE id = ?", (operation_id,)).fetchone()
-        return _operation_row_to_dict(row) if row else None
-    finally:
-        conn.close()
+    return operations_repository.get_operation(_conn, operation_id)
 
 
 def _last_insert_id(conn: sqlite3.Connection | db_connection.LibsqlConnection, cursor: object) -> int:
@@ -515,113 +423,23 @@ def _last_insert_id(conn: sqlite3.Connection | db_connection.LibsqlConnection, c
 
 
 def get_latest_operation(operation_type: str | None = None) -> dict | None:
-    conn = _conn()
-    try:
-        if operation_type:
-            row = conn.execute(
-                "SELECT * FROM operation_runs WHERE type = ? ORDER BY created_at DESC LIMIT 1",
-                (operation_type,),
-            ).fetchone()
-        else:
-            row = conn.execute("SELECT * FROM operation_runs ORDER BY created_at DESC LIMIT 1").fetchone()
-        return _operation_row_to_dict(row) if row else None
-    finally:
-        conn.close()
+    return operations_repository.get_latest_operation(_conn, operation_type)
 
 
 def claim_next_operation(worker_id: str, operation_types: list[str] | None = None) -> dict | None:
-    now = datetime.now().isoformat(timespec="seconds")
-    conn = _conn()
-    try:
-        params: list[object] = []
-        query = "SELECT id FROM operation_runs WHERE status = 'queued'"
-        if operation_types:
-            placeholders = ",".join("?" for _ in operation_types)
-            query += f" AND type IN ({placeholders})"
-            params.extend(operation_types)
-        query += " ORDER BY created_at ASC LIMIT 1"
-        row = conn.execute(query, params).fetchone()
-        if not row:
-            return None
-        operation_id = int(row["id"])
-        conn.execute(
-            """UPDATE operation_runs
-               SET status = 'running',
-                   attempts = attempts + 1,
-                   claimed_by = ?,
-                   started_at = COALESCE(started_at, ?),
-                   progress_message = 'Worker started processing.',
-                   updated_at = ?
-               WHERE id = ? AND status = 'queued'""",
-            (worker_id, now, now, operation_id),
-        )
-        conn.commit()
-        claimed = conn.execute("SELECT * FROM operation_runs WHERE id = ?", (operation_id,)).fetchone()
-        if not claimed or claimed["status"] != "running" or claimed["claimed_by"] != worker_id:
-            return None
-        return _operation_row_to_dict(claimed)
-    finally:
-        conn.close()
+    return operations_repository.claim_next_operation(_conn, worker_id, operation_types)
 
 
 def update_operation_progress(operation_id: int, message: str) -> None:
-    now = datetime.now().isoformat(timespec="seconds")
-    conn = _conn()
-    try:
-        conn.execute(
-            "UPDATE operation_runs SET progress_message = ?, updated_at = ? WHERE id = ?",
-            (message, now, operation_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    operations_repository.update_operation_progress(_conn, operation_id, message)
 
 
 def complete_operation(operation_id: int, output_payload: dict, message: str = "Completed.") -> None:
-    now = datetime.now().isoformat(timespec="seconds")
-    conn = _conn()
-    try:
-        conn.execute(
-            """UPDATE operation_runs
-               SET status = 'completed',
-                   progress_message = ?,
-                   output_json = ?,
-                   error = NULL,
-                   finished_at = ?,
-                   updated_at = ?
-               WHERE id = ?""",
-            (message, json.dumps(output_payload, ensure_ascii=False), now, now, operation_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    operations_repository.complete_operation(_conn, operation_id, output_payload, message)
 
 
 def fail_operation(operation_id: int, error: str, message: str = "Failed.") -> None:
-    now = datetime.now().isoformat(timespec="seconds")
-    conn = _conn()
-    try:
-        conn.execute(
-            """UPDATE operation_runs
-               SET status = 'failed',
-                   progress_message = ?,
-                   error = ?,
-                   finished_at = ?,
-                   updated_at = ?
-               WHERE id = ?""",
-            (message, error, now, now, operation_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _operation_row_to_dict(row: object) -> dict:
-    data = dict(row)
-    for field in ("input_json", "output_json"):
-        value = data.get(field)
-        data[field] = parse_json_value(value, {}) if value else None
-    return data
+    operations_repository.fail_operation(_conn, operation_id, error, message)
 
 
 def parse_json_value(value: object, fallback: object) -> object:
