@@ -47,3 +47,21 @@ def test_extract_json_object_repairs_common_llm_json_issues() -> None:
     assert parsed["headline"] == "Backend Developer"
     assert parsed["target_roles"] == ["Backend Engineer"]
     assert parsed["skills"][0]["name"] == "Python"
+
+
+def test_extract_json_object_accepts_yaml_like_object() -> None:
+    parsed = _extract_json_object(
+        """
+{
+  headline: Backend Developer,
+  target_roles: [Backend Engineer, API Engineer],
+  skills: [
+    {name: Python, category: Programming, level: strong}
+  ]
+}
+"""
+    )
+
+    assert parsed["headline"] == "Backend Developer"
+    assert parsed["target_roles"] == ["Backend Engineer", "API Engineer"]
+    assert parsed["skills"][0]["level"] == "strong"

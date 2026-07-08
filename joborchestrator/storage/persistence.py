@@ -39,6 +39,7 @@ APPLICATION_KIT_COLUMNS = {
     "ats_cv_text": "TEXT",
     "autofill_notes": "TEXT",
 }
+_SCHEMA_READY = False
 
 SCANNER_SCHEMA = """
 CREATE TABLE IF NOT EXISTS company_sources (
@@ -192,16 +193,19 @@ CREATE TABLE IF NOT EXISTS app_settings (
 
 
 def _conn():
+    global _SCHEMA_READY
     conn = db_connection.connect(DB_PATH)
     if not getattr(conn, "is_cloud", False):
         conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute("PRAGMA journal_mode = WAL")
-    conn.executescript(SCANNER_SCHEMA)
-    if _scanner_migration_needed(conn):
-        backup_database("before_speed_ranking_migration")
-    _ensure_scanner_columns(conn)
-    _backfill_speed_ranking_columns(conn)
-    conn.commit()
+    if not getattr(conn, "is_cloud", False) or not _SCHEMA_READY:
+        conn.executescript(SCANNER_SCHEMA)
+        if _scanner_migration_needed(conn):
+            backup_database("before_speed_ranking_migration")
+        _ensure_scanner_columns(conn)
+        _backfill_speed_ranking_columns(conn)
+        conn.commit()
+        _SCHEMA_READY = True
     return conn
 
 

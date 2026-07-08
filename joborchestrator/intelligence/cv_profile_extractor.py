@@ -7,6 +7,7 @@ from io import BytesIO
 from typing import Any
 
 import httpx
+import yaml
 
 NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1"
 DEFAULT_PROFILE_EXTRACTION_MODEL = (
@@ -194,7 +195,13 @@ def _loads_lenient_json(raw: str) -> dict[str, Any]:
         return json.loads(raw)
     except json.JSONDecodeError:
         repaired = _repair_common_json_issues(raw)
+    try:
         return json.loads(repaired)
+    except json.JSONDecodeError:
+        parsed = yaml.safe_load(repaired)
+        if isinstance(parsed, dict):
+            return parsed
+        raise
 
 
 def _repair_common_json_issues(raw: str) -> str:

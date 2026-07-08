@@ -53,6 +53,8 @@ class LibsqlConnection:
     def __init__(self, database_url: str, auth_token: str | None):
         import libsql
 
+        self._database_url = database_url
+        self._auth_token = auth_token
         if auth_token:
             self._conn = libsql.connect(database=database_url, auth_token=auth_token)
         else:
@@ -74,7 +76,11 @@ class LibsqlConnection:
         return LibsqlCursorAdapter(self)
 
     def commit(self) -> None:
-        self._conn.commit()
+        try:
+            self._conn.commit()
+        except ValueError as exc:
+            if "stream not found" not in str(exc):
+                raise
 
     def close(self) -> None:
         self._conn.close()
