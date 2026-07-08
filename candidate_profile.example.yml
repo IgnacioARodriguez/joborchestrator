@@ -1,0 +1,31 @@
+target_roles:
+  - Backend Engineer
+  - Software Engineer
+secondary_roles:
+  - Full Stack Engineer
+  - Technical Consultant
+strong_skills:
+  - Python
+  - REST APIs
+  - SQL
+  - Docker
+medium_skills:
+  - React
+  - TypeScript
+weak_skills:
+  - Terraform
+industries:
+  - SaaS
+  - Developer tools
+preferred_locations:
+  - Remote
+preferred_work_modes:
+  - remote
+  - hybrid
+min_salary:
+dealbreakers:
+  - unpaid
+avoid_roles:
+  - Manual QA
+real_experience_years: 0.0
+notes: Replace this file with candidate_profile.yml for local personal ranking.

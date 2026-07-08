@@ -1,16 +1,4 @@
-"""
-Persistencia local (SQLite) para el pipeline de ofertas.
-
-Guarda TODA oferta que pasó alguna vez por "Preparar lotes", para poder:
-  - Deduplicar entre corridas (si en una semana vuelves a scrapear y salen
-    las mismas ofertas, no se vuelven a mandar a la IA ni se re-muestran).
-  - Marcar cuáles ya aplicaste, con fecha y notas.
-  - Guardar el score de facilidad de entrada una vez consolidado.
-
-El archivo .db vive junto a app.py, en la misma carpeta del proyecto —
-mientras no borres o muevas esa carpeta, la persistencia sobrevive entre
-sesiones y entre semanas.
-"""
+"""SQLite persistence for the local job pipeline."""
 
 import sqlite3
 import json
@@ -50,31 +38,6 @@ APPLICATION_KIT_COLUMNS = {
     "ats_cv_text": "TEXT",
     "autofill_notes": "TEXT",
 }
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS ofertas (
-    id TEXT PRIMARY KEY,
-    titulo TEXT,
-    empresa TEXT,
-    ubicacion TEXT,
-    modalidad TEXT,
-    categoria TEXT,
-    url TEXT,
-    fecha_primera_vista TEXT,
-    fecha_ultima_vista TEXT,
-    veces_vista INTEGER DEFAULT 1,
-    score_total REAL,
-    fit_stack REAL,
-    fit_seniority REAL,
-    barreras_duras REAL,
-    volumen_contratacion REAL,
-    transferibilidad REAL,
-    razon_breve TEXT,
-    aplicado INTEGER DEFAULT 0,
-    fecha_aplicado TEXT,
-    notas TEXT
-);
-"""
 
 SCANNER_SCHEMA = """
 CREATE TABLE IF NOT EXISTS company_sources (
@@ -226,7 +189,6 @@ def _conn():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute(SCHEMA)
     conn.executescript(SCANNER_SCHEMA)
     if _scanner_migration_needed(conn):
         backup_database("before_speed_ranking_migration")
@@ -360,179 +322,6 @@ def init_db():
     conn = _conn()
     conn.commit()
     conn.close()
-
-
-def get_ids_ya_vistos() -> set:
-    """Todos los ids que ya pasaron por el sistema alguna vez."""
-    conn = _conn()
-    try:
-        rows = conn.execute("SELECT id FROM ofertas").fetchall()
-    finally:
-        conn.close()
-    return {r[0] for r in rows}
-
-
-def registrar_ofertas_vistas(df: pd.DataFrame):
-    """
-    Inserta ofertas nuevas o actualiza fecha_ultima_vista/veces_vista si ya existían.
-    No pisa el score ni el estado de aplicado si ya estaban seteados.
-    """
-    if df.empty or "id" not in df.columns:
-        return
-
-    ahora = datetime.now().isoformat(timespec="seconds")
-    conn = _conn()
-    try:
-        for _, row in df.iterrows():
-            existe = conn.execute(
-                "SELECT id FROM ofertas WHERE id = ?", (row["id"],)
-            ).fetchone()
-
-            if existe:
-                conn.execute(
-                    "UPDATE ofertas SET fecha_ultima_vista = ?, veces_vista = veces_vista + 1 WHERE id = ?",
-                    (ahora, row["id"]),
-                )
-            else:
-                conn.execute(
-                    """INSERT INTO ofertas
-                       (id, titulo, empresa, ubicacion, modalidad, categoria, url,
-                        fecha_primera_vista, fecha_ultima_vista, veces_vista)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-                    (
-                        row["id"],
-                        row.get("titulo", ""),
-                        row.get("empresa", ""),
-                        row.get("ubicacion", ""),
-                        row.get("modalidad", ""),
-                        row.get("categoria", ""),
-                        row.get("url", ""),
-                        ahora,
-                        ahora,
-                    ),
-                )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def guardar_scores(df_final: pd.DataFrame):
-    """Actualiza los scores/razones de ranking una vez consolidado un lote de resultados."""
-    if df_final.empty or "id" not in df_final.columns:
-        return
-
-    conn = _conn()
-    try:
-        for _, row in df_final.iterrows():
-            conn.execute(
-                """UPDATE ofertas SET
-                       score_total = ?, fit_stack = ?, fit_seniority = ?,
-                       barreras_duras = ?, volumen_contratacion = ?,
-                       transferibilidad = ?, razon_breve = ?
-                   WHERE id = ?""",
-                (
-                    row.get("SCORE_TOTAL"),
-                    row.get("FIT_STACK"),
-                    row.get("FIT_SENIORITY"),
-                    row.get("BARRERAS_DURAS"),
-                    row.get("VOLUMEN_CONTRATACION"),
-                    row.get("TRANSFERIBILIDAD"),
-                    row.get("razon_breve"),
-                    row["id"],
-                ),
-            )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def marcar_aplicado(id_oferta: str, aplicado: bool, notas: str = None):
-    conn = _conn()
-    try:
-        fecha = datetime.now().isoformat(timespec="seconds") if aplicado else None
-        if notas is not None:
-            conn.execute(
-                "UPDATE ofertas SET aplicado = ?, fecha_aplicado = ?, notas = ? WHERE id = ?",
-                (int(aplicado), fecha, notas, id_oferta),
-            )
-        else:
-            conn.execute(
-                "UPDATE ofertas SET aplicado = ?, fecha_aplicado = ? WHERE id = ?",
-                (int(aplicado), fecha, id_oferta),
-            )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def actualizar_estado_bulk(df_editado: pd.DataFrame):
-    """
-    Recibe el DataFrame editado desde st.data_editor (con columnas id, aplicado, notas)
-    y persiste todos los cambios de una vez.
-    """
-    conn = _conn()
-    try:
-        for _, row in df_editado.iterrows():
-            aplicado = bool(row.get("aplicado", False))
-            fecha = datetime.now().isoformat(timespec="seconds") if aplicado else None
-            conn.execute(
-                "UPDATE ofertas SET aplicado = ?, fecha_aplicado = COALESCE(?, fecha_aplicado), notas = ? WHERE id = ?",
-                (int(aplicado), fecha if aplicado else None, row.get("notas", ""), row["id"]),
-            )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def get_historial(solo_aplicadas: bool = False) -> pd.DataFrame:
-    conn = _conn()
-    try:
-        query = "SELECT * FROM ofertas"
-        if solo_aplicadas:
-            query += " WHERE aplicado = 1"
-        query += " ORDER BY score_total DESC NULLS LAST, fecha_ultima_vista DESC"
-        df = pd.read_sql_query(query, conn)
-    finally:
-        conn.close()
-    return df
-
-
-def resetear_puntuaciones() -> int:
-    """Borra scores y razones para poder recalcular con un sistema nuevo."""
-    conn = _conn()
-    try:
-        cursor = conn.execute(
-            """UPDATE ofertas SET
-                   score_total = NULL,
-                   fit_stack = NULL,
-                   fit_seniority = NULL,
-                   barreras_duras = NULL,
-                   volumen_contratacion = NULL,
-                   transferibilidad = NULL,
-                   razon_breve = NULL
-               WHERE score_total IS NOT NULL
-                  OR fit_stack IS NOT NULL
-                  OR fit_seniority IS NOT NULL
-                  OR barreras_duras IS NOT NULL
-                  OR volumen_contratacion IS NOT NULL
-                  OR transferibilidad IS NOT NULL
-                  OR razon_breve IS NOT NULL"""
-        )
-        conn.commit()
-        return cursor.rowcount
-    finally:
-        conn.close()
-
-
-def borrar_historial() -> int:
-    """Elimina todo el historial local de ofertas."""
-    conn = _conn()
-    try:
-        cursor = conn.execute("DELETE FROM ofertas")
-        conn.commit()
-        return cursor.rowcount
-    finally:
-        conn.close()
 
 
 def add_company_source(
@@ -830,127 +619,10 @@ def get_job_posting(job_id: int) -> dict | None:
 def update_job_status(job_id: int, status: str) -> None:
     conn = _conn()
     try:
-        row = conn.execute("SELECT external_id FROM job_postings WHERE id = ?", (job_id,)).fetchone()
         conn.execute("UPDATE job_postings SET pipeline_status = ? WHERE id = ?", (status, job_id))
-        if row is not None and status in {"applied", "discarded", "shortlisted"}:
-            aplicado = 1 if status == "applied" else 0
-            fecha = datetime.now().isoformat(timespec="seconds") if status == "applied" else None
-            conn.execute(
-                """UPDATE ofertas
-                   SET aplicado = ?,
-                       fecha_aplicado = COALESCE(?, fecha_aplicado)
-                   WHERE id = ?""",
-                (aplicado, fecha, row["external_id"]),
-            )
         conn.commit()
     finally:
         conn.close()
-
-
-def registrar_job_posting_abierta(job_id: int) -> bool:
-    """Add a normalized job to legacy history only when the user opens it."""
-    conn = _conn()
-    try:
-        row = conn.execute("SELECT * FROM job_postings WHERE id = ?", (job_id,)).fetchone()
-        if row is None:
-            return False
-
-        external_id = row["external_id"]
-        ahora = datetime.now().isoformat(timespec="seconds")
-        ranking = _latest_ranking_for_job(conn, job_id)
-        existe = conn.execute("SELECT id FROM ofertas WHERE id = ?", (external_id,)).fetchone()
-        if existe:
-            conn.execute(
-                """UPDATE ofertas SET
-                       fecha_ultima_vista = ?,
-                       veces_vista = veces_vista + 1,
-                       score_total = COALESCE(?, score_total),
-                       fit_stack = COALESCE(?, fit_stack),
-                       fit_seniority = COALESCE(?, fit_seniority),
-                       barreras_duras = COALESCE(?, barreras_duras),
-                       volumen_contratacion = COALESCE(?, volumen_contratacion),
-                       transferibilidad = COALESCE(?, transferibilidad),
-                       razon_breve = COALESCE(?, razon_breve)
-                   WHERE id = ?""",
-                (
-                    ahora,
-                    ranking["score_total"],
-                    ranking["fit_stack"],
-                    ranking["fit_seniority"],
-                    ranking["barreras_duras"],
-                    ranking["volumen_contratacion"],
-                    ranking["transferibilidad"],
-                    ranking["razon_breve"],
-                    external_id,
-                ),
-            )
-        else:
-            conn.execute(
-                """INSERT INTO ofertas
-                   (id, titulo, empresa, ubicacion, modalidad, categoria, url,
-                    fecha_primera_vista, fecha_ultima_vista, veces_vista,
-                    score_total, fit_stack, fit_seniority, barreras_duras,
-                    volumen_contratacion, transferibilidad, razon_breve)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    external_id,
-                    row["title"] or "",
-                    row["company"] or "",
-                    row["location"] or "",
-                    row["workplace_type"] or "",
-                    row["source"] or "",
-                    row["url"] or row["apply_url"] or "",
-                    ahora,
-                    ahora,
-                    ranking["score_total"],
-                    ranking["fit_stack"],
-                    ranking["fit_seniority"],
-                    ranking["barreras_duras"],
-                    ranking["volumen_contratacion"],
-                    ranking["transferibilidad"],
-                    ranking["razon_breve"],
-                ),
-            )
-        conn.commit()
-        return True
-    finally:
-        conn.close()
-
-
-def _latest_ranking_for_job(conn: sqlite3.Connection, job_id: int) -> dict[str, object | None]:
-    row = conn.execute(
-        """SELECT final_score, scores_json, reasoning_summary, ranking_version, updated_at
-           FROM job_rankings
-           WHERE job_id = ?
-           ORDER BY updated_at DESC
-           LIMIT 1""",
-        (job_id,),
-    ).fetchone()
-    empty = {
-        "score_total": None,
-        "fit_stack": None,
-        "fit_seniority": None,
-        "barreras_duras": None,
-        "volumen_contratacion": None,
-        "transferibilidad": None,
-        "razon_breve": None,
-    }
-    if row is None:
-        return empty
-    try:
-        scores = json.loads(row["scores_json"] or "{}")
-    except json.JSONDecodeError:
-        scores = {}
-    risk_penalty = scores.get("risk_penalty")
-    return {
-        "score_total": row["final_score"],
-        "fit_stack": scores.get("technical_fit"),
-        "fit_seniority": scores.get("seniority_fit"),
-        "barreras_duras": None if risk_penalty is None else max(0, 100 - float(risk_penalty) * 2.5),
-        "volumen_contratacion": scores.get("application_roi"),
-        "transferibilidad": scores.get("role_fit"),
-        "razon_breve": row["reasoning_summary"],
-    }
 
 
 def update_job_application_materials(
@@ -1568,13 +1240,3 @@ def _ranking_job_item_counts(conn: sqlite3.Connection, ranking_job_id: int) -> d
         "cancelled": counts.get("cancelled", 0),
     }
 
-
-def stats_generales() -> dict:
-    conn = _conn()
-    try:
-        total = conn.execute("SELECT COUNT(*) FROM ofertas").fetchone()[0]
-        aplicadas = conn.execute("SELECT COUNT(*) FROM ofertas WHERE aplicado = 1").fetchone()[0]
-        con_score = conn.execute("SELECT COUNT(*) FROM ofertas WHERE score_total IS NOT NULL").fetchone()[0]
-    finally:
-        conn.close()
-    return {"total_vistas": total, "aplicadas": aplicadas, "con_score": con_score}

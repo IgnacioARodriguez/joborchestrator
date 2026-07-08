@@ -3,11 +3,11 @@ import {
   ListOrdered,
   ClipboardCheck,
   KanbanSquare,
-  Upload,
+  Wrench,
   type LucideIcon,
 } from "lucide-react"
 
-export type Section = "dashboard" | "ranking" | "review" | "pipeline" | "import"
+export type Section = "dashboard" | "ranking" | "review" | "pipeline" | "ops"
 
 export interface NavItem {
   id: Section
@@ -20,5 +20,5 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "ranking", label: "Ranking", icon: ListOrdered },
   { id: "review", label: "Needs Review", icon: ClipboardCheck },
   { id: "pipeline", label: "Pipeline", icon: KanbanSquare },
-  { id: "import", label: "Import", icon: Upload },
+  { id: "ops", label: "Ops", icon: Wrench },
 ]

@@ -20,7 +20,14 @@ export type PipelineStatus =
 export type JobStatus = "active" | "expired" | "filled"
 
 export interface RankingScores {
+  technical_fit?: number
+  seniority_fit?: number
   role_fit: number
+  opportunity_quality?: number
+  application_roi?: number
+  market_alignment?: number
+  risk_penalty?: number
+  speed_signal?: number
   requirement_coverage: number
   seniority_match: number
   location_fit: number
@@ -68,6 +75,7 @@ export interface JobPosting {
   location: string
   remote: boolean
   source: JobSource
+  source_raw?: string
   url: string
   apply_url: string
   description_text: string
@@ -80,15 +88,42 @@ export interface JobPosting {
   materials: ApplicationMaterials
 }
 
-export interface ImportRecord {
-  id: string
-  file_name: string
-  imported_at: string
-  rows_detected: number
-  inserted: number
-  updated: number
-  duplicates: number
-  errors: number
+export interface CompanySource {
+  id: number
+  provider: string
+  company_name: string
+  company_ref: string
+  enabled: number | boolean
+  last_scan_at?: string | null
+  last_scan_status?: string | null
+  last_scan_error?: string | null
+}
+
+export interface ScanResult {
+  source_type: string
+  company_name: string
+  company_ref: string
+  found_count: number
+  new_count: number
+  updated_count: number
+  unchanged_count: number
+  errors: string[]
+  duration_seconds: number
+}
+
+export interface RankingJobRecord {
+  id: number
+  provider: string
+  model: string
+  ranking_version: string
+  status: string
+  total_items: number
+  processed_items: number
+  saved_items: number
+  failed_items: number
+  created_at: string
+  updated_at: string
+  error?: string | null
 }
 
 export const DECISION_ORDER: Decision[] = [

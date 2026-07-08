@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Protocol
 
 import httpx
@@ -296,47 +295,4 @@ async def list_jobs_for_source(
     if provider is None:
         raise ProviderError(f"Unsupported provider: {source_type}")
     return await provider.list_jobs(company_ref, company_name)
-
-
-async def fetch_all_providers(companies: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """Backward-compatible adapter for the legacy portal scanner."""
-    results: dict[str, list[dict[str, Any]]] = {}
-
-    async def _fetch(company_cfg: dict[str, Any]) -> None:
-        company_name = company_cfg.get("name", "")
-        source_type = company_cfg.get("api_provider")
-        company_ref = company_cfg.get("company_ref") or _legacy_company_ref(company_cfg)
-        if not source_type or not company_ref:
-            return
-        try:
-            jobs = await list_jobs_for_source(source_type, company_ref, company_name)
-            results[company_name] = [
-                {
-                    "title": job.title or "",
-                    "url": job.url or "",
-                    "location": job.location or "",
-                    "job_id": job.external_id,
-                    "department": job.department or "",
-                    "source": job.source,
-                    "description": job.description_text or "",
-                    "salary_min": job.salary_min,
-                    "salary_max": job.salary_max,
-                }
-                for job in jobs
-            ]
-        except ProviderError as exc:
-            print(f"[{source_type}] {company_name}: {exc}")
-            results[company_name] = []
-
-    await asyncio.gather(*[_fetch(cfg) for cfg in companies if cfg.get("enabled", True)])
-    return results
-
-
-def _legacy_company_ref(company_cfg: dict[str, Any]) -> str | None:
-    if company_cfg.get("company_ref"):
-        return company_cfg["company_ref"]
-    api_url = company_cfg.get("api") or ""
-    if "/boards/" in api_url:
-        return api_url.split("/boards/", 1)[1].split("/", 1)[0]
-    return company_cfg.get("slug") or company_cfg.get("name")
 

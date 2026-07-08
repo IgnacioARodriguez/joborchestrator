@@ -9,7 +9,7 @@ import { DashboardScreen } from "@/components/screens/dashboard-screen"
 import { RankingScreen } from "@/components/screens/ranking-screen"
 import { NeedsReviewScreen } from "@/components/screens/needs-review-screen"
 import { PipelineScreen } from "@/components/screens/pipeline-screen"
-import { ImportScreen } from "@/components/screens/import-screen"
+import { OpsScreen } from "@/components/screens/ops-screen"
 import { JobDetailDrawer } from "@/components/job-detail-drawer"
 
 const SECTION_TITLES: Record<Section, string> = {
@@ -17,7 +17,7 @@ const SECTION_TITLES: Record<Section, string> = {
   ranking: "Ranking",
   review: "Needs Review",
   pipeline: "Pipeline",
-  import: "Import",
+  ops: "Operations",
 }
 
 export function AppShell() {
@@ -97,7 +97,7 @@ export function AppShell() {
             {section === "pipeline" && (
               <PipelineScreen onOpenJob={setOpenJobId} />
             )}
-            {section === "import" && <ImportScreen onNavigate={navigate} />}
+            {section === "ops" && <OpsScreen />}
           </main>
         </div>
       </div>

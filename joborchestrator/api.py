@@ -1,0 +1,332 @@
+from __future__ import annotations
+
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any, Literal
+
+import pandas as pd
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+from joborchestrator.api_dto import (
+    job_dto,
+    latest_rankings_by_job_id,
+    parse_json_value,
+    scan_result_dto,
+)
+from joborchestrator.batching import MIN_DESCRIPCION_LEN_DEFAULT, filtrar_ofertas
+from joborchestrator.intelligence.application_materials import build_application_kit
+from joborchestrator.intelligence.llm_application_materials import (
+    DEFAULT_MATERIALS_MODEL,
+    LLMMaterialsError,
+    build_application_kit_with_llm,
+)
+from joborchestrator.paths import SALIDAS_DIR
+from joborchestrator.ranking.manual_llm_review import (
+    ManualLLMReviewError,
+    ranking_from_storage_row,
+)
+from joborchestrator.ranking.nvidia_ranker import DEFAULT_NVIDIA_MODEL
+from joborchestrator.ranking.ranker import result_to_dict
+from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
+from joborchestrator.ranking.worker import run_worker_once
+from joborchestrator.scanning import scanner as source_scanner
+from joborchestrator.scanning import search_scanner
+from joborchestrator.scanning.linkedin_importer import import_linkedin_dataframe_to_job_postings
+from joborchestrator.scanning.providers import PROVIDERS
+from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS
+from joborchestrator.storage import persistence as db
+
+
+app = FastAPI(title="Job Orchestrator API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+class PipelinePatch(BaseModel):
+    status: Literal["new", "shortlisted", "applied", "discarded", "opened"]
+
+
+class SourcePayload(BaseModel):
+    provider: str
+    company_name: str
+    company_ref: str
+    enabled: bool = True
+
+
+class AtsScanPayload(BaseModel):
+    source_ids: list[int] | None = None
+    max_concurrency: int = Field(default=6, ge=1, le=20)
+
+
+class SearchPayload(BaseModel):
+    providers: list[str]
+    queries: list[str]
+    location: str | None = "Spain"
+    remote: bool = True
+    max_pages: int = Field(default=1, ge=1, le=10)
+    max_concurrency: int = Field(default=4, ge=1, le=20)
+
+
+class RankingJobPayload(BaseModel):
+    job_ids: list[int] | None = None
+    limit: int = Field(default=250, ge=1, le=2000)
+    model: str = DEFAULT_NVIDIA_MODEL
+    request_batch_size: int = Field(default=25, ge=1, le=100)
+    max_concurrency: int = Field(default=4, ge=1, le=20)
+    ranking_version: str = SPEED_RANKING_VERSION
+    run_once: bool = False
+
+
+class MaterialsPayload(BaseModel):
+    use_llm: bool = False
+    model: str = DEFAULT_MATERIALS_MODEL
+    api_key: str | None = None
+    shortlist: bool = True
+
+
+class ManualReviewPayload(BaseModel):
+    payload: dict[str, Any]
+
+
+def _job_for_materials(job_id: int) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    job = db.get_job_posting(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    ranking = latest_rankings_by_job_id().get(job_id)
+    if ranking:
+        job.update(
+            {
+                "final_score": ranking.get("final_score"),
+                "decision": ranking.get("decision"),
+                "reasoning_summary": ranking.get("reasoning_summary"),
+                "recommended_application_angle": ranking.get("recommended_application_angle"),
+                "cv_keywords_to_emphasize": parse_json_value(ranking.get("cv_keywords_to_emphasize_json"), []),
+            }
+        )
+    return job, ranking
+
+
+@app.on_event("startup")
+def startup() -> None:
+    db.init_db()
+
+
+@app.get("/api/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/api/jobs")
+def list_jobs(limit: int = 2000) -> dict[str, Any]:
+    jobs = db.get_job_postings(limit=limit)
+    rankings = latest_rankings_by_job_id()
+    return {
+        "jobs": [job_dto(row, rankings.get(int(row["id"]))) for row in jobs.to_dict("records")],
+        "ranking_versions": db.get_ranking_versions(),
+    }
+
+
+@app.post("/api/jobs/{job_id}/pipeline")
+def update_pipeline(job_id: int, payload: PipelinePatch) -> dict[str, Any]:
+    db.update_job_status(job_id, payload.status)
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/opened")
+def mark_opened(job_id: int) -> dict[str, Any]:
+    db.update_job_status(job_id, "opened")
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/materials")
+def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]:
+    job, ranking = _job_for_materials(job_id)
+    keywords = parse_json_value(ranking.get("cv_keywords_to_emphasize_json"), []) if ranking else []
+    try:
+        if payload.use_llm:
+            kit = build_application_kit_with_llm(
+                job,
+                api_key=payload.api_key,
+                model=payload.model,
+            )
+        else:
+            kit = build_application_kit(job, keywords=keywords)
+    except LLMMaterialsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    db.update_job_application_materials(
+        job_id,
+        pipeline_status="shortlisted" if payload.shortlist else None,
+        recruiter_message=kit.get("recruiter_message"),
+        cover_letter=kit.get("cover_letter"),
+        ats_cv_text=kit.get("ats_cv_text") or kit.get("ats_cv_notes"),
+        autofill_notes=kit.get("autofill_notes"),
+    )
+    fresh = db.get_job_posting(job_id)
+    rankings = latest_rankings_by_job_id()
+    return {"job": job_dto(fresh, rankings.get(job_id))}
+
+
+@app.post("/api/jobs/{job_id}/manual-review")
+def apply_manual_review(job_id: int, payload: ManualReviewPayload) -> dict[str, Any]:
+    ranking_row = latest_rankings_by_job_id().get(job_id)
+    if not ranking_row:
+        raise HTTPException(status_code=404, detail="No baseline ranking found")
+    try:
+        baseline = ranking_from_storage_row(ranking_row)
+        merged = payload.payload.copy()
+        merged.setdefault("evidence", {})
+        merged["evidence"]["requires_llm_review"] = False
+        current = result_to_dict(baseline)
+        current.update(merged)
+        scores = asdict(baseline.scores)
+        scores.update(merged.get("scores") or {})
+        evidence = asdict(baseline.evidence)
+        evidence.update(merged.get("evidence") or {})
+        reviewed = baseline.__class__(
+            final_score=current.get("final_score", baseline.final_score),
+            decision=current.get("decision", baseline.decision),
+            confidence=current.get("confidence", baseline.confidence),
+            scores=baseline.scores.__class__(**scores),
+            evidence=baseline.evidence.__class__(**evidence),
+            reasoning_summary=current.get("reasoning_summary", baseline.reasoning_summary),
+            recommended_application_angle=current.get(
+                "recommended_application_angle", baseline.recommended_application_angle
+            ),
+            cv_keywords_to_emphasize=current.get("cv_keywords_to_emphasize", baseline.cv_keywords_to_emphasize),
+            cv_keywords_to_avoid_overclaiming=current.get(
+                "cv_keywords_to_avoid_overclaiming", baseline.cv_keywords_to_avoid_overclaiming
+            ),
+            ranking_version=baseline.ranking_version,
+        )
+        db.save_job_ranking(job_id, reviewed)
+    except (ManualLLMReviewError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.get("/api/sources")
+def list_sources() -> dict[str, Any]:
+    return {
+        "sources": db.list_company_sources().to_dict("records"),
+        "providers": sorted(PROVIDERS.keys()),
+        "search_providers": sorted(SEARCH_PROVIDERS.keys()),
+    }
+
+
+@app.post("/api/sources")
+def upsert_source(payload: SourcePayload) -> dict[str, Any]:
+    if payload.provider not in PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: {payload.provider}")
+    source_id = db.add_company_source(
+        payload.provider,
+        payload.company_name,
+        payload.company_ref,
+        enabled=payload.enabled,
+    )
+    return {"id": source_id}
+
+
+@app.post("/api/scans/ats")
+async def scan_ats(payload: AtsScanPayload) -> dict[str, Any]:
+    sources = db.list_company_sources(enabled_only=True).to_dict("records")
+    if payload.source_ids:
+        wanted = {int(source_id) for source_id in payload.source_ids}
+        sources = [source for source in sources if int(source["id"]) in wanted]
+    results = await source_scanner.scan_sources_concurrently(sources, max_concurrency=payload.max_concurrency)
+    return {"results": [scan_result_dto(result) for result in results]}
+
+
+@app.post("/api/scans/search")
+async def scan_search(payload: SearchPayload) -> dict[str, Any]:
+    bad = [provider for provider in payload.providers if provider not in SEARCH_PROVIDERS]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"Unsupported search providers: {bad}")
+    queries = [query.strip() for query in payload.queries if query.strip()]
+    results = await search_scanner.search_jobs_concurrently(
+        payload.providers,
+        queries,
+        payload.location,
+        remote=payload.remote,
+        max_pages=payload.max_pages,
+        max_concurrency=payload.max_concurrency,
+    )
+    return {"results": [scan_result_dto(result) for result in results]}
+
+
+@app.get("/api/scans/overview")
+def scan_overview() -> dict[str, Any]:
+    return {
+        "overview": db.get_scanner_overview(),
+        "events": db.get_recent_scan_events(limit=20).to_dict("records"),
+        "errors": db.get_recent_scan_errors(limit=10).to_dict("records"),
+    }
+
+
+@app.post("/api/linkedin/import-latest")
+def import_latest_linkedin(min_description_len: int = MIN_DESCRIPCION_LEN_DEFAULT) -> dict[str, Any]:
+    if not SALIDAS_DIR.exists():
+        raise HTTPException(status_code=404, detail=f"LinkedIn output folder not found: {SALIDAS_DIR}")
+    files = sorted(Path(SALIDAS_DIR).glob("*.xlsx"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files:
+        raise HTTPException(status_code=404, detail="No LinkedIn .xlsx files found")
+    df = pd.read_excel(files[0])
+    filtered, stats = filtrar_ofertas(df, min_descripcion_len=min_description_len)
+    import_stats = import_linkedin_dataframe_to_job_postings(filtered)
+    return {"file": files[0].name, "filter_stats": stats, "import_stats": import_stats}
+
+
+@app.post("/api/ranking/jobs")
+def create_ranking_job(payload: RankingJobPayload) -> dict[str, Any]:
+    job_ids = payload.job_ids
+    if not job_ids:
+        unranked = db.get_unranked_jobs(ranking_version=payload.ranking_version, limit=payload.limit)
+        job_ids = [int(value) for value in unranked["id"].tolist()]
+    if not job_ids:
+        return {"ranking_job_id": None, "queued": 0}
+
+    ranking_job_id = db.create_ranking_job(
+        provider="nvidia",
+        model=payload.model,
+        ranking_version=payload.ranking_version,
+        job_ids=job_ids,
+        request_batch_size=payload.request_batch_size,
+        max_concurrency=payload.max_concurrency,
+    )
+    processed = False
+    if payload.run_once:
+        processed = run_worker_once(ranking_job_id=ranking_job_id)
+    return {"ranking_job_id": ranking_job_id, "queued": len(job_ids), "processed_once": processed}
+
+
+@app.post("/api/ranking/jobs/{ranking_job_id}/run-once")
+def run_ranking_job_once(ranking_job_id: int) -> dict[str, Any]:
+    return {"processed": run_worker_once(ranking_job_id=ranking_job_id)}
+
+
+@app.get("/api/ranking/jobs")
+def list_ranking_jobs() -> dict[str, Any]:
+    return {"jobs": db.list_ranking_jobs(limit=25).to_dict("records")}
+
+
+def main() -> None:
+    import uvicorn
+
+    uvicorn.run("joborchestrator.api:app", host="127.0.0.1", port=8000, reload=True)
+
+
+if __name__ == "__main__":
+    main()

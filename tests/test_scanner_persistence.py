@@ -119,48 +119,6 @@ def test_application_material_update_preserves_unspecified_fields(tmp_path, monk
     assert stored["autofill_notes"] == "Initial autofill"
 
 
-def test_opening_job_posting_registers_legacy_history(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
-    db.init_db()
-    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
-    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
-
-    assert db.registrar_job_posting_abierta(job_id) is True
-    assert db.registrar_job_posting_abierta(job_id) is True
-
-    historial = db.get_historial()
-    row = historial.iloc[0]
-    assert len(historial) == 1
-    assert row["id"] == "job-1"
-    assert row["titulo"] == "Backend Engineer"
-    assert row["empresa"] == "Acme"
-    assert row["categoria"] == "greenhouse"
-    assert row["veces_vista"] == 2
-
-
-def test_opening_ranked_job_posting_copies_score_to_legacy_history(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
-    db.init_db()
-    db.upsert_job_posting(
-        make_job(description="Requirements: Python, FastAPI, REST APIs, AWS. Responsibilities: build backend APIs."),
-        seen_at="2026-01-01T10:00:00",
-    )
-    stored = db.get_job_postings(limit=10).iloc[0]
-    job_id = int(stored["id"])
-    ranking = rank_job(stored.to_dict())
-    db.save_job_ranking(job_id, ranking)
-
-    db.registrar_job_posting_abierta(job_id)
-
-    historial = db.get_historial()
-    row = historial.iloc[0]
-    assert row["score_total"] == ranking.final_score
-    assert row["fit_stack"] == ranking.scores.technical_fit
-    assert row["fit_seniority"] == ranking.scores.seniority_fit
-    assert row["transferibilidad"] == ranking.scores.role_fit
-    assert row["razon_breve"] == ranking.reasoning_summary
-
-
 def test_delete_job_rankings_clears_current_rankings(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()
@@ -209,22 +167,6 @@ def test_create_and_cancel_ranking_job(tmp_path, monkeypatch):
     cancelled = db.get_ranking_job(ranking_job_id)
     assert cancelled["status"] == "cancelled"
     assert db.get_queued_ranking_items(ranking_job_id, limit=10).empty
-
-
-def test_marking_job_posting_applied_syncs_legacy_history_when_opened(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
-    db.init_db()
-    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
-    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
-
-    db.registrar_job_posting_abierta(job_id)
-    db.update_job_status(job_id, "applied")
-
-    stored = db.get_job_posting(job_id)
-    historial = db.get_historial()
-    assert stored["pipeline_status"] == "applied"
-    assert int(historial.iloc[0]["aplicado"]) == 1
-    assert historial.iloc[0]["fecha_aplicado"]
 
 
 def test_speed_ranking_migration_is_additive_and_backfills(tmp_path, monkeypatch):

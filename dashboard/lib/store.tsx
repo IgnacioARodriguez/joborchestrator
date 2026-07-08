@@ -4,38 +4,57 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react"
 import type {
-  ImportRecord,
   JobPosting,
   JobRanking,
   PipelineStatus,
 } from "./types"
-import { MOCK_IMPORTS, MOCK_JOBS } from "./mock-data"
-
-// Client store backed by mock data. Every mutation is isolated here so the
-// data layer can later be replaced with Supabase calls without touching the UI.
+import { api } from "./api"
 
 interface StoreValue {
   jobs: JobPosting[]
-  imports: ImportRecord[]
+  loading: boolean
+  backendOnline: boolean
+  refresh: () => Promise<void>
   getJob: (id: string) => JobPosting | undefined
   setPipelineStatus: (id: string, status: PipelineStatus) => void
   markOpened: (id: string) => void
   applyReview: (id: string, ranking: Partial<JobRanking>) => void
-  importJobs: (incoming: JobPosting[], mode: "merge" | "replace") => void
-  resetToSample: () => void
-  addImport: (record: ImportRecord) => void
+  generateMaterials: (id: string, useLlm?: boolean) => Promise<void>
 }
 
 const StoreContext = createContext<StoreValue | null>(null)
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [jobs, setJobs] = useState<JobPosting[]>(MOCK_JOBS)
-  const [imports, setImports] = useState<ImportRecord[]>(MOCK_IMPORTS)
+  const [jobs, setJobs] = useState<JobPosting[]>([])
+  const [loading, setLoading] = useState(true)
+  const [backendOnline, setBackendOnline] = useState(false)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await api.getJobs()
+      setJobs(data.jobs)
+      setBackendOnline(true)
+    } catch {
+      setBackendOnline(false)
+      setJobs([])
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void refresh()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [refresh])
 
   const getJob = useCallback(
     (id: string) => jobs.find((j) => j.id === id),
@@ -57,6 +76,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           : j,
       ),
     )
+    void api.setPipelineStatus(id, status).catch(() => {
+      setBackendOnline(false)
+    })
   }, [])
 
   const markOpened = useCallback((id: string) => {
@@ -72,6 +94,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           : j,
       ),
     )
+    void api.markOpened(id).catch(() => {
+      setBackendOnline(false)
+    })
   }, [])
 
   const applyReview = useCallback((id: string, ranking: Partial<JobRanking>) => {
@@ -90,84 +115,39 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           : j,
       ),
     )
+    void api.applyManualReview(id, ranking).catch(() => {
+      setBackendOnline(false)
+    })
   }, [])
 
-  const importJobs = useCallback(
-    (incoming: JobPosting[], mode: "merge" | "replace") => {
-      const now = new Date().toISOString()
-      let inserted = incoming.length
-      let updated = 0
-      let duplicates = 0
-
-      setJobs((prev) => {
-        if (mode === "replace") return incoming
-
-        const byId = new Map(prev.map((job) => [job.id, job]))
-        for (const job of incoming) {
-          if (byId.has(job.id)) {
-            updated += 1
-            byId.set(job.id, { ...byId.get(job.id), ...job })
-          } else {
-            byId.set(job.id, job)
-          }
-        }
-
-        inserted = incoming.length - updated
-        duplicates = updated
-        return Array.from(byId.values())
-      })
-
-      setImports((prev) => [
-        {
-          id: `imp_${Date.now()}`,
-          file_name:
-            mode === "replace"
-              ? "pasted_json_replace.json"
-              : "pasted_json_merge.json",
-          imported_at: now,
-          rows_detected: incoming.length,
-          inserted,
-          updated,
-          duplicates,
-          errors: 0,
-        },
-        ...prev,
-      ])
-    },
-    [],
-  )
-
-  const resetToSample = useCallback(() => {
-    setJobs(MOCK_JOBS)
-    setImports(MOCK_IMPORTS)
-  }, [])
-
-  const addImport = useCallback((record: ImportRecord) => {
-    setImports((prev) => [record, ...prev])
+  const generateMaterials = useCallback(async (id: string, useLlm = false) => {
+    const result = await api.generateMaterials(id, useLlm)
+    setBackendOnline(true)
+    setJobs((prev) => prev.map((j) => (j.id === id ? result.job : j)))
   }, [])
 
   const value = useMemo(
     () => ({
       jobs,
-      imports,
+      loading,
+      backendOnline,
+      refresh,
       getJob,
       setPipelineStatus,
       markOpened,
       applyReview,
-      importJobs,
-      resetToSample,
-      addImport,
+      generateMaterials,
     }),
     [
       jobs,
-      imports,
+      loading,
+      backendOnline,
+      refresh,
       getJob,
       setPipelineStatus,
       markOpened,
       applyReview,
-      importJobs,
-      resetToSample,
-      addImport,
+      generateMaterials,
     ],
   )
 

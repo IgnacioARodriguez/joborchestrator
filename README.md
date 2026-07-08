@@ -1,105 +1,136 @@
 # Job Orchestrator
 
-Aplicacion local en Streamlit para organizar un pipeline de busqueda de empleo:
-scraping, preparacion de lotes para IA, consolidacion de ranking, historial de
-ofertas y escaneo de portales ATS.
+Local career-ops app for discovering, ranking, reviewing, and tracking job
+opportunities.
 
-## Instalacion
+The active product is:
+
+- **FastAPI backend** over the existing Python core and local SQLite database.
+- **Next.js dashboard** as the main user interface.
+- **Python core** for LinkedIn import, ATS scans, search API scans, NVIDIA LLM
+  ranking, manual review, and application material generation.
+
+The old Streamlit app has been removed from the active codebase.
+
+## Setup
 
 ```bash
 pip install -r requirements.txt
 playwright install chromium
+cd dashboard
+npm install
 ```
 
-## Ejecutar la app
+## Run Locally
+
+Start the API:
 
 ```bash
-streamlit run app.py
+run_api.bat
 ```
 
-La interfaz se abre normalmente en `http://localhost:8501`.
+Or manually:
 
-En Windows, si tienes la `.venv` del proyecto, usa el lanzador incluido para
-evitar mezclar dependencias con otro Python:
-
-```bat
-run_app.bat
+```bash
+python -m uvicorn joborchestrator.api:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-## Dashboard Next.js
-
-El prototipo web generado con V0 vive en `dashboard/`. Es una app Next.js
-mobile-first con datos mock para ranking, revision manual, pipeline e import.
+Start the dashboard:
 
 ```bash
 cd dashboard
-npm install
 npm run dev
 ```
 
-La interfaz se abre normalmente en `http://localhost:3000`.
+Open:
 
-Comandos utiles:
+- Dashboard: `http://127.0.0.1:3000`
+- API health: `http://127.0.0.1:8000/api/health`
 
-```bash
-npm run build
-npm run lint
-npm run typecheck
-```
+## Deploy To Vercel / v0
 
-## Estructura
+The repo includes a Vercel entrypoint:
+
+- `vercel.json`
+- `api/index.py`
+- dashboard production API calls use same-origin `/api/*`
+
+See [VERCEL_DEPLOYMENT.md](./VERCEL_DEPLOYMENT.md) for limits and the production storage path. Short version:
+
+- Vercel/v0 can host the dashboard and FastAPI functions.
+- Local SQLite is not durable on Vercel.
+- The LinkedIn Playwright scraper should remain local/manual or move to a
+  separate worker.
+- For real remote use, migrate persistence to Neon/Supabase/another serverless
+  database.
+
+## Main Structure
 
 ```text
 joborchestrator/
-├── app.py
-├── dashboard/
-├── portals.yml
-├── requirements.txt
-├── pyproject.toml
+├── dashboard/                 # Next.js UI
 ├── joborchestrator/
-│   ├── batching.py
-│   ├── paths.py
-│   ├── intelligence/
-│   ├── scanning/
-│   └── storage/
-├── data/
-└── tests/
+│   ├── api.py                 # FastAPI adapter for the dashboard
+│   ├── scanning/              # LinkedIn importer, ATS providers, search APIs
+│   ├── ranking/               # Ranking models, rankers, NVIDIA worker
+│   ├── intelligence/          # Application materials and supporting signals
+│   ├── storage/               # SQLite persistence
+│   ├── batching.py            # LinkedIn Excel filtering utilities
+│   └── paths.py               # Shared local paths
+├── tests/                     # Python tests
+├── candidate_profile.yml      # Local candidate ranking profile
+├── job_tracker.db             # Local SQLite database, ignored by Git
+├── requirements.txt
+└── run_api.bat
 ```
 
-## Modulos principales
+## Dashboard Capabilities
 
-- `app.py`: UI de Streamlit y orquestacion de pantallas.
-- `joborchestrator/batching.py`: filtrado de ofertas, generacion de lotes y parseo de respuestas.
-- `joborchestrator/storage/persistence.py`: persistencia SQLite local.
-- `joborchestrator/scanning/`: scanner de portales, proveedores ATS y scraper de LinkedIn.
-- `joborchestrator/intelligence/`: validacion de confianza, arquetipos, reposts, cartas y autofill ATS.
-- `joborchestrator/paths.py`: rutas compartidas para evitar paths relativos dispersos.
+- Load real opportunities from `job_tracker.db`.
+- Import the latest LinkedIn scraper Excel output.
+- Add and scan ATS sources such as Greenhouse, Lever, and Ashby.
+- Run public search API scans.
+- Queue and process NVIDIA LLM ranking jobs.
+- Review rankings that need manual ChatGPT validation.
+- Track pipeline state: new, opened, shortlisted, applied, discarded.
+- Generate application kits: recruiter message, cover letter, ATS CV notes, and
+  autofill notes.
 
-## Scraper de LinkedIn
+## Useful Commands
 
-Desde la UI se lanza como subproceso. Tambien puede ejecutarse manualmente:
+Backend tests:
+
+```bash
+python -m pytest
+```
+
+Dashboard checks:
+
+```bash
+cd dashboard
+npm run lint
+npm run typecheck
+npm run build
+```
+
+LinkedIn scraper:
 
 ```bash
 python -m joborchestrator.scanning.linkedin
 ```
 
-El scraper sigue usando navegador local y sesion manual. No automatiza
-credenciales, captchas, aplicaciones ni mensajes.
-
-## Tests
+Ranking worker:
 
 ```bash
-pip install -r requirements-dev.txt
-python -m pytest
+python -m joborchestrator.ranking.worker --once
 ```
 
-## Datos locales
+## Local Data
 
-Estos archivos se mantienen fuera de Git por defecto:
+Ignored local/runtime files include:
 
 - `.venv/`
-- `__pycache__/` y caches de test
 - `job_tracker.db`
-- `data/scan_history.tsv`
-
-`data/.gitkeep` se versiona solo para conservar la carpeta.
+- `data/*` except `data/.gitkeep`
+- Python caches and test caches
+- local dev logs

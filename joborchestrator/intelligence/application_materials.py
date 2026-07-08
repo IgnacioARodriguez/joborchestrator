@@ -3,9 +3,17 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from joborchestrator.batching import PERFIL_CANDIDATO_DEFAULT
 from joborchestrator.intelligence.ats_autofill import build_autofill_plan
 from joborchestrator.intelligence.cover_letter_generator import build_professional_cover_letter
+
+CANDIDATE_PROFILE_SUMMARY = """\
+PERFIL DEL CANDIDATO:
+- 4+ años como backend/full stack developer con Python, Django, FastAPI, Flask,
+  PostgreSQL, MongoDB, Redis, Docker, AWS, React, TypeScript y Three.js.
+- Experiencia client-facing en cuentas grandes vía consultoras.
+- Base en Málaga, España; abierto a remoto en España/UE.
+- Inglés y español.
+"""
 
 
 def build_recruiter_message(job: dict[str, Any], keywords: list[str] | None = None) -> str:
@@ -47,7 +55,7 @@ def build_application_kit(job: dict[str, Any], keywords: list[str] | None = None
     autofill = build_autofill_plan(enriched_job, ats_type=str(job.get("source") or "portal"))
     return {
         "recruiter_message": build_recruiter_message(job, keywords),
-        "cover_letter": build_professional_cover_letter(enriched_job, PERFIL_CANDIDATO_DEFAULT),
+        "cover_letter": build_professional_cover_letter(enriched_job, CANDIDATE_PROFILE_SUMMARY),
         "ats_cv_text": build_ats_cv_text(job, keywords),
         "autofill_notes": json.dumps(autofill, ensure_ascii=False, indent=2),
     }

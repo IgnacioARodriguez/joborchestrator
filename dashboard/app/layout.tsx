@@ -13,7 +13,6 @@ export const metadata: Metadata = {
   title: 'Job Orchestrator',
   description:
     'A personal job search operating system to import, rank, review, and track opportunities.',
-  generator: 'v0.app',
 }
 
 export const viewport: Viewport = {

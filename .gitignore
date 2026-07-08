@@ -18,6 +18,7 @@ env/
 .env
 .env.*
 !.env.example
+candidate_profile.yml
 *.pem
 *.key
 *.crt
@@ -42,3 +43,4 @@ Thumbs.db
 
 # Local frontend dev logs
 dashboard-dev.*.log
+api-dev.*.log

@@ -15,6 +15,7 @@ import {
   CircleX,
   Target,
   Lightbulb,
+  Sparkles,
 } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -86,7 +87,7 @@ function DetailBody({
   job: JobPosting
   onClose: () => void
 }) {
-  const { setPipelineStatus, markOpened } = useStore()
+  const { setPipelineStatus, markOpened, generateMaterials } = useStore()
   const { evidence } = job.ranking
 
   function openExternal(url: string) {
@@ -144,6 +145,26 @@ function DetailBody({
           >
             <Star data-icon="inline-start" />
             Shortlist
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={async () => {
+              try {
+                await generateMaterials(job.id)
+                toast.success("Application kit generated", {
+                  description: job.title,
+                })
+              } catch (e) {
+                toast.error("Could not generate kit", {
+                  description:
+                    e instanceof Error ? e.message : "Backend request failed.",
+                })
+              }
+            }}
+          >
+            <Sparkles data-icon="inline-start" />
+            Build kit
           </Button>
           <Button
             size="sm"
