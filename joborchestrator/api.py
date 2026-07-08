@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal
 
@@ -23,12 +22,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     build_application_kit_with_llm,
 )
 from joborchestrator.paths import SALIDAS_DIR
-from joborchestrator.ranking.manual_llm_review import (
-    ManualLLMReviewError,
-    ranking_from_storage_row,
-)
 from joborchestrator.ranking.nvidia_ranker import DEFAULT_NVIDIA_MODEL
-from joborchestrator.ranking.ranker import result_to_dict
 from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
 from joborchestrator.ranking.worker import run_worker_once
 from joborchestrator.scanning import scanner as source_scanner
@@ -95,10 +89,6 @@ class MaterialsPayload(BaseModel):
     model: str = DEFAULT_MATERIALS_MODEL
     api_key: str | None = None
     shortlist: bool = True
-
-
-class ManualReviewPayload(BaseModel):
-    payload: dict[str, Any]
 
 
 def _job_for_materials(job_id: int) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -178,44 +168,6 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
     fresh = db.get_job_posting(job_id)
     rankings = latest_rankings_by_job_id()
     return {"job": job_dto(fresh, rankings.get(job_id))}
-
-
-@app.post("/api/jobs/{job_id}/manual-review")
-def apply_manual_review(job_id: int, payload: ManualReviewPayload) -> dict[str, Any]:
-    ranking_row = latest_rankings_by_job_id().get(job_id)
-    if not ranking_row:
-        raise HTTPException(status_code=404, detail="No baseline ranking found")
-    try:
-        baseline = ranking_from_storage_row(ranking_row)
-        merged = payload.payload.copy()
-        merged.setdefault("evidence", {})
-        merged["evidence"]["requires_llm_review"] = False
-        current = result_to_dict(baseline)
-        current.update(merged)
-        scores = asdict(baseline.scores)
-        scores.update(merged.get("scores") or {})
-        evidence = asdict(baseline.evidence)
-        evidence.update(merged.get("evidence") or {})
-        reviewed = baseline.__class__(
-            final_score=current.get("final_score", baseline.final_score),
-            decision=current.get("decision", baseline.decision),
-            confidence=current.get("confidence", baseline.confidence),
-            scores=baseline.scores.__class__(**scores),
-            evidence=baseline.evidence.__class__(**evidence),
-            reasoning_summary=current.get("reasoning_summary", baseline.reasoning_summary),
-            recommended_application_angle=current.get(
-                "recommended_application_angle", baseline.recommended_application_angle
-            ),
-            cv_keywords_to_emphasize=current.get("cv_keywords_to_emphasize", baseline.cv_keywords_to_emphasize),
-            cv_keywords_to_avoid_overclaiming=current.get(
-                "cv_keywords_to_avoid_overclaiming", baseline.cv_keywords_to_avoid_overclaiming
-            ),
-            ranking_version=baseline.ranking_version,
-        )
-        db.save_job_ranking(job_id, reviewed)
-    except (ManualLLMReviewError, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True}
 
 
 @app.get("/api/sources")

@@ -51,8 +51,6 @@
   --color-warning-foreground: var(--warning-foreground);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
-  --color-review: var(--review);
-  --color-review-foreground: var(--review-foreground);
   --color-neutral-muted: var(--neutral-muted);
   --color-neutral-muted-foreground: var(--neutral-muted-foreground);
 }
@@ -90,8 +88,6 @@
   --warning-foreground: oklch(0.4 0.08 70);
   --info: oklch(0.62 0.14 240);
   --info-foreground: oklch(0.32 0.08 250);
-  --review: oklch(0.7 0.15 55);
-  --review-foreground: oklch(0.4 0.1 45);
   --neutral-muted: oklch(0.9 0.006 260);
   --neutral-muted-foreground: oklch(0.45 0.01 260);
 

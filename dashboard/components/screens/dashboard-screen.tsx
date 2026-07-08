@@ -3,7 +3,6 @@
 import {
   Briefcase,
   CheckCircle2,
-  ClipboardCheck,
   Send,
   Sparkles,
   Gauge,
@@ -27,14 +26,12 @@ function TodayCard({
   title,
   jobs,
   onOpenJob,
-  showReview,
   emptyText,
   action,
 }: {
   title: string
   jobs: ReturnType<typeof useStore>["jobs"]
   onOpenJob: (id: string) => void
-  showReview?: boolean
   emptyText: string
   action?: React.ReactNode
 }) {
@@ -56,7 +53,6 @@ function TodayCard({
                 key={job.id}
                 job={job}
                 onOpen={onOpenJob}
-                showReview={showReview}
               />
             ))}
           </div>
@@ -76,7 +72,7 @@ export function DashboardScreen({
   const { jobs } = useStore()
   const kpis = computeKpis(jobs)
 
-  const topToReview = [...jobs]
+  const topCandidates = [...jobs]
     .filter(
       (j) =>
         j.pipeline_status !== "discarded" &&
@@ -84,10 +80,6 @@ export function DashboardScreen({
           j.ranking.decision === "APPLY_WITH_TAILORED_CV"),
     )
     .sort((a, b) => b.ranking.final_score - a.ranking.final_score)
-    .slice(0, 5)
-
-  const needsReview = jobs
-    .filter((j) => j.review.requires_llm_review)
     .slice(0, 5)
 
   const recentlyOpened = [...jobs]
@@ -100,7 +92,7 @@ export function DashboardScreen({
 
   return (
     <div className="flex flex-col gap-5">
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
         <KpiCard
           label="Total"
           value={kpis.total}
@@ -114,13 +106,6 @@ export function DashboardScreen({
           tone="primary"
           hint="candidates"
         />
-        <KpiCard
-          label="Review"
-          value={kpis.needsReview}
-          icon={ClipboardCheck}
-          tone="review"
-          hint="needs LLM"
-        />
         <KpiCard label="Applied" value={kpis.applied} icon={CheckCircle2} />
         <KpiCard
           label="New"
@@ -133,10 +118,10 @@ export function DashboardScreen({
 
       <DashboardCharts jobs={jobs} />
 
-      <section className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+      <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <TodayCard
-          title="Top jobs to review"
-          jobs={topToReview}
+          title="Top application candidates"
+          jobs={topCandidates}
           onOpenJob={onOpenJob}
           emptyText="No apply candidates right now."
           action={
@@ -147,24 +132,6 @@ export function DashboardScreen({
               onClick={() => onNavigate("ranking")}
             >
               Ranking
-              <ArrowRight data-icon="inline-end" />
-            </Button>
-          }
-        />
-        <TodayCard
-          title="Needs ChatGPT review"
-          jobs={needsReview}
-          onOpenJob={onOpenJob}
-          showReview
-          emptyText="Review queue is clear."
-          action={
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => onNavigate("review")}
-            >
-              Queue
               <ArrowRight data-icon="inline-end" />
             </Button>
           }

@@ -19,7 +19,6 @@ import type { JobPosting } from "@/lib/types"
 type FilterKey =
   | "apply"
   | "maybe"
-  | "review"
   | "remote"
   | "linkedin"
   | "ats"
@@ -27,7 +26,6 @@ type FilterKey =
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "apply", label: "Apply" },
   { key: "maybe", label: "Maybe" },
-  { key: "review", label: "Needs Review" },
   { key: "remote", label: "Remote" },
   { key: "linkedin", label: "LinkedIn" },
   { key: "ats", label: "ATS" },
@@ -46,8 +44,6 @@ function matchesFilter(job: JobPosting, key: FilterKey): boolean {
       )
     case "maybe":
       return job.ranking.decision === "MAYBE"
-    case "review":
-      return job.review.requires_llm_review
     case "remote":
       return job.remote
     case "linkedin":

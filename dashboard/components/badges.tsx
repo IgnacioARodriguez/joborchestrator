@@ -1,4 +1,3 @@
-import { AlertCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { DECISION_STYLES, scoreTone } from "@/lib/job-ui"
 import type { Decision } from "@/lib/types"
@@ -42,20 +41,6 @@ export function DecisionBadge({
     >
       <span className={cn("size-1.5 rounded-full", style.dot)} />
       {style.label}
-    </span>
-  )
-}
-
-export function ReviewBadge({ className }: { className?: string }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-md border border-review/30 bg-review/15 px-2 py-0.5 text-xs font-medium text-review-foreground",
-        className,
-      )}
-    >
-      <AlertCircle className="size-3" />
-      Needs Review
     </span>
   )
 }

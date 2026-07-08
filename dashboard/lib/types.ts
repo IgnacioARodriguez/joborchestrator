@@ -60,14 +60,6 @@ export interface ApplicationMaterials {
   autofill_notes: string
 }
 
-export interface ManualReview {
-  requires_llm_review: boolean
-  review_reason: string
-  prompt: string
-  pasted_chatgpt_json: string | null
-  applied_at: string | null
-}
-
 export interface JobPosting {
   id: string
   title: string
@@ -84,7 +76,6 @@ export interface JobPosting {
   status: JobStatus
   pipeline_status: PipelineStatus
   ranking: JobRanking
-  review: ManualReview
   materials: ApplicationMaterials
 }
 

@@ -22,8 +22,6 @@ def parse_json_value(value: Any, fallback: Any) -> Any:
 
 def job_dto(job: dict[str, Any], ranking_row: dict[str, Any] | None) -> dict[str, Any]:
     ranking = ranking_dto(ranking_row)
-    evidence = ranking["evidence"]
-    requires_review = bool(evidence.get("requires_llm_review"))
     location_mode = _string(job.get("location") or job.get("workplace_type")).lower()
     return {
         "id": str(job["id"]),
@@ -41,15 +39,6 @@ def job_dto(job: dict[str, Any], ranking_row: dict[str, Any] | None) -> dict[str
         "status": "active" if int(job.get("is_active") or 0) else "expired",
         "pipeline_status": job.get("pipeline_status") or "new",
         "ranking": ranking,
-        "review": {
-            "requires_llm_review": requires_review,
-            "review_reason": "; ".join(evidence.get("llm_escalation_reasons") or []) or (
-                "Ranking confidence requires manual review." if requires_review else ""
-            ),
-            "prompt": _manual_prompt(job, ranking),
-            "pasted_chatgpt_json": None,
-            "applied_at": None,
-        },
         "materials": {
             "recruiter_message": _string(job.get("recruiter_message")),
             "cover_letter": _string(job.get("cover_letter")),
@@ -85,8 +74,8 @@ def ranking_dto(row: dict[str, Any] | None) -> dict[str, Any]:
         item.get("requirement") if isinstance(item, dict) else str(item)
         for item in evidence.get("central_requirements") or []
     ]
-    evidence.setdefault("requires_llm_review", False)
-    evidence.setdefault("llm_escalation_reasons", [])
+    evidence.pop("requires_llm_review", None)
+    evidence.pop("llm_escalation_reasons", None)
     return {
         "final_score": int(row.get("final_score") or 0),
         "decision": row.get("decision") or "MAYBE",
@@ -148,28 +137,11 @@ def _default_ranking() -> dict[str, Any]:
             "missing_requirements": [],
             "red_flags": [],
             "central_requirements": [],
-            "requires_llm_review": False,
-            "llm_escalation_reasons": [],
         },
         "reasoning_summary": "Not ranked yet.",
         "recommended_application_angle": "",
         "ranking_version": "unranked",
     }
-
-
-def _manual_prompt(job: dict[str, Any], ranking: dict[str, Any]) -> str:
-    return json.dumps(
-        {
-            "job_id": job.get("id"),
-            "title": job.get("title"),
-            "company": job.get("company"),
-            "description_text": job.get("description_text"),
-            "current_ranking": ranking,
-            "instructions": "Return JSON with final_score, decision, confidence, evidence, reasoning_summary, recommended_application_angle.",
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
 
 
 def _source_label(source: str | None) -> str:

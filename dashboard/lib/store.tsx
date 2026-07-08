@@ -11,7 +11,6 @@ import {
 } from "react"
 import type {
   JobPosting,
-  JobRanking,
   PipelineStatus,
 } from "./types"
 import { api } from "./api"
@@ -24,7 +23,6 @@ interface StoreValue {
   getJob: (id: string) => JobPosting | undefined
   setPipelineStatus: (id: string, status: PipelineStatus) => void
   markOpened: (id: string) => void
-  applyReview: (id: string, ranking: Partial<JobRanking>) => void
   generateMaterials: (id: string, useLlm?: boolean) => Promise<void>
 }
 
@@ -68,10 +66,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ? {
               ...j,
               pipeline_status: status,
-              review:
-                status === "applied"
-                  ? { ...j.review, applied_at: new Date().toISOString() }
-                  : j.review,
             }
           : j,
       ),
@@ -99,27 +93,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const applyReview = useCallback((id: string, ranking: Partial<JobRanking>) => {
-    setJobs((prev) =>
-      prev.map((j) =>
-        j.id === id
-          ? {
-              ...j,
-              ranking: { ...j.ranking, ...ranking },
-              review: {
-                ...j.review,
-                requires_llm_review: false,
-                applied_at: new Date().toISOString(),
-              },
-            }
-          : j,
-      ),
-    )
-    void api.applyManualReview(id, ranking).catch(() => {
-      setBackendOnline(false)
-    })
-  }, [])
-
   const generateMaterials = useCallback(async (id: string, useLlm = false) => {
     const result = await api.generateMaterials(id, useLlm)
     setBackendOnline(true)
@@ -135,7 +108,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       getJob,
       setPipelineStatus,
       markOpened,
-      applyReview,
       generateMaterials,
     }),
     [
@@ -146,7 +118,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       getJob,
       setPipelineStatus,
       markOpened,
-      applyReview,
       generateMaterials,
     ],
   )

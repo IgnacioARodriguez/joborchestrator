@@ -12,7 +12,7 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: 'Job Orchestrator',
   description:
-    'A personal job search operating system to import, rank, review, and track opportunities.',
+    'A personal job search operating system to import, rank, and track opportunities.',
 }
 
 export const viewport: Viewport = {

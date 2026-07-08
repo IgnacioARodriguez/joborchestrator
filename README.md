@@ -1,6 +1,6 @@
 # Job Orchestrator
 
-Local career-ops app for discovering, ranking, reviewing, and tracking job
+Local career-ops app for discovering, AI-ranking, and tracking job
 opportunities.
 
 The active product is:
@@ -8,7 +8,7 @@ The active product is:
 - **FastAPI backend** over the existing Python core and local SQLite database.
 - **Next.js dashboard** as the main user interface.
 - **Python core** for LinkedIn import, ATS scans, search API scans, NVIDIA LLM
-  ranking, manual review, and application material generation.
+  ranking, and application material generation.
 
 The old Streamlit app has been removed from the active codebase.
 
@@ -68,20 +68,20 @@ See [VERCEL_DEPLOYMENT.md](./VERCEL_DEPLOYMENT.md) for limits and the production
 
 ```text
 joborchestrator/
-├── dashboard/                 # Next.js UI
-├── joborchestrator/
-│   ├── api.py                 # FastAPI adapter for the dashboard
-│   ├── scanning/              # LinkedIn importer, ATS providers, search APIs
-│   ├── ranking/               # Ranking models, rankers, NVIDIA worker
-│   ├── intelligence/          # Application materials and supporting signals
-│   ├── storage/               # SQLite persistence
-│   ├── batching.py            # LinkedIn Excel filtering utilities
-│   └── paths.py               # Shared local paths
-├── tests/                     # Python tests
-├── candidate_profile.yml      # Local candidate ranking profile
-├── job_tracker.db             # Local SQLite database, ignored by Git
-├── requirements.txt
-└── run_api.bat
+|-- dashboard/                 # Next.js UI
+|-- joborchestrator/
+|   |-- api.py                 # FastAPI adapter for the dashboard
+|   |-- scanning/              # LinkedIn importer, ATS providers, search APIs
+|   |-- ranking/               # Ranking models, rankers, NVIDIA worker
+|   |-- intelligence/          # Application materials and supporting signals
+|   |-- storage/               # SQLite/Turso persistence
+|   |-- batching.py            # LinkedIn Excel filtering utilities
+|   `-- paths.py               # Shared local paths
+|-- tests/                     # Python tests
+|-- candidate_profile.yml      # Local candidate ranking profile, ignored by Git
+|-- job_tracker.db             # Local SQLite database, ignored by Git
+|-- requirements.txt
+`-- run_api.bat
 ```
 
 ## Dashboard Capabilities
@@ -91,7 +91,6 @@ joborchestrator/
 - Add and scan ATS sources such as Greenhouse, Lever, and Ashby.
 - Run public search API scans.
 - Queue and process NVIDIA LLM ranking jobs.
-- Review rankings that need manual ChatGPT validation.
 - Track pipeline state: new, opened, shortlisted, applied, discarded.
 - Generate application kits: recruiter message, cover letter, ATS CV notes, and
   autofill notes.

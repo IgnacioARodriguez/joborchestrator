@@ -13,7 +13,7 @@ export function KpiCard({
   value: string | number
   icon: LucideIcon
   hint?: string
-  tone?: "default" | "primary" | "review"
+  tone?: "default" | "primary"
 }) {
   return (
     <Card className="gap-0 p-3.5">
@@ -25,7 +25,6 @@ export function KpiCard({
           className={cn(
             "flex size-7 items-center justify-center rounded-md",
             tone === "primary" && "bg-primary/10 text-primary",
-            tone === "review" && "bg-review/15 text-review-foreground",
             tone === "default" && "bg-muted text-muted-foreground",
           )}
         >

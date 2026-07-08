@@ -4,10 +4,8 @@ import { useState } from "react"
 import { Compass } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { NAV_ITEMS, type Section } from "@/lib/nav"
-import { useStore } from "@/lib/store"
 import { DashboardScreen } from "@/components/screens/dashboard-screen"
 import { RankingScreen } from "@/components/screens/ranking-screen"
-import { NeedsReviewScreen } from "@/components/screens/needs-review-screen"
 import { PipelineScreen } from "@/components/screens/pipeline-screen"
 import { OpsScreen } from "@/components/screens/ops-screen"
 import { JobDetailDrawer } from "@/components/job-detail-drawer"
@@ -15,7 +13,6 @@ import { JobDetailDrawer } from "@/components/job-detail-drawer"
 const SECTION_TITLES: Record<Section, string> = {
   dashboard: "Dashboard",
   ranking: "Ranking",
-  review: "Needs Review",
   pipeline: "Pipeline",
   ops: "Operations",
 }
@@ -23,9 +20,6 @@ const SECTION_TITLES: Record<Section, string> = {
 export function AppShell() {
   const [section, setSection] = useState<Section>("dashboard")
   const [openJobId, setOpenJobId] = useState<string | null>(null)
-  const { jobs } = useStore()
-
-  const reviewCount = jobs.filter((j) => j.review.requires_llm_review).length
 
   function navigate(next: Section) {
     setSection(next)
@@ -62,11 +56,6 @@ export function AppShell() {
                 >
                   <Icon className="size-4.5" />
                   <span className="flex-1 text-left">{item.label}</span>
-                  {item.id === "review" && reviewCount > 0 && (
-                    <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-review/20 px-1.5 text-xs font-semibold text-review-foreground">
-                      {reviewCount}
-                    </span>
-                  )}
                 </button>
               )
             })}
@@ -91,9 +80,6 @@ export function AppShell() {
               <DashboardScreen onOpenJob={setOpenJobId} onNavigate={navigate} />
             )}
             {section === "ranking" && <RankingScreen onOpenJob={setOpenJobId} />}
-            {section === "review" && (
-              <NeedsReviewScreen onOpenJob={setOpenJobId} />
-            )}
             {section === "pipeline" && (
               <PipelineScreen onOpenJob={setOpenJobId} />
             )}
@@ -119,14 +105,7 @@ export function AppShell() {
                 )}
                 aria-current={active ? "page" : undefined}
               >
-                <span className="relative">
-                  <Icon className="size-5" />
-                  {item.id === "review" && reviewCount > 0 && (
-                    <span className="absolute -right-2 -top-1.5 inline-flex min-w-4 items-center justify-center rounded-full bg-review px-1 text-[9px] font-bold text-background">
-                      {reviewCount}
-                    </span>
-                  )}
-                </span>
+                <Icon className="size-5" />
                 <span className="text-center leading-tight">{item.label}</span>
               </button>
             )

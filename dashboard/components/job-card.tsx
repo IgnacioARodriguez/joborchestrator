@@ -12,7 +12,7 @@ import {
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { DecisionBadge, ReviewBadge, ScoreBadge } from "@/components/badges"
+import { DecisionBadge, ScoreBadge } from "@/components/badges"
 import { useStore } from "@/lib/store"
 import type { JobPosting } from "@/lib/types"
 import { relativeTime } from "@/lib/job-ui"
@@ -43,7 +43,6 @@ export function JobCard({
             <div className="flex flex-wrap items-center gap-1.5">
               <ScoreBadge score={job.ranking.final_score} />
               <DecisionBadge decision={job.ranking.decision} />
-              {job.review.requires_llm_review && <ReviewBadge />}
             </div>
             <h3 className="text-pretty text-sm font-semibold leading-snug text-foreground">
               {job.title}

@@ -57,13 +57,6 @@ export const api = {
     })
   },
 
-  async applyManualReview(id: string, payload: unknown) {
-    return request<{ ok: boolean }>(`/api/jobs/${id}/manual-review`, {
-      method: "POST",
-      body: JSON.stringify({ payload }),
-    })
-  },
-
   async getSources() {
     return request<{
       sources: CompanySource[]

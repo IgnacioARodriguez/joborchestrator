@@ -30,7 +30,6 @@ import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { DecisionBadge } from "@/components/badges"
 import { ScoreRing } from "@/components/badges"
-import { ManualReviewPanel } from "@/components/manual-review-panel"
 import { useStore } from "@/lib/store"
 import { PIPELINE_LABELS } from "@/lib/job-ui"
 import type { JobPosting } from "@/lib/types"
@@ -249,21 +248,6 @@ function DetailBody({
             />
           </div>
         </section>
-
-        {/* Needs review inline */}
-        {job.review.requires_llm_review && (
-          <>
-            <Separator />
-            <section className="flex flex-col gap-3">
-              <h3 className="text-sm font-semibold text-foreground">
-                Manual review
-              </h3>
-              <ManualReviewPanel job={job} />
-            </section>
-          </>
-        )}
-
-        <Separator />
 
         {/* Description */}
         <section className="flex flex-col gap-2">

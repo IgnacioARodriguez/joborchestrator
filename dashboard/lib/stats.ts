@@ -9,7 +9,6 @@ export function computeKpis(jobs: JobPosting[]) {
       j.ranking.decision === "APPLY_NOW" ||
       j.ranking.decision === "APPLY_WITH_TAILORED_CV",
   ).length
-  const needsReview = jobs.filter((j) => j.review.requires_llm_review).length
   const applied = jobs.filter((j) => j.pipeline_status === "applied").length
   const newThisWeek = jobs.filter(isNewThisWeek).length
   const avgScore = total
@@ -17,7 +16,7 @@ export function computeKpis(jobs: JobPosting[]) {
         jobs.reduce((sum, j) => sum + j.ranking.final_score, 0) / total,
       )
     : 0
-  return { total, applyCandidates, needsReview, applied, newThisWeek, avgScore }
+  return { total, applyCandidates, applied, newThisWeek, avgScore }
 }
 
 export function decisionDistribution(jobs: JobPosting[]) {

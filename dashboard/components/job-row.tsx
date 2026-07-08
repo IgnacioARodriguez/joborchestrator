@@ -1,18 +1,16 @@
 "use client"
 
 import { ChevronRight } from "lucide-react"
-import { ScoreBadge, DecisionBadge, ReviewBadge } from "@/components/badges"
+import { ScoreBadge, DecisionBadge } from "@/components/badges"
 import type { JobPosting } from "@/lib/types"
 import { relativeTime } from "@/lib/job-ui"
 
 export function JobRow({
   job,
   onOpen,
-  showReview = false,
 }: {
   job: JobPosting
   onOpen: (id: string) => void
-  showReview?: boolean
 }) {
   return (
     <button
@@ -29,11 +27,7 @@ export function JobRow({
           {job.company} · {relativeTime(job.last_seen_at)}
         </span>
       </div>
-      {showReview && job.review.requires_llm_review ? (
-        <ReviewBadge />
-      ) : (
-        <DecisionBadge decision={job.ranking.decision} />
-      )}
+      <DecisionBadge decision={job.ranking.decision} />
       <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
     </button>
   )
