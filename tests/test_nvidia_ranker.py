@@ -8,6 +8,7 @@ import pandas as pd
 from joborchestrator.ranking import nvidia_ranker
 from joborchestrator.ranking.nvidia_ranker import (
     DEFAULT_NVIDIA_MODEL,
+    NVIDIA_RANKING_VERSION,
     NvidiaRankingError,
     build_nvidia_ranking_payload,
     rank_jobs_with_nvidia_async,
@@ -93,6 +94,7 @@ def test_rank_jobs_with_nvidia_saves_each_ranking(monkeypatch):
     assert summary["APPLY_NOW"] == 1
     assert summary["SKIP"] == 1
     assert saved[1].final_score == 82
+    assert saved[1].ranking_version == NVIDIA_RANKING_VERSION
     assert "nvidia_ranking_applied" in saved[1].evidence.llm_escalation_reasons
 
 
@@ -239,6 +241,10 @@ def test_call_nvidia_batch_uses_chat_completions(monkeypatch):
 
 def test_default_nvidia_model_matches_nvidia_snippet():
     assert DEFAULT_NVIDIA_MODEL == "nvidia/llama-3.3-nemotron-super-49b-v1"
+
+
+def test_nvidia_response_contract_does_not_request_speed_signal():
+    assert "speed_signal" not in nvidia_ranker._response_contract()
 
 
 def _ranking_payload(job_id: int, score: int, decision: str) -> dict:

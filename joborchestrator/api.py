@@ -29,7 +29,7 @@ from joborchestrator.intelligence.llm_application_materials import (
 )
 from joborchestrator.paths import SALIDAS_DIR
 from joborchestrator.ranking.nvidia_ranker import DEFAULT_NVIDIA_MODEL
-from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
+from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.ranking.worker import run_worker_once
 from joborchestrator.scanning import scanner as source_scanner
 from joborchestrator.scanning import search_scanner
@@ -87,7 +87,7 @@ class RankingJobPayload(BaseModel):
     model: str = DEFAULT_NVIDIA_MODEL
     request_batch_size: int = Field(default=25, ge=1, le=100)
     max_concurrency: int = Field(default=4, ge=1, le=20)
-    ranking_version: str = SPEED_RANKING_VERSION
+    ranking_version: str = NVIDIA_RANKING_VERSION
     run_once: bool = False
 
 

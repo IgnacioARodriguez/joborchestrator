@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
+from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION, ranking_version_sort_key
 from joborchestrator.storage import persistence as db
 
 
@@ -84,12 +84,12 @@ def ranking_dto(row: dict[str, Any] | None) -> dict[str, Any]:
         "evidence": evidence,
         "reasoning_summary": row.get("reasoning_summary") or "",
         "recommended_application_angle": row.get("recommended_application_angle") or "",
-        "ranking_version": row.get("ranking_version") or SPEED_RANKING_VERSION,
+        "ranking_version": row.get("ranking_version") or NVIDIA_RANKING_VERSION,
     }
 
 
 def latest_rankings_by_job_id() -> dict[int, dict[str, Any]]:
-    versions = db.get_ranking_versions()
+    versions = sorted(db.get_ranking_versions(), key=ranking_version_sort_key)
     rankings: dict[int, dict[str, Any]] = {}
     for version in versions:
         ranked = db.get_ranked_jobs(ranking_version=version)

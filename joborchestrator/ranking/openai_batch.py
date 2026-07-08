@@ -22,7 +22,7 @@ from joborchestrator.ranking.llm_ranker import (
 )
 from joborchestrator.ranking.profile import load_candidate_profile
 from joborchestrator.ranking.ranking_rules import OPENAI_BATCH_INSTRUCTIONS
-from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
+from joborchestrator.ranking.versions import SPEED_RANKING_VERSION
 from joborchestrator.storage import persistence as db
 
 OPENAI_BATCH_DIR = DATA_DIR / "openai_batches"

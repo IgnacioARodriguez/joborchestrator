@@ -5,7 +5,8 @@ from typing import Iterable
 import pandas as pd
 
 from joborchestrator.ranking.profile import load_candidate_profile
-from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION, rank_job_speed
+from joborchestrator.ranking.speed_ranker import rank_job_speed
+from joborchestrator.ranking.versions import SPEED_RANKING_VERSION
 from joborchestrator.storage import persistence as db
 
 

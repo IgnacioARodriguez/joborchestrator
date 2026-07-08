@@ -13,7 +13,7 @@ import pandas as pd
 from joborchestrator.ranking.llm_ranker import _ranking_from_payload
 from joborchestrator.ranking.ranking_rules import NVIDIA_EXTRA_RULES, RANKING_GOAL, RANKING_RULES, SCORING_RUBRIC
 from joborchestrator.ranking.schemas import CandidateProfile
-from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
+from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.storage import persistence as db
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
 
@@ -39,7 +39,7 @@ def rank_jobs_with_nvidia(
     model: str = DEFAULT_NVIDIA_MODEL,
     request_batch_size: int = 5,
     max_concurrency: int = 1,
-    ranking_version: str = SPEED_RANKING_VERSION,
+    ranking_version: str = NVIDIA_RANKING_VERSION,
     api_key: str | None = None,
     base_url: str = NVIDIA_BASE_URL,
     timeout: float = 90.0,
@@ -66,7 +66,7 @@ async def rank_jobs_with_nvidia_async(
     model: str = DEFAULT_NVIDIA_MODEL,
     request_batch_size: int = 5,
     max_concurrency: int = 3,
-    ranking_version: str = SPEED_RANKING_VERSION,
+    ranking_version: str = NVIDIA_RANKING_VERSION,
     api_key: str | None = None,
     base_url: str = NVIDIA_BASE_URL,
     timeout: float = 90.0,
@@ -297,7 +297,6 @@ Return exactly:
         "application_roi": 0,
         "market_alignment": 0,
         "risk_penalty": 0,
-        "speed_signal": 0,
         "technical_readiness": 0,
         "central_requirement_coverage": 0,
         "role_confidence": 0,

@@ -15,8 +15,7 @@ from joborchestrator.ranking.structural_requirements import (
     LOW_COVERAGE_THRESHOLD,
     analyze_central_requirements,
 )
-
-SPEED_RANKING_VERSION = "ranking_v1.1.0-speed"
+from joborchestrator.ranking.versions import SPEED_RANKING_VERSION
 
 
 def rank_job_speed(
