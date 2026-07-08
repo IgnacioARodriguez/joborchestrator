@@ -55,11 +55,11 @@ def score_fit(
         technical_fit = int((achieved / hard_weight) * 82)
         if nice_weight:
             technical_fit += int((nice_achieved / nice_weight) * 12)
-        technical_fit += 6 if any(normalize_text(skill) == "python" for skill in evidence.strong_matches) else 0
     else:
         technical_fit = 52
     if evidence.missing_requirements:
-        central_missing = [x for x in evidence.missing_requirements if normalize_text(x) in {"python", "backend", "api", "rest apis"}]
+        central_skills = {normalize_text(skill) for skill in profile.strong_skills}
+        central_missing = [x for x in evidence.missing_requirements if normalize_text(x) in central_skills]
         technical_fit -= 25 if central_missing else min(18, len(evidence.missing_requirements) * 4)
     technical_fit = _clamp(technical_fit)
 

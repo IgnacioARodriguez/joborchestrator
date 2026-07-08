@@ -1,5 +1,6 @@
 from joborchestrator.ranking.profile import load_candidate_profile
 from joborchestrator.ranking.ranker import decision_from_score, rank_job
+from joborchestrator.ranking.schemas import CandidateProfile
 
 
 PROFILE = load_candidate_profile()
@@ -136,6 +137,27 @@ def test_technical_solutions_engineer_with_apis_is_medium_fit():
 
     assert result.scores.role_fit >= 55
     assert result.decision in {"APPLY_WITH_TAILORED_CV", "MAYBE", "APPLY_NOW"}
+
+
+def test_manual_qa_is_not_a_global_dealbreaker():
+    qa_profile = CandidateProfile(
+        target_roles=["QA Tester"],
+        role_aliases={"QA Tester": ["Manual QA", "Quality Assurance Tester"]},
+        strong_skills=["Manual QA", "Test cases", "Bug reports"],
+        medium_skills=["Regression testing"],
+        preferred_locations=["Spain"],
+        preferred_work_modes=["remote"],
+        real_experience_years=3,
+    )
+    job = make_job(
+        "Manual QA Tester",
+        "Requirements: Manual QA, test cases, regression testing. Responsibilities: report bugs and verify fixes.",
+    )
+
+    result = rank_job(job, qa_profile)
+
+    flags = result.evidence.dealbreakers + result.evidence.red_flags
+    assert not any("manual qa" in flag.lower() for flag in flags)
 
 
 def test_low_parse_confidence_caps_ranking_decision():

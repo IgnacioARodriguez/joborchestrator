@@ -19,6 +19,7 @@ env/
 .env.*
 !.env.example
 candidate_profile.yml
+linkedin_user_profile/
 *.pem
 *.key
 *.crt

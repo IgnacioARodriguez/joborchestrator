@@ -139,8 +139,6 @@ def _extract_dealbreakers(norm: str) -> list[str]:
         dealbreakers.append("commission only")
     if "relocation" in norm and not any(x in norm for x in ["remote", "spain", "eu", "europe"]):
         dealbreakers.append("mandatory relocation")
-    if "manual qa" in norm and "automation" not in norm:
-        dealbreakers.append("manual QA only")
     return dealbreakers
 
 
