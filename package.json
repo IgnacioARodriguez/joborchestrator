@@ -6,7 +6,7 @@
     "npm": ">=10"
   },
   "scripts": {
-    "build": "npm --prefix dashboard run build && node -e \"require('fs').cpSync('dashboard/.next', '.next', { recursive: true })\"",
+    "build": "npm --prefix dashboard run build",
     "dev": "npm --prefix dashboard run dev",
     "lint": "npm --prefix dashboard run lint",
     "typecheck": "npm --prefix dashboard run typecheck"
