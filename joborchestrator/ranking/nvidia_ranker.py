@@ -10,7 +10,7 @@ from typing import Any, Callable
 import httpx
 import pandas as pd
 
-from joborchestrator.ranking.llm_ranker import _apply_guards, _ranking_from_payload
+from joborchestrator.ranking.llm_ranker import _ranking_from_payload
 from joborchestrator.ranking.ranking_rules import NVIDIA_EXTRA_RULES, RANKING_GOAL, RANKING_RULES, SCORING_RUBRIC
 from joborchestrator.ranking.schemas import CandidateProfile
 from joborchestrator.ranking.speed_ranker import SPEED_RANKING_VERSION
@@ -245,7 +245,6 @@ def _apply_nvidia_batch_result(
             if "nvidia_ranking_applied" not in reasons:
                 reasons.append("nvidia_ranking_applied")
             ranking.evidence.llm_escalation_reasons = reasons
-            ranking = _apply_guards(ranking, row)
             ranking.ranking_version = ranking_version
             db.save_job_ranking(job_id, ranking)
             summary["saved"] += 1

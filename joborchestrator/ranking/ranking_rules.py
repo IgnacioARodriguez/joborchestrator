@@ -13,7 +13,7 @@ RANKING_RULES = [
     "Adjacent, translated or industry-specific role labels are viable when the job text supports transfer from the candidate profile.",
     "Treat role_aliases as equivalent labels for the same user-defined role; do not treat aliases as extra skills.",
     "Separate missing requirements from unstated requirements; do not penalize or reward facts absent from the job text.",
-    "Purely unrelated domains, unpaid roles, commission-only roles or critical dealbreakers must be capped at SKIP/AVOID.",
+    "The model must decide how dealbreakers, relocation, visa constraints, unpaid roles, commission-only roles, technical_fit, seniority_fit and role_fit affect the final score.",
 ]
 
 NVIDIA_EXTRA_RULES = [

@@ -159,6 +159,40 @@ def test_rank_jobs_with_nvidia_reports_progress(monkeypatch):
     assert len(progress_events) == 2
 
 
+def test_nvidia_ranking_is_not_capped_by_heuristic_guards(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Relocation-heavy role",
+                "company": "Acme",
+                "description_text": "Visa relocation manual QA commission-only",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 91, "APPLY_NOW")
+        payload["scores"]["technical_fit"] = 20
+        payload["scores"]["seniority_fit"] = 20
+        payload["scores"]["role_fit"] = 20
+        payload["evidence"]["red_flags"] = ["relocation", "visa", "manual qa", "commission-only"]
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["saved"] == 1
+    assert summary["APPLY_NOW"] == 1
+    assert saved[1].final_score == 91
+    assert saved[1].decision == "APPLY_NOW"
+
+
 def test_call_nvidia_batch_uses_chat_completions(monkeypatch):
     calls = []
 
