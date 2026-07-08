@@ -162,12 +162,8 @@ def _reasoning_summary(scores: RankingScores, evidence: RankingEvidence, role_in
 
 
 def _application_angle(role_info: dict, emphasize: list[str]) -> str:
-    keywords = ", ".join(emphasize[:6]) or "relevant backend experience"
-    if role_info["primary_role"] in {"Solutions Engineer", "Technical Consultant"}:
-        return f"Position as a technical customer-facing engineer with API/integration depth. Emphasize {keywords}."
-    if role_info["primary_role"] in {"ML/AI Engineer", "Data Engineer"}:
-        return f"Position as Python backend engineer moving into data/AI systems. Emphasize {keywords}."
-    return f"Position as Python backend engineer with strong API, cloud and product delivery ownership. Emphasize {keywords}."
+    keywords = ", ".join(emphasize[:6]) or "profile-backed experience"
+    return f"Position as {role_info['primary_role']} using profile-backed evidence. Emphasize {keywords}."
 
 
 def _keywords_to_emphasize(evidence: RankingEvidence, tech_stack: list[str]) -> list[str]:

@@ -1,11 +1,11 @@
-"""
+﻿"""
 LinkedIn Job Scraper - Backend Python RAW
 =========================================
 - Login manual persistente
-- Reutiliza sesión local de navegador
+- Reutiliza sesiÃ³n local de navegador
 - No automatiza credenciales
 - No intenta saltarse captchas, checkpoints ni verificaciones
-- Recorre múltiples búsquedas
+- Recorre mÃºltiples bÃºsquedas
 - Extrae jobs del listado izquierdo acumulando IDs mientras scrollea
 - Clickea cada card visible/acumulada
 - Lee el panel derecho del job seleccionado
@@ -14,7 +14,7 @@ LinkedIn Job Scraper - Backend Python RAW
 
 IMPORTANTE:
 Este script NO hace scoring ni filtra ofertas por relevancia.
-La idea es exportar raw data para analizar después con IA.
+La idea es exportar raw data para analizar despuÃ©s con IA.
 """
 
 import asyncio
@@ -27,75 +27,58 @@ from urllib.parse import urlencode
 import pandas as pd
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
+from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
+from joborchestrator.ranking.role_catalog import profile_search_terms
+from joborchestrator.ranking.schemas import CandidateProfile
+from joborchestrator.storage import persistence as db
+
+
+def build_busquedas_from_profile(profile: CandidateProfile, max_terms: int = 40) -> list[dict[str, str]]:
+    terms = profile_search_terms(profile)[:max_terms]
+    locations = profile.preferred_locations or ["Spain"]
+    if any(str(mode).lower() == "remote" for mode in profile.preferred_work_modes):
+        locations = [*locations, "European Union"]
+    searches = []
+    seen = set()
+    for term in terms:
+        for location in locations:
+            key = (term.lower(), str(location).lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            searches.append(
+                {
+                    "keywords": term,
+                    "ubicacion": str(location),
+                    "categoria": _category_from_role(term),
+                }
+            )
+    return searches
+
+
+def load_profile_busquedas() -> list[dict[str, str]]:
+    profile_payload = db.get_candidate_profile_payload()
+    if not profile_payload:
+        raise RuntimeError("No candidate profile configured. Upload a CV and define target roles before running LinkedIn scraping.")
+    profile = CandidateProfile(**profile_payload_to_candidate_profile(profile_payload))
+    searches = build_busquedas_from_profile(profile)
+    if not searches:
+        raise RuntimeError("No target roles configured in profile. Add roles or aliases before running LinkedIn scraping.")
+    return searches
+
+
+def _category_from_role(role: str) -> str:
+    category = re.sub(r"[^a-zA-Z0-9]+", "_", role.lower()).strip("_")
+    return category or "profile_role"
+
 
 # ============================================================
-# CONFIGURACIÓN GENERAL
+# CONFIGURACIÃ“N GENERAL
 # ============================================================
 
-BUSQUEDAS = [
-    # --- Backend / Python (base original) ---
-    {"keywords": "Python Developer Malaga", "ubicacion": "Spain", "categoria": "backend_python"},
-    {"keywords": "Python Backend Developer", "ubicacion": "Spain", "categoria": "backend_python"},
-    {"keywords": "Python Backend Engineer", "ubicacion": "Spain", "categoria": "backend_python"},
-    {"keywords": "Backend Developer Django", "ubicacion": "Spain", "categoria": "backend_python"},
-    {"keywords": "Django REST Framework", "ubicacion": "Spain", "categoria": "backend_python"},
-    {"keywords": "FastAPI Backend Developer", "ubicacion": "Spain", "categoria": "backend_python"},
-    {"keywords": "Python Software Engineer Backend", "ubicacion": "Spain", "categoria": "backend_python"},
-    {"keywords": "Python API Developer", "ubicacion": "Spain", "categoria": "backend_python"},
-    {"keywords": "Python Microservices Backend", "ubicacion": "Spain", "categoria": "backend_python"},
-    {"keywords": "Python Backend Developer Remote", "ubicacion": "European Union", "categoria": "backend_python"},
-
-    # --- Automatización / Ops técnico ---
-    {"keywords": "Automation Engineer", "ubicacion": "Spain", "categoria": "automatizacion_ops"},
-    {"keywords": "Business Process Automation", "ubicacion": "Spain", "categoria": "automatizacion_ops"},
-    {"keywords": "RPA Developer", "ubicacion": "Spain", "categoria": "automatizacion_ops"},
-    {"keywords": "DevOps Engineer", "ubicacion": "Spain", "categoria": "automatizacion_ops"},
-    {"keywords": "Platform Engineer", "ubicacion": "Spain", "categoria": "automatizacion_ops"},
-    {"keywords": "Integration Engineer", "ubicacion": "Spain", "categoria": "automatizacion_ops"},
-    {"keywords": "Technical Operations Engineer", "ubicacion": "Spain", "categoria": "automatizacion_ops"},
-
-    # --- Presales / Client-facing ---
-    {"keywords": "Solutions Engineer", "ubicacion": "Spain", "categoria": "presales_clientfacing"},
-    {"keywords": "Sales Engineer", "ubicacion": "Spain", "categoria": "presales_clientfacing"},
-    {"keywords": "Presales Consultant", "ubicacion": "Spain", "categoria": "presales_clientfacing"},
-    {"keywords": "Presales Engineer", "ubicacion": "Spain", "categoria": "presales_clientfacing"},
-    {"keywords": "Technical Consultant", "ubicacion": "Spain", "categoria": "presales_clientfacing"},
-    {"keywords": "Solutions Consultant", "ubicacion": "Spain", "categoria": "presales_clientfacing"},
-    {"keywords": "Implementation Consultant", "ubicacion": "Spain", "categoria": "presales_clientfacing"},
-    {"keywords": "Implementation Engineer", "ubicacion": "Spain", "categoria": "presales_clientfacing"},
-    {"keywords": "Customer Solutions Engineer", "ubicacion": "Spain", "categoria": "presales_clientfacing"},
-    {"keywords": "Technical Account Manager", "ubicacion": "Spain", "categoria": "presales_clientfacing"},
-
-    # --- Consultoría técnica ---
-    {"keywords": "IT Consultant", "ubicacion": "Spain", "categoria": "consultoria_tecnica"},
-    {"keywords": "Digital Transformation Consultant", "ubicacion": "Spain", "categoria": "consultoria_tecnica"},
-    {"keywords": "Cloud Consultant", "ubicacion": "Spain", "categoria": "consultoria_tecnica"},
-
-    # --- Data / Backend adyacente ---
-    {"keywords": "Data Engineer Python", "ubicacion": "Spain", "categoria": "data_backend_adyacente"},
-    {"keywords": "Integration Developer API", "ubicacion": "Spain", "categoria": "data_backend_adyacente"},
-    {"keywords": "Backend Engineer Fintech", "ubicacion": "Spain", "categoria": "data_backend_adyacente"},
-    {"keywords": "Payments Backend Engineer", "ubicacion": "Spain", "categoria": "data_backend_adyacente"},
-
-    # --- Arquitectura / 3D / spatial (nicho) ---
-    {"keywords": "Digital Twin Developer", "ubicacion": "Spain", "categoria": "arquitectura_3d_nicho"},
-    {"keywords": "WebGL Developer", "ubicacion": "Spain", "categoria": "arquitectura_3d_nicho"},
-    {"keywords": "Three.js Developer", "ubicacion": "Spain", "categoria": "arquitectura_3d_nicho"},
-    {"keywords": "Proptech Software Engineer", "ubicacion": "Spain", "categoria": "arquitectura_3d_nicho"},
-
-    # --- Customer success técnico ---
-    {"keywords": "Customer Success Engineer", "ubicacion": "Spain", "categoria": "customer_success_tecnico"},
-    {"keywords": "Support Engineer Technical", "ubicacion": "Spain", "categoria": "customer_success_tecnico"},
-    {"keywords": "Onboarding Engineer", "ubicacion": "Spain", "categoria": "customer_success_tecnico"},
-
-    # --- Remoto EU (mezcla de las más prometedoras) ---
-    {"keywords": "Solutions Engineer Remote", "ubicacion": "European Union", "categoria": "presales_clientfacing"},
-    {"keywords": "Presales Consultant Remote", "ubicacion": "European Union", "categoria": "presales_clientfacing"},
-    {"keywords": "Python Backend Developer Remote", "ubicacion": "European Union", "categoria": "backend_python"},
-]
 
 # No pongas 100000. LinkedIn no se comporta como una API paginada perfecta.
-# Subí MAX_PAGINAS si querés explorar más profundidad por búsqueda.
+# SubÃ­ MAX_PAGINAS si querÃ©s explorar mÃ¡s profundidad por bÃºsqueda.
 LIMITE_RESULTADOS = 100000
 MAX_PAGINAS = 200
 PAGINAS_CONSECUTIVAS_SIN_NUEVOS = 3
@@ -109,12 +92,12 @@ ARCHIVO_SALIDA = str(
 
 LINKEDIN_JOBS_URL = "https://www.linkedin.com/jobs/search/"
 
-# Ponelo en True una sola ejecución si querés ver logs de scroll.
+# Ponelo en True una sola ejecuciÃ³n si querÃ©s ver logs de scroll.
 DEBUG = False
 
 # Perfil persistente local de LinkedIn.
-# Primera ejecución: login manual.
-# Siguientes ejecuciones: reutiliza cookies/sesión.
+# Primera ejecuciÃ³n: login manual.
+# Siguientes ejecuciones: reutiliza cookies/sesiÃ³n.
 PERFIL_LINKEDIN = Path("linkedin_user_profile").resolve()
 
 GUARDAR_CHECKPOINT = True
@@ -127,7 +110,7 @@ CHECKPOINT_SNAPSHOT_BASE = str(OUTPUT_DIR / "snapshot_actual_todas_posiciones_ra
 
 
 # ============================================================
-# CHECKPOINT Y EXPORTACIÓN
+# CHECKPOINT Y EXPORTACIÃ“N
 # ============================================================
 
 def deduplicar_ofertas(ofertas: list[dict]) -> list[dict]:
@@ -166,12 +149,12 @@ def cargar_checkpoint() -> tuple[list[dict], set[str]]:
     seen_ids = {str(o["id"]) for o in ofertas if o.get("id")}
 
     print(
-        f"♻ Checkpoint cargado: {len(ofertas)} ofertas únicas "
+        f"â™» Checkpoint cargado: {len(ofertas)} ofertas Ãºnicas "
         f"desde {CHECKPOINT_JSONL}"
     )
 
     if lineas_invalidas:
-        print(f"⚠ Líneas inválidas ignoradas en checkpoint: {lineas_invalidas}")
+        print(f"âš  LÃ­neas invÃ¡lidas ignoradas en checkpoint: {lineas_invalidas}")
 
     return ofertas, seen_ids
 
@@ -259,11 +242,11 @@ def limpiar_descripcion(texto: str) -> str:
     if not texto:
         return ""
 
-    texto = re.sub(r"\s*…\s*más\s*$", "", texto, flags=re.IGNORECASE).strip()
-    texto = re.sub(r"\s*…\s*more\s*$", "", texto, flags=re.IGNORECASE).strip()
+    texto = re.sub(r"\s*â€¦\s*mÃ¡s\s*$", "", texto, flags=re.IGNORECASE).strip()
+    texto = re.sub(r"\s*â€¦\s*more\s*$", "", texto, flags=re.IGNORECASE).strip()
 
     basura_final = [
-        r"mostrar más\s*$",
+        r"mostrar mÃ¡s\s*$",
         r"show more\s*$",
         r"me interesa\s*$",
         r"solicitar\s*$",
@@ -277,7 +260,7 @@ def limpiar_descripcion(texto: str) -> str:
 
 
 # ============================================================
-# EXTRACCIÓN DE METADATA
+# EXTRACCIÃ“N DE METADATA
 # ============================================================
 
 def extraer_modalidad_desde_texto(texto: str) -> str:
@@ -288,7 +271,7 @@ def extraer_modalidad_desde_texto(texto: str) -> str:
 
     patrones = [
         ("remote", [r"\ben remoto\b", r"\bremote\b", r"\bremoto\b"]),
-        ("hybrid", [r"\bhíbrido\b", r"\bhybrid\b"]),
+        ("hybrid", [r"\bhÃ­brido\b", r"\bhybrid\b"]),
         ("onsite", [r"\bpresencial\b", r"\bon-?site\b", r"\bin office\b"]),
     ]
 
@@ -306,11 +289,11 @@ def extraer_fecha_desde_texto(texto: str) -> str:
         return ""
 
     patrones = [
-        r"hace \d+ (hora|horas|día|días|semana|semanas|mes|meses)",
-        r"publicado de nuevo hace \d+ (hora|horas|día|días|semana|semanas|mes|meses)",
+        r"hace \d+ (hora|horas|dÃ­a|dÃ­as|semana|semanas|mes|meses)",
+        r"publicado de nuevo hace \d+ (hora|horas|dÃ­a|dÃ­as|semana|semanas|mes|meses)",
         r"posted \d+ (hour|hours|day|days|week|weeks|month|months) ago",
         r"reposted \d+ (hour|hours|day|days|week|weeks|month|months) ago",
-        r"en las últimas 24 horas",
+        r"en las Ãºltimas 24 horas",
         r"in the past 24 hours",
     ]
 
@@ -323,13 +306,13 @@ def extraer_fecha_desde_texto(texto: str) -> str:
 
 
 # ============================================================
-# LOGIN PERSISTENTE / SESIÓN
+# LOGIN PERSISTENTE / SESIÃ“N
 # ============================================================
 
 async def crear_contexto_linkedin(p):
     """
     Crea un contexto persistente.
-    No automatiza el login; reutiliza sesión local si ya existe.
+    No automatiza el login; reutiliza sesiÃ³n local si ya existe.
     """
 
     context = await p.chromium.launch_persistent_context(
@@ -348,7 +331,7 @@ async def crear_contexto_linkedin(p):
 
 async def linkedin_pide_verificacion(page) -> bool:
     """
-    Detecta captcha, checkpoint o verificación.
+    Detecta captcha, checkpoint o verificaciÃ³n.
     Si aparece, el script debe detenerse.
     """
 
@@ -370,7 +353,7 @@ async def linkedin_pide_verificacion(page) -> bool:
 
     indicadores_texto = [
         "security verification",
-        "verificación de seguridad",
+        "verificaciÃ³n de seguridad",
         "captcha",
         "checkpoint",
         "we need to verify",
@@ -386,8 +369,8 @@ async def linkedin_pide_verificacion(page) -> bool:
 
 async def asegurar_sesion_manual(page):
     """
-    Comprueba sesión activa.
-    Si no hay sesión, pide login manual una sola vez.
+    Comprueba sesiÃ³n activa.
+    Si no hay sesiÃ³n, pide login manual una sola vez.
     """
 
     await page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded")
@@ -395,36 +378,36 @@ async def asegurar_sesion_manual(page):
 
     if await linkedin_pide_verificacion(page):
         raise RuntimeError(
-            "LinkedIn está pidiendo verificación. "
-            "No continúo automáticamente."
+            "LinkedIn estÃ¡ pidiendo verificaciÃ³n. "
+            "No continÃºo automÃ¡ticamente."
         )
 
     if "/login" in page.url:
         print("\n" + "=" * 60)
-        print("Inicia sesión manualmente en la ventana abierta.")
+        print("Inicia sesiÃ³n manualmente en la ventana abierta.")
         print("No cierres el navegador.")
         print("Cuando termines, vuelve a la terminal y pulsa ENTER.")
         print("=" * 60)
 
-        input("→ ENTER cuando hayas terminado el login manual: ")
+        input("â†’ ENTER cuando hayas terminado el login manual: ")
 
         await page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded")
         await page.wait_for_timeout(2500)
 
         if "/login" in page.url:
-            raise RuntimeError("No se detectó sesión activa después del login manual.")
+            raise RuntimeError("No se detectÃ³ sesiÃ³n activa despuÃ©s del login manual.")
 
         if await linkedin_pide_verificacion(page):
             raise RuntimeError(
-                "LinkedIn pidió verificación después del login. "
-                "No continúo automáticamente."
+                "LinkedIn pidiÃ³ verificaciÃ³n despuÃ©s del login. "
+                "No continÃºo automÃ¡ticamente."
             )
 
-    print("✅ Sesión de LinkedIn activa.")
+    print("âœ… SesiÃ³n de LinkedIn activa.")
 
 
 # ============================================================
-# NAVEGACIÓN
+# NAVEGACIÃ“N
 # ============================================================
 
 async def navegar_estable(page, url: str, timeout: int = 30000):
@@ -470,7 +453,7 @@ async def pagina_sin_resultados_reales(page) -> bool:
 
 
 # ============================================================
-# EXTRACCIÓN DE RESULTADOS DEL LISTADO
+# EXTRACCIÃ“N DE RESULTADOS DEL LISTADO
 # ============================================================
 
 async def resetear_scroll_listado(page):
@@ -661,7 +644,7 @@ async def scroll_listado_jobs(page) -> dict:
 async def extraer_resultados_visibles(page) -> list[dict]:
     """
     Extrae jobs del listado izquierdo acumulando IDs mientras scrollea.
-    LinkedIn virtualiza el listado, así que una sola lectura del DOM suele traer solo 7-8 cards.
+    LinkedIn virtualiza el listado, asÃ­ que una sola lectura del DOM suele traer solo 7-8 cards.
     """
 
     await page.wait_for_timeout(1000)
@@ -710,7 +693,7 @@ async def extraer_resultados_visibles(page) -> list[dict]:
         if sin_cambios >= 3:
             break
 
-    # Captura final después del último scroll.
+    # Captura final despuÃ©s del Ãºltimo scroll.
     actuales = await extraer_resultados_dom_actual(page)
 
     for job in actuales:
@@ -720,7 +703,7 @@ async def extraer_resultados_visibles(page) -> list[dict]:
 
 
 # ============================================================
-# EXTRACCIÓN DEL PANEL DERECHO
+# EXTRACCIÃ“N DEL PANEL DERECHO
 # ============================================================
 
 async def abrir_job_visible_en_panel(page, job_id: str, titulo: str = "") -> bool:
@@ -781,12 +764,12 @@ async def abrir_job_visible_en_panel(page, job_id: str, titulo: str = "") -> boo
 async def expandir_descripcion_si_hace_falta(page):
     selectores = [
         'section.jobs-description button.jobs-description__footer-button',
-        'section.jobs-description button[aria-label*="Ver más"]',
+        'section.jobs-description button[aria-label*="Ver mÃ¡s"]',
         'section.jobs-description button[aria-label*="See more"]',
-        'section.jobs-description button[aria-label*="más"]',
+        'section.jobs-description button[aria-label*="mÃ¡s"]',
         'section.jobs-description button[aria-label*="more"]',
-        '.jobs-description button:has-text("Ver más")',
-        '.jobs-description button:has-text("Mostrar más")',
+        '.jobs-description button:has-text("Ver mÃ¡s")',
+        '.jobs-description button:has-text("Mostrar mÃ¡s")',
         '.jobs-description button:has-text("Show more")',
         '[data-testid="expandable-text-button"]',
     ]
@@ -828,8 +811,8 @@ async def obtener_panel_detalles(page):
 
             ruido_listado = [
                 "crear alerta",
-                "ir al resultado de búsqueda",
-                "¿estos resultados son útiles?",
+                "ir al resultado de bÃºsqueda",
+                "Â¿estos resultados son Ãºtiles?",
                 "siguiente",
             ]
 
@@ -885,7 +868,7 @@ def recortar_descripcion_desde_panel(panel_texto: str) -> str:
         r"\bAcerca de la empresa\b",
         r"\bAbout the company\b",
         r"\bMeet the hiring team\b",
-        r"\bConoce al equipo de contratación\b",
+        r"\bConoce al equipo de contrataciÃ³n\b",
         r"\bMe interesa\b",
         r"\bSolicitar\b",
         r"\bGuardar\b",
@@ -902,15 +885,15 @@ def recortar_descripcion_desde_panel(panel_texto: str) -> str:
 
     texto = limpiar_descripcion(texto[:fin])
 
-    señales_ruido = [
+    senales_ruido = [
         "Crear alerta",
-        "Ir al resultado de búsqueda",
-        "¿Estos resultados son útiles?",
+        "Ir al resultado de bÃºsqueda",
+        "Â¿Estos resultados son Ãºtiles?",
         "Siguiente",
         "Jobs you may be interested in",
     ]
 
-    ruido = sum(1 for s in señales_ruido if s.lower() in texto.lower())
+    ruido = sum(1 for s in senales_ruido if s.lower() in texto.lower())
 
     if ruido >= 2:
         return ""
@@ -1016,7 +999,7 @@ async def extraer_header_desde_panel(panel) -> dict:
 
     for linea in lineas[:25]:
         if re.search(
-            r"\b(en remoto|remote|remoto|híbrido|hybrid|presencial|on-?site)\b",
+            r"\b(en remoto|remote|remoto|hÃ­brido|hybrid|presencial|on-?site)\b",
             linea,
             re.IGNORECASE,
         ):
@@ -1025,7 +1008,7 @@ async def extraer_header_desde_panel(panel) -> dict:
 
     if not data["ubicacion"]:
         for linea in lineas[:25]:
-            if "·" in linea and not re.search(
+            if "Â·" in linea and not re.search(
                 r"hace \d+|posted|reposted|solicitantes|applicants",
                 linea,
                 re.IGNORECASE,
@@ -1082,7 +1065,7 @@ async def procesar_pagina_actual(
     duplicados_visibles = [x for x in visibles if x["id"] in seen_ids]
 
     print(
-        f"\n[PÁGINA start={start_value}] "
+        f"\n[PÃGINA start={start_value}] "
         f"visibles={len(visibles)} "
         f"nuevos={len(nuevos_visibles)} "
         f"duplicados={len(duplicados_visibles)} "
@@ -1115,7 +1098,7 @@ async def procesar_pagina_actual(
 
         if await linkedin_pide_verificacion(page):
             raise RuntimeError(
-                "LinkedIn pidió verificación durante la extracción. "
+                "LinkedIn pidiÃ³ verificaciÃ³n durante la extracciÃ³n. "
                 "Detengo el script."
             )
 
@@ -1133,7 +1116,7 @@ async def procesar_pagina_actual(
         if not descripcion and DEBUG:
             debug_name = f"sin_descripcion_{job['id']}"
             await page.screenshot(path=f"{debug_name}.png", full_page=True)
-            print(f"  [DEBUG] screenshot sin descripción: {debug_name}.png")
+            print(f"  [DEBUG] screenshot sin descripciÃ³n: {debug_name}.png")
 
         oferta = {
             "id": job["id"],
@@ -1169,7 +1152,7 @@ async def procesar_pagina_actual(
         nuevos_agregados += 1
 
         if len(todas) >= LIMITE_RESULTADOS:
-            print(f"✅ Alcanzado límite de {LIMITE_RESULTADOS} ofertas únicas.")
+            print(f"âœ… Alcanzado lÃ­mite de {LIMITE_RESULTADOS} ofertas Ãºnicas.")
             return nuevos_agregados
 
         await asyncio.sleep(1.2)
@@ -1179,7 +1162,7 @@ async def procesar_pagina_actual(
 
 def exportar_resultados(ofertas: list[dict], nombre_archivo: str):
     if not ofertas:
-        print("⚠ No hay ofertas para exportar.")
+        print("âš  No hay ofertas para exportar.")
         return
 
     df = pd.DataFrame(ofertas).drop_duplicates(subset=["id"])
@@ -1230,9 +1213,9 @@ def exportar_resultados(ofertas: list[dict], nombre_archivo: str):
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(ofertas, f, ensure_ascii=False, indent=2)
 
-    print(f"\n✅ Excel RAW: {excel_path}")
-    print(f"✅ JSON RAW:  {json_path}")
-    print(f"✅ Total exportado: {len(df)}")
+    print(f"\nâœ… Excel RAW: {excel_path}")
+    print(f"âœ… JSON RAW:  {json_path}")
+    print(f"âœ… Total exportado: {len(df)}")
 
 
 # ============================================================
@@ -1241,13 +1224,14 @@ def exportar_resultados(ofertas: list[dict], nombre_archivo: str):
 
 async def main():
     print("\n" + "=" * 60)
-    print("LinkedIn Job Scraper — Backend Python RAW")
+    print("LinkedIn Job Scraper â€” Backend Python RAW")
     print("=" * 60)
 
     print(f"ARCHIVO EJECUTADO: {Path(__file__).resolve()}")
+    busquedas = load_profile_busquedas()
     print("BUSQUEDAS ACTIVAS:")
-    for b in BUSQUEDAS:
-        print(f" - {b['keywords']} — {b['ubicacion']}")
+    for b in busquedas:
+        print(f" - {b['keywords']} â€” {b['ubicacion']}")
 
     async with async_playwright() as p:
         context, page = await crear_contexto_linkedin(p)
@@ -1257,9 +1241,9 @@ async def main():
 
             todas, seen_ids = cargar_checkpoint()
 
-            for busqueda in BUSQUEDAS:
+            for busqueda in busquedas:
                 print("\n" + "=" * 70)
-                print(f"INICIANDO BÚSQUEDA: {busqueda['keywords']} — {busqueda['ubicacion']}")
+                print(f"INICIANDO BÃšSQUEDA: {busqueda['keywords']} â€” {busqueda['ubicacion']}")
                 print("=" * 70)
 
                 paginas_sin_nuevos = 0
@@ -1278,9 +1262,9 @@ async def main():
                     url = f"{LINKEDIN_JOBS_URL}?{urlencode(params)}"
 
                     print(
-                        f"\n🔍 Buscando: "
-                        f"{busqueda['keywords']} — "
-                        f"{busqueda['ubicacion']} — "
+                        f"\nðŸ” Buscando: "
+                        f"{busqueda['keywords']} â€” "
+                        f"{busqueda['ubicacion']} â€” "
                         f"start={start}"
                     )
 
@@ -1289,7 +1273,7 @@ async def main():
 
                     if await linkedin_pide_verificacion(page):
                         raise RuntimeError(
-                            "LinkedIn pidió verificación durante la navegación. "
+                            "LinkedIn pidiÃ³ verificaciÃ³n durante la navegaciÃ³n. "
                             "Detengo el script."
                         )
 
@@ -1304,13 +1288,13 @@ async def main():
                         await dump_debug_info(page, f"debug_{safe_kw}_{start}")
 
                     if sin_resultados_reales:
-                        print("⛔ LinkedIn indica que no hay más resultados para esta búsqueda.")
+                        print("â›” LinkedIn indica que no hay mÃ¡s resultados para esta bÃºsqueda.")
                         break
 
                     visibles = await extraer_resultados_visibles(page)
 
                     if not visibles:
-                        print("⛔ No hay jobs visibles en esta página. Cambio de búsqueda.")
+                        print("â›” No hay jobs visibles en esta pÃ¡gina. Cambio de bÃºsqueda.")
                         break
 
                     nuevos = await procesar_pagina_actual(
@@ -1330,14 +1314,14 @@ async def main():
                     if nuevos == 0:
                         paginas_sin_nuevos += 1
                         print(
-                            f"⚠ Página sin resultados nuevos. "
+                            f"âš  PÃ¡gina sin resultados nuevos. "
                             f"consecutivas={paginas_sin_nuevos}"
                         )
                     else:
                         paginas_sin_nuevos = 0
 
                     if paginas_sin_nuevos >= PAGINAS_CONSECUTIVAS_SIN_NUEVOS:
-                        print("⛔ Búsqueda agotada: páginas consecutivas sin ofertas nuevas.")
+                        print("â›” BÃºsqueda agotada: pÃ¡ginas consecutivas sin ofertas nuevas.")
                         break
 
                     if len(todas) >= LIMITE_RESULTADOS:
@@ -1358,18 +1342,18 @@ if __name__ == "__main__":
         asyncio.run(main())
 
     except KeyboardInterrupt:
-        print("\n⛔ Ejecución interrumpida manualmente.")
-        print(f"✅ Lo procesado hasta ahora quedó en: {CHECKPOINT_JSONL}")
-        print(f"✅ Último estado guardado en: {CHECKPOINT_STATE}")
+        print("\nâ›” EjecuciÃ³n interrumpida manualmente.")
+        print(f"âœ… Lo procesado hasta ahora quedÃ³ en: {CHECKPOINT_JSONL}")
+        print(f"âœ… Ãšltimo estado guardado en: {CHECKPOINT_STATE}")
 
     except RuntimeError as e:
-        print("\n⛔ Ejecución detenida.")
+        print("\nâ›” EjecuciÃ³n detenida.")
         print(str(e))
-        print(f"✅ Lo procesado hasta ahora quedó en: {CHECKPOINT_JSONL}")
-        print(f"✅ Último estado guardado en: {CHECKPOINT_STATE}")
+        print(f"âœ… Lo procesado hasta ahora quedÃ³ en: {CHECKPOINT_JSONL}")
+        print(f"âœ… Ãšltimo estado guardado en: {CHECKPOINT_STATE}")
 
     except Exception as e:
-        print("\n❌ Error inesperado.")
+        print("\nâŒ Error inesperado.")
         print(repr(e))
-        print(f"✅ Lo procesado hasta ahora quedó en: {CHECKPOINT_JSONL}")
-        print(f"✅ Último estado guardado en: {CHECKPOINT_STATE}")
+        print(f"âœ… Lo procesado hasta ahora quedÃ³ en: {CHECKPOINT_JSONL}")
+        print(f"âœ… Ãšltimo estado guardado en: {CHECKPOINT_STATE}")

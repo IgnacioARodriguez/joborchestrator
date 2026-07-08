@@ -5,6 +5,7 @@ from typing import Any
 
 from joborchestrator.ranking.risk_detector import detect_risks
 from joborchestrator.ranking.role_classifier import classify_role
+from joborchestrator.ranking.role_catalog import role_fit_score
 from joborchestrator.ranking.roi_scorer import score_application_roi
 from joborchestrator.ranking.schemas import CandidateProfile, JobRequirements, RankingEvidence, RankingScores
 from joborchestrator.ranking.skill_taxonomy import expand_skills, skill_match
@@ -63,8 +64,8 @@ def score_fit(
     technical_fit = _clamp(technical_fit)
 
     seniority_fit = _score_seniority(requirements, profile)
-    role_info = classify_role(job, requirements)
-    role_fit = _score_role(role_info["primary_role"], role_info["secondary_roles"], requirements)
+    role_info = classify_role(job, requirements, profile)
+    role_fit = _score_role(role_info)
     market_alignment = _score_market_alignment(requirements, role_info)
     opportunity_quality = _score_opportunity_quality(job, requirements)
     red_flags, risk_penalty = detect_risks(job, requirements, profile)
@@ -109,37 +110,16 @@ def _score_seniority(requirements: JobRequirements, profile: CandidateProfile) -
     return _clamp(base)
 
 
-def _score_role(primary: str, secondary: list[str], requirements: JobRequirements) -> int:
-    mapping = {
-        "Backend Engineer": 92,
-        "Python Developer": 90,
-        "Full Stack Engineer": 78,
-        "ML/AI Engineer": 64 if "Python" in requirements.tech_stack else 50,
-        "Data Engineer": 62,
-        "Solutions Engineer": 62,
-        "Technical Consultant": 58,
-        "DevOps/Platform Engineer": 36,
-        "Frontend Engineer": 28,
-        "QA/Automation Engineer": 34,
-        "Product Manager": 22,
-        "Sales/Pre-sales": 24,
-        "Other": 45,
-    }
-    score = mapping.get(primary, 45)
-    if primary == "Frontend Engineer" and any(role in secondary for role in ["Full Stack Engineer", "Backend Engineer"]):
-        score = 66
-    return _clamp(score)
+def _score_role(role_info: dict) -> int:
+    return role_fit_score(role_info)
 
 
 def _score_market_alignment(requirements: JobRequirements, role_info: dict) -> int:
     text = normalize_text(" ".join(requirements.tech_stack + requirements.role_signals + [role_info["primary_role"]]))
     score = 50
-    for signal in ["python", "backend", "api", "cloud", "aws", "llm", "ai", "automation", "saas", "platform"]:
-        if signal in text:
+    for signal in requirements.tech_stack + requirements.role_signals + role_info["primary_role"].split():
+        if normalize_text(signal) in text:
             score += 6
-    for bad in ["frontend", "mobile", "manual qa", "sales"]:
-        if bad in text:
-            score -= 10
     return _clamp(score)
 
 
