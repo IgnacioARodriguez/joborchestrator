@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import socket
@@ -18,6 +19,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     build_application_kit_with_llm,
     build_application_kit_with_nvidia,
 )
+from joborchestrator.scanning.orchestrator import run_unified_job_scan
 from joborchestrator.storage import persistence as db
 
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
@@ -44,7 +46,7 @@ logger = configure_logging()
 
 
 def process_once(worker_id: str = WORKER_ID) -> bool:
-    operation = db.claim_next_operation(worker_id, ["cv_profile_import", "application_materials_generation"])
+    operation = db.claim_next_operation(worker_id, ["cv_profile_import", "application_materials_generation", "job_scan"])
     if not operation:
         return False
     operation_id = int(operation["id"])
@@ -55,6 +57,8 @@ def process_once(worker_id: str = WORKER_ID) -> bool:
             _process_cv_profile_import(operation)
         elif operation_type == "application_materials_generation":
             _process_application_materials_generation(operation)
+        elif operation_type == "job_scan":
+            _process_job_scan(operation)
         else:
             raise RuntimeError(f"Unsupported operation type: {operation_type}")
     except Exception as exc:  # noqa: BLE001 - worker must persist failures.
@@ -147,6 +151,29 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
         "Application materials ready.",
     )
     logger.info("Completed application materials operation=%s job_id=%s provider=%s", operation_id, job_id, provider)
+
+
+def _process_job_scan(operation: dict[str, Any]) -> None:
+    operation_id = int(operation["id"])
+    input_payload = operation.get("input_json") or {}
+    logger.info("Processing job scan operation=%s", operation_id)
+
+    def progress(message: str) -> None:
+        db.update_operation_progress(operation_id, message)
+
+    output = asyncio.run(run_unified_job_scan(input_payload, progress=progress))
+    summary = output.get("summary") or {}
+    db.complete_operation(
+        operation_id,
+        output,
+        (
+            "Job scan completed: "
+            f"{summary.get('new', 0)} new, "
+            f"{summary.get('updated', 0)} updated, "
+            f"{summary.get('errors', 0)} errors."
+        ),
+    )
+    logger.info("Completed job scan operation=%s summary=%s", operation_id, summary)
 
 
 def _job_for_materials(job_id: int) -> tuple[dict[str, Any], dict[str, Any] | None]:

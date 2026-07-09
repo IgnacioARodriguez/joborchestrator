@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import asyncio
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
@@ -41,7 +40,7 @@ from joborchestrator.ranking.worker import run_worker_once
 from joborchestrator.scanning import scanner as source_scanner
 from joborchestrator.scanning import search_scanner
 from joborchestrator.scanning import linkedin
-from joborchestrator.scanning.linkedin_importer import import_linkedin_dataframe_to_job_postings
+from joborchestrator.scanning.orchestrator import run_unified_job_scan
 from joborchestrator.scanning.providers import PROVIDERS
 from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS
 from joborchestrator.storage import db_connection
@@ -388,63 +387,21 @@ def set_linkedin_profile(payload: LinkedInProfilePayload) -> dict[str, Any]:
 
 
 @app.post("/api/scans/all")
-async def scan_all(payload: UnifiedScanPayload) -> dict[str, Any]:
-    tasks: dict[str, Any] = {}
-
-    if payload.include_ats:
-        sources = db.list_company_sources(enabled_only=True).to_dict("records")
-        if payload.source_ids:
-            wanted = {int(source_id) for source_id in payload.source_ids}
-            sources = [source for source in sources if int(source["id"]) in wanted]
-        tasks["ats"] = source_scanner.scan_sources_concurrently(
-            sources,
-            max_concurrency=payload.ats_max_concurrency,
-        )
-
-    if payload.include_search:
-        providers = payload.search_providers or sorted(SEARCH_PROVIDERS.keys())
-        bad = [provider for provider in providers if provider not in SEARCH_PROVIDERS]
-        if bad:
-            raise HTTPException(status_code=400, detail=f"Unsupported search providers: {bad}")
-        queries = [query.strip() for query in payload.queries if query.strip()]
-        if queries:
-            tasks["search"] = search_scanner.search_jobs_concurrently(
-                providers,
-                queries,
-                payload.location,
-                remote=payload.remote,
-                max_pages=payload.max_pages,
-                max_concurrency=payload.search_max_concurrency,
-            )
-
-    if payload.include_linkedin:
-        tasks["linkedin"] = _run_linkedin_scan_for_api()
-
-    results = await asyncio.gather(*tasks.values(), return_exceptions=True) if tasks else []
-    output: dict[str, Any] = {"ats": [], "search": [], "linkedin": None, "errors": {}}
-    for name, result in zip(tasks.keys(), results):
-        if isinstance(result, Exception):
-            output["errors"][name] = str(result)
-        elif name in {"ats", "search"}:
-            output[name] = [scan_result_dto(item) for item in result]
-        else:
-            output[name] = result
-    return output
-
-
-async def _run_linkedin_scan_for_api() -> dict[str, Any]:
-    scraped = await linkedin.run_linkedin_scrape()
-    import_stats = import_linkedin_dataframe_to_job_postings(scraped) if not scraped.empty else {
-        "new": 0,
-        "updated": 0,
-        "seen": 0,
-        "total": 0,
-    }
-    inactive = db.mark_jobs_inactive_by_last_seen(
-        "linkedin_scraper",
-        linkedin.FRESHNESS_WINDOW_SECONDS,
+def queue_scan_all(payload: UnifiedScanPayload) -> dict[str, Any]:
+    operation_id = db.create_operation(
+        "job_scan",
+        payload.model_dump(),
+        "Queued unified job scan. Waiting for local worker.",
     )
-    return {"import_stats": import_stats, "inactive": inactive}
+    return {"operation_id": operation_id, "status": "queued"}
+
+
+@app.post("/api/scans/all/run")
+async def run_scan_all_now(payload: UnifiedScanPayload) -> dict[str, Any]:
+    try:
+        return await run_unified_job_scan(payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/scans/overview")

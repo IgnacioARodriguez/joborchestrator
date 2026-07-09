@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   Ban,
   BriefcaseBusiness,
@@ -160,6 +160,8 @@ export function OpsScreen() {
   const [linkedinProfile, setLinkedinProfile] = useState("main")
   const [linkedinProfileInput, setLinkedinProfileInput] = useState("main")
   const [linkedinProfileDir, setLinkedinProfileDir] = useState("")
+  const [scanOperationId, setScanOperationId] = useState<number | null>(null)
+  const liveRefreshAtRef = useRef(0)
   const busyCopy = operationCopy(busy)
 
   async function loadOps() {
@@ -207,6 +209,66 @@ export function OpsScreen() {
     }, 500)
     return () => window.clearInterval(interval)
   }, [busyStartedAt])
+
+  useEffect(() => {
+    if (!scanOperationId) return
+    const interval = window.setInterval(async () => {
+      try {
+        const response = await api.getOperation(scanOperationId)
+        const operation = response.operation
+        setBusy("all")
+        setBusyDetail(operation.progress_message || "Unified job scan is running.")
+        if (["queued", "running"].includes(operation.status)) {
+          const now = Date.now()
+          if (now - liveRefreshAtRef.current >= 4000) {
+            liveRefreshAtRef.current = now
+            await refresh()
+            await loadOps()
+          }
+        }
+        if (operation.status === "completed") {
+          const output = (operation.output_json || {}) as {
+            ats?: ScanResult[]
+            search?: ScanResult[]
+            errors?: Record<string, string>
+            summary?: { new?: number; updated?: number; errors?: number }
+          }
+          setResults([...(output.ats ?? []), ...(output.search ?? [])])
+          setScanOperationId(null)
+          setBusy(null)
+          setBusyDetail("")
+          setBusyStartedAt(null)
+          setElapsedSeconds(0)
+          await refresh()
+          await loadOps()
+          toast.success("Unified scrape finished", {
+            description: `${output.summary?.new ?? 0} new, ${output.summary?.updated ?? 0} updated.`,
+          })
+        }
+        if (operation.status === "failed") {
+          setScanOperationId(null)
+          setBusy(null)
+          setBusyDetail("")
+          setBusyStartedAt(null)
+          setElapsedSeconds(0)
+          await loadOps()
+          toast.error("Unified scrape failed", {
+            description: operation.error ?? "Check local worker logs.",
+          })
+        }
+      } catch (e) {
+        setScanOperationId(null)
+        setBusy(null)
+        setBusyDetail("")
+        setBusyStartedAt(null)
+        setElapsedSeconds(0)
+        toast.error("Could not check scan operation", {
+          description: e instanceof Error ? e.message : "Backend request failed.",
+        })
+      }
+    }, 1500)
+    return () => window.clearInterval(interval)
+  }, [refresh, scanOperationId])
 
   async function runAction<T>(name: string, fn: () => Promise<T>) {
     setBusy(name)
@@ -295,29 +357,39 @@ export function OpsScreen() {
           <Button
             disabled={busy !== null || (sources.length === 0 && searchProviders.length === 0)}
             onClick={() =>
-              void runAction("all", async () => {
-                const res = await api.scanAll({
-                  include_ats: sources.length > 0,
-                  include_search: searchProviders.length > 0,
-                  include_linkedin: false,
-                  search_providers: searchProviders,
-                  queries: queries.split("\n"),
-                  location,
-                  remote: true,
-                  max_pages: 1,
-                })
-                setResults([...(res.ats ?? []), ...(res.search ?? [])])
-                const errorCount = Object.keys(res.errors ?? {}).length
-                if (errorCount > 0) {
-                  toast.error("Unified scrape finished with errors", {
-                    description: Object.entries(res.errors)
-                      .map(([name, message]) => `${name}: ${message}`)
-                      .join("; "),
+              void (async () => {
+                setBusy("all")
+                setBusyDetail("Queueing unified job scan.")
+                setBusyStartedAt(Date.now())
+                setElapsedSeconds(0)
+                try {
+                  const res = await api.scanAll({
+                    include_ats: sources.length > 0,
+                    include_search: searchProviders.length > 0,
+                    include_linkedin: false,
+                    search_providers: searchProviders,
+                    queries: queries.split("\n"),
+                    location,
+                    remote: true,
+                    max_pages: 1,
                   })
-                } else {
-                  toast.success("Unified scrape finished")
+                  setScanOperationId(res.operation_id)
+                  liveRefreshAtRef.current = 0
+                  setBusyDetail("Queued. Waiting for the local worker.")
+                  toast.success("Unified scrape queued", {
+                    description: `Operation #${res.operation_id}`,
+                  })
+                  await loadOps()
+                } catch (e) {
+                  setBusy(null)
+                  setBusyDetail("")
+                  setBusyStartedAt(null)
+                  setElapsedSeconds(0)
+                  toast.error("Could not queue unified scrape", {
+                    description: e instanceof Error ? e.message : "Backend request failed.",
+                  })
                 }
-              })
+              })()
             }
           >
             {busy === "all" ? (

@@ -166,6 +166,29 @@ def test_linkedin_profile_setting_round_trip(tmp_path, monkeypatch):
     assert "disabled" in blocked.json()["detail"]
 
 
+def test_scan_all_queues_job_scan_operation(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/api/scans/all",
+        json={
+            "include_ats": True,
+            "include_search": True,
+            "search_providers": ["remotive"],
+            "queries": ["backend engineer"],
+            "location": "Spain",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    operation = db.get_operation(body["operation_id"])
+    assert body["status"] == "queued"
+    assert operation["type"] == "job_scan"
+    assert operation["input_json"]["queries"] == ["backend engineer"]
+    assert operation["progress_message"] == "Queued unified job scan. Waiting for local worker."
+
+
 def test_ranking_job_requires_profile(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
 

@@ -163,10 +163,8 @@ export const api = {
     max_pages: number
   }) {
     return request<{
-      ats: ScanResult[]
-      search: ScanResult[]
-      linkedin: null | Record<string, unknown>
-      errors: Record<string, string>
+      operation_id: number
+      status: string
     }>("/api/scans/all", {
       method: "POST",
       body: JSON.stringify(input),

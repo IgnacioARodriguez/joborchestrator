@@ -125,3 +125,45 @@ def test_worker_processes_application_materials_generation(monkeypatch):
     assert saved["recruiter_message"] == "Hi recruiter"
     assert completed["output"]["materials_saved"] is True
     assert "Generating nvidia application materials." in progress
+
+
+def test_worker_processes_job_scan(monkeypatch):
+    completed = {}
+    progress = []
+
+    monkeypatch.setattr(
+        worker.db,
+        "claim_next_operation",
+        lambda worker_id, operation_types: {
+            "id": 31,
+            "type": "job_scan",
+            "input_json": {"include_ats": True, "include_search": False},
+        },
+    )
+    monkeypatch.setattr(worker.db, "update_operation_progress", lambda op_id, message: progress.append(message))
+
+    async def fake_scan(input_payload, progress=None):
+        if progress:
+            progress("Fake scan running.")
+        return {
+            "ats": [],
+            "search": [],
+            "linkedin": None,
+            "errors": {},
+            "summary": {"new": 2, "updated": 1, "errors": 0},
+        }
+
+    monkeypatch.setattr(worker, "run_unified_job_scan", fake_scan)
+    monkeypatch.setattr(
+        worker.db,
+        "complete_operation",
+        lambda op_id, output, message: completed.update({"id": op_id, "output": output, "message": message}),
+    )
+    monkeypatch.setattr(worker.db, "fail_operation", lambda *args: (_ for _ in ()).throw(AssertionError("unexpected failure")))
+
+    assert worker.process_once("worker-1") is True
+
+    assert completed["id"] == 31
+    assert completed["output"]["summary"]["new"] == 2
+    assert completed["message"] == "Job scan completed: 2 new, 1 updated, 0 errors."
+    assert "Fake scan running." in progress
