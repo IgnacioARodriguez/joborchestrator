@@ -38,6 +38,7 @@ dist/
 
 # Editor and OS files
 .codex/
+codex/
 .vscode/
 .idea/
 Thumbs.db
