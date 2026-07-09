@@ -37,6 +37,7 @@ dist/
 *.egg-info/
 
 # Editor and OS files
+.codex/
 .vscode/
 .idea/
 Thumbs.db

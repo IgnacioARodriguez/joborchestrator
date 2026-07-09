@@ -1,7 +1,6 @@
 """SQLite persistence for the local job pipeline."""
 
 import sqlite3
-import json
 import hashlib
 import re
 import shutil
@@ -12,11 +11,17 @@ import pandas as pd
 from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.normalization import normalize_job_identity, normalize_text
 from joborchestrator.ranking.schemas import RankingResult
-from joborchestrator.ranking.serialization import result_to_dict
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.paths import DB_PATH
 from joborchestrator.storage import db_connection
-from joborchestrator.storage import jobs_repository, operations_repository, settings_repository, skill_catalog_repository
+from joborchestrator.storage import (
+    jobs_repository,
+    operations_repository,
+    ranking_jobs_repository,
+    rankings_repository,
+    settings_repository,
+    skill_catalog_repository,
+)
 
 BACKUP_DIR_NAME = "backups"
 SPEED_RANKING_MIGRATION_COLUMNS = {
@@ -574,120 +579,11 @@ def get_recent_scan_events(limit: int = 20) -> pd.DataFrame:
 
 
 def save_job_ranking(job_id: int, ranking: RankingResult) -> int:
-    now = datetime.now().isoformat(timespec="seconds")
-    payload = result_to_dict(ranking)
-    conn = _conn()
-    try:
-        existing = conn.execute(
-            "SELECT id, created_at FROM job_rankings WHERE job_id = ? AND ranking_version = ?",
-            (job_id, ranking.ranking_version),
-        ).fetchone()
-        if existing:
-            conn.execute(
-                """UPDATE job_rankings SET
-                       final_score = ?, decision = ?, confidence = ?, scores_json = ?,
-                       evidence_json = ?, reasoning_summary = ?, recommended_application_angle = ?,
-                       cv_keywords_to_emphasize_json = ?, cv_keywords_to_avoid_overclaiming_json = ?,
-                       updated_at = ?
-                   WHERE id = ?""",
-                (
-                    ranking.final_score,
-                    ranking.decision,
-                    ranking.confidence,
-                    json.dumps(payload["scores"], ensure_ascii=False),
-                    json.dumps(payload["evidence"], ensure_ascii=False),
-                    ranking.reasoning_summary,
-                    ranking.recommended_application_angle,
-                    json.dumps(ranking.cv_keywords_to_emphasize, ensure_ascii=False),
-                    json.dumps(ranking.cv_keywords_to_avoid_overclaiming, ensure_ascii=False),
-                    now,
-                    existing["id"],
-                ),
-            )
-            ranking_id = int(existing["id"])
-        else:
-            cursor = conn.execute(
-                """INSERT INTO job_rankings (
-                       job_id, final_score, decision, confidence, scores_json, evidence_json,
-                       reasoning_summary, recommended_application_angle,
-                       cv_keywords_to_emphasize_json, cv_keywords_to_avoid_overclaiming_json,
-                       ranking_version, created_at, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    job_id,
-                    ranking.final_score,
-                    ranking.decision,
-                    ranking.confidence,
-                    json.dumps(payload["scores"], ensure_ascii=False),
-                    json.dumps(payload["evidence"], ensure_ascii=False),
-                    ranking.reasoning_summary,
-                    ranking.recommended_application_angle,
-                    json.dumps(ranking.cv_keywords_to_emphasize, ensure_ascii=False),
-                    json.dumps(ranking.cv_keywords_to_avoid_overclaiming, ensure_ascii=False),
-                    ranking.ranking_version,
-                    now,
-                    now,
-                ),
-            )
-            ranking_id = int(cursor.lastrowid)
-        _update_job_posting_ranking_signals(conn, job_id, ranking)
-        conn.commit()
-        return ranking_id
-    finally:
-        conn.close()
+    return rankings_repository.save_job_ranking(_conn, job_id, ranking)
 
 
 def delete_job_rankings(ranking_version: str | None = None) -> int:
-    conn = _conn()
-    try:
-        if ranking_version:
-            cursor = conn.execute("DELETE FROM job_rankings WHERE ranking_version = ?", (ranking_version,))
-        else:
-            cursor = conn.execute("DELETE FROM job_rankings")
-        deleted = int(cursor.rowcount if cursor.rowcount is not None else 0)
-        columns = {row["name"] for row in conn.execute("PRAGMA table_info(job_postings)").fetchall()}
-        reset_columns = [
-            "speed_signal",
-            "role_viable",
-            "duplicate_of_job_id",
-            "application_effort_signal",
-            "data_quality_signal",
-            "source_reliability_signal",
-        ]
-        assignments = [f"{column} = NULL" for column in reset_columns if column in columns]
-        if assignments:
-            conn.execute(f"UPDATE job_postings SET {', '.join(assignments)}")
-        conn.commit()
-        return deleted
-    finally:
-        conn.close()
-
-
-def _update_job_posting_ranking_signals(
-    conn: sqlite3.Connection,
-    job_id: int,
-    ranking: RankingResult,
-) -> None:
-    role_fit = float(ranking.scores.role_fit)
-    requires_llm_review = bool(ranking.evidence.requires_llm_review)
-    role_viable = role_fit >= 55 and ranking.decision not in {"SKIP", "AVOID"} and not requires_llm_review
-    conn.execute(
-        """UPDATE job_postings SET
-               speed_signal = ?,
-               role_viable = ?,
-               application_effort_signal = ?,
-               data_quality_signal = ?,
-               source_reliability_signal = ?
-           WHERE id = ?""",
-        (
-            ranking.scores.speed_signal,
-            int(role_viable),
-            ranking.scores.application_effort_signal,
-            ranking.scores.data_quality_signal,
-            ranking.scores.source_reliability_signal,
-            job_id,
-        ),
-    )
+    return rankings_repository.delete_job_rankings(_conn, ranking_version)
 
 
 def get_ranked_jobs(
@@ -697,83 +593,23 @@ def get_ranked_jobs(
     with_red_flags: bool | None = None,
     ranking_version: str = NVIDIA_RANKING_VERSION,
 ) -> pd.DataFrame:
-    conn = _conn()
-    try:
-        params: list[object] = [ranking_version]
-        query = """
-            SELECT
-                jp.id AS job_id, jp.title, jp.company, jp.location, jp.source, jp.url,
-                jp.apply_url, jp.description_text, jp.department, jp.workplace_type,
-                jp.first_seen_at, jp.last_seen_at, jp.status AS scan_status, jp.pipeline_status,
-                jp.recruiter_message, jp.cover_letter, jp.ats_cv_text, jp.autofill_notes,
-                jp.parse_confidence, jp.data_quality_flags,
-                jr.final_score, jr.decision, jr.confidence, jr.scores_json, jr.evidence_json,
-                jr.reasoning_summary, jr.recommended_application_angle,
-                jr.cv_keywords_to_emphasize_json, jr.cv_keywords_to_avoid_overclaiming_json,
-                jr.ranking_version, jr.updated_at AS ranked_at
-            FROM job_rankings jr
-            JOIN job_postings jp ON jp.id = jr.job_id
-            WHERE jr.ranking_version = ?
-        """
-        if decisions:
-            placeholders = ",".join("?" for _ in decisions)
-            query += f" AND jr.decision IN ({placeholders})"
-            params.extend(decisions)
-        if min_score is not None:
-            query += " AND jr.final_score >= ?"
-            params.append(min_score)
-        if sources:
-            placeholders = ",".join("?" for _ in sources)
-            query += f" AND jp.source IN ({placeholders})"
-            params.extend(sources)
-        if with_red_flags is True:
-            query += " AND jr.evidence_json LIKE '%red_flags%' AND jr.evidence_json NOT LIKE '%\"red_flags\": []%'"
-        elif with_red_flags is False:
-            query += " AND (jr.evidence_json LIKE '%\"red_flags\": []%' OR jr.evidence_json NOT LIKE '%red_flags%')"
-        query += """
-            ORDER BY
-              CASE jr.decision
-                WHEN 'APPLY_NOW' THEN 1
-                WHEN 'APPLY_WITH_TAILORED_CV' THEN 2
-                WHEN 'MAYBE' THEN 3
-                WHEN 'SKIP' THEN 4
-                WHEN 'AVOID' THEN 5
-                ELSE 6
-              END,
-              jr.final_score DESC
-        """
-        return _read_sql_query(query, conn, params=params)
-    finally:
-        conn.close()
+    return rankings_repository.get_ranked_jobs(
+        _conn,
+        _read_sql_query,
+        decisions=decisions,
+        min_score=min_score,
+        sources=sources,
+        with_red_flags=with_red_flags,
+        ranking_version=ranking_version,
+    )
 
 
 def get_ranking_versions() -> list[str]:
-    conn = _conn()
-    try:
-        rows = conn.execute(
-            "SELECT DISTINCT ranking_version FROM job_rankings ORDER BY ranking_version DESC"
-        ).fetchall()
-        return [row["ranking_version"] for row in rows]
-    finally:
-        conn.close()
+    return rankings_repository.get_ranking_versions(_conn)
 
 
 def get_unranked_jobs(ranking_version: str = NVIDIA_RANKING_VERSION, limit: int = 500) -> pd.DataFrame:
-    conn = _conn()
-    try:
-        return _read_sql_query(
-            """SELECT jp.*
-               FROM job_postings jp
-               LEFT JOIN job_rankings jr
-                 ON jr.job_id = jp.id AND jr.ranking_version = ?
-               WHERE jr.id IS NULL
-               ORDER BY jp.last_seen_at DESC
-               LIMIT ?""",
-            conn,
-            params=(ranking_version, limit),
-        )
-    finally:
-        conn.close()
+    return rankings_repository.get_unranked_jobs(_conn, _read_sql_query, ranking_version, limit)
 
 
 def create_ranking_job(
@@ -785,213 +621,51 @@ def create_ranking_job(
     request_batch_size: int,
     max_concurrency: int,
 ) -> int:
-    now = datetime.now().isoformat(timespec="seconds")
-    unique_job_ids = list(dict.fromkeys(int(job_id) for job_id in job_ids))
-    conn = _conn()
-    try:
-        cursor = conn.execute(
-            """INSERT INTO ranking_jobs (
-                   provider, model, ranking_version, status, request_batch_size,
-                   max_concurrency, total_items, processed_items, saved_items,
-                   failed_items, created_at, updated_at
-               ) VALUES (?, ?, ?, 'queued', ?, ?, ?, 0, 0, 0, ?, ?)""",
-            (
-                provider,
-                model,
-                ranking_version,
-                int(request_batch_size),
-                int(max_concurrency),
-                len(unique_job_ids),
-                now,
-                now,
-            ),
-        )
-        ranking_job_id = int(cursor.lastrowid)
-        conn.executemany(
-            """INSERT OR IGNORE INTO ranking_job_items (
-                   ranking_job_id, job_posting_id, status, attempts, created_at, updated_at
-               ) VALUES (?, ?, 'queued', 0, ?, ?)""",
-            [(ranking_job_id, job_id, now, now) for job_id in unique_job_ids],
-        )
-        conn.commit()
-        return ranking_job_id
-    finally:
-        conn.close()
+    return ranking_jobs_repository.create_ranking_job(
+        _conn,
+        provider=provider,
+        model=model,
+        ranking_version=ranking_version,
+        job_ids=job_ids,
+        request_batch_size=request_batch_size,
+        max_concurrency=max_concurrency,
+    )
 
 
 def list_ranking_jobs(limit: int = 20) -> pd.DataFrame:
-    conn = _conn()
-    try:
-        return _read_sql_query(
-            """SELECT *
-               FROM ranking_jobs
-               ORDER BY created_at DESC
-               LIMIT ?""",
-            conn,
-            params=(limit,),
-        )
-    finally:
-        conn.close()
+    return ranking_jobs_repository.list_ranking_jobs(_conn, _read_sql_query, limit)
 
 
 def get_ranking_job(ranking_job_id: int) -> dict | None:
-    conn = _conn()
-    try:
-        row = conn.execute("SELECT * FROM ranking_jobs WHERE id = ?", (ranking_job_id,)).fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
+    return ranking_jobs_repository.get_ranking_job(_conn, ranking_job_id)
 
 
 def get_next_ranking_job() -> dict | None:
-    conn = _conn()
-    try:
-        row = conn.execute(
-            """SELECT *
-               FROM ranking_jobs
-               WHERE status IN ('queued', 'running')
-               ORDER BY
-                   CASE status WHEN 'running' THEN 1 ELSE 2 END,
-                   created_at ASC
-               LIMIT 1"""
-        ).fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
+    return ranking_jobs_repository.get_next_ranking_job(_conn)
 
 
 def start_ranking_job(ranking_job_id: int) -> None:
-    now = datetime.now().isoformat(timespec="seconds")
-    conn = _conn()
-    try:
-        conn.execute(
-            """UPDATE ranking_jobs
-               SET status = 'running',
-                   started_at = COALESCE(started_at, ?),
-                   updated_at = ?,
-                   error = NULL
-               WHERE id = ? AND status IN ('queued', 'running')""",
-            (now, now, ranking_job_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    ranking_jobs_repository.start_ranking_job(_conn, ranking_job_id)
 
 
 def cancel_ranking_job(ranking_job_id: int) -> None:
-    now = datetime.now().isoformat(timespec="seconds")
-    conn = _conn()
-    try:
-        conn.execute(
-            """UPDATE ranking_jobs
-               SET status = 'cancelled',
-                   finished_at = COALESCE(finished_at, ?),
-                   updated_at = ?
-               WHERE id = ? AND status IN ('queued', 'running')""",
-            (now, now, ranking_job_id),
-        )
-        conn.execute(
-            """UPDATE ranking_job_items
-               SET status = 'cancelled', updated_at = ?
-               WHERE ranking_job_id = ? AND status IN ('queued', 'running')""",
-            (now, ranking_job_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    ranking_jobs_repository.cancel_ranking_job(_conn, ranking_job_id)
 
 
 def fail_ranking_job(ranking_job_id: int, error: str) -> None:
-    now = datetime.now().isoformat(timespec="seconds")
-    conn = _conn()
-    try:
-        conn.execute(
-            """UPDATE ranking_jobs
-               SET status = 'failed',
-                   error = ?,
-                   finished_at = ?,
-                   updated_at = ?
-               WHERE id = ?""",
-            (error[:2000], now, now, ranking_job_id),
-        )
-        conn.execute(
-            """UPDATE ranking_job_items
-               SET status = 'failed',
-                   error = COALESCE(error, ?),
-                   finished_at = COALESCE(finished_at, ?),
-                   updated_at = ?
-               WHERE ranking_job_id = ? AND status = 'running'""",
-            (error[:2000], now, now, ranking_job_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    ranking_jobs_repository.fail_ranking_job(_conn, ranking_job_id, error)
 
 
 def complete_ranking_job_if_done(ranking_job_id: int) -> None:
-    now = datetime.now().isoformat(timespec="seconds")
-    conn = _conn()
-    try:
-        pending = conn.execute(
-            """SELECT COUNT(*)
-               FROM ranking_job_items
-               WHERE ranking_job_id = ? AND status IN ('queued', 'running')""",
-            (ranking_job_id,),
-        ).fetchone()[0]
-        job = conn.execute("SELECT status FROM ranking_jobs WHERE id = ?", (ranking_job_id,)).fetchone()
-        if pending == 0 and job is not None and job["status"] == "running":
-            conn.execute(
-                """UPDATE ranking_jobs
-                   SET status = 'completed', finished_at = ?, updated_at = ?
-                   WHERE id = ?""",
-                (now, now, ranking_job_id),
-            )
-        conn.commit()
-    finally:
-        conn.close()
+    ranking_jobs_repository.complete_ranking_job_if_done(_conn, ranking_job_id)
 
 
 def get_queued_ranking_items(ranking_job_id: int, limit: int = 100) -> pd.DataFrame:
-    conn = _conn()
-    try:
-        return _read_sql_query(
-            """SELECT
-                   rji.id AS ranking_job_item_id,
-                   jp.*
-               FROM ranking_job_items rji
-               JOIN job_postings jp ON jp.id = rji.job_posting_id
-               WHERE rji.ranking_job_id = ? AND rji.status = 'queued'
-               ORDER BY rji.id ASC
-               LIMIT ?""",
-            conn,
-            params=(ranking_job_id, limit),
-        )
-    finally:
-        conn.close()
+    return ranking_jobs_repository.get_queued_ranking_items(_conn, _read_sql_query, ranking_job_id, limit)
 
 
 def mark_ranking_items_running(ranking_job_id: int, job_ids: list[int]) -> None:
-    if not job_ids:
-        return
-    now = datetime.now().isoformat(timespec="seconds")
-    placeholders = ",".join("?" for _ in job_ids)
-    params: list[object] = [now, now, ranking_job_id, *[int(job_id) for job_id in job_ids]]
-    conn = _conn()
-    try:
-        conn.execute(
-            f"""UPDATE ranking_job_items
-                SET status = 'running',
-                    attempts = attempts + 1,
-                    started_at = COALESCE(started_at, ?),
-                    updated_at = ?
-                WHERE ranking_job_id = ?
-                  AND job_posting_id IN ({placeholders})
-                  AND status = 'queued'""",
-            params,
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    ranking_jobs_repository.mark_ranking_items_running(_conn, ranking_job_id, job_ids)
 
 
 def sync_ranking_items_from_rankings(
@@ -999,95 +673,9 @@ def sync_ranking_items_from_rankings(
     ranking_version: str,
     job_ids: list[int] | None = None,
 ) -> dict[str, int]:
-    now = datetime.now().isoformat(timespec="seconds")
-    conn = _conn()
-    try:
-        job_filter = ""
-        params: list[object] = [ranking_job_id]
-        if job_ids:
-            placeholders = ",".join("?" for _ in job_ids)
-            job_filter = f" AND job_posting_id IN ({placeholders})"
-            params.extend(int(job_id) for job_id in job_ids)
-
-        items = conn.execute(
-            f"""SELECT job_posting_id
-                FROM ranking_job_items
-                WHERE ranking_job_id = ?{job_filter}""",
-            params,
-        ).fetchall()
-        item_job_ids = [int(row["job_posting_id"]) for row in items]
-        ranked_job_ids: set[int] = set()
-        if item_job_ids:
-            placeholders = ",".join("?" for _ in item_job_ids)
-            ranked_rows = conn.execute(
-                f"""SELECT job_id
-                    FROM job_rankings
-                    WHERE ranking_version = ? AND job_id IN ({placeholders})""",
-                [ranking_version, *item_job_ids],
-            ).fetchall()
-            ranked_job_ids = {int(row["job_id"]) for row in ranked_rows}
-
-        completed_ids = [job_id for job_id in item_job_ids if job_id in ranked_job_ids]
-        failed_ids = [job_id for job_id in item_job_ids if job_id not in ranked_job_ids]
-
-        if completed_ids:
-            placeholders = ",".join("?" for _ in completed_ids)
-            conn.execute(
-                f"""UPDATE ranking_job_items
-                    SET status = 'completed',
-                        error = NULL,
-                        finished_at = COALESCE(finished_at, ?),
-                        updated_at = ?
-                    WHERE ranking_job_id = ? AND job_posting_id IN ({placeholders})""",
-                [now, now, ranking_job_id, *completed_ids],
-            )
-        if failed_ids:
-            placeholders = ",".join("?" for _ in failed_ids)
-            conn.execute(
-                f"""UPDATE ranking_job_items
-                    SET status = 'failed',
-                        error = COALESCE(error, 'NVIDIA did not save a ranking for this job.'),
-                        finished_at = COALESCE(finished_at, ?),
-                        updated_at = ?
-                    WHERE ranking_job_id = ? AND job_posting_id IN ({placeholders})""",
-                [now, now, ranking_job_id, *failed_ids],
-            )
-
-        counts = _ranking_job_item_counts(conn, ranking_job_id)
-        conn.execute(
-            """UPDATE ranking_jobs
-               SET processed_items = ?,
-                   saved_items = ?,
-                   failed_items = ?,
-                   updated_at = ?
-               WHERE id = ?""",
-            (
-                counts["completed"] + counts["failed"],
-                counts["completed"],
-                counts["failed"],
-                now,
-                ranking_job_id,
-            ),
-        )
-        conn.commit()
-        return counts
-    finally:
-        conn.close()
-
-
-def _ranking_job_item_counts(conn: sqlite3.Connection, ranking_job_id: int) -> dict[str, int]:
-    rows = conn.execute(
-        """SELECT status, COUNT(*) AS count
-           FROM ranking_job_items
-           WHERE ranking_job_id = ?
-           GROUP BY status""",
-        (ranking_job_id,),
-    ).fetchall()
-    counts = {row["status"]: int(row["count"]) for row in rows}
-    return {
-        "queued": counts.get("queued", 0),
-        "running": counts.get("running", 0),
-        "completed": counts.get("completed", 0),
-        "failed": counts.get("failed", 0),
-        "cancelled": counts.get("cancelled", 0),
-    }
+    return ranking_jobs_repository.sync_ranking_items_from_rankings(
+        _conn,
+        ranking_job_id,
+        ranking_version,
+        job_ids,
+    )
