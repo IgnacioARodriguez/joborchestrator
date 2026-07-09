@@ -22,9 +22,8 @@ def build_recruiter_message(
     headline = str(profile.get("headline") or "my background").strip()
     keyword_text = ", ".join(_truthful_keywords(profile, keywords, limit=4)) or "relevant experience"
     return (
-        f"Hi, I saw the {title} opportunity at {company} and it looks closely aligned with my background. "
-        f"My profile focuses on {headline}, with experience around {keyword_text}. "
-        "I would be happy to share how I could contribute to the team. Thanks for considering my profile."
+        f"Hi, I saw the {title} role at {company} and it looks like a strong match for my background in {headline}. "
+        f"I have hands-on experience with {keyword_text}, and I would be happy to discuss where that could be useful for your team."
     )
 
 

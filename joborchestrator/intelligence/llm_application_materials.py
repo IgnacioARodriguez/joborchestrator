@@ -105,7 +105,8 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "Keep the base CV's overall section structure when possible, but rewrite wording and ordering for ATS fit against this job.",
             "If base_cv is empty, produce the best complete CV draft possible from the candidate profile and mark missing source limitations in risk_flags.",
             "Use job requirements as keywords only when the candidate can truthfully claim or position adjacent experience.",
-            "Recruiter messages must be concise and human. Include a LinkedIn connection note under 300 characters and a longer InMail/email variant.",
+            "Recruiter_message must be one coherent outreach message to a recruiter or hiring contact, not a cover letter and not multiple variants.",
+            "Recruiter_message must not use letter salutations like 'Dear Hiring Manager', must not include a cover-letter body, and must not repeat the candidate introduction.",
             "Output language should match the job posting language unless the user profile clearly indicates otherwise.",
             "ATS CV text should be ready to copy, export to DOCX/PDF, and submit after human review.",
             "Cover letter can be empty only when application context clearly does not need one; otherwise provide a concise tailored letter.",
@@ -114,7 +115,7 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "Return only JSON matching the schema.",
         ],
         "output_shape": {
-            "recruiter_message": "short recruiter note plus longer message when useful",
+            "recruiter_message": "single recruiter outreach message, ready to paste into LinkedIn/InMail/email",
             "cover_letter": "concise tailored cover letter or empty string",
             "ats_cv_text": "complete ATS-optimized CV only; no notes or internal instructions",
             "autofill_notes": "structured copy-paste application workflow",
@@ -126,11 +127,32 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
 
 def _kit_from_response(response: dict[str, Any]) -> dict[str, str]:
     return {
-        "recruiter_message": _material_text(response["recruiter_message"]),
+        "recruiter_message": _clean_recruiter_message(_material_text(response["recruiter_message"])),
         "cover_letter": str(response.get("cover_letter") or ""),
         "ats_cv_text": str(response["ats_cv_text"]),
         "autofill_notes": _material_text(response["autofill_notes"]),
     }
+
+
+def _clean_recruiter_message(text: str) -> str:
+    message = re.sub(r"\n{3,}", "\n\n", str(text or "")).strip()
+    if not message:
+        return ""
+    contamination_patterns = [
+        r"\bDear\s+(?:Hiring Manager|Recruiter|Sir/Madam|Team)\b[:,]?",
+        r"\bI'?m reaching out to express (?:my )?interest\b",
+        r"\bI am writing to (?:express|apply)\b",
+        r"\bSincerely\b[:,]?",
+        r"\bBest regards\b[:,]?",
+    ]
+    earliest: int | None = None
+    for pattern in contamination_patterns:
+        match = re.search(pattern, message, flags=re.IGNORECASE)
+        if match and match.start() > 0:
+            earliest = match.start() if earliest is None else min(earliest, match.start())
+    if earliest is not None:
+        message = message[:earliest].strip()
+    return re.sub(r"[ \t]+", " ", message).strip()
 
 
 def _material_text(value: Any) -> str:
@@ -598,6 +620,8 @@ Rules:
 - Do not include the ATS CV in this response.
 - recruiter_message and autofill_notes are required.
 - Every value must be a plain string. Do not return nested objects or arrays for any field.
+- recruiter_message must be one coherent outreach message, not multiple variants, not a cover letter, and not a formal letter beginning with "Dear Hiring Manager".
+- recruiter_message should state fit and interest naturally, then invite a conversation. Do not repeat the same introduction twice.
 - Keep language aligned with the job posting language.
 - Do not invent facts.
 """.strip()
@@ -629,9 +653,36 @@ def _kit_response_validation_error(payload: dict[str, Any]) -> str | None:
     for field in ["recruiter_message", "autofill_notes"]:
         if not str(payload.get(field) or "").strip():
             problems.append(f"{field} is required")
-    if len(str(payload.get("recruiter_message") or "")) > 2500:
+    recruiter_message = str(payload.get("recruiter_message") or "")
+    if len(recruiter_message) > 2500:
         problems.append("recruiter_message is too long")
+    problems.extend(_recruiter_message_quality_problems(recruiter_message))
     return "; ".join(problems) if problems else None
+
+
+def _recruiter_message_quality_problems(text: str) -> list[str]:
+    message = str(text or "").strip()
+    lower = message.lower()
+    problems: list[str] = []
+    cover_letter_markers = [
+        "dear hiring manager",
+        "dear recruiter",
+        "i am writing to express",
+        "i'm writing to express",
+        "i am reaching out to express interest",
+        "i'm reaching out to express interest",
+        "sincerely",
+    ]
+    found = [marker for marker in cover_letter_markers if marker in lower]
+    if found:
+        problems.append(f"recruiter_message reads like a cover letter: {', '.join(found[:2])}")
+    intro_markers = len(re.findall(r"\b(?:i am|i'm)\s+[^.\n]{0,90}\b(?:developer|engineer|specialist|manager|consultant)\b", lower))
+    if intro_markers > 1:
+        problems.append("recruiter_message repeats the candidate introduction")
+    interest_markers = len(re.findall(r"\b(?:interested in|interest in|excited about|express interest)\b", lower))
+    if interest_markers > 2:
+        problems.append("recruiter_message repeats the interest statement")
+    return problems
 
 
 def _ats_cv_response_validation_error(payload: dict[str, Any], base_cv_text: str | None = None) -> str | None:

@@ -220,6 +220,45 @@ def test_application_kit_flattens_nested_recruiter_message():
     assert kit["autofill_notes"] == "Use tailored answers\n\nReview before submit"
 
 
+def test_recruiter_message_cleanup_removes_cover_letter_contamination():
+    kit = _kit_from_response(
+        {
+            "recruiter_message": (
+                "Hi, I'm Ignacio Rodriguez, a Python/Django backend developer with 4+ years of experience. "
+                "I'm interested in the Python Developer role at Hire Feed.\n\n"
+                "Dear Hiring Manager, I'm reaching out to express interest in the Python Developer position."
+            ),
+            "cover_letter": "Dear team",
+            "ats_cv_text": "Professional Summary\nBackend engineer",
+            "autofill_notes": "Use tailored answers",
+        }
+    )
+
+    assert "Dear Hiring Manager" not in kit["recruiter_message"]
+    assert "reaching out to express interest" not in kit["recruiter_message"]
+    assert kit["recruiter_message"].startswith("Hi, I'm Ignacio Rodriguez")
+
+
+def test_recruiter_message_validation_rejects_cover_letter_style():
+    error = _materials_validation_error(
+        {
+            "recruiter_message": (
+                "Hi, I'm Ignacio Rodriguez, a Python/Django backend developer. "
+                "Excited about the Python Developer role. "
+                "Dear Hiring Manager, I'm reaching out to express interest in the Python Developer position."
+            ),
+            "cover_letter": "",
+            "ats_cv_text": "Tiny",
+            "autofill_notes": "Use tailored answers",
+            "risk_flags": [],
+            "keywords_used": [],
+        }
+    )
+
+    assert error is not None
+    assert "recruiter_message reads like a cover letter" in error
+
+
 def test_llm_application_kit_validation_rejects_empty_required_sections():
     error = _materials_validation_error(
         {
