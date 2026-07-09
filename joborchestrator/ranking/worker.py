@@ -6,10 +6,15 @@ import os
 from pathlib import Path
 import time
 
-from joborchestrator.ranking.nvidia_ranker import NvidiaRankingError, rank_jobs_with_nvidia
+from joborchestrator.ranking.nvidia_ranker import (
+    DEFAULT_NVIDIA_MAX_CONCURRENCY,
+    DEFAULT_NVIDIA_REQUEST_BATCH_SIZE,
+    NvidiaRankingError,
+    rank_jobs_with_nvidia,
+)
 from joborchestrator.storage import persistence as db
 
-DEFAULT_WORKER_CHUNK_SIZE = int(os.getenv("RANKING_WORKER_CHUNK_SIZE", "100"))
+DEFAULT_WORKER_CHUNK_SIZE = int(os.getenv("RANKING_WORKER_CHUNK_SIZE", "25"))
 DEFAULT_POLL_SECONDS = float(os.getenv("RANKING_WORKER_POLL_SECONDS", "5"))
 DEFAULT_STALE_SECONDS = int(os.getenv("RANKING_WORKER_STALE_SECONDS", "60"))
 LOG_PATH = Path("logs/ranking-worker.log")
@@ -80,11 +85,15 @@ def run_worker_once(*, ranking_job_id: int | None = None, chunk_size: int = DEFA
         return True
 
     item_job_ids = [int(row_id) for row_id in rows["id"].tolist()]
+    request_batch_size = min(int(job["request_batch_size"]), DEFAULT_NVIDIA_REQUEST_BATCH_SIZE)
+    max_concurrency = min(int(job["max_concurrency"]), DEFAULT_NVIDIA_MAX_CONCURRENCY)
     logger.info(
-        "Processing ranking job #%s chunk_items=%s model=%s request_batch_size=%s max_concurrency=%s",
+        "Processing ranking job #%s chunk_items=%s model=%s request_batch_size=%s max_concurrency=%s stored_request_batch_size=%s stored_max_concurrency=%s",
         job_id,
         len(item_job_ids),
         job["model"],
+        request_batch_size,
+        max_concurrency,
         job["request_batch_size"],
         job["max_concurrency"],
     )
@@ -94,10 +103,16 @@ def run_worker_once(*, ranking_job_id: int | None = None, chunk_size: int = DEFA
         summary = rank_jobs_with_nvidia(
             rows,
             model=str(job["model"]),
-            request_batch_size=int(job["request_batch_size"]),
-            max_concurrency=int(job["max_concurrency"]),
+            request_batch_size=request_batch_size,
+            max_concurrency=max_concurrency,
             ranking_version=str(job["ranking_version"]),
-            progress_callback=lambda *_args: None,
+            progress_callback=lambda completed, total, progress: logger.info(
+                "Ranking job #%s NVIDIA batches %s/%s progress=%s",
+                job_id,
+                completed,
+                total,
+                progress,
+            ),
         )
         logger.info("NVIDIA ranking job #%s chunk summary=%s", job_id, summary)
         missing_error = (

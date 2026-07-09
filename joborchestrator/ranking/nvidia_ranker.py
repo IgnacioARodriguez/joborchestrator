@@ -24,9 +24,10 @@ DEFAULT_NVIDIA_MODEL = (
     or os.getenv("NVIDIA_MODEL")
     or "nvidia/llama-3.3-nemotron-super-49b-v1"
 )
-DEFAULT_NVIDIA_REQUEST_BATCH_SIZE = int(os.getenv("NVIDIA_RANKING_BATCH_SIZE", "5"))
-DEFAULT_NVIDIA_MAX_CONCURRENCY = int(os.getenv("NVIDIA_RANKING_MAX_CONCURRENCY", "2"))
+DEFAULT_NVIDIA_REQUEST_BATCH_SIZE = int(os.getenv("NVIDIA_RANKING_BATCH_SIZE", "2"))
+DEFAULT_NVIDIA_MAX_CONCURRENCY = int(os.getenv("NVIDIA_RANKING_MAX_CONCURRENCY", "1"))
 DEFAULT_NVIDIA_MAX_TOKENS = int(os.getenv("NVIDIA_RANKING_MAX_TOKENS", "8192"))
+DEFAULT_NVIDIA_TIMEOUT_SECONDS = float(os.getenv("NVIDIA_RANKING_TIMEOUT_SECONDS", "180"))
 logger = logging.getLogger(__name__)
 
 
@@ -47,7 +48,7 @@ def rank_jobs_with_nvidia(
     ranking_version: str = NVIDIA_RANKING_VERSION,
     api_key: str | None = None,
     base_url: str = NVIDIA_BASE_URL,
-    timeout: float = 90.0,
+    timeout: float = DEFAULT_NVIDIA_TIMEOUT_SECONDS,
     progress_callback: Callable[[int, int, dict[str, int]], None] | None = None,
 ) -> dict[str, int]:
     return asyncio.run(
@@ -74,7 +75,7 @@ async def rank_jobs_with_nvidia_async(
     ranking_version: str = NVIDIA_RANKING_VERSION,
     api_key: str | None = None,
     base_url: str = NVIDIA_BASE_URL,
-    timeout: float = 90.0,
+    timeout: float = DEFAULT_NVIDIA_TIMEOUT_SECONDS,
     progress_callback: Callable[[int, int, dict[str, int]], None] | None = None,
 ) -> dict[str, int]:
     key = api_key or nvidia_api_key()
@@ -230,7 +231,7 @@ def _apply_nvidia_batch_result(
 ) -> None:
     summary["processed"] += len(batch)
     if isinstance(result, Exception):
-        logger.warning("NVIDIA ranking batch failed before parsing: %s", result)
+        logger.warning("NVIDIA ranking batch failed before parsing: %s", _exception_summary(result))
         summary["failed"] += len(batch)
         return
     try:
@@ -359,6 +360,18 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise NvidiaRankingError("NVIDIA response JSON must be an object.")
     return parsed
+
+
+def _exception_summary(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        response_text = exc.response.text[:1000] if exc.response is not None else ""
+        return (
+            f"{type(exc).__name__}: status={exc.response.status_code} "
+            f"url={exc.request.url} body={response_text!r}"
+        )
+    if isinstance(exc, httpx.RequestError):
+        return f"{type(exc).__name__}: url={exc.request.url} detail={exc!r}"
+    return f"{type(exc).__name__}: {exc!r}"
 
 
 def _compact_job(job: dict[str, Any], max_description_chars: int = 6000) -> dict[str, Any]:

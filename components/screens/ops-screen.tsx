@@ -461,8 +461,8 @@ export function OpsScreen() {
                   const res = await api.createRankingJob({
                     limit: 250,
                     run_once: false,
-                    request_batch_size: 5,
-                    max_concurrency: 2,
+                    request_batch_size: 2,
+                    max_concurrency: 1,
                   })
                   toast.success("Ranking job queued", {
                     description: `${res.queued} jobs queued.`,
