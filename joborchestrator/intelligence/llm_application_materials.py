@@ -126,11 +126,23 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
 
 def _kit_from_response(response: dict[str, Any]) -> dict[str, str]:
     return {
-        "recruiter_message": str(response["recruiter_message"]),
+        "recruiter_message": _material_text(response["recruiter_message"]),
         "cover_letter": str(response.get("cover_letter") or ""),
         "ats_cv_text": str(response["ats_cv_text"]),
-        "autofill_notes": str(response["autofill_notes"]),
+        "autofill_notes": _material_text(response["autofill_notes"]),
     }
+
+
+def _material_text(value: Any) -> str:
+    if isinstance(value, dict):
+        preferred_keys = ["short", "long", "summary", "copy_paste_block", "notes"]
+        parts = [str(value[key]).strip() for key in preferred_keys if str(value.get(key) or "").strip()]
+        if parts:
+            return "\n\n".join(parts)
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    if isinstance(value, list):
+        return "\n".join(str(item).strip() for item in value if str(item).strip())
+    return str(value or "")
 
 
 def _ranking_payload(ranking: Any | None) -> dict[str, Any] | None:
@@ -577,7 +589,7 @@ Use only truthful facts from Context.candidate_profile and Context.base_cv.
 
 Shape:
 {
-  "recruiter_message": "short LinkedIn connection note plus optional longer variant",
+  "recruiter_message": "short LinkedIn connection note followed by optional longer variant in the same plain string",
   "cover_letter": "concise tailored cover letter or empty string",
   "autofill_notes": "structured copy-paste answers and application caveats"
 }
@@ -585,6 +597,7 @@ Shape:
 Rules:
 - Do not include the ATS CV in this response.
 - recruiter_message and autofill_notes are required.
+- Every value must be a plain string. Do not return nested objects or arrays for any field.
 - Keep language aligned with the job posting language.
 - Do not invent facts.
 """.strip()

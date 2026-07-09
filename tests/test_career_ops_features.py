@@ -6,6 +6,7 @@ from joborchestrator.intelligence.cover_letter_generator import (
 from joborchestrator.intelligence.ats_autofill import build_autofill_plan
 from joborchestrator.intelligence.llm_application_materials import (
     _experience_coverage_problems,
+    _kit_from_response,
     _materials_validation_error,
     _materials_payload,
     build_application_kit_with_llm,
@@ -202,6 +203,21 @@ def test_llm_materials_payload_accepts_ranking_dict(monkeypatch):
 
     assert payload["ranking"]["final_score"] == 82
     assert payload["ranking"]["decision"] == "APPLY_NOW"
+
+
+def test_application_kit_flattens_nested_recruiter_message():
+    kit = _kit_from_response(
+        {
+            "recruiter_message": {"short": "Hi team", "long": "Longer recruiter message"},
+            "cover_letter": "",
+            "ats_cv_text": "Professional Summary\nBackend engineer",
+            "autofill_notes": {"summary": "Use tailored answers", "notes": "Review before submit"},
+        }
+    )
+
+    assert kit["recruiter_message"] == "Hi team\n\nLonger recruiter message"
+    assert "{'short'" not in kit["recruiter_message"]
+    assert kit["autofill_notes"] == "Use tailored answers\n\nReview before submit"
 
 
 def test_llm_application_kit_validation_rejects_empty_required_sections():
