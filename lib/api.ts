@@ -100,10 +100,10 @@ export const api = {
     })
   },
 
-  async generateMaterials(id: string, useLlm = false) {
+  async generateMaterials(id: string, provider: "heuristic" | "openai" | "nvidia" = "openai") {
     return request<{ job: JobPosting }>(`/api/jobs/${id}/materials`, {
       method: "POST",
-      body: JSON.stringify({ use_llm: useLlm, shortlist: true }),
+      body: JSON.stringify({ provider, use_llm: provider !== "heuristic", shortlist: true }),
     })
   },
 

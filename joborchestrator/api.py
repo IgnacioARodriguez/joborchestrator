@@ -25,8 +25,10 @@ from joborchestrator.intelligence.cv_profile_extractor import (
 )
 from joborchestrator.intelligence.llm_application_materials import (
     DEFAULT_MATERIALS_MODEL,
+    DEFAULT_NVIDIA_MATERIALS_MODEL,
     LLMMaterialsError,
     build_application_kit_with_llm,
+    build_application_kit_with_nvidia,
     export_ats_cv_docx_bytes,
     export_ats_cv_pdf_bytes,
 )
@@ -100,6 +102,7 @@ class RankingJobPayload(BaseModel):
 
 class MaterialsPayload(BaseModel):
     use_llm: bool = False
+    provider: Literal["heuristic", "openai", "nvidia"] | None = None
     model: str = DEFAULT_MATERIALS_MODEL
     api_key: str | None = None
     shortlist: bool = True
@@ -242,11 +245,18 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
     job, ranking = _job_for_materials(job_id)
     keywords = parse_json_value(ranking.get("cv_keywords_to_emphasize_json"), []) if ranking else []
     try:
-        if payload.use_llm:
+        provider = payload.provider or ("openai" if payload.use_llm else "heuristic")
+        if provider == "openai":
             kit = build_application_kit_with_llm(
                 job,
                 api_key=payload.api_key,
                 model=payload.model,
+            )
+        elif provider == "nvidia":
+            kit = build_application_kit_with_nvidia(
+                job,
+                api_key=payload.api_key,
+                model=payload.model if payload.model != DEFAULT_MATERIALS_MODEL else DEFAULT_NVIDIA_MATERIALS_MODEL,
             )
         else:
             kit = build_application_kit(job, keywords=keywords)

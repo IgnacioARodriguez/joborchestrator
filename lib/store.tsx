@@ -28,7 +28,7 @@ interface StoreValue {
   getJob: (id: string) => JobPosting | undefined
   setPipelineStatus: (id: string, status: PipelineStatus) => void
   markOpened: (id: string) => void
-  generateMaterials: (id: string, useLlm?: boolean) => Promise<void>
+  generateMaterials: (id: string, provider?: "heuristic" | "openai" | "nvidia") => Promise<void>
 }
 
 const StoreContext = createContext<StoreValue | null>(null)
@@ -112,8 +112,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const generateMaterials = useCallback(async (id: string, useLlm = false) => {
-    const result = await api.generateMaterials(id, useLlm)
+  const generateMaterials = useCallback(async (id: string, provider: "heuristic" | "openai" | "nvidia" = "openai") => {
+    const result = await api.generateMaterials(id, provider)
     setBackendOnline(true)
     setJobs((prev) => prev.map((j) => (j.id === id ? result.job : j)))
   }, [])

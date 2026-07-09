@@ -276,12 +276,12 @@ function DetailBody({
             variant="outline"
             onClick={async () => {
               try {
-                await generateMaterials(job.id, true)
-                toast.success("Application kit generated", {
+                await generateMaterials(job.id, "nvidia")
+                toast.success("NVIDIA kit generated", {
                   description: job.title,
                 })
               } catch (e) {
-                toast.error("Could not generate kit", {
+                toast.error("Could not generate NVIDIA kit", {
                   description:
                     e instanceof Error ? e.message : "Backend request failed.",
                 })
@@ -289,7 +289,27 @@ function DetailBody({
             }}
           >
             <Sparkles data-icon="inline-start" />
-            Build kit
+            NVIDIA kit
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={async () => {
+              try {
+                await generateMaterials(job.id, "openai")
+                toast.success("OpenAI kit generated", {
+                  description: job.title,
+                })
+              } catch (e) {
+                toast.error("Could not generate OpenAI kit", {
+                  description:
+                    e instanceof Error ? e.message : "Backend request failed.",
+                })
+              }
+            }}
+          >
+            <Sparkles data-icon="inline-start" />
+            OpenAI kit
           </Button>
           <Button
             size="sm"

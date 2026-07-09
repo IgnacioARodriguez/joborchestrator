@@ -16,6 +16,13 @@ from joborchestrator.ranking.serialization import result_to_dict
 from joborchestrator.storage import persistence as db
 
 DEFAULT_MATERIALS_MODEL = os.getenv("OPENAI_MATERIALS_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4-mini"
+DEFAULT_NVIDIA_MATERIALS_MODEL = (
+    os.getenv("NVIDIA_MATERIALS_MODEL")
+    or os.getenv("NVIDIA_RANKING_MODEL")
+    or os.getenv("NVIDIA_MODEL")
+    or "nvidia/llama-3.3-nemotron-super-49b-v1"
+)
+NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1"
 DEFAULT_MATERIALS_VALIDATION_RETRIES = int(os.getenv("OPENAI_MATERIALS_VALIDATION_RETRIES", "1"))
 logger = logging.getLogger(__name__)
 
@@ -47,12 +54,35 @@ def build_application_kit_with_llm(
     if not key:
         raise LLMMaterialsError("OPENAI_API_KEY is required to generate materials with API.")
 
+    payload = _materials_payload(job, ranking)
+    response = _call_openai(payload, key, model or DEFAULT_MATERIALS_MODEL, timeout)
+    return _kit_from_response(response)
+
+
+def build_application_kit_with_nvidia(
+    job: Any,
+    ranking: Any | None = None,
+    *,
+    model: str | None = None,
+    api_key: str | None = None,
+    timeout: float = 180.0,
+) -> dict[str, str]:
+    key = api_key or os.getenv("NVIDIA_API_KEY") or os.getenv("NIM_API_KEY")
+    if not key:
+        raise LLMMaterialsError("NVIDIA_API_KEY or NIM_API_KEY is required to generate materials with NVIDIA.")
+
+    payload = _materials_payload(job, ranking)
+    response = _call_nvidia(payload, key, model or DEFAULT_NVIDIA_MATERIALS_MODEL, timeout)
+    return _kit_from_response(response)
+
+
+def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
     profile_payload = db.get_candidate_profile_payload()
     if not profile_payload:
         raise LLMMaterialsError("No candidate profile configured. Upload a CV in Profile before generating materials.")
     profile = CandidateProfile(**profile_payload_to_candidate_profile(profile_payload))
     base_cv_text = str(profile_payload.get("base_cv_text") or "").strip()
-    payload = {
+    return {
         "candidate_profile": asdict(profile),
         "base_cv": {
             "filename": profile_payload.get("base_cv_filename") or "",
@@ -78,8 +108,18 @@ def build_application_kit_with_llm(
             "List risk_flags for unsupported claims, adjacency framing, or user facts to double-check.",
             "Return only JSON matching the schema.",
         ],
+        "output_shape": {
+            "recruiter_message": "short recruiter note plus longer message when useful",
+            "cover_letter": "concise tailored cover letter or empty string",
+            "ats_cv_text": "complete ATS-optimized CV only; no notes or internal instructions",
+            "autofill_notes": "structured copy-paste application workflow",
+            "risk_flags": ["unsupported or review-needed claims"],
+            "keywords_used": ["truthful job keywords included"],
+        },
     }
-    response = _call_openai(payload, key, model or DEFAULT_MATERIALS_MODEL, timeout)
+
+
+def _kit_from_response(response: dict[str, Any]) -> dict[str, str]:
     return {
         "recruiter_message": str(response["recruiter_message"]),
         "cover_letter": str(response.get("cover_letter") or ""),
@@ -208,6 +248,68 @@ def _call_openai(payload: dict[str, Any], api_key: str, model: str, timeout: flo
     raise LLMMaterialsError("OpenAI materials response did not produce a usable application kit.")
 
 
+def _call_nvidia(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
+    validation_feedback: str | None = None
+    for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
+        parsed = _call_nvidia_once(payload, api_key, model, timeout, validation_feedback)
+        validation_feedback = _materials_validation_error(parsed)
+        if not validation_feedback:
+            return parsed
+        if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
+            logger.warning("Retrying NVIDIA materials generation after invalid response: %s", validation_feedback)
+            continue
+        raise LLMMaterialsError(f"NVIDIA materials response was incomplete: {validation_feedback}")
+    raise LLMMaterialsError("NVIDIA materials response did not produce a usable application kit.")
+
+
+def _call_nvidia_once(
+    payload: dict[str, Any],
+    api_key: str,
+    model: str,
+    timeout: float,
+    validation_feedback: str | None = None,
+) -> dict[str, Any]:
+    user_payload = dict(payload)
+    if validation_feedback:
+        user_payload["previous_response_error"] = validation_feedback
+        user_payload["instruction"] = "Return a corrected complete JSON object only."
+    try:
+        response = httpx.post(
+            f"{NVIDIA_BASE_URL.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model,
+                "temperature": 0.1,
+                "top_p": 0.95,
+                "max_tokens": int(os.getenv("NVIDIA_MATERIALS_MAX_TOKENS", "12000")),
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a strict career application assistant. Return only valid JSON. "
+                            "The ats_cv_text value must be a final complete CV, not notes, comments, or instructions."
+                        ),
+                    },
+                    {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+                ],
+            },
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:1000] if exc.response is not None else ""
+        raise LLMMaterialsError(f"NVIDIA materials request failed: status={exc.response.status_code} body={detail!r}") from exc
+    except httpx.HTTPError as exc:
+        raise LLMMaterialsError(f"NVIDIA materials request failed: {type(exc).__name__}: {exc!r}") from exc
+
+    try:
+        content = response.json()["choices"][0]["message"]["content"]
+        return json.loads(_extract_json_object_text(str(content)))
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise LLMMaterialsError(f"NVIDIA materials response was not valid JSON: {exc}") from exc
+
+
 def _call_openai_once(
     payload: dict[str, Any],
     api_key: str,
@@ -260,6 +362,18 @@ def _call_openai_once(
         return json.loads(_extract_response_text(response.json()))
     except json.JSONDecodeError as exc:
         raise LLMMaterialsError("OpenAI materials response was not valid JSON.") from exc
+
+
+def _extract_json_object_text(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.removeprefix("```json").removeprefix("```").strip()
+        cleaned = cleaned.removesuffix("```").strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start < 0 or end <= start:
+        raise json.JSONDecodeError("No JSON object found", cleaned, 0)
+    return cleaned[start : end + 1]
 
 
 def _materials_schema() -> dict[str, Any]:

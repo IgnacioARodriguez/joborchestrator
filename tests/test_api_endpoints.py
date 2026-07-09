@@ -290,6 +290,27 @@ def test_generate_materials_persists_application_kit(tmp_path, monkeypatch):
     assert job["materials"]["ats_cv_notes"] == "Python\nFastAPI"
 
 
+def test_generate_materials_can_use_nvidia_provider(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    job_id = save_job_with_rankings()
+    client.put("/api/profile", json={"profile": profile_payload()})
+    monkeypatch.setattr(
+        api,
+        "build_application_kit_with_nvidia",
+        lambda job, api_key=None, model=None: {
+            "recruiter_message": "NVIDIA recruiter",
+            "cover_letter": "NVIDIA cover",
+            "ats_cv_text": "NVIDIA optimized CV with enough useful content for this target role.",
+            "autofill_notes": "NVIDIA autofill",
+        },
+    )
+
+    response = client.post(f"/api/jobs/{job_id}/materials", json={"provider": "nvidia", "shortlist": True})
+
+    assert response.status_code == 200
+    assert response.json()["job"]["materials"]["recruiter_message"] == "NVIDIA recruiter"
+
+
 def test_download_optimized_cv_materials(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
     job_id = save_job_with_rankings()
