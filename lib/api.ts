@@ -3,6 +3,7 @@ import type {
   CandidateProfile,
   JobPosting,
   JobsResponse,
+  LinkedInProfileSetting,
   OperationRun,
   PipelineStatus,
   RankingJobRecord,
@@ -148,6 +149,38 @@ export const api = {
     return request<{ results: ScanResult[] }>("/api/scans/search", {
       method: "POST",
       body: JSON.stringify(input),
+    })
+  },
+
+  async scanAll(input: {
+    include_ats: boolean
+    include_search: boolean
+    include_linkedin?: boolean
+    search_providers: string[]
+    queries: string[]
+    location: string
+    remote: boolean
+    max_pages: number
+  }) {
+    return request<{
+      ats: ScanResult[]
+      search: ScanResult[]
+      linkedin: null | Record<string, unknown>
+      errors: Record<string, string>
+    }>("/api/scans/all", {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  },
+
+  async getLinkedInProfile() {
+    return request<{ linkedin_profile: LinkedInProfileSetting }>("/api/linkedin/profile")
+  },
+
+  async setLinkedInProfile(profileName: string) {
+    return request<{ linkedin_profile: LinkedInProfileSetting }>("/api/linkedin/profile", {
+      method: "PUT",
+      body: JSON.stringify({ profile_name: profileName }),
     })
   },
 

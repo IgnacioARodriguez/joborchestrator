@@ -145,6 +145,27 @@ def test_skill_catalog_can_be_extended_via_api(tmp_path, monkeypatch):
     assert any(skill["name"] == "Contract Review" for skill in body["skills"])
 
 
+def test_linkedin_profile_setting_round_trip(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+
+    initial = client.get("/api/linkedin/profile")
+    assert initial.status_code == 200
+    assert initial.json()["linkedin_profile"]["current"] == "test"
+
+    response = client.put("/api/linkedin/profile", json={"profile_name": "Test Account"})
+
+    assert response.status_code == 200
+    body = response.json()["linkedin_profile"]
+    assert body["current"] == "test_account"
+    assert "test_account" in body["profiles"]
+    assert body["profile_dir"].endswith("linkedin_user_profile_test_account")
+    assert client.get("/api/linkedin/profile").json()["linkedin_profile"]["current"] == "test_account"
+
+    blocked = client.put("/api/linkedin/profile", json={"profile_name": "main"})
+    assert blocked.status_code == 400
+    assert "disabled" in blocked.json()["detail"]
+
+
 def test_ranking_job_requires_profile(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
 

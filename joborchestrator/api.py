@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import asyncio
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
@@ -39,6 +40,7 @@ from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION, filter_llm_
 from joborchestrator.ranking.worker import run_worker_once
 from joborchestrator.scanning import scanner as source_scanner
 from joborchestrator.scanning import search_scanner
+from joborchestrator.scanning import linkedin
 from joborchestrator.scanning.linkedin_importer import import_linkedin_dataframe_to_job_postings
 from joborchestrator.scanning.providers import PROVIDERS
 from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS
@@ -87,6 +89,20 @@ class SearchPayload(BaseModel):
     max_concurrency: int = Field(default=4, ge=1, le=20)
 
 
+class UnifiedScanPayload(BaseModel):
+    include_ats: bool = True
+    include_search: bool = True
+    include_linkedin: bool = False
+    source_ids: list[int] | None = None
+    search_providers: list[str] = Field(default_factory=list)
+    queries: list[str] = Field(default_factory=list)
+    location: str | None = "Spain"
+    remote: bool = True
+    max_pages: int = Field(default=1, ge=1, le=10)
+    ats_max_concurrency: int = Field(default=6, ge=1, le=20)
+    search_max_concurrency: int = Field(default=4, ge=1, le=20)
+
+
 class RankingJobPayload(BaseModel):
     job_ids: list[int] | None = None
     limit: int = Field(default=250, ge=1, le=2000)
@@ -112,6 +128,10 @@ class ProfilePayload(BaseModel):
 class SkillCatalogPayload(BaseModel):
     category: str = "General"
     name: str
+
+
+class LinkedInProfilePayload(BaseModel):
+    profile_name: str = Field(min_length=1, max_length=64)
 
 
 def _job_for_materials(job_id: int) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -351,6 +371,80 @@ async def scan_search(payload: SearchPayload) -> dict[str, Any]:
         max_concurrency=payload.max_concurrency,
     )
     return {"results": [scan_result_dto(result) for result in results]}
+
+
+@app.get("/api/linkedin/profile")
+def get_linkedin_profile() -> dict[str, Any]:
+    return {"linkedin_profile": linkedin.get_linkedin_profile_setting()}
+
+
+@app.put("/api/linkedin/profile")
+def set_linkedin_profile(payload: LinkedInProfilePayload) -> dict[str, Any]:
+    try:
+        profile = linkedin.set_linkedin_profile_setting(payload.profile_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"linkedin_profile": profile}
+
+
+@app.post("/api/scans/all")
+async def scan_all(payload: UnifiedScanPayload) -> dict[str, Any]:
+    tasks: dict[str, Any] = {}
+
+    if payload.include_ats:
+        sources = db.list_company_sources(enabled_only=True).to_dict("records")
+        if payload.source_ids:
+            wanted = {int(source_id) for source_id in payload.source_ids}
+            sources = [source for source in sources if int(source["id"]) in wanted]
+        tasks["ats"] = source_scanner.scan_sources_concurrently(
+            sources,
+            max_concurrency=payload.ats_max_concurrency,
+        )
+
+    if payload.include_search:
+        providers = payload.search_providers or sorted(SEARCH_PROVIDERS.keys())
+        bad = [provider for provider in providers if provider not in SEARCH_PROVIDERS]
+        if bad:
+            raise HTTPException(status_code=400, detail=f"Unsupported search providers: {bad}")
+        queries = [query.strip() for query in payload.queries if query.strip()]
+        if queries:
+            tasks["search"] = search_scanner.search_jobs_concurrently(
+                providers,
+                queries,
+                payload.location,
+                remote=payload.remote,
+                max_pages=payload.max_pages,
+                max_concurrency=payload.search_max_concurrency,
+            )
+
+    if payload.include_linkedin:
+        tasks["linkedin"] = _run_linkedin_scan_for_api()
+
+    results = await asyncio.gather(*tasks.values(), return_exceptions=True) if tasks else []
+    output: dict[str, Any] = {"ats": [], "search": [], "linkedin": None, "errors": {}}
+    for name, result in zip(tasks.keys(), results):
+        if isinstance(result, Exception):
+            output["errors"][name] = str(result)
+        elif name in {"ats", "search"}:
+            output[name] = [scan_result_dto(item) for item in result]
+        else:
+            output[name] = result
+    return output
+
+
+async def _run_linkedin_scan_for_api() -> dict[str, Any]:
+    scraped = await linkedin.run_linkedin_scrape()
+    import_stats = import_linkedin_dataframe_to_job_postings(scraped) if not scraped.empty else {
+        "new": 0,
+        "updated": 0,
+        "seen": 0,
+        "total": 0,
+    }
+    inactive = db.mark_jobs_inactive_by_last_seen(
+        "linkedin_scraper",
+        linkedin.FRESHNESS_WINDOW_SECONDS,
+    )
+    return {"import_stats": import_stats, "inactive": inactive}
 
 
 @app.get("/api/scans/overview")

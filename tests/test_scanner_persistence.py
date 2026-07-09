@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timedelta
 
 from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.normalization import compute_content_hash
@@ -6,12 +7,19 @@ from joborchestrator.storage import persistence as db
 from joborchestrator.ranking.schemas import RankingEvidence, RankingResult, RankingScores
 
 
-def make_job(title: str = "Backend Engineer", description: str = "Build APIs") -> JobPosting:
-    content_hash = compute_content_hash(title, "Acme", "Remote", description, "https://example.com/apply")
+def make_job(
+    title: str = "Backend Engineer",
+    description: str = "Build APIs",
+    *,
+    external_id: str = "job-1",
+    source: str = "greenhouse",
+    company: str = "Acme",
+) -> JobPosting:
+    content_hash = compute_content_hash(title, company, "Remote", description, "https://example.com/apply")
     return JobPosting(
-        external_id="job-1",
-        source="greenhouse",
-        company="Acme",
+        external_id=external_id,
+        source=source,
+        company=company,
         title=title,
         location="Remote",
         apply_url="https://example.com/apply",
@@ -20,7 +28,7 @@ def make_job(title: str = "Backend Engineer", description: str = "Build APIs") -
         posted_at_raw="2026-01-01",
         posted_at_confidence="medium",
         content_hash=content_hash,
-        raw_payload={"id": "job-1", "title": title},
+        raw_payload={"id": external_id, "title": title},
     )
 
 
@@ -242,6 +250,60 @@ def test_skill_catalog_can_be_extended(tmp_path, monkeypatch):
     assert skill["category"] == "Legal"
     assert skill["name"] == "Contract Review"
     assert any(item["name"] == "Contract Review" for item in db.list_skill_catalog())
+
+
+def test_recent_external_ids_for_source_respects_freshness_window(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    now = datetime.now()
+    recent = (now - timedelta(days=2)).isoformat(timespec="seconds")
+    old = (now - timedelta(days=45)).isoformat(timespec="seconds")
+
+    db.upsert_job_posting(
+        make_job(external_id="li-recent", source="linkedin_scraper", company="Acme"),
+        seen_at=recent,
+    )
+    db.upsert_job_posting(
+        make_job(external_id="li-old", source="linkedin_scraper", company="Acme"),
+        seen_at=old,
+    )
+    db.upsert_job_posting(
+        make_job(external_id="gh-recent", source="greenhouse", company="Acme"),
+        seen_at=recent,
+    )
+
+    seen_ids = db.get_recent_external_ids_for_source("linkedin_scraper", freshness_window_seconds=30 * 24 * 60 * 60)
+
+    assert seen_ids == {"li-recent"}
+
+
+def test_mark_jobs_inactive_by_last_seen_only_affects_old_matching_source(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    now = datetime.now()
+    recent = (now - timedelta(days=2)).isoformat(timespec="seconds")
+    old = (now - timedelta(days=45)).isoformat(timespec="seconds")
+
+    db.upsert_job_posting(
+        make_job(external_id="li-recent", source="linkedin_scraper", company="Acme"),
+        seen_at=recent,
+    )
+    db.upsert_job_posting(
+        make_job(external_id="li-old", source="linkedin_scraper", company="Acme"),
+        seen_at=old,
+    )
+    db.upsert_job_posting(
+        make_job(external_id="gh-old", source="greenhouse", company="Acme"),
+        seen_at=old,
+    )
+
+    inactive = db.mark_jobs_inactive_by_last_seen("linkedin_scraper", freshness_window_seconds=30 * 24 * 60 * 60)
+    rows = {row["external_id"]: row for _, row in db.get_job_postings(limit=10).iterrows()}
+
+    assert inactive == 1
+    assert rows["li-recent"]["is_active"] == 1
+    assert rows["li-old"]["is_active"] == 0
+    assert rows["gh-old"]["is_active"] == 1
 
 
 def test_speed_ranking_migration_is_additive_and_backfills(tmp_path, monkeypatch):

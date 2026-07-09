@@ -116,6 +116,12 @@ export interface ScanResult {
   duration_seconds: number
 }
 
+export interface LinkedInProfileSetting {
+  current: string
+  profiles: string[]
+  profile_dir: string
+}
+
 export interface RankingJobRecord {
   id: number
   provider: string

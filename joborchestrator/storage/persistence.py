@@ -501,6 +501,14 @@ def mark_jobs_inactive_for_source(source: str, company: str, active_external_ids
     return jobs_repository.mark_jobs_inactive_for_source(_conn, source, company, active_external_ids)
 
 
+def get_recent_external_ids_for_source(source: str, freshness_window_seconds: int) -> set[str]:
+    return jobs_repository.get_recent_external_ids_for_source(_conn, source, freshness_window_seconds)
+
+
+def mark_jobs_inactive_by_last_seen(source: str, freshness_window_seconds: int) -> int:
+    return jobs_repository.mark_jobs_inactive_by_last_seen(_conn, source, freshness_window_seconds)
+
+
 def record_scan_event(
     source_id: int | None,
     provider: str,

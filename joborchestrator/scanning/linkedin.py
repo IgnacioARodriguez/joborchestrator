@@ -19,6 +19,7 @@ La idea es exportar raw data para analizar despuÃ©s con IA.
 
 import asyncio
 import json
+import random
 import re
 from datetime import datetime
 from pathlib import Path
@@ -28,19 +29,36 @@ import pandas as pd
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
-from joborchestrator.ranking.role_catalog import profile_search_terms
+from joborchestrator.ranking.role_catalog import role_catalog_from_profile
 from joborchestrator.ranking.schemas import CandidateProfile
 from joborchestrator.storage import persistence as db
 
 
-def build_busquedas_from_profile(profile: CandidateProfile, max_terms: int = 40) -> list[dict[str, str]]:
-    terms = profile_search_terms(profile)[:max_terms]
+FRESHNESS_WINDOW_SECONDS = 30 * 24 * 60 * 60
+TARGET_ROLE_FRESHNESS_WINDOW_SECONDS = 2 * 24 * 60 * 60
+SECONDARY_ROLE_FRESHNESS_WINDOW_SECONDS = FRESHNESS_WINDOW_SECONDS
+
+
+def build_busquedas_from_profile(profile: CandidateProfile, max_terms: int = 40) -> list[dict[str, str | int]]:
+    entries = role_catalog_from_profile(profile)
+    role_terms: list[tuple[str, str, int]] = []
+    for entry in entries:
+        # Adjust these constants to change the LinkedIn cadence by role priority:
+        # target roles stay very fresh; secondary roles keep a wider discovery window.
+        window_seconds = (
+            TARGET_ROLE_FRESHNESS_WINDOW_SECONDS
+            if entry.priority == "target"
+            else SECONDARY_ROLE_FRESHNESS_WINDOW_SECONDS
+        )
+        for term in entry.search_terms:
+            role_terms.append((term, entry.priority, window_seconds))
+    role_terms = role_terms[:max_terms]
     locations = profile.preferred_locations or ["Spain"]
     if any(str(mode).lower() == "remote" for mode in profile.preferred_work_modes):
         locations = [*locations, "European Union"]
     searches = []
     seen = set()
-    for term in terms:
+    for term, priority, window_seconds in role_terms:
         for location in locations:
             key = (term.lower(), str(location).lower())
             if key in seen:
@@ -51,12 +69,14 @@ def build_busquedas_from_profile(profile: CandidateProfile, max_terms: int = 40)
                     "keywords": term,
                     "ubicacion": str(location),
                     "categoria": _category_from_role(term),
+                    "role_priority": priority,
+                    "freshness_window_seconds": window_seconds,
                 }
             )
     return searches
 
 
-def load_profile_busquedas() -> list[dict[str, str]]:
+def load_profile_busquedas() -> list[dict[str, str | int]]:
     profile_payload = db.get_candidate_profile_payload()
     if not profile_payload:
         raise RuntimeError("No candidate profile configured. Upload a CV and define target roles before running LinkedIn scraping.")
@@ -98,7 +118,60 @@ DEBUG = False
 # Perfil persistente local de LinkedIn.
 # Primera ejecuciÃ³n: login manual.
 # Siguientes ejecuciones: reutiliza cookies/sesiÃ³n.
-PERFIL_LINKEDIN = Path("linkedin_user_profile").resolve()
+LINKEDIN_PROFILE_SETTING_KEY = "linkedin_profile_name"
+DEFAULT_LINKEDIN_PROFILE_NAME = "test"
+DISABLED_LINKEDIN_PROFILE_NAMES = {"main"}
+LINKEDIN_PROFILE_PREFIX = "linkedin_user_profile"
+PERFIL_LINKEDIN = Path(LINKEDIN_PROFILE_PREFIX).resolve()
+
+
+def linkedin_profile_dir(profile_name: str | None = None) -> Path:
+    name = sanitize_linkedin_profile_name(
+        profile_name
+        or str(db.get_app_setting(LINKEDIN_PROFILE_SETTING_KEY, DEFAULT_LINKEDIN_PROFILE_NAME) or DEFAULT_LINKEDIN_PROFILE_NAME)
+    )
+    if name in DISABLED_LINKEDIN_PROFILE_NAMES:
+        name = DEFAULT_LINKEDIN_PROFILE_NAME
+    dirname = LINKEDIN_PROFILE_PREFIX if name == "main" else f"{LINKEDIN_PROFILE_PREFIX}_{name}"
+    return Path(dirname).resolve()
+
+
+def sanitize_linkedin_profile_name(value: str | None) -> str:
+    text = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(value or "").strip()).strip("_").lower()
+    return text or DEFAULT_LINKEDIN_PROFILE_NAME
+
+
+def get_linkedin_profile_setting() -> dict[str, object]:
+    current = sanitize_linkedin_profile_name(
+        str(db.get_app_setting(LINKEDIN_PROFILE_SETTING_KEY, DEFAULT_LINKEDIN_PROFILE_NAME) or DEFAULT_LINKEDIN_PROFILE_NAME)
+    )
+    if current in DISABLED_LINKEDIN_PROFILE_NAMES:
+        current = DEFAULT_LINKEDIN_PROFILE_NAME
+        db.set_app_setting(LINKEDIN_PROFILE_SETTING_KEY, current)
+    profiles = {DEFAULT_LINKEDIN_PROFILE_NAME}
+    for path in Path.cwd().glob(f"{LINKEDIN_PROFILE_PREFIX}*"):
+        if not path.is_dir():
+            continue
+        if path.name == LINKEDIN_PROFILE_PREFIX:
+            continue
+        elif path.name.startswith(f"{LINKEDIN_PROFILE_PREFIX}_"):
+            profile = sanitize_linkedin_profile_name(path.name.removeprefix(f"{LINKEDIN_PROFILE_PREFIX}_"))
+            if profile not in DISABLED_LINKEDIN_PROFILE_NAMES:
+                profiles.add(profile)
+    profiles.add(current)
+    return {
+        "current": current,
+        "profiles": sorted(profiles),
+        "profile_dir": str(linkedin_profile_dir(current)),
+    }
+
+
+def set_linkedin_profile_setting(profile_name: str) -> dict[str, object]:
+    name = sanitize_linkedin_profile_name(profile_name)
+    if name in DISABLED_LINKEDIN_PROFILE_NAMES:
+        raise ValueError("The main LinkedIn profile is disabled. Use a separate test profile.")
+    db.set_app_setting(LINKEDIN_PROFILE_SETTING_KEY, name)
+    return get_linkedin_profile_setting()
 
 GUARDAR_CHECKPOINT = True
 REANUDAR_DESDE_CHECKPOINT = True
@@ -107,6 +180,18 @@ EXPORTAR_SNAPSHOT_CADA_PAGINA = True
 CHECKPOINT_JSONL = OUTPUT_DIR / "checkpoint_ofertas_todas_posiciones_raw.jsonl"
 CHECKPOINT_STATE = OUTPUT_DIR / "checkpoint_estado_todas_posiciones_raw.json"
 CHECKPOINT_SNAPSHOT_BASE = str(OUTPUT_DIR / "snapshot_actual_todas_posiciones_raw")
+
+
+def jitter_ms(base_ms: int, spread: float = 0.25) -> int:
+    low = max(0, base_ms * (1 - spread))
+    high = base_ms * (1 + spread)
+    return int(random.uniform(low, high))
+
+
+def jitter_seconds(base_seconds: float, spread: float = 0.25) -> float:
+    low = max(0.0, base_seconds * (1 - spread))
+    high = base_seconds * (1 + spread)
+    return random.uniform(low, high)
 
 
 # ============================================================
@@ -124,9 +209,15 @@ def deduplicar_ofertas(ofertas: list[dict]) -> list[dict]:
     return list(por_id.values())
 
 
-def cargar_checkpoint() -> tuple[list[dict], set[str]]:
+def cargar_checkpoint(freshness_window_seconds: int = FRESHNESS_WINDOW_SECONDS) -> tuple[list[dict], set[str]]:
+    db_seen_ids = db.get_recent_external_ids_for_source(
+        "linkedin_scraper",
+        freshness_window_seconds=freshness_window_seconds,
+    )
     if not REANUDAR_DESDE_CHECKPOINT or not CHECKPOINT_JSONL.exists():
-        return [], set()
+        if db_seen_ids:
+            print(f"DB freshness cargada: {len(db_seen_ids)} IDs recientes de LinkedIn.")
+        return [], db_seen_ids
 
     ofertas = []
     lineas_invalidas = 0
@@ -146,11 +237,11 @@ def cargar_checkpoint() -> tuple[list[dict], set[str]]:
                 lineas_invalidas += 1
 
     ofertas = deduplicar_ofertas(ofertas)
-    seen_ids = {str(o["id"]) for o in ofertas if o.get("id")}
+    seen_ids = {str(o["id"]) for o in ofertas if o.get("id")} | db_seen_ids
 
     print(
         f"â™» Checkpoint cargado: {len(ofertas)} ofertas Ãºnicas "
-        f"desde {CHECKPOINT_JSONL}"
+        f"desde {CHECKPOINT_JSONL}; DB recientes={len(db_seen_ids)}"
     )
 
     if lineas_invalidas:
@@ -194,6 +285,19 @@ def exportar_snapshot_resultados(ofertas: list[dict]):
         return
 
     exportar_resultados(ofertas, CHECKPOINT_SNAPSHOT_BASE)
+
+
+def build_linkedin_search_params(busqueda: dict, start: int) -> dict[str, str | int]:
+    freshness_window_seconds = int(busqueda.get("freshness_window_seconds") or FRESHNESS_WINDOW_SECONDS)
+    params: dict[str, str | int] = {
+        "keywords": busqueda["keywords"],
+        "location": busqueda["ubicacion"],
+        "start": start,
+        "sortBy": "DD",
+        "f_TPR": f"r{freshness_window_seconds}",
+    }
+    params.update(busqueda.get("filtros", {}))
+    return params
 
 
 # ============================================================
@@ -316,7 +420,7 @@ async def crear_contexto_linkedin(p):
     """
 
     context = await p.chromium.launch_persistent_context(
-        user_data_dir=str(PERFIL_LINKEDIN),
+        user_data_dir=str(linkedin_profile_dir()),
         headless=False,
         viewport={"width": 1440, "height": 1000},
         locale="es-ES",
@@ -374,7 +478,7 @@ async def asegurar_sesion_manual(page):
     """
 
     await page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded")
-    await page.wait_for_timeout(2500)
+    await page.wait_for_timeout(jitter_ms(2500))
 
     if await linkedin_pide_verificacion(page):
         raise RuntimeError(
@@ -392,7 +496,7 @@ async def asegurar_sesion_manual(page):
         input("â†’ ENTER cuando hayas terminado el login manual: ")
 
         await page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded")
-        await page.wait_for_timeout(2500)
+        await page.wait_for_timeout(jitter_ms(2500))
 
         if "/login" in page.url:
             raise RuntimeError("No se detectÃ³ sesiÃ³n activa despuÃ©s del login manual.")
@@ -415,7 +519,7 @@ async def navegar_estable(page, url: str, timeout: int = 30000):
         await page.goto(url, wait_until="networkidle", timeout=timeout)
     except PlaywrightTimeoutError:
         await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
-        await page.wait_for_timeout(5000)
+        await page.wait_for_timeout(jitter_ms(5000))
 
 
 async def dump_debug_info(page, etiqueta: str = "debug"):
@@ -647,7 +751,7 @@ async def extraer_resultados_visibles(page) -> list[dict]:
     LinkedIn virtualiza el listado, asÃ­ que una sola lectura del DOM suele traer solo 7-8 cards.
     """
 
-    await page.wait_for_timeout(1000)
+    await page.wait_for_timeout(jitter_ms(1000))
 
     try:
         await page.wait_for_selector('a[href*="/jobs/view/"]', timeout=8000)
@@ -655,7 +759,7 @@ async def extraer_resultados_visibles(page) -> list[dict]:
         return []
 
     await resetear_scroll_listado(page)
-    await page.wait_for_timeout(600)
+    await page.wait_for_timeout(jitter_ms(600))
 
     acumulados = {}
     sin_cambios = 0
@@ -669,7 +773,7 @@ async def extraer_resultados_visibles(page) -> list[dict]:
             acumulados[job["id"]] = job
 
         scroll_info = await scroll_listado_jobs(page)
-        await page.wait_for_timeout(900)
+        await page.wait_for_timeout(jitter_ms(900))
 
         total_actual = len(acumulados)
         scroll_top = int(scroll_info.get("after") or 0)
@@ -723,7 +827,7 @@ async def abrir_job_visible_en_panel(page, job_id: str, titulo: str = "") -> boo
                 continue
 
             await loc.scroll_into_view_if_needed(timeout=3000)
-            await page.wait_for_timeout(250)
+            await page.wait_for_timeout(jitter_ms(250))
             await loc.click(force=True, timeout=3000)
 
             clicked = True
@@ -746,17 +850,17 @@ async def abrir_job_visible_en_panel(page, job_id: str, titulo: str = "") -> boo
             descripcion = await extraer_descripcion_directa(page, panel)
 
             if descripcion and len(descripcion) >= 80:
-                await page.wait_for_timeout(300)
+                await page.wait_for_timeout(jitter_ms(300))
                 return True
 
             if url_ok and panel is not None:
-                await page.wait_for_timeout(500)
+                await page.wait_for_timeout(jitter_ms(500))
                 return True
 
         except Exception:
             pass
 
-        await page.wait_for_timeout(300)
+        await page.wait_for_timeout(jitter_ms(300))
 
     return False
 
@@ -780,7 +884,7 @@ async def expandir_descripcion_si_hace_falta(page):
 
             if await btn.count() > 0 and await btn.is_visible(timeout=1000):
                 await btn.click(force=True, timeout=1500)
-                await page.wait_for_timeout(600)
+                await page.wait_for_timeout(jitter_ms(600))
                 return True
 
         except Exception:
@@ -1155,7 +1259,7 @@ async def procesar_pagina_actual(
             print(f"âœ… Alcanzado lÃ­mite de {LIMITE_RESULTADOS} ofertas Ãºnicas.")
             return nuevos_agregados
 
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(jitter_seconds(1.2))
 
     return nuevos_agregados
 
@@ -1222,16 +1326,20 @@ def exportar_resultados(ofertas: list[dict], nombre_archivo: str):
 # MAIN
 # ============================================================
 
-async def main():
+async def run_linkedin_scrape() -> pd.DataFrame:
     print("\n" + "=" * 60)
     print("LinkedIn Job Scraper â€” Backend Python RAW")
     print("=" * 60)
 
     print(f"ARCHIVO EJECUTADO: {Path(__file__).resolve()}")
     busquedas = load_profile_busquedas()
+    random.shuffle(busquedas)
     print("BUSQUEDAS ACTIVAS:")
     for b in busquedas:
-        print(f" - {b['keywords']} â€” {b['ubicacion']}")
+        print(
+            f" - {b['keywords']} â€” {b['ubicacion']} "
+            f"(freshness={b.get('freshness_window_seconds', FRESHNESS_WINDOW_SECONDS)}s)"
+        )
 
     async with async_playwright() as p:
         context, page = await crear_contexto_linkedin(p)
@@ -1250,14 +1358,7 @@ async def main():
 
                 for pagina in range(MAX_PAGINAS):
                     start = pagina * 25
-
-                    params = {
-                        "keywords": busqueda["keywords"],
-                        "location": busqueda["ubicacion"],
-                        "start": start,
-                    }
-
-                    params.update(busqueda.get("filtros", {}))
+                    params = build_linkedin_search_params(busqueda, start)
 
                     url = f"{LINKEDIN_JOBS_URL}?{urlencode(params)}"
 
@@ -1269,7 +1370,7 @@ async def main():
                     )
 
                     await navegar_estable(page, url)
-                    await page.wait_for_timeout(2500)
+                    await page.wait_for_timeout(jitter_ms(2500))
 
                     if await linkedin_pide_verificacion(page):
                         raise RuntimeError(
@@ -1332,9 +1433,14 @@ async def main():
 
             print("\nANTES DE EXPORTAR")
             exportar_resultados(todas, ARCHIVO_SALIDA)
+            return pd.DataFrame(deduplicar_ofertas(todas))
 
         finally:
             await context.close()
+
+
+async def main():
+    await run_linkedin_scrape()
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable
 
 import pandas as pd
@@ -242,6 +242,49 @@ def mark_jobs_inactive_for_source(
                 SET is_active = 0
                 WHERE source = ? AND company = ? AND external_id NOT IN ({placeholders})""",
             [source, company, *active_external_ids],
+        )
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
+
+
+def get_recent_external_ids_for_source(
+    connect: ConnectionFactory,
+    source: str,
+    freshness_window_seconds: int,
+    now: datetime | None = None,
+) -> set[str]:
+    cutoff = (now or datetime.now()) - timedelta(seconds=int(freshness_window_seconds))
+    conn = connect()
+    try:
+        rows = conn.execute(
+            """SELECT external_id
+               FROM job_postings
+               WHERE source = ? AND last_seen_at >= ?""",
+            (source, cutoff.isoformat(timespec="seconds")),
+        ).fetchall()
+        return {str(row["external_id"]) for row in rows if row["external_id"]}
+    finally:
+        conn.close()
+
+
+def mark_jobs_inactive_by_last_seen(
+    connect: ConnectionFactory,
+    source: str,
+    freshness_window_seconds: int,
+    now: datetime | None = None,
+) -> int:
+    cutoff = (now or datetime.now()) - timedelta(seconds=int(freshness_window_seconds))
+    conn = connect()
+    try:
+        cursor = conn.execute(
+            """UPDATE job_postings
+               SET is_active = 0
+               WHERE source = ?
+                 AND is_active = 1
+                 AND last_seen_at < ?""",
+            (source, cutoff.isoformat(timespec="seconds")),
         )
         conn.commit()
         return cursor.rowcount

@@ -66,6 +66,10 @@ function operationCopy(name: string | null) {
       title: "Importing LinkedIn Excel",
       detail: "Uploading the spreadsheet, filtering rows, and saving new opportunities.",
     },
+    "linkedin-profile": {
+      title: "Switching LinkedIn profile",
+      detail: "Saving the browser session profile used by the local scraper.",
+    },
     source: {
       title: "Saving ATS source",
       detail: "Adding the company portal so it can be scanned later.",
@@ -73,6 +77,10 @@ function operationCopy(name: string | null) {
     ats: {
       title: "Scanning ATS portals",
       detail: "Contacting enabled company portals and saving new or updated jobs.",
+    },
+    all: {
+      title: "Running unified scrape",
+      detail: "Launching ATS portals and public job APIs in parallel.",
     },
     search: {
       title: "Searching public job APIs",
@@ -148,6 +156,10 @@ export function OpsScreen() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [results, setResults] = useState<ScanResult[]>([])
   const [linkedinFile, setLinkedinFile] = useState<File | null>(null)
+  const [linkedinProfiles, setLinkedinProfiles] = useState<string[]>([])
+  const [linkedinProfile, setLinkedinProfile] = useState("main")
+  const [linkedinProfileInput, setLinkedinProfileInput] = useState("main")
+  const [linkedinProfileDir, setLinkedinProfileDir] = useState("")
   const busyCopy = operationCopy(busy)
 
   async function loadOps() {
@@ -157,7 +169,10 @@ export function OpsScreen() {
         api.getRankingJobs(),
         api.getOperations(8),
       ])
-      const profileData = await api.getProfile()
+      const [profileData, linkedinProfileData] = await Promise.all([
+        api.getProfile(),
+        api.getLinkedInProfile(),
+      ])
       setSources(sourceData.sources)
       setHasProfile(Boolean(profileData.profile))
       setProviders(sourceData.providers)
@@ -165,6 +180,10 @@ export function OpsScreen() {
       setProvider(sourceData.providers[0] ?? "greenhouse")
       setRankingJobs(rankingData.jobs)
       setOperations(operationData.operations)
+      setLinkedinProfiles(linkedinProfileData.linkedin_profile.profiles)
+      setLinkedinProfile(linkedinProfileData.linkedin_profile.current)
+      setLinkedinProfileInput(linkedinProfileData.linkedin_profile.current)
+      setLinkedinProfileDir(linkedinProfileData.linkedin_profile.profile_dir)
     } catch (e) {
       toast.error("Backend unavailable", {
         description: e instanceof Error ? e.message : "Start the API server.",
@@ -273,6 +292,41 @@ export function OpsScreen() {
             )}
             {busy === "refresh-ops" ? "Refreshing ops" : "Refresh ops"}
           </Button>
+          <Button
+            disabled={busy !== null || (sources.length === 0 && searchProviders.length === 0)}
+            onClick={() =>
+              void runAction("all", async () => {
+                const res = await api.scanAll({
+                  include_ats: sources.length > 0,
+                  include_search: searchProviders.length > 0,
+                  include_linkedin: false,
+                  search_providers: searchProviders,
+                  queries: queries.split("\n"),
+                  location,
+                  remote: true,
+                  max_pages: 1,
+                })
+                setResults([...(res.ats ?? []), ...(res.search ?? [])])
+                const errorCount = Object.keys(res.errors ?? {}).length
+                if (errorCount > 0) {
+                  toast.error("Unified scrape finished with errors", {
+                    description: Object.entries(res.errors)
+                      .map(([name, message]) => `${name}: ${message}`)
+                      .join("; "),
+                  })
+                } else {
+                  toast.success("Unified scrape finished")
+                }
+              })
+            }
+          >
+            {busy === "all" ? (
+              <LoadingIcon />
+            ) : (
+              <Play data-icon="inline-start" />
+            )}
+            {busy === "all" ? "Scraping all" : "Scrap all"}
+          </Button>
         </CardContent>
       </Card>
 
@@ -288,6 +342,53 @@ export function OpsScreen() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[180px_1fr_auto]">
+            <Select
+              value={linkedinProfile}
+              onValueChange={(value) => {
+                setLinkedinProfile(value)
+                setLinkedinProfileInput(value)
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Profile" />
+              </SelectTrigger>
+              <SelectContent>
+                {linkedinProfiles.map((profile) => (
+                  <SelectItem key={profile} value={profile}>
+                    {profile}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              value={linkedinProfileInput}
+              onChange={(event) => setLinkedinProfileInput(event.target.value)}
+              placeholder="main or test"
+            />
+            <Button
+              variant="outline"
+              disabled={busy !== null || !linkedinProfileInput.trim()}
+              onClick={() =>
+                void runAction("linkedin-profile", async () => {
+                  const res = await api.setLinkedInProfile(linkedinProfileInput)
+                  setLinkedinProfiles(res.linkedin_profile.profiles)
+                  setLinkedinProfile(res.linkedin_profile.current)
+                  setLinkedinProfileInput(res.linkedin_profile.current)
+                  setLinkedinProfileDir(res.linkedin_profile.profile_dir)
+                  toast.success("LinkedIn profile selected", {
+                    description: res.linkedin_profile.current,
+                  })
+                })
+              }
+            >
+              {busy === "linkedin-profile" ? <LoadingIcon /> : <LinkIcon data-icon="inline-start" />}
+              Save profile
+            </Button>
+          </div>
+          <p className="break-all text-xs text-muted-foreground">
+            Active scraper session: {linkedinProfileDir || "linkedin_user_profile"}
+          </p>
           <Input
             type="file"
             accept=".xlsx,.xls"
