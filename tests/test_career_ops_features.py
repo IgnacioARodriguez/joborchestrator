@@ -6,6 +6,7 @@ from joborchestrator.intelligence.cover_letter_generator import (
 from joborchestrator.intelligence.ats_autofill import build_autofill_plan
 from joborchestrator.intelligence.llm_application_materials import (
     _materials_validation_error,
+    _materials_payload,
     build_application_kit_with_llm,
     estimate_materials_cost,
     export_ats_cv_docx_bytes,
@@ -177,6 +178,29 @@ def test_llm_application_kit_uses_structured_payload(monkeypatch):
     assert kit["recruiter_message"] == "Hi team"
     assert "FastAPI" in kit["ats_cv_text"]
     assert "LinkedIn" in kit["autofill_notes"]
+
+
+def test_llm_materials_payload_accepts_ranking_dict(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(
+        llm_application_materials.db,
+        "get_candidate_profile_payload",
+        lambda: {
+            "headline": "Backend engineer",
+            "target_roles": ["Backend Engineer"],
+            "skills": [{"name": "Python", "category": "Programming", "level": "strong"}],
+            "base_cv_text": "Ignacio Rodriguez\nBackend engineer\nExperience with Python APIs.",
+        },
+    )
+
+    payload = _materials_payload(
+        {"title": "Backend Engineer", "company": "Acme"},
+        {"final_score": 82, "decision": "APPLY_NOW"},
+    )
+
+    assert payload["ranking"]["final_score"] == 82
+    assert payload["ranking"]["decision"] == "APPLY_NOW"
 
 
 def test_llm_application_kit_validation_rejects_empty_required_sections():

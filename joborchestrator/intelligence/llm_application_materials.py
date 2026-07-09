@@ -92,7 +92,7 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "text": base_cv_text[:24000],
         },
         "job": _compact_job(_to_dict(job)),
-        "ranking": result_to_dict(ranking) if ranking is not None else None,
+        "ranking": _ranking_payload(ranking),
         "goal": (
             "Generate truthful, editable application materials and a complete ATS-optimized CV for this specific job. "
             "Optimize for ATS filters and fast application workflow without inventing experience."
@@ -129,6 +129,14 @@ def _kit_from_response(response: dict[str, Any]) -> dict[str, str]:
         "ats_cv_text": str(response["ats_cv_text"]),
         "autofill_notes": str(response["autofill_notes"]),
     }
+
+
+def _ranking_payload(ranking: Any | None) -> dict[str, Any] | None:
+    if ranking is None:
+        return None
+    if isinstance(ranking, dict):
+        return ranking
+    return result_to_dict(ranking)
 
 
 def build_ats_cv_with_nvidia(
