@@ -4,6 +4,7 @@ import json
 import os
 import re
 import asyncio
+import logging
 from dataclasses import asdict
 from typing import Any, Callable
 
@@ -23,6 +24,10 @@ DEFAULT_NVIDIA_MODEL = (
     or os.getenv("NVIDIA_MODEL")
     or "nvidia/llama-3.3-nemotron-super-49b-v1"
 )
+DEFAULT_NVIDIA_REQUEST_BATCH_SIZE = int(os.getenv("NVIDIA_RANKING_BATCH_SIZE", "5"))
+DEFAULT_NVIDIA_MAX_CONCURRENCY = int(os.getenv("NVIDIA_RANKING_MAX_CONCURRENCY", "2"))
+DEFAULT_NVIDIA_MAX_TOKENS = int(os.getenv("NVIDIA_RANKING_MAX_TOKENS", "8192"))
+logger = logging.getLogger(__name__)
 
 
 class NvidiaRankingError(RuntimeError):
@@ -37,7 +42,7 @@ def rank_jobs_with_nvidia(
     jobs: pd.DataFrame,
     *,
     model: str = DEFAULT_NVIDIA_MODEL,
-    request_batch_size: int = 5,
+    request_batch_size: int = DEFAULT_NVIDIA_REQUEST_BATCH_SIZE,
     max_concurrency: int = 1,
     ranking_version: str = NVIDIA_RANKING_VERSION,
     api_key: str | None = None,
@@ -64,8 +69,8 @@ async def rank_jobs_with_nvidia_async(
     jobs: pd.DataFrame,
     *,
     model: str = DEFAULT_NVIDIA_MODEL,
-    request_batch_size: int = 5,
-    max_concurrency: int = 3,
+    request_batch_size: int = DEFAULT_NVIDIA_REQUEST_BATCH_SIZE,
+    max_concurrency: int = DEFAULT_NVIDIA_MAX_CONCURRENCY,
     ranking_version: str = NVIDIA_RANKING_VERSION,
     api_key: str | None = None,
     base_url: str = NVIDIA_BASE_URL,
@@ -225,6 +230,7 @@ def _apply_nvidia_batch_result(
 ) -> None:
     summary["processed"] += len(batch)
     if isinstance(result, Exception):
+        logger.warning("NVIDIA ranking batch failed before parsing: %s", result)
         summary["failed"] += len(batch)
         return
     try:
@@ -235,21 +241,29 @@ def _apply_nvidia_batch_result(
         expected_ids = [int(row.get("id") or row.get("job_id")) for row in batch]
         missing = sorted(set(expected_ids) - set(by_id))
         if missing:
-            raise NvidiaRankingError(f"NVIDIA response is missing job_id: {missing}")
+            logger.warning("NVIDIA response is missing job_id values: %s", missing)
 
         for row in batch:
             job_id = int(row.get("id") or row.get("job_id"))
-            ranking = _ranking_from_payload(by_id[job_id], ranking_version)
-            ranking.evidence.requires_llm_review = False
-            reasons = list(ranking.evidence.llm_escalation_reasons or [])
-            if "nvidia_ranking_applied" not in reasons:
-                reasons.append("nvidia_ranking_applied")
-            ranking.evidence.llm_escalation_reasons = reasons
-            ranking.ranking_version = ranking_version
-            db.save_job_ranking(job_id, ranking)
-            summary["saved"] += 1
-            summary[ranking.decision] += 1
+            if job_id not in by_id:
+                summary["failed"] += 1
+                continue
+            try:
+                ranking = _ranking_from_payload(by_id[job_id], ranking_version)
+                ranking.evidence.requires_llm_review = False
+                reasons = list(ranking.evidence.llm_escalation_reasons or [])
+                if "nvidia_ranking_applied" not in reasons:
+                    reasons.append("nvidia_ranking_applied")
+                ranking.evidence.llm_escalation_reasons = reasons
+                ranking.ranking_version = ranking_version
+                db.save_job_ranking(job_id, ranking)
+                summary["saved"] += 1
+                summary[ranking.decision] += 1
+            except (KeyError, TypeError, ValueError) as exc:
+                logger.warning("NVIDIA ranking payload for job_id=%s could not be saved: %s", job_id, exc)
+                summary["failed"] += 1
     except (KeyError, ValueError, json.JSONDecodeError, httpx.HTTPError, NvidiaRankingError):
+        logger.warning("NVIDIA ranking batch response could not be applied.", exc_info=True)
         summary["failed"] += len(batch)
 
 
@@ -258,7 +272,7 @@ def _nvidia_chat_body(payload: dict[str, Any], model: str) -> dict[str, Any]:
         "model": model,
         "temperature": 0,
         "top_p": 0.95,
-        "max_tokens": 4096,
+        "max_tokens": DEFAULT_NVIDIA_MAX_TOKENS,
         "frequency_penalty": 0,
         "presence_penalty": 0,
         "stream": False,

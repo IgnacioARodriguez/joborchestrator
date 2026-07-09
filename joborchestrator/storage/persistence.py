@@ -672,10 +672,12 @@ def sync_ranking_items_from_rankings(
     ranking_job_id: int,
     ranking_version: str,
     job_ids: list[int] | None = None,
+    missing_error: str = "NVIDIA did not save a ranking for this job.",
 ) -> dict[str, int]:
     return ranking_jobs_repository.sync_ranking_items_from_rankings(
         _conn,
         ranking_job_id,
         ranking_version,
         job_ids,
+        missing_error,
     )

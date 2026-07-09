@@ -244,6 +244,7 @@ def sync_ranking_items_from_rankings(
     ranking_job_id: int,
     ranking_version: str,
     job_ids: list[int] | None = None,
+    missing_error: str = "NVIDIA did not save a ranking for this job.",
 ) -> dict[str, int]:
     now = datetime.now().isoformat(timespec="seconds")
     conn = connect()
@@ -292,11 +293,11 @@ def sync_ranking_items_from_rankings(
             conn.execute(
                 f"""UPDATE ranking_job_items
                     SET status = 'failed',
-                        error = COALESCE(error, 'NVIDIA did not save a ranking for this job.'),
+                        error = COALESCE(error, ?),
                         finished_at = COALESCE(finished_at, ?),
                         updated_at = ?
                     WHERE ranking_job_id = ? AND job_posting_id IN ({placeholders})""",
-                [now, now, ranking_job_id, *failed_ids],
+                [missing_error[:2000], now, now, ranking_job_id, *failed_ids],
             )
 
         counts = _ranking_job_item_counts(conn, ranking_job_id)

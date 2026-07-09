@@ -161,6 +161,31 @@ def test_rank_jobs_with_nvidia_reports_progress(monkeypatch):
     assert len(progress_events) == 2
 
 
+def test_rank_jobs_with_nvidia_saves_partial_batch_when_response_omits_job(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {"id": 1, "title": "Backend Engineer", "company": "Acme", "description_text": "Python"},
+            {"id": 2, "title": "API Engineer", "company": "Acme", "description_text": "FastAPI"},
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        return {"rankings": [_ranking_payload(1, 80, "APPLY_NOW")]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=2)
+
+    assert summary["processed"] == 2
+    assert summary["saved"] == 1
+    assert summary["failed"] == 1
+    assert set(saved) == {1}
+
+
 def test_nvidia_ranking_is_not_capped_by_heuristic_guards(monkeypatch):
     jobs = pd.DataFrame(
         [

@@ -50,7 +50,7 @@ def run_worker_once(*, ranking_job_id: int | None = None, chunk_size: int = DEFA
     db.mark_ranking_items_running(job_id, item_job_ids)
 
     try:
-        rank_jobs_with_nvidia(
+        summary = rank_jobs_with_nvidia(
             rows,
             model=str(job["model"]),
             request_batch_size=int(job["request_batch_size"]),
@@ -58,7 +58,13 @@ def run_worker_once(*, ranking_job_id: int | None = None, chunk_size: int = DEFA
             ranking_version=str(job["ranking_version"]),
             progress_callback=lambda *_args: None,
         )
-        db.sync_ranking_items_from_rankings(job_id, str(job["ranking_version"]), item_job_ids)
+        missing_error = (
+            "NVIDIA did not return a valid ranking for this job. "
+            "Try rerunning with a smaller batch size if this repeats."
+            if summary.get("failed", 0)
+            else "NVIDIA did not save a ranking for this job."
+        )
+        db.sync_ranking_items_from_rankings(job_id, str(job["ranking_version"]), item_job_ids, missing_error)
         db.complete_ranking_job_if_done(job_id)
     except NvidiaRankingError as exc:
         db.fail_ranking_job(job_id, str(exc))
