@@ -118,3 +118,56 @@ def test_worker_recovers_stale_running_items(tmp_path, monkeypatch):
     assert finished["status"] == "completed"
     assert finished["processed_items"] == 1
     assert finished["saved_items"] == 1
+
+
+def test_worker_failed_item_overwrites_stale_requeue_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    monkeypatch.setattr(worker, "DEFAULT_STALE_SECONDS", 1)
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+    ranking_version = "worker-failed-error-test-v1"
+    ranking_job_id = db.create_ranking_job(
+        provider="nvidia",
+        model="nvidia/test",
+        ranking_version=ranking_version,
+        job_ids=[job_id],
+        request_batch_size=1,
+        max_concurrency=1,
+    )
+    db.start_ranking_job(ranking_job_id)
+    db.mark_ranking_items_running(ranking_job_id, [job_id])
+
+    conn = db._conn()
+    try:
+        conn.execute(
+            """UPDATE ranking_job_items
+               SET updated_at = '2026-01-01T00:00:00'
+               WHERE ranking_job_id = ?""",
+            (ranking_job_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    def fake_rank_jobs_with_nvidia(jobs, **kwargs):
+        return {"processed": len(jobs), "saved": 0, "failed": len(jobs)}
+
+    monkeypatch.setattr(worker, "rank_jobs_with_nvidia", fake_rank_jobs_with_nvidia)
+
+    assert worker.run_worker_once(ranking_job_id=ranking_job_id, chunk_size=10) is True
+
+    conn = db._conn()
+    try:
+        item = conn.execute(
+            "SELECT status, error FROM ranking_job_items WHERE ranking_job_id = ?",
+            (ranking_job_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert item["status"] == "failed"
+    assert item["error"] == (
+        "NVIDIA did not return a valid ranking for this job. "
+        "Try rerunning with a smaller batch size if this repeats."
+    )

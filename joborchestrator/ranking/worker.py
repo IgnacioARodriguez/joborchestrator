@@ -61,7 +61,7 @@ def run_worker(
 def run_worker_once(*, ranking_job_id: int | None = None, chunk_size: int = DEFAULT_WORKER_CHUNK_SIZE) -> bool:
     job = db.get_ranking_job(ranking_job_id) if ranking_job_id is not None else db.get_next_ranking_job()
     if not job or job["status"] not in {"queued", "running"}:
-        logger.info("No queued/running NVIDIA ranking job found job_id=%s", ranking_job_id or "any")
+        logger.debug("No queued/running NVIDIA ranking job found job_id=%s", ranking_job_id or "any")
         return False
 
     if job["provider"] != "nvidia":

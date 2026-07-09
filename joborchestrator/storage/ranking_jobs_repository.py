@@ -402,7 +402,7 @@ def sync_ranking_items_from_rankings(
             conn.execute(
                 f"""UPDATE ranking_job_items
                     SET status = 'failed',
-                        error = COALESCE(error, ?),
+                        error = ?,
                         finished_at = COALESCE(finished_at, ?),
                         updated_at = ?
                     WHERE ranking_job_id = ? AND job_posting_id IN ({placeholders})""",
