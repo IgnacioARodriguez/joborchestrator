@@ -420,9 +420,57 @@ def _materials_validation_error(payload: dict[str, Any]) -> str | None:
             problems.append(f"{field} must be an array")
     if len(str(payload.get("recruiter_message") or "")) > 2500:
         problems.append("recruiter_message is too long")
-    if len(str(payload.get("ats_cv_text") or "")) < 80:
-        problems.append("ats_cv_text is too short to be useful")
+    ats_cv_text = str(payload.get("ats_cv_text") or "")
+    problems.extend(_ats_cv_quality_problems(ats_cv_text))
     return "; ".join(problems) if problems else None
+
+
+def _ats_cv_quality_problems(text: str) -> list[str]:
+    cleaned = _clean_cv_text_for_export(text)
+    normalized = cleaned.lower()
+    raw_normalized = str(text or "").lower()
+    problems: list[str] = []
+    if len(cleaned) < 700:
+        problems.append("ats_cv_text is too short to be a complete ATS CV")
+    if len([line for line in cleaned.splitlines() if line.strip()]) < 18:
+        problems.append("ats_cv_text has too few parseable lines for a complete CV")
+
+    section_patterns = {
+        "summary": ["summary", "profile", "professional summary", "perfil", "resumen"],
+        "experience": ["experience", "work experience", "professional experience", "experiencia"],
+        "skills": ["skills", "technical skills", "core skills", "competencias", "habilidades"],
+        "education": ["education", "formacion", "formación", "academic", "educacion", "educación"],
+    }
+    missing_sections = [
+        section
+        for section, aliases in section_patterns.items()
+        if not any(_contains_section_heading(normalized, alias) for alias in aliases)
+    ]
+    if missing_sections:
+        problems.append(f"ats_cv_text is missing standard ATS sections: {', '.join(missing_sections)}")
+
+    forbidden_markers = [
+        "optimization notes",
+        "ats cv targeting notes",
+        "target role:",
+        "positioning angle:",
+        "do not add skills",
+        "profile-backed keywords",
+        "keywords to emphasize",
+        "internal note",
+    ]
+    found_markers = [marker for marker in forbidden_markers if marker in raw_normalized]
+    if found_markers:
+        problems.append(f"ats_cv_text contains internal/non-CV notes: {', '.join(found_markers[:3])}")
+    return problems
+
+
+def _contains_section_heading(normalized_text: str, heading: str) -> bool:
+    for line in normalized_text.splitlines():
+        stripped = line.strip(" :-\t")
+        if stripped == heading or stripped.startswith(f"{heading}:"):
+            return True
+    return False
 
 
 def _to_dict(value: Any) -> dict[str, Any]:

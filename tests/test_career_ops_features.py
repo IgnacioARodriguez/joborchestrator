@@ -198,6 +198,71 @@ def test_llm_application_kit_validation_rejects_empty_required_sections():
     assert "ats_cv_text is too short" in error
 
 
+def test_llm_application_kit_validation_requires_complete_ats_cv():
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi team",
+            "cover_letter": "",
+            "ats_cv_text": (
+                "ATS CV targeting notes\n"
+                "Target role: Backend Engineer\n"
+                "Python, FastAPI, PostgreSQL\n"
+                "Optimization notes\n"
+                "- Add better keywords"
+            ),
+            "autofill_notes": "Paste the recruiter note.",
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        }
+    )
+
+    assert error is not None
+    assert "too short to be a complete ATS CV" in error
+    assert "missing standard ATS sections" in error
+    assert "internal/non-CV notes" in error
+
+
+def test_llm_application_kit_validation_accepts_complete_parseable_ats_cv():
+    ats_cv_text = """
+Ignacio Rodriguez
+Madrid, Spain | ignacio@example.com | linkedin.com/in/ignacio
+
+Professional Summary
+Backend engineer focused on Python services, FastAPI APIs, PostgreSQL data models, and reliable delivery for product teams.
+Experienced translating business requirements into maintainable systems, improving observability, and collaborating with stakeholders.
+
+Technical Skills
+Python, FastAPI, PostgreSQL, REST APIs, Docker, AWS, CI/CD, SQL, Git, monitoring, documentation, stakeholder collaboration.
+
+Professional Experience
+Backend Engineer | Acme Labs | 2022 - Present
+- Built and maintained Python APIs for internal product workflows used by cross-functional teams.
+- Improved PostgreSQL query patterns and service reliability through profiling, indexing, and clearer ownership.
+- Partnered with product managers to break requirements into scoped backend deliverables and measurable releases.
+- Documented API contracts and operational runbooks to speed onboarding and reduce repeated support questions.
+
+Software Engineer | Example Systems | 2019 - 2022
+- Delivered backend features across REST services, data pipelines, and integrations with external platforms.
+- Supported production troubleshooting, root-cause analysis, and incremental performance improvements.
+- Collaborated with frontend engineers, QA, and business stakeholders in agile delivery cycles.
+
+Education
+Computer Science coursework and continuing professional development in backend engineering, cloud systems, and software delivery.
+""".strip()
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi team",
+            "cover_letter": "",
+            "ats_cv_text": ats_cv_text,
+            "autofill_notes": "Paste the recruiter note.",
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        }
+    )
+
+    assert error is None
+
+
 def test_ats_cv_docx_export_returns_document_bytes():
     content = export_ats_cv_docx_bytes(
         {"title": "Backend Engineer", "company": "Acme"},
