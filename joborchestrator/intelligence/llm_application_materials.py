@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import asdict, is_dataclass
 from io import BytesIO
@@ -13,6 +14,8 @@ from joborchestrator.ranking.profile import load_candidate_profile
 from joborchestrator.ranking.serialization import result_to_dict
 
 DEFAULT_MATERIALS_MODEL = os.getenv("OPENAI_MATERIALS_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4-mini"
+DEFAULT_MATERIALS_VALIDATION_RETRIES = int(os.getenv("OPENAI_MATERIALS_VALIDATION_RETRIES", "1"))
+logger = logging.getLogger(__name__)
 
 
 class LLMMaterialsError(RuntimeError):
@@ -99,6 +102,30 @@ def export_ats_cv_docx_bytes(job: dict[str, Any], ats_cv_text: str) -> bytes:
 
 
 def _call_openai(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
+    validation_feedback: str | None = None
+    for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
+        parsed = _call_openai_once(payload, api_key, model, timeout, validation_feedback)
+        validation_feedback = _materials_validation_error(parsed)
+        if not validation_feedback:
+            return parsed
+        if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
+            logger.warning("Retrying OpenAI materials generation after invalid response: %s", validation_feedback)
+            continue
+        raise LLMMaterialsError(f"OpenAI materials response was incomplete: {validation_feedback}")
+    raise LLMMaterialsError("OpenAI materials response did not produce a usable application kit.")
+
+
+def _call_openai_once(
+    payload: dict[str, Any],
+    api_key: str,
+    model: str,
+    timeout: float,
+    validation_feedback: str | None = None,
+) -> dict[str, Any]:
+    user_payload = dict(payload)
+    if validation_feedback:
+        user_payload["previous_response_error"] = validation_feedback
+        user_payload["instruction"] = "Return a corrected complete JSON object only."
     body = {
         "model": model,
         "store": False,
@@ -108,10 +135,10 @@ def _call_openai(payload: dict[str, Any], api_key: str, model: str, timeout: flo
                 "role": "system",
                 "content": (
                     "You are a strict career application assistant. Create high-quality, truthful, ATS-aware "
-                    "materials. Return only structured JSON."
+                    "materials. Return only structured JSON. Do not leave required sections blank."
                 ),
             },
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ],
         "text": {
             "format": {
@@ -130,8 +157,11 @@ def _call_openai(payload: dict[str, Any], api_key: str, model: str, timeout: flo
             timeout=timeout,
         )
         response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:1000] if exc.response is not None else ""
+        raise LLMMaterialsError(f"OpenAI materials request failed: status={exc.response.status_code} body={detail!r}") from exc
     except httpx.HTTPError as exc:
-        raise LLMMaterialsError(f"OpenAI materials request failed: {exc}") from exc
+        raise LLMMaterialsError(f"OpenAI materials request failed: {type(exc).__name__}: {exc!r}") from exc
 
     try:
         return json.loads(_extract_response_text(response.json()))
@@ -170,6 +200,22 @@ def _extract_response_text(response: dict[str, Any]) -> str:
             if content.get("type") in {"output_text", "text"} and content.get("text"):
                 return content["text"]
     raise LLMMaterialsError("OpenAI materials response did not include text output.")
+
+
+def _materials_validation_error(payload: dict[str, Any]) -> str | None:
+    problems = []
+    required_text = ["recruiter_message", "ats_cv_text", "autofill_notes"]
+    for field in required_text:
+        if not str(payload.get(field) or "").strip():
+            problems.append(f"{field} is required")
+    for field in ["risk_flags", "keywords_used"]:
+        if not isinstance(payload.get(field), list):
+            problems.append(f"{field} must be an array")
+    if len(str(payload.get("recruiter_message") or "")) > 2500:
+        problems.append("recruiter_message is too long")
+    if len(str(payload.get("ats_cv_text") or "")) < 80:
+        problems.append("ats_cv_text is too short to be useful")
+    return "; ".join(problems) if problems else None
 
 
 def _to_dict(value: Any) -> dict[str, Any]:

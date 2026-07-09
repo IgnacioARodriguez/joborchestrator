@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from io import BytesIO
@@ -16,8 +17,11 @@ DEFAULT_PROFILE_EXTRACTION_MODEL = (
     or os.getenv("NVIDIA_MODEL")
     or "nvidia/llama-3.3-nemotron-super-49b-v1"
 )
+DEFAULT_PROFILE_EXTRACTION_TIMEOUT_SECONDS = float(os.getenv("PROFILE_EXTRACTION_TIMEOUT_SECONDS", "180"))
+DEFAULT_PROFILE_EXTRACTION_VALIDATION_RETRIES = int(os.getenv("PROFILE_EXTRACTION_VALIDATION_RETRIES", "1"))
 
 PROFILE_SCHEMA_VERSION = 1
+logger = logging.getLogger(__name__)
 
 
 class CVProfileError(RuntimeError):
@@ -39,7 +43,7 @@ def build_profile_from_cv_text(
     cv_text: str,
     *,
     model: str = DEFAULT_PROFILE_EXTRACTION_MODEL,
-    timeout: float = 90.0,
+    timeout: float = DEFAULT_PROFILE_EXTRACTION_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     text = cv_text.strip()
     if len(text) < 200:
@@ -64,41 +68,63 @@ def build_profile_from_cv_text(
     key = os.getenv("NVIDIA_API_KEY") or os.getenv("NIM_API_KEY")
     if not key:
         raise CVProfileError("NVIDIA_API_KEY or NIM_API_KEY is required to analyze CVs with AI.")
-    response = httpx.post(
-        f"{NVIDIA_BASE_URL.rstrip('/')}/chat/completions",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={
-            "model": model,
-            "temperature": 0.1,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a strict career profile extraction engine. "
-                        "Return only valid JSON matching the requested shape."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "input": payload,
-                            "output_shape": _profile_shape(),
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
-        },
-        timeout=timeout,
-    )
+    validation_feedback: str | None = None
+    for attempt in range(DEFAULT_PROFILE_EXTRACTION_VALIDATION_RETRIES + 1):
+        raw = _call_nvidia_profile_extraction(payload, key, model, timeout, validation_feedback)
+        profile = normalize_profile_payload(_extract_json_object(raw))
+        validation_feedback = _profile_validation_error(profile)
+        if not validation_feedback:
+            return profile
+        if attempt < DEFAULT_PROFILE_EXTRACTION_VALIDATION_RETRIES:
+            logger.warning("Retrying CV profile extraction after invalid response: %s", validation_feedback)
+            continue
+        raise CVProfileError(f"AI profile extraction response was incomplete: {validation_feedback}")
+    raise CVProfileError("AI profile extraction did not produce a usable profile.")
+
+
+def _call_nvidia_profile_extraction(
+    payload: dict[str, Any],
+    api_key: str,
+    model: str,
+    timeout: float,
+    validation_feedback: str | None = None,
+) -> str:
+    user_payload = {
+        "input": payload,
+        "output_shape": _profile_shape(),
+    }
+    if validation_feedback:
+        user_payload["previous_response_error"] = validation_feedback
+        user_payload["instruction"] = "Return a corrected complete JSON object only."
     try:
+        response = httpx.post(
+            f"{NVIDIA_BASE_URL.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model,
+                "temperature": 0.1,
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a strict career profile extraction engine. "
+                            "Return only valid JSON matching the requested shape. "
+                            "Do not return placeholders such as 'strong | medium | weak'."
+                        ),
+                    },
+                    {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+                ],
+            },
+            timeout=timeout,
+        )
         response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:1000] if exc.response is not None else ""
+        raise CVProfileError(f"NVIDIA CV analysis failed: status={exc.response.status_code} body={detail!r}") from exc
     except httpx.HTTPError as exc:
-        raise CVProfileError(f"NVIDIA CV analysis failed: {exc}") from exc
-    content = response.json()["choices"][0]["message"]["content"]
-    return normalize_profile_payload(_extract_json_object(content))
+        raise CVProfileError(f"NVIDIA CV analysis failed: {type(exc).__name__}: {exc!r}") from exc
+    return str(response.json()["choices"][0]["message"]["content"])
 
 
 def normalize_profile_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -260,7 +286,7 @@ def _profile_shape() -> dict[str, Any]:
             {
                 "name": "skill label",
                 "category": "skill category",
-                "level": "strong | medium | weak",
+                "level": "strong",
                 "evidence": "short evidence from CV",
             }
         ],
@@ -274,6 +300,29 @@ def _profile_shape() -> dict[str, Any]:
         "extraction_notes": ["ambiguities the user should review manually"],
         "confidence": "high | medium | low",
     }
+
+
+def _profile_validation_error(profile: dict[str, Any]) -> str | None:
+    problems = []
+    roles = [*profile.get("target_roles", []), *profile.get("secondary_roles", [])]
+    skills = profile.get("skills") or []
+    if not profile.get("headline"):
+        problems.append("headline is required")
+    if not roles:
+        problems.append("at least one target_roles or secondary_roles value is required")
+    if not skills:
+        problems.append("at least one skill with evidence is required")
+    missing_evidence = [skill.get("name") for skill in skills if not skill.get("evidence")]
+    if missing_evidence:
+        problems.append(f"skills missing evidence: {missing_evidence[:10]}")
+    placeholder_levels = [
+        skill.get("name")
+        for skill in skills
+        if "|" in str(skill.get("level") or "") or str(skill.get("level") or "").lower() not in {"strong", "medium", "weak"}
+    ]
+    if placeholder_levels:
+        problems.append(f"skills with invalid level values: {placeholder_levels[:10]}")
+    return "; ".join(problems) if problems else None
 
 
 def _confidence(value: Any) -> str:

@@ -5,6 +5,7 @@ from joborchestrator.intelligence.cover_letter_generator import (
 )
 from joborchestrator.intelligence.ats_autofill import build_autofill_plan
 from joborchestrator.intelligence.llm_application_materials import (
+    _materials_validation_error,
     build_application_kit_with_llm,
     estimate_materials_cost,
     export_ats_cv_docx_bytes,
@@ -154,6 +155,25 @@ def test_llm_application_kit_uses_structured_payload(monkeypatch):
     assert kit["recruiter_message"] == "Hi team"
     assert "FastAPI" in kit["ats_cv_text"]
     assert "LinkedIn" in kit["autofill_notes"]
+
+
+def test_llm_application_kit_validation_rejects_empty_required_sections():
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "",
+            "cover_letter": "",
+            "ats_cv_text": "Tiny",
+            "autofill_notes": "",
+            "risk_flags": "not-array",
+            "keywords_used": [],
+        }
+    )
+
+    assert error is not None
+    assert "recruiter_message is required" in error
+    assert "autofill_notes is required" in error
+    assert "risk_flags must be an array" in error
+    assert "ats_cv_text is too short" in error
 
 
 def test_ats_cv_docx_export_returns_document_bytes():

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from joborchestrator.intelligence.cv_profile_extractor import (
     _extract_json_object,
+    _profile_validation_error,
     normalize_profile_payload,
     profile_payload_to_candidate_profile,
 )
@@ -67,3 +68,20 @@ def test_extract_json_object_accepts_yaml_like_object() -> None:
     assert parsed["headline"] == "Backend Developer"
     assert parsed["target_roles"] == ["Backend Engineer", "API Engineer"]
     assert parsed["skills"][0]["level"] == "strong"
+
+
+def test_profile_validation_requires_useful_llm_output() -> None:
+    profile = normalize_profile_payload(
+        {
+            "headline": "",
+            "target_roles": [],
+            "skills": [{"name": "Python", "category": "Programming", "level": "strong", "evidence": ""}],
+        }
+    )
+
+    error = _profile_validation_error(profile)
+
+    assert error is not None
+    assert "headline is required" in error
+    assert "at least one target_roles" in error
+    assert "skills missing evidence" in error
