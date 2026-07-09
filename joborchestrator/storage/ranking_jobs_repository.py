@@ -63,9 +63,34 @@ def list_ranking_jobs(connect: ConnectionFactory, read_sql_query: ReadSqlQuery, 
     conn = connect()
     try:
         return read_sql_query(
-            """SELECT *
-               FROM ranking_jobs
-               ORDER BY created_at DESC
+            """SELECT
+                   rj.*,
+                   COALESCE(counts.queued_items, 0) AS queued_items,
+                   COALESCE(counts.running_items, 0) AS running_items,
+                   COALESCE(counts.completed_items, 0) AS completed_items,
+                   COALESCE(counts.failed_item_count, 0) AS failed_item_count,
+                   COALESCE(counts.cancelled_items, 0) AS cancelled_items,
+                   (
+                       SELECT error
+                       FROM ranking_job_items rji_error
+                       WHERE rji_error.ranking_job_id = rj.id
+                         AND rji_error.error IS NOT NULL
+                       ORDER BY rji_error.updated_at DESC
+                       LIMIT 1
+                   ) AS latest_item_error
+               FROM ranking_jobs rj
+               LEFT JOIN (
+                   SELECT
+                       ranking_job_id,
+                       SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued_items,
+                       SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running_items,
+                       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_items,
+                       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_item_count,
+                       SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_items
+                   FROM ranking_job_items
+                   GROUP BY ranking_job_id
+               ) counts ON counts.ranking_job_id = rj.id
+               ORDER BY rj.created_at DESC
                LIMIT ?""",
             conn,
             params=(limit,),
@@ -250,6 +275,49 @@ def requeue_stale_ranking_items(
                    WHERE id = ? AND status = 'running'""",
                 (now_text, int(ranking_job_id)),
             )
+        conn.commit()
+        return int(cursor.rowcount if cursor.rowcount is not None else 0)
+    finally:
+        conn.close()
+
+
+def requeue_failed_ranking_items(connect: ConnectionFactory, ranking_job_id: int) -> int:
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = connect()
+    try:
+        cursor = conn.execute(
+            """UPDATE ranking_job_items
+               SET status = 'queued',
+                   error = 'Requeued after failed ranking attempt.',
+                   updated_at = ?
+               WHERE ranking_job_id = ? AND status = 'failed'""",
+            (now, int(ranking_job_id)),
+        )
+        conn.execute(
+            """UPDATE ranking_jobs
+               SET status = 'queued',
+                   error = NULL,
+                   finished_at = NULL,
+                   updated_at = ?
+               WHERE id = ? AND status IN ('failed', 'running', 'queued', 'completed')""",
+            (now, int(ranking_job_id)),
+        )
+        counts = _ranking_job_item_counts(conn, int(ranking_job_id))
+        conn.execute(
+            """UPDATE ranking_jobs
+               SET processed_items = ?,
+                   saved_items = ?,
+                   failed_items = ?,
+                   updated_at = ?
+               WHERE id = ?""",
+            (
+                counts["completed"] + counts["failed"],
+                counts["completed"],
+                counts["failed"],
+                now,
+                int(ranking_job_id),
+            ),
+        )
         conn.commit()
         return int(cursor.rowcount if cursor.rowcount is not None else 0)
     finally:

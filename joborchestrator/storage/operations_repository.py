@@ -58,6 +58,21 @@ def get_latest_operation(connect: ConnectionFactory, operation_type: str | None 
         conn.close()
 
 
+def list_operations(connect: ConnectionFactory, limit: int = 20) -> list[dict]:
+    conn = connect()
+    try:
+        rows = conn.execute(
+            """SELECT *
+               FROM operation_runs
+               ORDER BY created_at DESC, id DESC
+               LIMIT ?""",
+            (int(limit),),
+        ).fetchall()
+        return [operation_row_to_dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def claim_next_operation(
     connect: ConnectionFactory,
     worker_id: str,

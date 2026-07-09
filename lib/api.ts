@@ -82,6 +82,10 @@ export const api = {
     return request<{ operation: OperationRun | null }>(`/api/operations/latest${query}`)
   },
 
+  async getOperations(limit = 10) {
+    return request<{ operations: OperationRun[] }>(`/api/operations?limit=${limit}`)
+  },
+
   async setPipelineStatus(id: string, status: PipelineStatus) {
     return request<{ ok: boolean }>(`/api/jobs/${id}/pipeline`, {
       method: "POST",
@@ -179,6 +183,27 @@ export const api = {
 
   async getRankingJobs() {
     return request<{ jobs: RankingJobRecord[] }>("/api/ranking/jobs")
+  },
+
+  async cancelRankingJob(id: number) {
+    return request<{ job: RankingJobRecord }>(`/api/ranking/jobs/${id}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    })
+  },
+
+  async requeueFailedRankingItems(id: number) {
+    return request<{ requeued: number; job: RankingJobRecord }>(`/api/ranking/jobs/${id}/requeue-failed`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    })
+  },
+
+  async requeueStaleRankingItems(id: number) {
+    return request<{ requeued: number; job: RankingJobRecord }>(`/api/ranking/jobs/${id}/requeue-stale`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    })
   },
 
   async runRankingJobOnce(id: number) {

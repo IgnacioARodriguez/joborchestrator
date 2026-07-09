@@ -189,6 +189,11 @@ def latest_operation(type: str | None = None) -> dict[str, Any]:
     return {"operation": db.get_latest_operation(type)}
 
 
+@app.get("/api/operations")
+def list_operations(limit: int = 20) -> dict[str, Any]:
+    return {"operations": db.list_operations(limit=max(1, min(int(limit), 100)))}
+
+
 @app.get("/api/operations/{operation_id}")
 def get_operation(operation_id: int) -> dict[str, Any]:
     operation = db.get_operation(operation_id)
@@ -401,6 +406,30 @@ def run_ranking_job_once(ranking_job_id: int) -> dict[str, Any]:
 @app.get("/api/ranking/jobs")
 def list_ranking_jobs() -> dict[str, Any]:
     return {"jobs": db.list_ranking_jobs(limit=25).to_dict("records")}
+
+
+@app.post("/api/ranking/jobs/{ranking_job_id}/cancel")
+def cancel_ranking_job(ranking_job_id: int) -> dict[str, Any]:
+    if not db.get_ranking_job(ranking_job_id):
+        raise HTTPException(status_code=404, detail="Ranking job not found")
+    db.cancel_ranking_job(ranking_job_id)
+    return {"job": db.get_ranking_job(ranking_job_id)}
+
+
+@app.post("/api/ranking/jobs/{ranking_job_id}/requeue-failed")
+def requeue_failed_ranking_job_items(ranking_job_id: int) -> dict[str, Any]:
+    if not db.get_ranking_job(ranking_job_id):
+        raise HTTPException(status_code=404, detail="Ranking job not found")
+    requeued = db.requeue_failed_ranking_items(ranking_job_id)
+    return {"requeued": requeued, "job": db.get_ranking_job(ranking_job_id)}
+
+
+@app.post("/api/ranking/jobs/{ranking_job_id}/requeue-stale")
+def requeue_stale_ranking_job_items(ranking_job_id: int, stale_seconds: int = 60) -> dict[str, Any]:
+    if not db.get_ranking_job(ranking_job_id):
+        raise HTTPException(status_code=404, detail="Ranking job not found")
+    requeued = db.requeue_stale_ranking_items(ranking_job_id, stale_seconds=max(1, int(stale_seconds)))
+    return {"requeued": requeued, "job": db.get_ranking_job(ranking_job_id)}
 
 
 def main() -> None:

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import {
+  Ban,
   BriefcaseBusiness,
   DatabaseZap,
   LinkIcon,
@@ -9,6 +10,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Sparkles,
   Upload,
@@ -34,7 +36,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { api } from "@/lib/api"
 import { useStore } from "@/lib/store"
-import type { CompanySource, RankingJobRecord, ScanResult } from "@/lib/types"
+import type { CompanySource, OperationRun, RankingJobRecord, ScanResult } from "@/lib/types"
 
 const DEFAULT_QUERIES = [
   "software engineer",
@@ -91,6 +93,12 @@ function LoadingIcon() {
   return <LoaderCircle className="size-4 animate-spin" data-icon="inline-start" />
 }
 
+function statusVariant(status: string) {
+  if (status === "failed") return "destructive" as const
+  if (status === "completed") return "default" as const
+  return "secondary" as const
+}
+
 function ResultList({ results }: { results: ScanResult[] }) {
   if (results.length === 0) return null
   return (
@@ -128,6 +136,7 @@ export function OpsScreen() {
   const [providers, setProviders] = useState<string[]>([])
   const [searchProviders, setSearchProviders] = useState<string[]>([])
   const [rankingJobs, setRankingJobs] = useState<RankingJobRecord[]>([])
+  const [operations, setOperations] = useState<OperationRun[]>([])
   const [provider, setProvider] = useState("greenhouse")
   const [companyName, setCompanyName] = useState("")
   const [companyRef, setCompanyRef] = useState("")
@@ -143,9 +152,10 @@ export function OpsScreen() {
 
   async function loadOps() {
     try {
-      const [sourceData, rankingData] = await Promise.all([
+      const [sourceData, rankingData, operationData] = await Promise.all([
         api.getSources(),
         api.getRankingJobs(),
+        api.getOperations(8),
       ])
       const profileData = await api.getProfile()
       setSources(sourceData.sources)
@@ -154,6 +164,7 @@ export function OpsScreen() {
       setSearchProviders(sourceData.search_providers)
       setProvider(sourceData.providers[0] ?? "greenhouse")
       setRankingJobs(rankingData.jobs)
+      setOperations(operationData.operations)
     } catch (e) {
       toast.error("Backend unavailable", {
         description: e instanceof Error ? e.message : "Start the API server.",
@@ -490,7 +501,7 @@ export function OpsScreen() {
             {rankingJobs.slice(0, 5).map((job) => (
               <div
                 key={job.id}
-                className="flex items-center justify-between gap-2 rounded-lg border border-border p-2 text-xs"
+                className="flex flex-col gap-2 rounded-lg border border-border p-2 text-xs"
               >
                 <div>
                   <p className="font-medium text-foreground">
@@ -504,9 +515,100 @@ export function OpsScreen() {
                 <Badge variant={job.status === "failed" ? "destructive" : "secondary"}>
                   local worker
                 </Badge>
+                <p className="text-muted-foreground">
+                  {job.queued_items ?? 0} queued - {job.running_items ?? 0} running -{" "}
+                  {job.completed_items ?? 0} done - {job.failed_item_count ?? 0} failed
+                </p>
+                {(job.latest_item_error || job.error) && (
+                  <p className="line-clamp-2 text-muted-foreground">
+                    {job.latest_item_error || job.error}
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy !== null || !["queued", "running"].includes(job.status)}
+                    onClick={() =>
+                      void runAction("refresh-ops", async () => {
+                        await api.requeueStaleRankingItems(job.id)
+                        toast.success(`Requeued stale items for #${job.id}`)
+                      })
+                    }
+                  >
+                    <RotateCcw data-icon="inline-start" />
+                    Requeue stale
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy !== null || (job.failed_item_count ?? job.failed_items) === 0}
+                    onClick={() =>
+                      void runAction("refresh-ops", async () => {
+                        const res = await api.requeueFailedRankingItems(job.id)
+                        toast.success(`Requeued ${res.requeued} failed items`)
+                      })
+                    }
+                  >
+                    <RefreshCw data-icon="inline-start" />
+                    Retry failed
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy !== null || !["queued", "running"].includes(job.status)}
+                    onClick={() =>
+                      void runAction("refresh-ops", async () => {
+                        await api.cancelRankingJob(job.id)
+                        toast.success(`Cancelled ranking job #${job.id}`)
+                      })
+                    }
+                  >
+                    <Ban data-icon="inline-start" />
+                    Cancel
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Recent operations</CardTitle>
+          <CardDescription className="text-xs">
+            Async work handled by local workers.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {operations.map((operation) => (
+            <div
+              key={operation.id}
+              className="flex flex-col gap-1 rounded-lg border border-border p-2 text-xs"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-medium text-foreground">
+                  #{operation.id} Â· {operation.type}
+                </p>
+                <Badge variant={statusVariant(operation.status)}>
+                  {operation.status}
+                </Badge>
+              </div>
+              <p className="text-muted-foreground">
+                {operation.progress_message || "Waiting for worker."}
+              </p>
+              {operation.error && (
+                <p className="line-clamp-2 text-destructive">{operation.error}</p>
+              )}
+              <p className="text-muted-foreground">
+                attempts {operation.attempts} - updated {operation.updated_at}
+              </p>
+            </div>
+          ))}
+          {operations.length === 0 && (
+            <p className="text-xs text-muted-foreground">No async operations yet.</p>
+          )}
         </CardContent>
       </Card>
 

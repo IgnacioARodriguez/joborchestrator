@@ -126,9 +126,15 @@ export interface RankingJobRecord {
   processed_items: number
   saved_items: number
   failed_items: number
+  queued_items?: number
+  running_items?: number
+  completed_items?: number
+  failed_item_count?: number
+  cancelled_items?: number
   created_at: string
   updated_at: string
   error?: string | null
+  latest_item_error?: string | null
 }
 
 export type SkillLevel = "strong" | "medium" | "weak"

@@ -208,6 +208,51 @@ def test_import_cv_queues_operation(tmp_path, monkeypatch):
     assert operation["input_json"]["cv_text"] == "Python backend engineer"
 
 
+def test_operations_list_returns_recent_operations(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    first_id = db.create_operation("first", {}, "Queued first")
+    second_id = db.create_operation("second", {}, "Queued second")
+
+    response = client.get("/api/operations", params={"limit": 5})
+
+    assert response.status_code == 200
+    operations = response.json()["operations"]
+    assert [operation["id"] for operation in operations[:2]] == [second_id, first_id]
+
+
+def test_ranking_job_can_be_cancelled_from_api(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    client.put("/api/profile", json={"profile": profile_payload()})
+    ranking_job_id = client.post("/api/ranking/jobs", json={"limit": 10, "run_once": False}).json()["ranking_job_id"]
+
+    response = client.post(f"/api/ranking/jobs/{ranking_job_id}/cancel", json={})
+
+    assert response.status_code == 200
+    assert response.json()["job"]["status"] == "cancelled"
+
+
+def test_ranking_job_failed_items_can_be_requeued_from_api(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    client.put("/api/profile", json={"profile": profile_payload()})
+    ranking_job_id = client.post("/api/ranking/jobs", json={"limit": 10, "run_once": False}).json()["ranking_job_id"]
+    db.start_ranking_job(ranking_job_id)
+    db.mark_ranking_items_running(ranking_job_id, [job_id])
+    db.fail_ranking_job(ranking_job_id, "NVIDIA timeout")
+
+    response = client.post(f"/api/ranking/jobs/{ranking_job_id}/requeue-failed", json={})
+
+    assert response.status_code == 200
+    assert response.json()["requeued"] == 1
+    queued = db.get_queued_ranking_items(ranking_job_id, limit=10)
+    assert int(queued.iloc[0]["id"]) == job_id
+    refreshed = client.get("/api/ranking/jobs").json()["jobs"][0]
+    assert refreshed["queued_items"] == 1
+    assert refreshed["failed_item_count"] == 0
+
+
 def test_import_cv_rejects_empty_file(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
 

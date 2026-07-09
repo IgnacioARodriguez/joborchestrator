@@ -431,6 +431,10 @@ def get_latest_operation(operation_type: str | None = None) -> dict | None:
     return operations_repository.get_latest_operation(_conn, operation_type)
 
 
+def list_operations(limit: int = 20) -> list[dict]:
+    return operations_repository.list_operations(_conn, limit)
+
+
 def claim_next_operation(worker_id: str, operation_types: list[str] | None = None) -> dict | None:
     return operations_repository.claim_next_operation(_conn, worker_id, operation_types)
 
@@ -666,6 +670,10 @@ def get_queued_ranking_items(ranking_job_id: int, limit: int = 100) -> pd.DataFr
 
 def requeue_stale_ranking_items(ranking_job_id: int | None = None, stale_seconds: int = 60) -> int:
     return ranking_jobs_repository.requeue_stale_ranking_items(_conn, ranking_job_id, stale_seconds)
+
+
+def requeue_failed_ranking_items(ranking_job_id: int) -> int:
+    return ranking_jobs_repository.requeue_failed_ranking_items(_conn, ranking_job_id)
 
 
 def mark_ranking_items_running(ranking_job_id: int, job_ids: list[int]) -> None:
