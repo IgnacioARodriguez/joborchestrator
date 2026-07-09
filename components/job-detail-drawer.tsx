@@ -1,5 +1,6 @@
 "use client"
 
+import type { ReactNode } from "react"
 import {
   Building2,
   Copy,
@@ -32,6 +33,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { DecisionBadge } from "@/components/badges"
 import { ScoreRing } from "@/components/badges"
 import { useStore } from "@/lib/store"
+import { api } from "@/lib/api"
 import { PIPELINE_LABELS } from "@/lib/job-ui"
 import type { JobPosting } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -68,7 +70,15 @@ function EvidenceList({
   )
 }
 
-function MaterialBlock({ label, text }: { label: string; text: string }) {
+function MaterialBlock({
+  label,
+  text,
+  actions,
+}: {
+  label: string
+  text: string
+  actions?: ReactNode
+}) {
   if (!text) return null
   async function copyText() {
     await navigator.clipboard.writeText(text)
@@ -78,10 +88,13 @@ function MaterialBlock({ label, text }: { label: string; text: string }) {
     <div className="flex flex-col gap-1 rounded-lg border border-border bg-muted/30 p-3">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-semibold text-foreground">{label}</p>
-        <Button variant="ghost" size="sm" onClick={() => void copyText()}>
-          <Copy data-icon="inline-start" />
-          Copy
-        </Button>
+        <div className="flex flex-wrap justify-end gap-1">
+          {actions}
+          <Button variant="ghost" size="sm" onClick={() => void copyText()}>
+            <Copy data-icon="inline-start" />
+            Copy
+          </Button>
+        </div>
       </div>
       <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
         {text}
@@ -393,8 +406,26 @@ function DetailBody({
                   text={job.materials.cover_letter}
                 />
                 <MaterialBlock
-                  label="ATS CV notes"
+                  label="Optimized ATS CV"
                   text={job.materials.ats_cv_notes}
+                  actions={
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => window.open(api.materialDownloadUrl(job.id, "docx"), "_blank")}
+                      >
+                        DOCX
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => window.open(api.materialDownloadUrl(job.id, "pdf"), "_blank")}
+                      >
+                        PDF
+                      </Button>
+                    </>
+                  }
                 />
                 <AutofillPlanBlock text={job.materials.autofill_notes} />
               </div>

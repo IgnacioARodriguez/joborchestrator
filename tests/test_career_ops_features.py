@@ -9,6 +9,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     build_application_kit_with_llm,
     estimate_materials_cost,
     export_ats_cv_docx_bytes,
+    export_ats_cv_pdf_bytes,
 )
 from joborchestrator.intelligence.application_materials import (
     ApplicationMaterialsError,
@@ -102,6 +103,7 @@ def test_heuristic_application_kit_uses_profile_skills(monkeypatch):
                 {"name": "Onboarding", "category": "Customer Success", "level": "strong"},
                 {"name": "Renewals", "category": "Revenue", "level": "medium"},
             ],
+            "base_cv_text": "Ignacio Rodriguez\nCustomer success specialist\nLed onboarding programs.",
         },
     )
 
@@ -111,6 +113,8 @@ def test_heuristic_application_kit_uses_profile_skills(monkeypatch):
     )
 
     assert "Customer success specialist" in kit["cover_letter"]
+    assert "Optimized CV" in kit["ats_cv_text"]
+    assert "Ignacio Rodriguez" in kit["ats_cv_text"]
     assert "Onboarding" in kit["ats_cv_text"]
     assert "Python" not in kit["ats_cv_text"]
 
@@ -138,8 +142,21 @@ def test_llm_application_kit_uses_structured_payload(monkeypatch):
 
     from joborchestrator.intelligence import llm_application_materials
 
+    monkeypatch.setattr(
+        llm_application_materials.db,
+        "get_candidate_profile_payload",
+        lambda: {
+            "headline": "Backend engineer",
+            "target_roles": ["Backend Engineer"],
+            "skills": [{"name": "Python", "category": "Programming", "level": "strong"}],
+            "base_cv_text": "Ignacio Rodriguez\nBackend engineer\nExperience with Python APIs.",
+            "base_cv_filename": "Ignacio Rodriguez.pdf",
+        },
+    )
+
     def fake_call(payload, api_key, model, timeout):
         assert payload["candidate_profile"]
+        assert "Ignacio Rodriguez" in payload["base_cv"]["text"]
         assert payload["job"]["title"] == "Backend Engineer"
         return {
             "recruiter_message": "Hi team",
@@ -188,4 +205,14 @@ def test_ats_cv_docx_export_returns_document_bytes():
     )
 
     assert content.startswith(b"PK")
+    assert len(content) > 1000
+
+
+def test_ats_cv_pdf_export_returns_document_bytes():
+    content = export_ats_cv_pdf_bytes(
+        {"title": "Backend Engineer", "company": "Acme"},
+        "Summary\nPython APIs\nPostgreSQL",
+    )
+
+    assert content.startswith(b"%PDF")
     assert len(content) > 1000

@@ -10,8 +10,10 @@ from typing import Any
 import httpx
 
 from joborchestrator.intelligence.llm_costs import estimate_application_kit_tokens, estimate_cost
-from joborchestrator.ranking.profile import load_candidate_profile
+from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
+from joborchestrator.ranking.schemas import CandidateProfile
 from joborchestrator.ranking.serialization import result_to_dict
+from joborchestrator.storage import persistence as db
 
 DEFAULT_MATERIALS_MODEL = os.getenv("OPENAI_MATERIALS_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4-mini"
 DEFAULT_MATERIALS_VALIDATION_RETRIES = int(os.getenv("OPENAI_MATERIALS_VALIDATION_RETRIES", "1"))
@@ -45,21 +47,32 @@ def build_application_kit_with_llm(
     if not key:
         raise LLMMaterialsError("OPENAI_API_KEY is required to generate materials with API.")
 
-    profile = load_candidate_profile()
+    profile_payload = db.get_candidate_profile_payload()
+    if not profile_payload:
+        raise LLMMaterialsError("No candidate profile configured. Upload a CV in Profile before generating materials.")
+    profile = CandidateProfile(**profile_payload_to_candidate_profile(profile_payload))
+    base_cv_text = str(profile_payload.get("base_cv_text") or "").strip()
     payload = {
         "candidate_profile": asdict(profile),
+        "base_cv": {
+            "filename": profile_payload.get("base_cv_filename") or "",
+            "text": base_cv_text[:24000],
+        },
         "job": _compact_job(_to_dict(job)),
         "ranking": result_to_dict(ranking) if ranking is not None else None,
         "goal": (
-            "Generate truthful, editable application materials for this specific job. "
+            "Generate truthful, editable application materials and a complete ATS-optimized CV for this specific job. "
             "Optimize for ATS filters and fast application workflow without inventing experience."
         ),
         "rules": [
             "Do not invent employers, degrees, certifications, years of experience, tools or projects.",
+            "The ats_cv_text field must be a complete rewritten CV, not notes, and must preserve the candidate's real personal details, experience, education, dates, and achievements from base_cv.",
+            "Keep the base CV's overall section structure when possible, but rewrite wording and ordering for ATS fit against this job.",
+            "If base_cv is empty, produce the best complete CV draft possible from the candidate profile and mark missing source limitations in risk_flags.",
             "Use job requirements as keywords only when the candidate can truthfully claim or position adjacent experience.",
             "Recruiter messages must be concise and human. Include a LinkedIn connection note under 300 characters and a longer InMail/email variant.",
             "Output language should match the job posting language unless the user profile clearly indicates otherwise.",
-            "ATS CV text should be a focused one-page CV draft/section set, not generic advice.",
+            "ATS CV text should be ready to copy, export to DOCX/PDF, and submit after human review.",
             "Cover letter can be empty only when application context clearly does not need one; otherwise provide a concise tailored letter.",
             "Autofill notes should include copy-paste answers for common portal questions and caveats for claims to avoid.",
             "List risk_flags for unsupported claims, adjacency framing, or user facts to double-check.",
@@ -99,6 +112,60 @@ def export_ats_cv_docx_bytes(job: dict[str, Any], ats_cv_text: str) -> bytes:
     buffer = BytesIO()
     document.save(buffer)
     return buffer.getvalue()
+
+
+def export_ats_cv_pdf_bytes(job: dict[str, Any], ats_cv_text: str) -> bytes:
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import cm
+        from reportlab.pdfgen import canvas
+    except ModuleNotFoundError as exc:
+        raise LLMMaterialsError("PDF export requires reportlab. Install it with `pip install reportlab`.") from exc
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    x = 2 * cm
+    y = height - 2 * cm
+    pdf.setFont("Helvetica-Bold", 13)
+    title = job.get("title") or "Target role"
+    company = job.get("company") or "Target company"
+    pdf.drawString(x, y, f"ATS CV - {title} - {company}")
+    y -= 0.8 * cm
+    pdf.setFont("Helvetica", 10)
+    for raw_line in str(ats_cv_text or "").splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            y -= 0.35 * cm
+            continue
+        for chunk in _wrap_pdf_line(line, max_chars=95):
+            if y < 2 * cm:
+                pdf.showPage()
+                y = height - 2 * cm
+                pdf.setFont("Helvetica", 10)
+            pdf.drawString(x, y, chunk)
+            y -= 0.42 * cm
+    pdf.save()
+    return buffer.getvalue()
+
+
+def _wrap_pdf_line(line: str, max_chars: int) -> list[str]:
+    words = line.split()
+    if not words:
+        return [""]
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
 
 
 def _call_openai(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:

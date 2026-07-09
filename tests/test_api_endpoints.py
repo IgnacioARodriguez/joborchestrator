@@ -290,6 +290,25 @@ def test_generate_materials_persists_application_kit(tmp_path, monkeypatch):
     assert job["materials"]["ats_cv_notes"] == "Python\nFastAPI"
 
 
+def test_download_optimized_cv_materials(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    job_id = save_job_with_rankings()
+    db.update_job_application_materials(
+        job_id,
+        ats_cv_text="Ignacio Rodriguez\nBackend Engineer\nPython APIs and PostgreSQL.",
+    )
+
+    docx_response = client.get(f"/api/jobs/{job_id}/materials/ats-cv.docx")
+    pdf_response = client.get(f"/api/jobs/{job_id}/materials/ats-cv.pdf")
+
+    assert docx_response.status_code == 200
+    assert docx_response.content.startswith(b"PK")
+    assert "application/vnd.openxmlformats" in docx_response.headers["content-type"]
+    assert pdf_response.status_code == 200
+    assert pdf_response.content.startswith(b"%PDF")
+    assert pdf_response.headers["content-type"] == "application/pdf"
+
+
 def test_generate_materials_reports_missing_job(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
 

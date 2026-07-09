@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -27,6 +27,8 @@ from joborchestrator.intelligence.llm_application_materials import (
     DEFAULT_MATERIALS_MODEL,
     LLMMaterialsError,
     build_application_kit_with_llm,
+    export_ats_cv_docx_bytes,
+    export_ats_cv_pdf_bytes,
 )
 from joborchestrator.paths import SALIDAS_DIR
 from joborchestrator.ranking.nvidia_ranker import (
@@ -262,6 +264,38 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
     fresh = db.get_job_posting(job_id)
     rankings = latest_rankings_by_job_id()
     return {"job": job_dto(fresh, rankings.get(job_id))}
+
+
+@app.get("/api/jobs/{job_id}/materials/ats-cv.{file_format}")
+def download_ats_cv(job_id: int, file_format: Literal["docx", "pdf"]) -> Response:
+    job = db.get_job_posting(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    ats_cv_text = str(job.get("ats_cv_text") or "").strip()
+    if not ats_cv_text:
+        raise HTTPException(status_code=404, detail="Generate the application kit before downloading the optimized CV.")
+    filename = _download_filename(job, file_format)
+    try:
+        if file_format == "docx":
+            content = export_ats_cv_docx_bytes(job, ats_cv_text)
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            content = export_ats_cv_pdf_bytes(job, ats_cv_text)
+            media_type = "application/pdf"
+    except LLMMaterialsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _download_filename(job: dict[str, Any], extension: str) -> str:
+    raw = f"{job.get('company') or 'company'}-{job.get('title') or 'role'}-ats-cv"
+    slug = "".join(char.lower() if char.isalnum() else "-" for char in raw)
+    slug = "-".join(part for part in slug.split("-") if part)
+    return f"{slug[:80]}.{extension}"
 
 
 @app.get("/api/sources")

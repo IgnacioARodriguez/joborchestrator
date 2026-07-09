@@ -37,6 +37,8 @@ def test_worker_processes_cv_profile_import(monkeypatch):
     assert worker.process_once("worker-1") is True
 
     assert saved["target_roles"] == ["Backend Engineer"]
+    assert saved["base_cv_text"] == "Python FastAPI"
+    assert saved["base_cv_filename"] == "cv.pdf"
     assert completed["id"] == 12
     assert completed["output"]["profile_saved"] is True
     assert "Calling NVIDIA to analyze your CV." in progress

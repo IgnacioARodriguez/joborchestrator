@@ -165,6 +165,8 @@ def normalize_profile_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "suggested_roles_reasoning": str(payload.get("suggested_roles_reasoning") or "").strip(),
         "extraction_notes": _clean_list(payload.get("extraction_notes")),
         "confidence": _confidence(payload.get("confidence")),
+        "base_cv_text": str(payload.get("base_cv_text") or "").strip(),
+        "base_cv_filename": str(payload.get("base_cv_filename") or "").strip(),
     }
 
 

@@ -73,6 +73,8 @@ def _process_cv_profile_import(operation: dict[str, Any]) -> None:
         profile = build_profile_from_cv_text(cv_text, timeout=180.0)
     except CVProfileError:
         raise
+    profile["base_cv_text"] = cv_text
+    profile["base_cv_filename"] = filename
     db.update_operation_progress(operation_id, "Saving extracted profile.")
     db.save_candidate_profile_payload(profile)
     db.complete_operation(

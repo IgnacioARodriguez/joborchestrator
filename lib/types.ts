@@ -168,6 +168,8 @@ export interface CandidateProfile {
   real_experience_years: number
   notes: string
   suggested_roles_reasoning: string
+  base_cv_text?: string
+  base_cv_filename?: string
 }
 
 export type OperationStatus = "queued" | "running" | "completed" | "failed" | "cancelled"

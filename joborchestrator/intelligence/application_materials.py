@@ -38,8 +38,24 @@ def build_ats_cv_text(
     headline = str(profile.get("headline") or "Candidate profile").strip()
     keyword_text = ", ".join(_truthful_keywords(profile, keywords, limit=10)) or "profile-backed skills"
     angle = job.get("recommended_application_angle") or f"Position around {headline}."
+    base_cv = str(profile.get("base_cv_text") or "").strip()
+    if base_cv:
+        return (
+            f"{headline}\n\n"
+            f"Target role: {title} at {company}\n"
+            f"ATS keywords to emphasize truthfully: {keyword_text}\n"
+            f"Positioning angle: {angle}\n\n"
+            "Optimized CV\n"
+            "-------------\n"
+            f"{base_cv}\n\n"
+            "Optimization notes\n"
+            "------------------\n"
+            "- Preserve the candidate's real personal details, experience, education, dates, and achievements from the base CV.\n"
+            "- Reorder and emphasize the profile-backed keywords above when they are already true.\n"
+            "- Do not add skills, employers, degrees, certifications, dates, or achievements that are not present in the base CV/profile."
+        )
     return (
-        f"ATS CV targeting notes for {title} at {company}\n\n"
+        f"ATS optimized CV draft for {title} at {company}\n\n"
         f"Headline: {headline}\n\n"
         f"Profile-backed keywords to naturally include: {keyword_text}.\n\n"
         f"Positioning angle: {angle}\n\n"

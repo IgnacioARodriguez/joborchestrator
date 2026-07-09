@@ -107,6 +107,10 @@ export const api = {
     })
   },
 
+  materialDownloadUrl(id: string, format: "docx" | "pdf") {
+    return `${API_BASE}/api/jobs/${id}/materials/ats-cv.${format}`
+  },
+
   async getSources() {
     return request<{
       sources: CompanySource[]
