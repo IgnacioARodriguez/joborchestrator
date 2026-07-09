@@ -8,6 +8,7 @@ import {
   Star,
   X,
   Radio,
+  FileText,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -25,6 +26,12 @@ export function JobCard({
   onOpen: (id: string) => void
 }) {
   const { setPipelineStatus, markOpened } = useStore()
+  const hasMaterials = Boolean(
+    job.materials.recruiter_message ||
+      job.materials.cover_letter ||
+      job.materials.ats_cv_notes ||
+      job.materials.autofill_notes,
+  )
 
   function openExternal(url: string) {
     markOpened(job.id)
@@ -43,6 +50,12 @@ export function JobCard({
             <div className="flex flex-wrap items-center gap-1.5">
               <ScoreBadge score={job.ranking.final_score} />
               <DecisionBadge decision={job.ranking.decision} />
+              {hasMaterials ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                  <FileText className="size-3" />
+                  Kit ready
+                </span>
+              ) : null}
             </div>
             <h3 className="text-pretty text-sm font-semibold leading-snug text-foreground">
               {job.title}
