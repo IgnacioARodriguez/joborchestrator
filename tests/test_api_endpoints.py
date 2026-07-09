@@ -167,6 +167,30 @@ def test_ranking_job_queues_unranked_jobs_with_profile(tmp_path, monkeypatch):
     assert body["ranking_job_id"] is not None
 
 
+def test_ranking_job_run_once_is_disabled_by_default(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    client.put("/api/profile", json={"profile": profile_payload()})
+
+    response = client.post("/api/ranking/jobs", json={"limit": 10, "run_once": True})
+
+    assert response.status_code == 409
+    assert "local NVIDIA ranking worker" in response.json()["detail"]
+    assert client.get("/api/ranking/jobs").json()["jobs"] == []
+
+
+def test_existing_ranking_job_run_once_is_disabled_by_default(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    client.put("/api/profile", json={"profile": profile_payload()})
+    ranking_job_id = client.post("/api/ranking/jobs", json={"limit": 10, "run_once": False}).json()["ranking_job_id"]
+
+    response = client.post(f"/api/ranking/jobs/{ranking_job_id}/run-once", json={})
+
+    assert response.status_code == 409
+    assert "local NVIDIA ranking worker" in response.json()["detail"]
+
+
 def test_import_cv_queues_operation(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
     monkeypatch.setattr(api, "extract_text_from_cv", lambda filename, content: "Python backend engineer")

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react"
 import {
   BriefcaseBusiness,
-  CheckCircle2,
   DatabaseZap,
   LinkIcon,
   LoaderCircle,
@@ -449,7 +448,7 @@ export function OpsScreen() {
           </CardTitle>
           <CardDescription className="text-xs">
             {hasProfile
-              ? "Queues unranked jobs for the existing NVIDIA ranking worker."
+              ? "Queues unranked jobs. Your local NVIDIA ranking worker processes them."
               : "Upload and save a profile before running NVIDIA ranking."}
           </CardDescription>
         </CardHeader>
@@ -484,6 +483,9 @@ export function OpsScreen() {
               </p>
             )}
           </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Keep <span className="font-mono">run_ranking_worker.bat</span> running on your PC to process queued jobs and write logs locally.
+          </p>
           <div className="flex flex-col gap-2">
             {rankingJobs.slice(0, 5).map((job) => (
               <div
@@ -499,31 +501,9 @@ export function OpsScreen() {
                     {job.saved_items} saved · {job.failed_items} failed
                   </p>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={busy !== null || !hasProfile || !["queued", "running"].includes(job.status)}
-                  aria-disabled={!hasProfile}
-                  onClick={() =>
-                    hasProfile
-                      ? void runAction(`ranking-${job.id}`, async () => {
-                          await api.runRankingJobOnce(job.id)
-                          toast.success(`Processed ranking job #${job.id}`)
-                        })
-                      : toast.error("Profile required", {
-                          description: "Upload a CV in Profile before running NVIDIA ranking.",
-                        })
-                  }
-                >
-                  {busy === `ranking-${job.id}` ? (
-                    <LoadingIcon />
-                  ) : job.status === "completed" ? (
-                    <CheckCircle2 data-icon="inline-start" />
-                  ) : (
-                    <Play data-icon="inline-start" />
-                  )}
-                  {busy === `ranking-${job.id}` ? "Ranking" : "Run once"}
-                </Button>
+                <Badge variant={job.status === "failed" ? "destructive" : "secondary"}>
+                  local worker
+                </Badge>
               </div>
             ))}
           </div>

@@ -136,6 +136,8 @@ python -m joborchestrator.worker --once
 python -m joborchestrator.worker
 ```
 
+This worker processes async operations such as CV profile imports. Local logs are written to `logs/worker.log`.
+
 LinkedIn scraper:
 
 ```bash
@@ -146,7 +148,16 @@ Ranking worker:
 
 ```bash
 python -m joborchestrator.ranking.worker --once
+python -m joborchestrator.ranking.worker
 ```
+
+On Windows you can also run:
+
+```bash
+run_ranking_worker.bat
+```
+
+The dashboard queues NVIDIA ranking jobs, but long-running ranking is processed by this local worker. Local ranking logs are written to `logs/ranking-worker.log`. The API `run-once` endpoint is disabled by default to avoid Vercel/serverless timeouts; set `ALLOW_API_RANKING_RUN_ONCE=1` only for controlled local debugging.
 
 ## Local Data
 

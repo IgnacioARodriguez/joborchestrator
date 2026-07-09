@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
@@ -353,6 +354,14 @@ async def import_linkedin_excel(
 def create_ranking_job(payload: RankingJobPayload) -> dict[str, Any]:
     if not db.get_candidate_profile_payload():
         raise HTTPException(status_code=400, detail="No candidate profile configured. Upload a CV in Profile before running NVIDIA ranking.")
+    if payload.run_once and os.getenv("ALLOW_API_RANKING_RUN_ONCE") != "1":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Ranking jobs must be processed by the local NVIDIA ranking worker. "
+                "Start run_ranking_worker.bat on your PC instead of running this from the API."
+            ),
+        )
     job_ids = payload.job_ids
     if not job_ids:
         unranked = db.get_unranked_jobs(ranking_version=payload.ranking_version, limit=payload.limit)
@@ -378,6 +387,14 @@ def create_ranking_job(payload: RankingJobPayload) -> dict[str, Any]:
 def run_ranking_job_once(ranking_job_id: int) -> dict[str, Any]:
     if not db.get_candidate_profile_payload():
         raise HTTPException(status_code=400, detail="No candidate profile configured. Upload a CV in Profile before running NVIDIA ranking.")
+    if os.getenv("ALLOW_API_RANKING_RUN_ONCE") != "1":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Ranking jobs must be processed by the local NVIDIA ranking worker. "
+                "Start run_ranking_worker.bat on your PC instead of running this from the API."
+            ),
+        )
     return {"processed": run_worker_once(ranking_job_id=ranking_job_id)}
 
 
