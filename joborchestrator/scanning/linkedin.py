@@ -19,6 +19,7 @@ La idea es exportar raw data para analizar despuÃ©s con IA.
 
 import asyncio
 import json
+import os
 import random
 import re
 from datetime import datetime
@@ -103,8 +104,16 @@ LIMITE_RESULTADOS = 100000
 MAX_PAGINAS = 200
 PAGINAS_CONSECUTIVAS_SIN_NUEVOS = 3
 
-OUTPUT_DIR = Path("salidas_todas_posiciones_raw")
-OUTPUT_DIR.mkdir(exist_ok=True)
+def resolve_output_dir() -> Path:
+    configured = os.getenv("LINKEDIN_OUTPUT_DIR")
+    if configured:
+        return Path(configured)
+    if os.getenv("VERCEL"):
+        return Path("/tmp/salidas_todas_posiciones_raw")
+    return Path("salidas_todas_posiciones_raw")
+
+
+OUTPUT_DIR = resolve_output_dir()
 
 ARCHIVO_SALIDA = str(
     OUTPUT_DIR / f"ofertas_todas_posiciones_RAW_{datetime.now().strftime('%Y%m%d_%H%M')}"

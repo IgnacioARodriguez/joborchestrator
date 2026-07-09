@@ -5,7 +5,15 @@ from joborchestrator.scanning.linkedin import (
     TARGET_ROLE_FRESHNESS_WINDOW_SECONDS,
     build_busquedas_from_profile,
     build_linkedin_search_params,
+    resolve_output_dir,
 )
+
+
+def test_resolve_output_dir_uses_tmp_on_vercel(monkeypatch):
+    monkeypatch.delenv("LINKEDIN_OUTPUT_DIR", raising=False)
+    monkeypatch.setenv("VERCEL", "1")
+
+    assert resolve_output_dir().as_posix() == "/tmp/salidas_todas_posiciones_raw"
 
 
 def test_build_busquedas_from_profile_adds_freshness_by_role_priority():
