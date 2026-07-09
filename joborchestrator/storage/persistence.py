@@ -664,6 +664,10 @@ def get_queued_ranking_items(ranking_job_id: int, limit: int = 100) -> pd.DataFr
     return ranking_jobs_repository.get_queued_ranking_items(_conn, _read_sql_query, ranking_job_id, limit)
 
 
+def requeue_stale_ranking_items(ranking_job_id: int | None = None, stale_seconds: int = 60) -> int:
+    return ranking_jobs_repository.requeue_stale_ranking_items(_conn, ranking_job_id, stale_seconds)
+
+
 def mark_ranking_items_running(ranking_job_id: int, job_ids: list[int]) -> None:
     ranking_jobs_repository.mark_ranking_items_running(_conn, ranking_job_id, job_ids)
 

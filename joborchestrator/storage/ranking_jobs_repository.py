@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable
 
 import pandas as pd
@@ -211,6 +211,47 @@ def get_queued_ranking_items(
             conn,
             params=(ranking_job_id, limit),
         )
+    finally:
+        conn.close()
+
+
+def requeue_stale_ranking_items(
+    connect: ConnectionFactory,
+    ranking_job_id: int | None = None,
+    stale_seconds: int = 60,
+) -> int:
+    now = datetime.now()
+    cutoff = (now - timedelta(seconds=max(1, int(stale_seconds)))).isoformat(timespec="seconds")
+    now_text = now.isoformat(timespec="seconds")
+    conn = connect()
+    try:
+        params: list[object] = [
+            "Requeued after worker timeout or interrupted run-once.",
+            now_text,
+            cutoff,
+        ]
+        job_filter = ""
+        if ranking_job_id is not None:
+            job_filter = " AND ranking_job_id = ?"
+            params.append(int(ranking_job_id))
+        cursor = conn.execute(
+            f"""UPDATE ranking_job_items
+                SET status = 'queued',
+                    error = ?,
+                    updated_at = ?
+                WHERE status = 'running'
+                  AND updated_at <= ?{job_filter}""",
+            params,
+        )
+        if ranking_job_id is not None:
+            conn.execute(
+                """UPDATE ranking_jobs
+                   SET updated_at = ?
+                   WHERE id = ? AND status = 'running'""",
+                (now_text, int(ranking_job_id)),
+            )
+        conn.commit()
+        return int(cursor.rowcount if cursor.rowcount is not None else 0)
     finally:
         conn.close()
 

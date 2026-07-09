@@ -9,6 +9,7 @@ from joborchestrator.storage import persistence as db
 
 DEFAULT_WORKER_CHUNK_SIZE = int(os.getenv("RANKING_WORKER_CHUNK_SIZE", "100"))
 DEFAULT_POLL_SECONDS = float(os.getenv("RANKING_WORKER_POLL_SECONDS", "5"))
+DEFAULT_STALE_SECONDS = int(os.getenv("RANKING_WORKER_STALE_SECONDS", "60"))
 
 
 def run_worker(
@@ -41,6 +42,7 @@ def run_worker_once(*, ranking_job_id: int | None = None, chunk_size: int = DEFA
     if current_job is None or current_job["status"] != "running":
         return True
 
+    db.requeue_stale_ranking_items(job_id, stale_seconds=DEFAULT_STALE_SECONDS)
     rows = db.get_queued_ranking_items(job_id, limit=max(1, int(chunk_size)))
     if rows.empty:
         db.complete_ranking_job_if_done(job_id)
