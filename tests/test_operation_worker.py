@@ -74,3 +74,54 @@ def test_worker_persists_cv_profile_import_failure(monkeypatch):
     assert failed["id"] == 13
     assert "NVIDIA timeout" in failed["error"]
     assert failed["message"] == "Worker failed. Check local logs."
+
+
+def test_worker_processes_application_materials_generation(monkeypatch):
+    saved = {}
+    completed = {}
+    progress = []
+
+    monkeypatch.setattr(
+        worker.db,
+        "claim_next_operation",
+        lambda worker_id, operation_types: {
+            "id": 21,
+            "type": "application_materials_generation",
+            "input_json": {"job_id": 5, "provider": "nvidia", "model": "test-model", "shortlist": True},
+        },
+    )
+    monkeypatch.setattr(worker.db, "update_operation_progress", lambda op_id, message: progress.append(message))
+    monkeypatch.setattr(
+        worker,
+        "_job_for_materials",
+        lambda job_id: ({"id": job_id, "title": "Backend Engineer", "company": "Acme"}, None),
+    )
+    monkeypatch.setattr(
+        worker,
+        "build_application_kit_with_nvidia",
+        lambda job, ranking=None, model=None: {
+            "recruiter_message": "Hi recruiter",
+            "cover_letter": "Dear team",
+            "ats_cv_text": "Professional Summary\nBackend engineer\n\nTechnical Skills\nPython\n\nProfessional Experience\nBuilt APIs\n\nEducation\nCS",
+            "autofill_notes": "Paste answers",
+        },
+    )
+    monkeypatch.setattr(
+        worker.db,
+        "update_job_application_materials",
+        lambda job_id, **kwargs: saved.update({"job_id": job_id, **kwargs}),
+    )
+    monkeypatch.setattr(
+        worker.db,
+        "complete_operation",
+        lambda op_id, output, message: completed.update({"id": op_id, "output": output, "message": message}),
+    )
+    monkeypatch.setattr(worker.db, "fail_operation", lambda *args: (_ for _ in ()).throw(AssertionError("unexpected failure")))
+
+    assert worker.process_once("worker-1") is True
+
+    assert saved["job_id"] == 5
+    assert saved["pipeline_status"] == "shortlisted"
+    assert saved["recruiter_message"] == "Hi recruiter"
+    assert completed["output"]["materials_saved"] is True
+    assert "Generating nvidia application materials." in progress

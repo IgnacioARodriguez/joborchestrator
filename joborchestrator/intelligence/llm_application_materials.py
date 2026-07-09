@@ -23,6 +23,7 @@ DEFAULT_NVIDIA_MATERIALS_MODEL = (
     or "nvidia/llama-3.3-nemotron-super-49b-v1"
 )
 NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1"
+DEFAULT_NVIDIA_MATERIALS_TIMEOUT_SECONDS = float(os.getenv("NVIDIA_MATERIALS_TIMEOUT_SECONDS", "300"))
 DEFAULT_MATERIALS_VALIDATION_RETRIES = int(os.getenv("OPENAI_MATERIALS_VALIDATION_RETRIES", "1"))
 logger = logging.getLogger(__name__)
 
@@ -55,8 +56,8 @@ def build_application_kit_with_llm(
         raise LLMMaterialsError("OPENAI_API_KEY is required to generate materials with API.")
 
     payload = _materials_payload(job, ranking)
-    response = _call_openai(payload, key, model or DEFAULT_MATERIALS_MODEL, timeout)
-    return _kit_from_response(response)
+    kit_response = _call_openai(payload, key, model or DEFAULT_MATERIALS_MODEL, timeout)
+    return _kit_from_response(kit_response)
 
 
 def build_application_kit_with_nvidia(
@@ -65,15 +66,17 @@ def build_application_kit_with_nvidia(
     *,
     model: str | None = None,
     api_key: str | None = None,
-    timeout: float = 180.0,
+    timeout: float = DEFAULT_NVIDIA_MATERIALS_TIMEOUT_SECONDS,
 ) -> dict[str, str]:
     key = api_key or os.getenv("NVIDIA_API_KEY") or os.getenv("NIM_API_KEY")
     if not key:
         raise LLMMaterialsError("NVIDIA_API_KEY or NIM_API_KEY is required to generate materials with NVIDIA.")
 
     payload = _materials_payload(job, ranking)
-    response = _call_nvidia(payload, key, model or DEFAULT_NVIDIA_MATERIALS_MODEL, timeout)
-    return _kit_from_response(response)
+    selected_model = model or DEFAULT_NVIDIA_MATERIALS_MODEL
+    cv_response = _call_nvidia_cv(payload, key, selected_model, timeout)
+    kit_response = _call_nvidia_kit(payload, key, selected_model, timeout)
+    return _kit_from_response({**kit_response, **cv_response})
 
 
 def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
@@ -126,6 +129,36 @@ def _kit_from_response(response: dict[str, Any]) -> dict[str, str]:
         "ats_cv_text": str(response["ats_cv_text"]),
         "autofill_notes": str(response["autofill_notes"]),
     }
+
+
+def build_ats_cv_with_nvidia(
+    job: Any,
+    ranking: Any | None = None,
+    *,
+    model: str | None = None,
+    api_key: str | None = None,
+    timeout: float = DEFAULT_NVIDIA_MATERIALS_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    key = api_key or os.getenv("NVIDIA_API_KEY") or os.getenv("NIM_API_KEY")
+    if not key:
+        raise LLMMaterialsError("NVIDIA_API_KEY or NIM_API_KEY is required to generate materials with NVIDIA.")
+    payload = _materials_payload(job, ranking)
+    return _call_nvidia_cv(payload, key, model or DEFAULT_NVIDIA_MATERIALS_MODEL, timeout)
+
+
+def build_lightweight_kit_with_nvidia(
+    job: Any,
+    ranking: Any | None = None,
+    *,
+    model: str | None = None,
+    api_key: str | None = None,
+    timeout: float = DEFAULT_NVIDIA_MATERIALS_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    key = api_key or os.getenv("NVIDIA_API_KEY") or os.getenv("NIM_API_KEY")
+    if not key:
+        raise LLMMaterialsError("NVIDIA_API_KEY or NIM_API_KEY is required to generate materials with NVIDIA.")
+    payload = _materials_payload(job, ranking)
+    return _call_nvidia_kit(payload, key, model or DEFAULT_NVIDIA_MATERIALS_MODEL, timeout)
 
 
 def export_ats_cv_docx_bytes(job: dict[str, Any], ats_cv_text: str) -> bytes:
@@ -260,6 +293,110 @@ def _call_nvidia(payload: dict[str, Any], api_key: str, model: str, timeout: flo
             continue
         raise LLMMaterialsError(f"NVIDIA materials response was incomplete: {validation_feedback}")
     raise LLMMaterialsError("NVIDIA materials response did not produce a usable application kit.")
+
+
+def _call_nvidia_cv(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
+    validation_feedback: str | None = None
+    for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
+        parsed = _call_nvidia_contract_once(
+            _nvidia_cv_contract(),
+            payload,
+            api_key,
+            model,
+            timeout,
+            validation_feedback,
+        )
+        validation_feedback = _ats_cv_response_validation_error(parsed)
+        if not validation_feedback:
+            return parsed
+        if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
+            logger.warning(
+                "Retrying NVIDIA ATS CV generation after invalid response: %s received_keys=%s",
+                validation_feedback,
+                sorted(parsed.keys()),
+            )
+            continue
+        raise LLMMaterialsError(f"NVIDIA ATS CV response was incomplete: {validation_feedback}")
+    raise LLMMaterialsError("NVIDIA ATS CV response did not produce a usable CV.")
+
+
+def _call_nvidia_kit(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
+    validation_feedback: str | None = None
+    for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
+        parsed = _call_nvidia_contract_once(
+            _nvidia_kit_contract(),
+            payload,
+            api_key,
+            model,
+            timeout,
+            validation_feedback,
+        )
+        validation_feedback = _kit_response_validation_error(parsed)
+        if not validation_feedback:
+            return parsed
+        if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
+            logger.warning(
+                "Retrying NVIDIA kit generation after invalid response: %s received_keys=%s",
+                validation_feedback,
+                sorted(parsed.keys()),
+            )
+            continue
+        raise LLMMaterialsError(f"NVIDIA kit response was incomplete: {validation_feedback}")
+    raise LLMMaterialsError("NVIDIA kit response did not produce usable materials.")
+
+
+def _call_nvidia_contract_once(
+    contract: str,
+    payload: dict[str, Any],
+    api_key: str,
+    model: str,
+    timeout: float,
+    validation_feedback: str | None = None,
+) -> dict[str, Any]:
+    user_content = contract + "\n\nContext:\n" + json.dumps(payload, ensure_ascii=False)
+    if validation_feedback:
+        user_content += (
+            "\n\nYour previous response was rejected because: "
+            f"{validation_feedback}\nReturn a corrected complete JSON object only."
+        )
+    try:
+        response = httpx.post(
+            f"{NVIDIA_BASE_URL.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model,
+                "temperature": 0,
+                "top_p": 0.95,
+                "max_tokens": int(os.getenv("NVIDIA_MATERIALS_MAX_TOKENS", "8000")),
+                "frequency_penalty": 0,
+                "presence_penalty": 0,
+                "stream": False,
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a strict career application assistant. Return only JSON that matches "
+                            "the requested shape. Do not include markdown fences or commentary."
+                        ),
+                    },
+                    {"role": "user", "content": user_content},
+                ],
+            },
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:1000] if exc.response is not None else ""
+        raise LLMMaterialsError(f"NVIDIA materials request failed: status={exc.response.status_code} body={detail!r}") from exc
+    except httpx.HTTPError as exc:
+        raise LLMMaterialsError(f"NVIDIA materials request failed: {type(exc).__name__}: {exc!r}") from exc
+
+    try:
+        content = response.json()["choices"][0]["message"]["content"]
+        return json.loads(_extract_json_object_text(str(content)))
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise LLMMaterialsError(f"NVIDIA materials response was not valid JSON: {exc}") from exc
 
 
 def _call_nvidia_once(
@@ -399,6 +536,47 @@ def _materials_schema() -> dict[str, Any]:
     }
 
 
+def _nvidia_cv_contract() -> str:
+    return """
+Return a complete ATS-optimized CV for the target job.
+Use only truthful facts from Context.candidate_profile and Context.base_cv.
+Do not invent employers, degrees, certifications, dates, tools, or achievements.
+
+Shape:
+{
+  "ats_cv_text": "Candidate Name\\nContact line\\n\\nProfessional Summary\\n...\\n\\nTechnical Skills\\n...\\n\\nProfessional Experience\\n...\\n\\nEducation\\n...",
+  "risk_flags": [],
+  "keywords_used": []
+}
+
+Rules for ats_cv_text:
+- It must be the final CV only, with no internal notes, instructions, target-role notes, or optimization commentary.
+- It must include these parseable headings: Professional Summary, Technical Skills, Professional Experience, Education.
+- Use simple text, standard bullets, and no tables.
+- Keep real dates, employers, titles, education, and contact details from the base CV when available.
+""".strip()
+
+
+def _nvidia_kit_contract() -> str:
+    return """
+Return lightweight application materials for the target job.
+Use only truthful facts from Context.candidate_profile and Context.base_cv.
+
+Shape:
+{
+  "recruiter_message": "short LinkedIn connection note plus optional longer variant",
+  "cover_letter": "concise tailored cover letter or empty string",
+  "autofill_notes": "structured copy-paste answers and application caveats"
+}
+
+Rules:
+- Do not include the ATS CV in this response.
+- recruiter_message and autofill_notes are required.
+- Keep language aligned with the job posting language.
+- Do not invent facts.
+""".strip()
+
+
 def _extract_response_text(response: dict[str, Any]) -> str:
     if response.get("output_text"):
         return response["output_text"]
@@ -411,17 +589,33 @@ def _extract_response_text(response: dict[str, Any]) -> str:
 
 def _materials_validation_error(payload: dict[str, Any]) -> str | None:
     problems = []
-    required_text = ["recruiter_message", "ats_cv_text", "autofill_notes"]
-    for field in required_text:
+    kit_error = _kit_response_validation_error(payload)
+    cv_error = _ats_cv_response_validation_error(payload)
+    if kit_error:
+        problems.append(kit_error)
+    if cv_error:
+        problems.append(cv_error)
+    return "; ".join(problems) if problems else None
+
+
+def _kit_response_validation_error(payload: dict[str, Any]) -> str | None:
+    problems = []
+    for field in ["recruiter_message", "autofill_notes"]:
         if not str(payload.get(field) or "").strip():
             problems.append(f"{field} is required")
+    if len(str(payload.get("recruiter_message") or "")) > 2500:
+        problems.append("recruiter_message is too long")
+    return "; ".join(problems) if problems else None
+
+
+def _ats_cv_response_validation_error(payload: dict[str, Any]) -> str | None:
+    problems = []
+    if not str(payload.get("ats_cv_text") or "").strip():
+        problems.append("ats_cv_text is required")
     for field in ["risk_flags", "keywords_used"]:
         if not isinstance(payload.get(field), list):
             problems.append(f"{field} must be an array")
-    if len(str(payload.get("recruiter_message") or "")) > 2500:
-        problems.append("recruiter_message is too long")
-    ats_cv_text = str(payload.get("ats_cv_text") or "")
-    problems.extend(_ats_cv_quality_problems(ats_cv_text))
+    problems.extend(_ats_cv_quality_problems(str(payload.get("ats_cv_text") or "")))
     return "; ".join(problems) if problems else None
 
 

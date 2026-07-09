@@ -25,10 +25,7 @@ from joborchestrator.intelligence.cv_profile_extractor import (
 )
 from joborchestrator.intelligence.llm_application_materials import (
     DEFAULT_MATERIALS_MODEL,
-    DEFAULT_NVIDIA_MATERIALS_MODEL,
     LLMMaterialsError,
-    build_application_kit_with_llm,
-    build_application_kit_with_nvidia,
     export_ats_cv_docx_bytes,
     export_ats_cv_pdf_bytes,
 )
@@ -246,20 +243,19 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
     keywords = parse_json_value(ranking.get("cv_keywords_to_emphasize_json"), []) if ranking else []
     try:
         provider = payload.provider or ("openai" if payload.use_llm else "heuristic")
-        if provider == "openai":
-            kit = build_application_kit_with_llm(
-                job,
-                api_key=payload.api_key,
-                model=payload.model,
+        if provider in {"openai", "nvidia"}:
+            operation_id = db.create_operation(
+                "application_materials_generation",
+                {
+                    "job_id": job_id,
+                    "provider": provider,
+                    "model": payload.model,
+                    "shortlist": payload.shortlist,
+                },
+                f"Queued {provider} application materials generation.",
             )
-        elif provider == "nvidia":
-            kit = build_application_kit_with_nvidia(
-                job,
-                api_key=payload.api_key,
-                model=payload.model if payload.model != DEFAULT_MATERIALS_MODEL else DEFAULT_NVIDIA_MATERIALS_MODEL,
-            )
-        else:
-            kit = build_application_kit(job, keywords=keywords)
+            return {"operation_id": operation_id, "status": "queued"}
+        kit = build_application_kit(job, keywords=keywords)
     except (ApplicationMaterialsError, LLMMaterialsError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

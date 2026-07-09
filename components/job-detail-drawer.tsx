@@ -1,6 +1,6 @@
 "use client"
 
-import type { ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import {
   Building2,
   Copy,
@@ -212,8 +212,49 @@ function DetailBody({
   job: JobPosting
   onClose: () => void
 }) {
-  const { setPipelineStatus, markOpened, generateMaterials } = useStore()
+  const { setPipelineStatus, markOpened, generateMaterials, refresh } = useStore()
+  const [materialsOperationId, setMaterialsOperationId] = useState<number | null>(null)
   const { evidence } = job.ranking
+
+  useEffect(() => {
+    if (!materialsOperationId) return
+    let stopped = false
+    let timer: number | undefined
+    const poll = async () => {
+      try {
+        const response = await api.getOperation(materialsOperationId)
+        if (stopped) return
+        if (response.operation.status === "completed") {
+          await refresh()
+          if (!stopped) {
+            setMaterialsOperationId(null)
+            toast.success("Application kit ready", { description: job.title })
+          }
+          return
+        }
+        if (response.operation.status === "failed") {
+          setMaterialsOperationId(null)
+          toast.error("Application kit failed", {
+            description: response.operation.error ?? "Check local worker logs.",
+          })
+          return
+        }
+        timer = window.setTimeout(poll, 2500)
+      } catch (e) {
+        if (!stopped) {
+          setMaterialsOperationId(null)
+          toast.error("Could not check materials generation", {
+            description: e instanceof Error ? e.message : "Backend request failed.",
+          })
+        }
+      }
+    }
+    timer = window.setTimeout(poll, 1000)
+    return () => {
+      stopped = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [job.title, materialsOperationId, refresh])
 
   function openExternal(url: string) {
     markOpened(job.id)
@@ -276,10 +317,13 @@ function DetailBody({
             variant="outline"
             onClick={async () => {
               try {
-                await generateMaterials(job.id, "nvidia")
-                toast.success("NVIDIA kit generated", {
-                  description: job.title,
-                })
+                const result = await generateMaterials(job.id, "nvidia")
+                if (result.operation_id) {
+                  setMaterialsOperationId(result.operation_id)
+                  toast.success("NVIDIA kit queued", { description: job.title })
+                } else {
+                  toast.success("NVIDIA kit generated", { description: job.title })
+                }
               } catch (e) {
                 toast.error("Could not generate NVIDIA kit", {
                   description:
@@ -296,10 +340,13 @@ function DetailBody({
             variant="outline"
             onClick={async () => {
               try {
-                await generateMaterials(job.id, "openai")
-                toast.success("OpenAI kit generated", {
-                  description: job.title,
-                })
+                const result = await generateMaterials(job.id, "openai")
+                if (result.operation_id) {
+                  setMaterialsOperationId(result.operation_id)
+                  toast.success("OpenAI kit queued", { description: job.title })
+                } else {
+                  toast.success("OpenAI kit generated", { description: job.title })
+                }
               } catch (e) {
                 toast.error("Could not generate OpenAI kit", {
                   description:
