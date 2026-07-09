@@ -64,11 +64,16 @@ def test_autofill_plan_contains_contextual_answers():
     plan = build_autofill_plan(job, ats_type="greenhouse")
 
     assert plan["ats_type"] == "greenhouse"
+    assert plan["automation_mode"] == "assisted_copy_paste"
+    assert plan["preflight_checklist"]
+    assert plan["browser_steps"]
     assert plan["questions"]
     assert any("Why" in q["question"] for q in plan["questions"])
     assert plan["copy_paste_block"]
     assert plan["field_mappings"]
     assert "resume" in plan["field_mappings"]
+    assert plan["extension_payload"]["mode"] == "assist_only"
+    assert any(response["needs_review"] for response in plan["form_responses"])
 
 
 def test_heuristic_application_kit_requires_dynamic_profile(monkeypatch):

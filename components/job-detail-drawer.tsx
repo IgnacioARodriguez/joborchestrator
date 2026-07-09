@@ -2,6 +2,7 @@
 
 import {
   Building2,
+  Copy,
   MapPin,
   Radio,
   ExternalLink,
@@ -69,12 +70,124 @@ function EvidenceList({
 
 function MaterialBlock({ label, text }: { label: string; text: string }) {
   if (!text) return null
+  async function copyText() {
+    await navigator.clipboard.writeText(text)
+    toast.success("Copied", { description: label })
+  }
   return (
     <div className="flex flex-col gap-1 rounded-lg border border-border bg-muted/30 p-3">
-      <p className="text-xs font-semibold text-foreground">{label}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-foreground">{label}</p>
+        <Button variant="ghost" size="sm" onClick={() => void copyText()}>
+          <Copy data-icon="inline-start" />
+          Copy
+        </Button>
+      </div>
       <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
         {text}
       </p>
+    </div>
+  )
+}
+
+function parseAutofillPlan(text: string) {
+  try {
+    const parsed = JSON.parse(text) as {
+      preflight_checklist?: string[]
+      browser_steps?: string[]
+      copy_paste_block?: string
+      form_responses?: Array<{
+        field?: string
+        question?: string
+        answer?: string
+        confidence?: string
+        needs_review?: boolean
+      }>
+    }
+    return parsed && typeof parsed === "object" ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function AutofillPlanBlock({ text }: { text: string }) {
+  const plan = parseAutofillPlan(text)
+  if (!plan) return <MaterialBlock label="Autofill notes" text={text} />
+
+  const copyText = async (label: string, value: string) => {
+    await navigator.clipboard.writeText(value)
+    toast.success("Copied", { description: label })
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-foreground">
+          Application workflow
+        </p>
+        {plan.copy_paste_block && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void copyText("Application answers", plan.copy_paste_block ?? "")}
+          >
+            <Copy data-icon="inline-start" />
+            Copy answers
+          </Button>
+        )}
+      </div>
+      {plan.preflight_checklist && plan.preflight_checklist.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <p className="text-xs font-medium text-foreground">Preflight</p>
+          <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+            {plan.preflight_checklist.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {plan.browser_steps && plan.browser_steps.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <p className="text-xs font-medium text-foreground">Browser steps</p>
+          <ol className="list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
+            {plan.browser_steps.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ol>
+        </div>
+      )}
+      {plan.form_responses && plan.form_responses.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-medium text-foreground">Prepared answers</p>
+          {plan.form_responses.map((response) => (
+            <div
+              key={`${response.field}-${response.question}`}
+              className="rounded-md border border-border bg-background/60 p-2"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs font-medium text-foreground">
+                  {response.question || response.field}
+                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void copyText(response.field || "Answer", response.answer || "")}
+                >
+                  <Copy data-icon="inline-start" />
+                  Copy
+                </Button>
+              </div>
+              <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+                {response.answer}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                confidence {response.confidence || "medium"}
+                {response.needs_review ? " - review before using" : ""}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -283,10 +396,7 @@ function DetailBody({
                   label="ATS CV notes"
                   text={job.materials.ats_cv_notes}
                 />
-                <MaterialBlock
-                  label="Autofill notes"
-                  text={job.materials.autofill_notes}
-                />
+                <AutofillPlanBlock text={job.materials.autofill_notes} />
               </div>
             </section>
           </>
