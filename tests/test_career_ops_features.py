@@ -5,6 +5,7 @@ from joborchestrator.intelligence.cover_letter_generator import (
 )
 from joborchestrator.intelligence.ats_autofill import build_autofill_plan
 from joborchestrator.intelligence.llm_application_materials import (
+    _experience_coverage_problems,
     _materials_validation_error,
     _materials_payload,
     build_application_kit_with_llm,
@@ -285,6 +286,85 @@ Computer Science coursework and continuing professional development in backend e
     )
 
     assert error is None
+
+
+def test_ats_cv_validation_rejects_omitted_base_experiences():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+- Built dashboards.
+Backend Developer August 2022 - October 2022
+Globant Client: Tigo LATAM Buenos Aires, Argentina
+- Built AWS microservices.
+Full Stack Developer November 2021 - August 2022
+Balloon Group Buenos Aires, Argentina
+- Built web applications.
+PROJECTS
+AI Automation
+""".strip()
+    incomplete_cv = """
+Ignacio Rodriguez
+
+Professional Summary
+Backend developer.
+
+Technical Skills
+Python, Django, AWS, PostgreSQL.
+
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | October 2022 - April 2025
+- Built dashboards.
+
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_coverage_problems(base_cv, incomplete_cv)
+
+    assert problems
+    assert "Globant" in problems[0]
+    assert "Balloon" in problems[0]
+
+
+def test_ats_cv_validation_accepts_all_base_experiences():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+Backend Developer August 2022 - October 2022
+Globant Client: Tigo LATAM Buenos Aires, Argentina
+Full Stack Developer November 2021 - August 2022
+Balloon Group Buenos Aires, Argentina
+PROJECTS
+AI Automation
+""".strip()
+    complete_cv = """
+Professional Summary
+Backend developer.
+Technical Skills
+Python, Django, AWS, PostgreSQL.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | October 2022 - April 2025
+- Built dashboards.
+Backend Developer | Globant (Client: Tigo LATAM) | August 2022 - October 2022
+- Built AWS microservices.
+Full Stack Developer | Balloon Group | November 2021 - August 2022
+- Built web applications.
+Education
+Software Engineering.
+""".strip()
+
+    assert _experience_coverage_problems(base_cv, complete_cv) == []
 
 
 def test_ats_cv_docx_export_returns_document_bytes():

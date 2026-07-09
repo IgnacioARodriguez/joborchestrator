@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import unicodedata
 from dataclasses import asdict, is_dataclass
 from io import BytesIO
 from typing import Any
@@ -279,7 +281,7 @@ def _call_openai(payload: dict[str, Any], api_key: str, model: str, timeout: flo
     validation_feedback: str | None = None
     for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
         parsed = _call_openai_once(payload, api_key, model, timeout, validation_feedback)
-        validation_feedback = _materials_validation_error(parsed)
+        validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload))
         if not validation_feedback:
             return parsed
         if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
@@ -314,7 +316,7 @@ def _call_nvidia_cv(payload: dict[str, Any], api_key: str, model: str, timeout: 
             timeout,
             validation_feedback,
         )
-        validation_feedback = _ats_cv_response_validation_error(parsed)
+        validation_feedback = _ats_cv_response_validation_error(parsed, _base_cv_text(payload))
         if not validation_feedback:
             return parsed
         if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
@@ -560,6 +562,9 @@ Shape:
 Rules for ats_cv_text:
 - It must be the final CV only, with no internal notes, instructions, target-role notes, or optimization commentary.
 - It must include these parseable headings: Professional Summary, Technical Skills, Professional Experience, Education.
+- It must preserve every role from Context.base_cv EXPERIENCE section.
+- Do not omit, merge, or collapse employers, titles, locations, or date ranges from the base CV.
+- You may tailor bullets per role for the target job, but older or less relevant roles must still appear with at least one truthful bullet.
 - Use simple text, standard bullets, and no tables.
 - Keep real dates, employers, titles, education, and contact details from the base CV when available.
 """.strip()
@@ -595,10 +600,10 @@ def _extract_response_text(response: dict[str, Any]) -> str:
     raise LLMMaterialsError("OpenAI materials response did not include text output.")
 
 
-def _materials_validation_error(payload: dict[str, Any]) -> str | None:
+def _materials_validation_error(payload: dict[str, Any], base_cv_text: str | None = None) -> str | None:
     problems = []
     kit_error = _kit_response_validation_error(payload)
-    cv_error = _ats_cv_response_validation_error(payload)
+    cv_error = _ats_cv_response_validation_error(payload, base_cv_text)
     if kit_error:
         problems.append(kit_error)
     if cv_error:
@@ -616,15 +621,24 @@ def _kit_response_validation_error(payload: dict[str, Any]) -> str | None:
     return "; ".join(problems) if problems else None
 
 
-def _ats_cv_response_validation_error(payload: dict[str, Any]) -> str | None:
+def _ats_cv_response_validation_error(payload: dict[str, Any], base_cv_text: str | None = None) -> str | None:
     problems = []
-    if not str(payload.get("ats_cv_text") or "").strip():
+    ats_cv_text = str(payload.get("ats_cv_text") or "")
+    if not ats_cv_text.strip():
         problems.append("ats_cv_text is required")
     for field in ["risk_flags", "keywords_used"]:
         if not isinstance(payload.get(field), list):
             problems.append(f"{field} must be an array")
-    problems.extend(_ats_cv_quality_problems(str(payload.get("ats_cv_text") or "")))
+    problems.extend(_ats_cv_quality_problems(ats_cv_text))
+    problems.extend(_experience_coverage_problems(str(base_cv_text or ""), ats_cv_text))
     return "; ".join(problems) if problems else None
+
+
+def _base_cv_text(payload: dict[str, Any]) -> str:
+    base_cv = payload.get("base_cv")
+    if isinstance(base_cv, dict):
+        return str(base_cv.get("text") or "")
+    return ""
 
 
 def _ats_cv_quality_problems(text: str) -> list[str]:
@@ -673,6 +687,112 @@ def _contains_section_heading(normalized_text: str, heading: str) -> bool:
         if stripped == heading or stripped.startswith(f"{heading}:"):
             return True
     return False
+
+
+def _experience_coverage_problems(base_cv_text: str, ats_cv_text: str) -> list[str]:
+    entries = _extract_base_experience_entries(base_cv_text)
+    if len(entries) < 2:
+        return []
+    normalized_cv = _normalize_for_match(ats_cv_text)
+    missing = []
+    for entry in entries:
+        terms = entry["terms"]
+        if not any(term in normalized_cv for term in terms):
+            missing.append(entry["label"])
+    if missing:
+        return [f"ats_cv_text omitted base CV experience entries: {', '.join(missing[:6])}"]
+    return []
+
+
+def _extract_base_experience_entries(base_cv_text: str) -> list[dict[str, Any]]:
+    section = _experience_section(base_cv_text)
+    if not section:
+        return []
+    lines = [line.strip() for line in section.splitlines() if line.strip()]
+    entries: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        match = _date_range_match(line)
+        if not match:
+            continue
+        title = line[: match.start()].strip(" -|")
+        company = _next_company_line(lines, index + 1)
+        if not title or not company:
+            continue
+        terms = _company_match_terms(company)
+        if not terms:
+            continue
+        entries.append(
+            {
+                "title": title,
+                "company": company,
+                "label": f"{title} at {company}",
+                "terms": terms,
+            }
+        )
+    return entries
+
+
+def _experience_section(text: str) -> str:
+    match = re.search(
+        r"(?ims)^\s*(experience|professional experience|experiencia)\s*$([\s\S]*?)(?=^\s*(projects|technical skills|skills|education|formaci[oó]n)\s*$|\Z)",
+        text,
+    )
+    return match.group(2) if match else ""
+
+
+def _date_range_match(line: str) -> re.Match[str] | None:
+    month = (
+        r"january|february|march|april|may|june|july|august|september|october|november|december|"
+        r"enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre"
+    )
+    return re.search(rf"(?i)\b(?:{month})\s+\d{{4}}\s*[-–—]\s*(?:(?:{month})\s+\d{{4}}|present|current|actualidad)", line)
+
+
+def _next_company_line(lines: list[str], start: int) -> str:
+    for line in lines[start : start + 3]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("•", "-", "*")):
+            continue
+        if _date_range_match(stripped):
+            continue
+        return stripped
+    return ""
+
+
+def _company_match_terms(company: str) -> list[str]:
+    normalized = _normalize_for_match(company)
+    stopwords = {
+        "client",
+        "cliente",
+        "malaga",
+        "spain",
+        "espana",
+        "buenos",
+        "aires",
+        "argentina",
+        "remote",
+        "remoto",
+        "consulting",
+        "group",
+    }
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9]+", normalized)
+        if len(token) >= 4 and token not in stopwords
+    ]
+    seen = set()
+    unique = []
+    for token in tokens:
+        if token not in seen:
+            seen.add(token)
+            unique.append(token)
+    return unique[:5]
+
+
+def _normalize_for_match(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", str(text or ""))
+    ascii_text = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return ascii_text.lower()
 
 
 def _to_dict(value: Any) -> dict[str, Any]:
