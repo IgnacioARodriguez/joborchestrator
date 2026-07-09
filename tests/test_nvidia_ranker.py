@@ -272,6 +272,30 @@ def test_nvidia_response_contract_does_not_request_speed_signal():
     assert "speed_signal" not in nvidia_ranker._response_contract()
 
 
+def test_nvidia_response_contract_avoids_decision_placeholder():
+    contract = nvidia_ranker._response_contract()
+
+    assert "APPLY_NOW | APPLY_WITH_TAILORED_CV" not in contract
+    assert "Never return the pipe-separated placeholder" in contract
+
+
+def test_nvidia_batch_validation_reports_missing_ids_and_invalid_decisions():
+    result = {
+        "rankings": [
+            _ranking_payload(1, 80, "APPLY_NOW | APPLY_WITH_TAILORED_CV | MAYBE | SKIP | AVOID")
+        ]
+    }
+
+    error = nvidia_ranker._nvidia_batch_validation_error(
+        result,
+        [{"id": 1}, {"id": 2}],
+    )
+
+    assert error is not None
+    assert "missing job_id values [2]" in error
+    assert "invalid decision values" in error
+
+
 def _ranking_payload(job_id: int, score: int, decision: str) -> dict:
     return {
         "job_id": job_id,

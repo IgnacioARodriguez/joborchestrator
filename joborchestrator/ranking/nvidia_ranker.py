@@ -13,7 +13,7 @@ import pandas as pd
 
 from joborchestrator.ranking.llm_ranker import _ranking_from_payload
 from joborchestrator.ranking.ranking_rules import NVIDIA_EXTRA_RULES, RANKING_GOAL, RANKING_RULES, SCORING_RUBRIC
-from joborchestrator.ranking.schemas import CandidateProfile
+from joborchestrator.ranking.schemas import CandidateProfile, VALID_DECISIONS
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.storage import persistence as db
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
@@ -28,6 +28,7 @@ DEFAULT_NVIDIA_REQUEST_BATCH_SIZE = int(os.getenv("NVIDIA_RANKING_BATCH_SIZE", "
 DEFAULT_NVIDIA_MAX_CONCURRENCY = int(os.getenv("NVIDIA_RANKING_MAX_CONCURRENCY", "1"))
 DEFAULT_NVIDIA_MAX_TOKENS = int(os.getenv("NVIDIA_RANKING_MAX_TOKENS", "8192"))
 DEFAULT_NVIDIA_TIMEOUT_SECONDS = float(os.getenv("NVIDIA_RANKING_TIMEOUT_SECONDS", "180"))
+DEFAULT_NVIDIA_VALIDATION_RETRIES = int(os.getenv("NVIDIA_RANKING_VALIDATION_RETRIES", "1"))
 logger = logging.getLogger(__name__)
 
 
@@ -143,16 +144,27 @@ def _call_nvidia_batch(
     timeout: float,
 ) -> dict[str, Any]:
     payload = build_nvidia_ranking_payload(jobs)
-    body = _nvidia_chat_body(payload, model)
-    response = httpx.post(
-        f"{base_url.rstrip('/')}/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json=body,
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-    return _extract_json_object(content)
+    validation_feedback: str | None = None
+    for attempt in range(DEFAULT_NVIDIA_VALIDATION_RETRIES + 1):
+        body = _nvidia_chat_body(payload, model, validation_feedback=validation_feedback)
+        response = httpx.post(
+            f"{base_url.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=body,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+        parsed = _extract_json_object(content)
+        validation_feedback = _nvidia_batch_validation_error(parsed, jobs)
+        if not validation_feedback:
+            return parsed
+        if attempt < DEFAULT_NVIDIA_VALIDATION_RETRIES:
+            logger.warning("Retrying NVIDIA ranking batch after invalid response: %s", validation_feedback)
+            continue
+        logger.warning("NVIDIA ranking batch still invalid after retry; applying valid partial results: %s", validation_feedback)
+        return parsed
+    raise NvidiaRankingError("NVIDIA ranking batch could not be validated.")
 
 
 async def _rank_nvidia_batch_async(
@@ -211,16 +223,27 @@ async def _call_nvidia_batch_async(
     client: httpx.AsyncClient,
 ) -> dict[str, Any]:
     payload = build_nvidia_ranking_payload(jobs)
-    body = _nvidia_chat_body(payload, model)
-    response = await client.post(
-        f"{base_url.rstrip('/')}/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json=body,
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-    return _extract_json_object(content)
+    validation_feedback: str | None = None
+    for attempt in range(DEFAULT_NVIDIA_VALIDATION_RETRIES + 1):
+        body = _nvidia_chat_body(payload, model, validation_feedback=validation_feedback)
+        response = await client.post(
+            f"{base_url.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=body,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+        parsed = _extract_json_object(content)
+        validation_feedback = _nvidia_batch_validation_error(parsed, jobs)
+        if not validation_feedback:
+            return parsed
+        if attempt < DEFAULT_NVIDIA_VALIDATION_RETRIES:
+            logger.warning("Retrying NVIDIA ranking batch after invalid response: %s", validation_feedback)
+            continue
+        logger.warning("NVIDIA ranking batch still invalid after retry; applying valid partial results: %s", validation_feedback)
+        return parsed
+    raise NvidiaRankingError("NVIDIA ranking batch could not be validated.")
 
 
 def _apply_nvidia_batch_result(
@@ -268,7 +291,13 @@ def _apply_nvidia_batch_result(
         summary["failed"] += len(batch)
 
 
-def _nvidia_chat_body(payload: dict[str, Any], model: str) -> dict[str, Any]:
+def _nvidia_chat_body(payload: dict[str, Any], model: str, validation_feedback: str | None = None) -> dict[str, Any]:
+    user_content = _response_contract() + "\n\nContext:\n" + json.dumps(payload, ensure_ascii=False)
+    if validation_feedback:
+        user_content += (
+            "\n\nYour previous response was rejected because: "
+            f"{validation_feedback}\nReturn a corrected complete JSON object only."
+        )
     return {
         "model": model,
         "temperature": 0,
@@ -288,7 +317,7 @@ def _nvidia_chat_body(payload: dict[str, Any], model: str) -> dict[str, Any]:
             },
             {
                 "role": "user",
-                "content": _response_contract() + "\n\nContext:\n" + json.dumps(payload, ensure_ascii=False),
+                "content": user_content,
             },
         ],
     }
@@ -296,13 +325,17 @@ def _nvidia_chat_body(payload: dict[str, Any], model: str) -> dict[str, Any]:
 
 def _response_contract() -> str:
     return """
-Return exactly:
+Return exactly one ranking for every job in Context.jobs.
+Use only these decision values: APPLY_NOW, APPLY_WITH_TAILORED_CV, MAYBE, SKIP, AVOID.
+Never return the pipe-separated placeholder text as a value.
+
+Shape:
 {
   "rankings": [
     {
       "job_id": 123,
       "final_score": 0,
-      "decision": "APPLY_NOW | APPLY_WITH_TAILORED_CV | MAYBE | SKIP | AVOID",
+      "decision": "APPLY_NOW",
       "confidence": 0.0,
       "scores": {
         "technical_fit": 0,
@@ -360,6 +393,35 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise NvidiaRankingError("NVIDIA response JSON must be an object.")
     return parsed
+
+
+def _nvidia_batch_validation_error(result: dict[str, Any], jobs: list[dict[str, Any]]) -> str | None:
+    rankings = result.get("rankings")
+    if not isinstance(rankings, list):
+        return "response must include a `rankings` array"
+
+    expected_ids = sorted({int(row.get("id") or row.get("job_id")) for row in jobs})
+    returned_ids = sorted(
+        {
+            int(item["job_id"])
+            for item in rankings
+            if isinstance(item, dict) and item.get("job_id") is not None
+        }
+    )
+    missing_ids = sorted(set(expected_ids) - set(returned_ids))
+    invalid_decisions = sorted(
+        {
+            str(item.get("decision"))
+            for item in rankings
+            if isinstance(item, dict) and str(item.get("decision")) not in VALID_DECISIONS
+        }
+    )
+    problems = []
+    if missing_ids:
+        problems.append(f"missing job_id values {missing_ids}")
+    if invalid_decisions:
+        problems.append(f"invalid decision values {invalid_decisions}")
+    return "; ".join(problems) if problems else None
 
 
 def _exception_summary(exc: Exception) -> str:
