@@ -94,13 +94,8 @@ def export_ats_cv_docx_bytes(job: dict[str, Any], ats_cv_text: str) -> bytes:
     except ModuleNotFoundError as exc:
         raise LLMMaterialsError("DOCX export requires python-docx. Install it with `pip install python-docx`.") from exc
 
-    title = job.get("title") or "Target role"
-    company = job.get("company") or "Target company"
     document = Document()
-    document.add_heading(f"ATS CV - {title}", level=1)
-    document.add_paragraph(f"Target company: {company}")
-    document.add_paragraph("")
-    for block in str(ats_cv_text or "").splitlines():
+    for block in _clean_cv_text_for_export(ats_cv_text).splitlines():
         text = block.strip()
         if not text:
             document.add_paragraph("")
@@ -127,13 +122,8 @@ def export_ats_cv_pdf_bytes(job: dict[str, Any], ats_cv_text: str) -> bytes:
     width, height = A4
     x = 2 * cm
     y = height - 2 * cm
-    pdf.setFont("Helvetica-Bold", 13)
-    title = job.get("title") or "Target role"
-    company = job.get("company") or "Target company"
-    pdf.drawString(x, y, f"ATS CV - {title} - {company}")
-    y -= 0.8 * cm
     pdf.setFont("Helvetica", 10)
-    for raw_line in str(ats_cv_text or "").splitlines():
+    for raw_line in _clean_cv_text_for_export(ats_cv_text).splitlines():
         line = raw_line.rstrip()
         if not line:
             y -= 0.35 * cm
@@ -147,6 +137,42 @@ def export_ats_cv_pdf_bytes(job: dict[str, Any], ats_cv_text: str) -> bytes:
             y -= 0.42 * cm
     pdf.save()
     return buffer.getvalue()
+
+
+def _clean_cv_text_for_export(text: str) -> str:
+    cleaned = str(text or "")
+    replacements = {
+        "\x7f": "-",
+        "\u2022": "-",
+        "\u2023": "-",
+        "\u25e6": "-",
+    }
+    for old, new in replacements.items():
+        cleaned = cleaned.replace(old, new)
+    forbidden_sections = [
+        "Optimization notes",
+        "ATS CV targeting notes",
+        "ATS optimized CV draft",
+        "Optimized CV",
+    ]
+    lines = []
+    skip_rest = False
+    for raw_line in cleaned.splitlines():
+        stripped = raw_line.strip()
+        if any(stripped.lower().startswith(section.lower()) for section in forbidden_sections):
+            if stripped.lower().startswith("optimization notes"):
+                skip_rest = True
+            continue
+        if skip_rest:
+            continue
+        if stripped.startswith("Target role:") or stripped.startswith("Positioning angle:"):
+            continue
+        if stripped.startswith("ATS keywords to emphasize truthfully:"):
+            continue
+        if set(stripped) <= {"-"}:
+            continue
+        lines.append(raw_line)
+    return "\n".join(lines).strip()
 
 
 def _wrap_pdf_line(line: str, max_chars: int) -> list[str]:

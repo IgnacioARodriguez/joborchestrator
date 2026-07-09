@@ -113,9 +113,9 @@ def test_heuristic_application_kit_uses_profile_skills(monkeypatch):
     )
 
     assert "Customer success specialist" in kit["cover_letter"]
-    assert "Optimized CV" in kit["ats_cv_text"]
     assert "Ignacio Rodriguez" in kit["ats_cv_text"]
     assert "Onboarding" in kit["ats_cv_text"]
+    assert "Optimization notes" not in kit["ats_cv_text"]
     assert "Python" not in kit["ats_cv_text"]
 
 
@@ -216,3 +216,19 @@ def test_ats_cv_pdf_export_returns_document_bytes():
 
     assert content.startswith(b"%PDF")
     assert len(content) > 1000
+
+
+def test_ats_cv_export_strips_internal_optimization_notes():
+    content = export_ats_cv_pdf_bytes(
+        {"title": "Backend Engineer", "company": "Acme"},
+        "ATS CV - Backend Engineer\nIgnacio Rodriguez\n\x7f Python APIs\nOptimization notes\n- Internal note",
+    )
+
+    from pypdf import PdfReader
+    from io import BytesIO
+
+    text = PdfReader(BytesIO(content)).pages[0].extract_text()
+    assert "Ignacio Rodriguez" in text
+    assert "Optimization notes" not in text
+    assert "Internal note" not in text
+    assert "\x7f" not in text

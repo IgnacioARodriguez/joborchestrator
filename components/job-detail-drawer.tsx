@@ -276,7 +276,7 @@ function DetailBody({
             variant="outline"
             onClick={async () => {
               try {
-                await generateMaterials(job.id)
+                await generateMaterials(job.id, true)
                 toast.success("Application kit generated", {
                   description: job.title,
                 })

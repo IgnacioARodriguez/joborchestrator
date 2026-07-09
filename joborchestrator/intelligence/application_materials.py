@@ -41,18 +41,12 @@ def build_ats_cv_text(
     base_cv = str(profile.get("base_cv_text") or "").strip()
     if base_cv:
         return (
-            f"{headline}\n\n"
-            f"Target role: {title} at {company}\n"
-            f"ATS keywords to emphasize truthfully: {keyword_text}\n"
-            f"Positioning angle: {angle}\n\n"
-            "Optimized CV\n"
-            "-------------\n"
             f"{base_cv}\n\n"
-            "Optimization notes\n"
-            "------------------\n"
-            "- Preserve the candidate's real personal details, experience, education, dates, and achievements from the base CV.\n"
-            "- Reorder and emphasize the profile-backed keywords above when they are already true.\n"
-            "- Do not add skills, employers, degrees, certifications, dates, or achievements that are not present in the base CV/profile."
+            "ATS KEYWORDS\n"
+            f"{keyword_text}\n\n"
+            "TARGETED POSITIONING\n"
+            f"{angle}\n\n"
+            f"Target role: {title} at {company}"
         )
     return (
         f"ATS optimized CV draft for {title} at {company}\n\n"
