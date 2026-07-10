@@ -20,6 +20,12 @@ class JobPosting:
     salary_min: float | None = None
     salary_max: float | None = None
     salary_currency: str | None = None
+    applicant_count: int | None = None
+    applicant_count_raw: str | None = None
+    recruiter_name: str | None = None
+    recruiter_profile_url: str | None = None
+    apply_type: str | None = None
+    external_apply_url: str | None = None
     posted_at: str | None = None
     scraped_at: str | None = None
     posted_at_raw: str | None = None

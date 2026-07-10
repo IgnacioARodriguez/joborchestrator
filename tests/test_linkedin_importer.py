@@ -25,6 +25,15 @@ def test_maps_spanish_linkedin_columns_to_job_posting():
                 "url": "https://www.linkedin.com/jobs/view/123/",
                 "descripcion": "Requirements: Python, FastAPI, APIs. Responsibilities: build backend services." * 8,
                 "extraccion_ok": True,
+                "cantidad_solicitantes": 25,
+                "cantidad_solicitantes_raw": None,
+                "salary_min": 40000,
+                "salary_max": 55000,
+                "salary_currency": "EUR",
+                "recruiter_name": "Jane Recruiter",
+                "recruiter_profile_url": "https://www.linkedin.com/in/jane/",
+                "apply_type": "external",
+                "external_apply_url": "https://jobs.example.com/apply/123",
             }
         ]
     )
@@ -37,6 +46,39 @@ def test_maps_spanish_linkedin_columns_to_job_posting():
     assert jobs[0].company == "Acme"
     assert jobs[0].parse_confidence and jobs[0].parse_confidence >= 0.8
     assert jobs[0].content_hash
+    assert jobs[0].applicant_count == 25
+    assert jobs[0].applicant_count_raw is None
+    assert jobs[0].salary_min == 40000
+    assert jobs[0].salary_max == 55000
+    assert jobs[0].salary_currency == "EUR"
+    assert jobs[0].recruiter_name == "Jane Recruiter"
+    assert jobs[0].recruiter_profile_url == "https://www.linkedin.com/in/jane/"
+    assert jobs[0].apply_type == "external"
+    assert jobs[0].external_apply_url == "https://jobs.example.com/apply/123"
+
+
+def test_new_linkedin_enrichment_fields_default_to_none():
+    df = pd.DataFrame(
+        [
+            {
+                "id": "li-no-enrichment",
+                "titulo": "Python Backend Developer",
+                "empresa": "Acme",
+                "url": "https://www.linkedin.com/jobs/view/321/",
+                "descripcion": "Requirements: Python, FastAPI, APIs. Responsibilities: build backend services." * 8,
+                "extraccion_ok": True,
+            }
+        ]
+    )
+
+    job = linkedin_dataframe_to_job_postings(df)[0]
+
+    assert job.applicant_count is None
+    assert job.applicant_count_raw is None
+    assert job.recruiter_name is None
+    assert job.recruiter_profile_url is None
+    assert job.apply_type is None
+    assert job.external_apply_url is None
 
 
 def test_low_quality_extraction_is_flagged():

@@ -45,6 +45,14 @@ APPLICATION_KIT_COLUMNS = {
     "ats_cv_text": "TEXT",
     "autofill_notes": "TEXT",
 }
+LINKEDIN_ENRICHMENT_COLUMNS = {
+    "applicant_count": "INTEGER",
+    "applicant_count_raw": "TEXT",
+    "recruiter_name": "TEXT",
+    "recruiter_profile_url": "TEXT",
+    "apply_type": "TEXT",
+    "external_apply_url": "TEXT",
+}
 _SCHEMA_READY = False
 
 SCANNER_SCHEMA = """
@@ -78,6 +86,12 @@ CREATE TABLE IF NOT EXISTS job_postings (
     salary_min REAL,
     salary_max REAL,
     salary_currency TEXT,
+    applicant_count INTEGER,
+    applicant_count_raw TEXT,
+    recruiter_name TEXT,
+    recruiter_profile_url TEXT,
+    apply_type TEXT,
+    external_apply_url TEXT,
     posted_at TEXT,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
@@ -266,7 +280,11 @@ def _ensure_scanner_columns(conn: sqlite3.Connection) -> None:
     if "pipeline_status" not in columns:
         conn.execute("ALTER TABLE job_postings ADD COLUMN pipeline_status TEXT")
         columns.add("pipeline_status")
-    for column, column_type in {**SPEED_RANKING_MIGRATION_COLUMNS, **APPLICATION_KIT_COLUMNS}.items():
+    for column, column_type in {
+        **SPEED_RANKING_MIGRATION_COLUMNS,
+        **APPLICATION_KIT_COLUMNS,
+        **LINKEDIN_ENRICHMENT_COLUMNS,
+    }.items():
         if column not in columns:
             conn.execute(f"ALTER TABLE job_postings ADD COLUMN {column} {column_type}")
             columns.add(column)
@@ -282,7 +300,12 @@ def _scanner_migration_needed(conn: sqlite3.Connection) -> bool:
     if "job_postings" not in tables:
         return False
     columns = _table_columns(conn, "job_postings")
-    expected = {"pipeline_status", *SPEED_RANKING_MIGRATION_COLUMNS, *APPLICATION_KIT_COLUMNS}
+    expected = {
+        "pipeline_status",
+        *SPEED_RANKING_MIGRATION_COLUMNS,
+        *APPLICATION_KIT_COLUMNS,
+        *LINKEDIN_ENRICHMENT_COLUMNS,
+    }
     if not expected.issubset(columns):
         return True
     row = conn.execute(

@@ -24,7 +24,7 @@ import random
 import re
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlsplit, urlunsplit, urlencode
 
 import pandas as pd
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
@@ -418,6 +418,112 @@ def extraer_fecha_desde_texto(texto: str) -> str:
     return ""
 
 
+APPLICANT_LINE_RE = re.compile(
+    r"\b(solicitante|solicitantes|applicant|applicants)\b",
+    re.IGNORECASE,
+)
+
+
+def extraer_cantidad_solicitantes(texto: str) -> dict[str, int | str | None]:
+    data: dict[str, int | str | None] = {
+        "cantidad_solicitantes": None,
+        "cantidad_solicitantes_raw": None,
+    }
+    if not texto or not APPLICANT_LINE_RE.search(texto):
+        return data
+
+    normalized = limpiar_texto(texto)
+    if re.search(r"\d+\s*\+", normalized):
+        data["cantidad_solicitantes_raw"] = normalized
+        return data
+
+    match = re.search(r"\d[\d.,]*", normalized)
+    if not match:
+        return data
+
+    number_text = match.group(0)
+    digits = re.sub(r"\D", "", number_text)
+    if digits:
+        data["cantidad_solicitantes"] = int(digits)
+    return data
+
+
+def _parse_salary_number(raw: str, suffix: str | None = None) -> float | None:
+    text = raw.strip()
+    if not text:
+        return None
+    compact = re.sub(r"[\s\xa0]", "", text)
+    if "," in compact and "." in compact:
+        decimal_sep = "," if compact.rfind(",") > compact.rfind(".") else "."
+        thousand_sep = "." if decimal_sep == "," else ","
+        compact = compact.replace(thousand_sep, "").replace(decimal_sep, ".")
+    elif "," in compact:
+        parts = compact.split(",")
+        compact = "".join(parts) if len(parts[-1]) == 3 else compact.replace(",", ".")
+    elif "." in compact:
+        parts = compact.split(".")
+        compact = "".join(parts) if len(parts[-1]) == 3 else compact
+    try:
+        value = float(compact)
+    except ValueError:
+        return None
+    if suffix and suffix.lower() == "k":
+        value *= 1000
+    return value
+
+
+def extraer_salario_desde_texto(texto: str) -> dict[str, float | str | None]:
+    data: dict[str, float | str | None] = {
+        "salary_min": None,
+        "salary_max": None,
+        "salary_currency": None,
+    }
+    if not texto:
+        return data
+
+    currency_pattern = r"([$€£])?\s*(\d[\d.,]*)([kK])?\s*([$€£])?"
+    period_pattern = r"(?:\s*/?\s*(?:año|yr|year|anual|al año))?"
+    range_re = re.compile(
+        currency_pattern + period_pattern + r"\s*(?:-|–|—|\bto\b|\ba\b)\s*" + currency_pattern,
+        re.IGNORECASE,
+    )
+    single_re = re.compile(currency_pattern, re.IGNORECASE)
+
+    match = range_re.search(texto)
+    values: list[float | None] = []
+    currency = None
+    if match:
+        groups = match.groups()
+        currency = next((g for g in (groups[0], groups[3], groups[4], groups[7]) if g), None)
+        values = [_parse_salary_number(groups[1], groups[2]), _parse_salary_number(groups[5], groups[6])]
+    else:
+        for candidate in single_re.finditer(texto):
+            groups = candidate.groups()
+            if not groups[0] and not groups[3] and not groups[2]:
+                continue
+            currency = groups[0] or groups[3]
+            values = [_parse_salary_number(groups[1], groups[2])]
+            break
+
+    if not values or any(value is None for value in values):
+        return data
+
+    currency_map = {"€": "EUR", "$": "USD", "£": "GBP"}
+    data["salary_currency"] = currency_map.get(currency or "")
+    data["salary_min"] = min(value for value in values if value is not None)
+    data["salary_max"] = max(value for value in values if value is not None) if len(values) > 1 else data["salary_min"]
+    return data
+
+
+def normalizar_linkedin_profile_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    parsed = urlsplit(url)
+    if "/in/" not in parsed.path:
+        return None
+    return urlunsplit((parsed.scheme or "https", parsed.netloc or "www.linkedin.com", parsed.path.rstrip("/") + "/", "", ""))
+
+
 # ============================================================
 # LOGIN PERSISTENTE / SESIÃ“N
 # ============================================================
@@ -529,6 +635,54 @@ async def navegar_estable(page, url: str, timeout: int = 30000):
     except PlaywrightTimeoutError:
         await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
         await page.wait_for_timeout(jitter_ms(5000))
+
+
+async def resolve_external_apply_url(page, job_id: str) -> str | None:
+    """
+    Costly on-demand resolver for one shortlisted job only.
+    Do not call this from the bulk scanning loop: it clicks, opens a new tab,
+    waits for redirect/navigation, captures the final URL, and returns to search.
+    """
+    if not job_id:
+        return None
+
+    original_url = page.url
+    job_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
+    await navegar_estable(page, job_url)
+    panel = await obtener_panel_detalles(page)
+    root = panel or page
+    selectors = [
+        'a:has-text("Solicitar")',
+        'a:has-text("Apply")',
+        'button:has-text("Solicitar")',
+        'button:has-text("Apply")',
+        'a[aria-label*="Solicitar"]',
+        'a[aria-label*="Apply"]',
+        'button[aria-label*="Solicitar"]',
+        'button[aria-label*="Apply"]',
+    ]
+
+    try:
+        for sel in selectors:
+            try:
+                button = root.locator(sel).first
+                if await button.count() == 0 or not await button.is_visible(timeout=1200):
+                    continue
+                async with page.context.expect_page(timeout=8000) as new_page_info:
+                    await button.click(timeout=2500)
+                new_page = await new_page_info.value
+                try:
+                    await new_page.wait_for_load_state("domcontentloaded", timeout=10000)
+                    await new_page.wait_for_timeout(jitter_ms(1200))
+                    return new_page.url
+                finally:
+                    await new_page.close()
+            except Exception:
+                continue
+        return None
+    finally:
+        if original_url and original_url != page.url:
+            await navegar_estable(page, original_url)
 
 
 async def dump_debug_info(page, etiqueta: str = "debug"):
@@ -955,6 +1109,78 @@ async def extraer_texto_locator(locator, timeout: int = 1800) -> str:
         return ""
 
 
+async def extraer_recruiter_desde_panel(panel) -> dict[str, str | None]:
+    empty = {"recruiter_name": None, "recruiter_profile_url": None}
+    headings = [
+        "Meet the hiring team",
+        "Conoce al equipo de contratación",
+        "Conoce al equipo de contrataciÃ³n",
+    ]
+    for heading in headings:
+        try:
+            heading_loc = panel.get_by_text(re.compile(rf"^{re.escape(heading)}$", re.IGNORECASE)).first
+            if await heading_loc.count() == 0:
+                continue
+            block = heading_loc.locator("xpath=ancestor::*[self::section or self::div][.//a[contains(@href, '/in/')]][1]")
+            if await block.count() == 0:
+                block = heading_loc.locator("xpath=following::*[.//a[contains(@href, '/in/')]][1]")
+            link = block.locator('a[href*="/in/"]').first
+            if await link.count() == 0:
+                continue
+            href = normalizar_linkedin_profile_url(await link.get_attribute("href"))
+            name = limpiar_texto(await link.inner_text(timeout=1500))
+            if not name and href:
+                name = limpiar_texto(await block.inner_text(timeout=1500)).splitlines()[0]
+            return {"recruiter_name": name or None, "recruiter_profile_url": href}
+        except Exception:
+            continue
+    return empty
+
+
+async def extraer_apply_desde_panel(panel) -> dict[str, str | None]:
+    data = {"apply_type": "unknown", "external_apply_url": None}
+    selectors = [
+        'button:has-text("Easy Apply")',
+        'button:has-text("Solicitud sencilla")',
+        'button[aria-label*="Easy Apply"]',
+        'button[aria-label*="Solicitud sencilla"]',
+    ]
+    for sel in selectors:
+        try:
+            loc = panel.locator(sel).first
+            if await loc.count() > 0 and await loc.is_visible(timeout=800):
+                data["apply_type"] = "easy_apply"
+                return data
+        except Exception:
+            continue
+
+    external_selectors = [
+        'a:has-text("Solicitar")',
+        'a:has-text("Apply")',
+        'button:has-text("Solicitar")',
+        'button:has-text("Apply")',
+        'a[aria-label*="Solicitar"]',
+        'a[aria-label*="Apply"]',
+        'button[aria-label*="Solicitar"]',
+        'button[aria-label*="Apply"]',
+    ]
+    for sel in external_selectors:
+        try:
+            loc = panel.locator(sel).first
+            if await loc.count() == 0 or not await loc.is_visible(timeout=800):
+                continue
+            data["apply_type"] = "external"
+            href = await loc.get_attribute("href")
+            if not href:
+                href = await loc.locator("xpath=ancestor-or-self::a[1]").get_attribute("href")
+            if href and "/jobs/view/" not in href:
+                data["external_apply_url"] = href
+            return data
+        except Exception:
+            continue
+    return data
+
+
 def recortar_descripcion_desde_panel(panel_texto: str) -> str:
     if not panel_texto:
         return ""
@@ -1077,6 +1303,11 @@ async def extraer_header_desde_panel(panel) -> dict:
         "fecha_publicacion": "",
         "modalidad": "",
         "panel_texto": "",
+        "cantidad_solicitantes": None,
+        "cantidad_solicitantes_raw": None,
+        "salary_min": None,
+        "salary_max": None,
+        "salary_currency": None,
     }
 
     try:
@@ -1109,6 +1340,12 @@ async def extraer_header_desde_panel(panel) -> dict:
 
     data["fecha_publicacion"] = extraer_fecha_desde_texto(data["panel_texto"])
     data["modalidad"] = extraer_modalidad_desde_texto(data["panel_texto"])
+    data.update(extraer_salario_desde_texto(data["panel_texto"]))
+
+    for linea in lineas[:25]:
+        if APPLICANT_LINE_RE.search(linea):
+            data.update(extraer_cantidad_solicitantes(linea))
+            break
 
     for linea in lineas[:25]:
         if re.search(
@@ -1142,6 +1379,15 @@ async def extraer_datos_job_desde_panel(page) -> dict:
             "ubicacion": "",
             "fecha_publicacion": "",
             "modalidad": "",
+            "cantidad_solicitantes": None,
+            "cantidad_solicitantes_raw": None,
+            "salary_min": None,
+            "salary_max": None,
+            "salary_currency": None,
+            "recruiter_name": None,
+            "recruiter_profile_url": None,
+            "apply_type": "unknown",
+            "external_apply_url": None,
             "descripcion": "",
             "descripcion_len": 0,
             "extraccion_ok": False,
@@ -1149,12 +1395,23 @@ async def extraer_datos_job_desde_panel(page) -> dict:
 
     header = await extraer_header_desde_panel(panel)
     descripcion = await extraer_descripcion_directa(page, panel)
+    recruiter = await extraer_recruiter_desde_panel(panel)
+    apply_data = await extraer_apply_desde_panel(panel)
 
     return {
         "empresa": header["empresa"],
         "ubicacion": header["ubicacion"],
         "fecha_publicacion": header["fecha_publicacion"],
         "modalidad": header["modalidad"],
+        "cantidad_solicitantes": header["cantidad_solicitantes"],
+        "cantidad_solicitantes_raw": header["cantidad_solicitantes_raw"],
+        "salary_min": header["salary_min"],
+        "salary_max": header["salary_max"],
+        "salary_currency": header["salary_currency"],
+        "recruiter_name": recruiter["recruiter_name"],
+        "recruiter_profile_url": recruiter["recruiter_profile_url"],
+        "apply_type": apply_data["apply_type"],
+        "external_apply_url": apply_data["external_apply_url"],
         "descripcion": descripcion,
         "descripcion_len": len(descripcion or ""),
         "extraccion_ok": bool(descripcion and len(descripcion) >= 80),
@@ -1197,6 +1454,15 @@ async def procesar_pagina_actual(
         ubicacion = ""
         fecha_publicacion = ""
         modalidad = ""
+        cantidad_solicitantes = None
+        cantidad_solicitantes_raw = None
+        salary_min = None
+        salary_max = None
+        salary_currency = None
+        recruiter_name = None
+        recruiter_profile_url = None
+        apply_type = "unknown"
+        external_apply_url = None
         descripcion = ""
         descripcion_len = 0
         extraccion_ok = False
@@ -1222,6 +1488,15 @@ async def procesar_pagina_actual(
             ubicacion = datos["ubicacion"]
             fecha_publicacion = datos["fecha_publicacion"]
             modalidad = datos["modalidad"]
+            cantidad_solicitantes = datos.get("cantidad_solicitantes")
+            cantidad_solicitantes_raw = datos.get("cantidad_solicitantes_raw")
+            salary_min = datos.get("salary_min")
+            salary_max = datos.get("salary_max")
+            salary_currency = datos.get("salary_currency")
+            recruiter_name = datos.get("recruiter_name")
+            recruiter_profile_url = datos.get("recruiter_profile_url")
+            apply_type = datos.get("apply_type", "unknown")
+            external_apply_url = datos.get("external_apply_url")
             descripcion = datos["descripcion"]
             descripcion_len = datos.get("descripcion_len", len(descripcion or ""))
             extraccion_ok = datos.get("extraccion_ok", bool(descripcion))
@@ -1237,6 +1512,15 @@ async def procesar_pagina_actual(
             "empresa": empresa,
             "ubicacion": ubicacion,
             "modalidad": modalidad,
+            "cantidad_solicitantes": cantidad_solicitantes,
+            "cantidad_solicitantes_raw": cantidad_solicitantes_raw,
+            "salary_min": salary_min,
+            "salary_max": salary_max,
+            "salary_currency": salary_currency,
+            "recruiter_name": recruiter_name,
+            "recruiter_profile_url": recruiter_profile_url,
+            "apply_type": apply_type,
+            "external_apply_url": external_apply_url,
             "fecha_publicacion": fecha_publicacion,
             "url": job["url"],
             "busqueda_keywords": busqueda["keywords"],

@@ -74,6 +74,15 @@ def linkedin_row_to_job_posting(row: dict[str, Any], scraped_at: str | None = No
     workplace_type = _text(first_value(normalized.get("workplace_type"), normalized.get("modalidad")))
     description = _text(first_value(normalized.get("description_text"), normalized.get("description"), normalized.get("descripcion")))
     posted_at = _text(first_value(normalized.get("posted_at"), normalized.get("fecha_publicacion"), normalized.get("fecha_publicada"), normalized.get("fecha")))
+    applicant_count = _int_or_none(first_value(normalized.get("applicant_count"), normalized.get("cantidad_solicitantes")))
+    applicant_count_raw = _text(first_value(normalized.get("applicant_count_raw"), normalized.get("cantidad_solicitantes_raw")))
+    recruiter_name = _text(normalized.get("recruiter_name"))
+    recruiter_profile_url = _text(normalized.get("recruiter_profile_url"))
+    apply_type = _text(normalized.get("apply_type"))
+    external_apply_url = _text(normalized.get("external_apply_url"))
+    salary_min = _float_or_none(normalized.get("salary_min"))
+    salary_max = _float_or_none(normalized.get("salary_max"))
+    salary_currency = _text(normalized.get("salary_currency"))
     parse_confidence, flags = parse_quality(normalized, title=title, company=company, url=url, location=location, description=description)
     if company_raw is None:
         flags.append("missing_company")
@@ -93,6 +102,15 @@ def linkedin_row_to_job_posting(row: dict[str, Any], scraped_at: str | None = No
         url=url,
         apply_url=apply_url,
         description_text=description,
+        salary_min=salary_min,
+        salary_max=salary_max,
+        salary_currency=salary_currency,
+        applicant_count=applicant_count,
+        applicant_count_raw=applicant_count_raw,
+        recruiter_name=recruiter_name,
+        recruiter_profile_url=recruiter_profile_url,
+        apply_type=apply_type,
+        external_apply_url=external_apply_url,
         posted_at=posted_at,
         scraped_at=scraped_at or datetime.now().isoformat(timespec="seconds"),
         posted_at_raw=posted_at,
@@ -207,6 +225,27 @@ def _boolish(value: Any) -> bool | None:
     if text in {"false", "0", "no", "fail", "failed", "error"}:
         return False
     return None
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none"}:
+        return None
+    return int(text) if re.fullmatch(r"\d+", text) else None
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(number) else number
 
 
 def _json_safe(value: Any) -> Any:
