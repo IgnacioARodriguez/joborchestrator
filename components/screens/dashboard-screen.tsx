@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/card"
 import { KpiCard } from "@/components/kpi-card"
 import { DashboardCharts } from "@/components/dashboard-charts"
-import { JobRow } from "@/components/job-row"
+import { JobCompactCard } from "@/components/job-compact-card"
 import { PageHeader } from "@/components/page-chrome"
 import { useStore } from "@/lib/store"
 import { computeKpis } from "@/lib/stats"
@@ -40,20 +40,20 @@ function TodayCard({
   action?: React.ReactNode
 }) {
   return (
-    <Card className="gap-3">
+    <Card className="min-h-0 gap-3">
       <CardHeader className="flex-row items-center justify-between pb-0">
         <CardTitle className="text-sm">{title}</CardTitle>
         {action}
       </CardHeader>
-      <CardContent>
+      <CardContent className="min-h-0 flex-1 overflow-y-auto">
         {jobs.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border bg-muted/30 px-3 py-6 text-center text-xs text-muted-foreground">
             {emptyText}
           </p>
         ) : (
-          <div className="flex flex-col gap-0.5">
+          <div className="flex flex-col gap-2">
             {jobs.map((job) => (
-              <JobRow
+              <JobCompactCard
                 key={job.id}
                 job={job}
                 onOpen={onOpenJob}
@@ -97,7 +97,7 @@ export function DashboardScreen({
     .slice(0, 5)
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
       <PageHeader
         eyebrow="Overview"
         title="Dashboard"
@@ -116,7 +116,7 @@ export function DashboardScreen({
         }
       />
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <section className="grid shrink-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard
           label="Total opportunities"
           value={kpis.total}
@@ -155,33 +155,37 @@ export function DashboardScreen({
         />
       </section>
 
-      <DashboardCharts jobs={jobs} />
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="flex flex-col gap-4">
+          <DashboardCharts jobs={jobs} />
 
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <TodayCard
-          title="Top application candidates"
-          jobs={topCandidates}
-          onOpenJob={onOpenJob}
-          emptyText="No apply candidates right now."
-          action={
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => onNavigate("ranking")}
-            >
-              Ranking
-              <ArrowRight data-icon="inline-end" />
-            </Button>
-          }
-        />
-        <TodayCard
-          title="Recently opened"
-          jobs={recentlyOpened}
-          onOpenJob={onOpenJob}
-          emptyText="Nothing opened yet."
-        />
-      </section>
+          <section className="grid min-h-[360px] grid-cols-1 gap-4 lg:grid-cols-2">
+            <TodayCard
+              title="Top application candidates"
+              jobs={topCandidates}
+              onOpenJob={onOpenJob}
+              emptyText="No apply candidates right now."
+              action={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => onNavigate("ranking")}
+                >
+                  Ranking
+                  <ArrowRight data-icon="inline-end" />
+                </Button>
+              }
+            />
+            <TodayCard
+              title="Recently opened"
+              jobs={recentlyOpened}
+              onOpenJob={onOpenJob}
+              emptyText="Nothing opened yet."
+            />
+          </section>
+        </div>
+      </div>
     </div>
   )
 }

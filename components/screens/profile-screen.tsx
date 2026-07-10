@@ -380,13 +380,13 @@ export function ProfileScreen() {
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
       <PageHeader
         eyebrow="Profile"
         title="Candidate profile"
         description="Maintain the editable profile used by rankings, role matching, and application materials."
       />
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 xl:grid-cols-[0.9fr_1.1fr]">
       {busy && (
         <Card className="border-primary/20 bg-primary/5 xl:col-span-2">
           <CardContent className="flex items-center gap-3 p-4">
@@ -570,32 +570,44 @@ export function ProfileScreen() {
           <CardTitle className="text-sm">Profile basics</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <Input
-            value={profile.headline}
-            placeholder="Professional headline"
-            onChange={(event) => patch({ headline: event.target.value })}
-          />
-          <Input
-            type="number"
-            min="0"
-            step="0.5"
-            value={profile.real_experience_years}
-            onChange={(event) =>
-              patch({ real_experience_years: Number(event.target.value) || 0 })
-            }
-          />
-          <Textarea
-            value={lines(profile.industries)}
-            onChange={(event) => patch({ industries: listFromText(event.target.value) })}
-            placeholder="Industries or domains, one per line"
-            className="min-h-24 text-xs"
-          />
-          <Textarea
-            value={profile.notes}
-            onChange={(event) => patch({ notes: event.target.value })}
-            placeholder="Notes for the ranker"
-            className="min-h-24 text-xs"
-          />
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-foreground">Professional headline</span>
+            <Input
+              value={profile.headline}
+              placeholder="Backend engineer focused on APIs and automation"
+              onChange={(event) => patch({ headline: event.target.value })}
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-foreground">Real experience years</span>
+            <Input
+              type="number"
+              min="0"
+              step="0.5"
+              value={profile.real_experience_years}
+              onChange={(event) =>
+                patch({ real_experience_years: Number(event.target.value) || 0 })
+              }
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-foreground">Industries or domains</span>
+            <Textarea
+              value={lines(profile.industries)}
+              onChange={(event) => patch({ industries: listFromText(event.target.value) })}
+              placeholder="Fintech&#10;Developer tools&#10;Healthcare"
+              className="min-h-24 text-xs"
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-foreground">Notes for ranking</span>
+            <Textarea
+              value={profile.notes}
+              onChange={(event) => patch({ notes: event.target.value })}
+              placeholder="Preferences, constraints, and context the ranker should respect."
+              className="min-h-24 text-xs"
+            />
+          </label>
           <Button disabled={busy !== null} onClick={() => void saveProfile()}>
             {busy === "save" ? <LoadingIcon /> : <Save data-icon="inline-start" />}
             {busy === "save" ? "Saving profile" : "Save profile"}
@@ -613,17 +625,25 @@ export function ProfileScreen() {
         <CardContent className="flex flex-col gap-3">
           {(profile.application_targets ?? []).map((target, index) => (
             <div key={`${target.label}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-border p-3 lg:grid-cols-[1fr_1.2fr_auto_auto]">
-              <Input
-                value={target.label}
-                placeholder="Label"
-                onChange={(event) => updateApplicationTarget(index, { label: event.target.value })}
-              />
-              <Input
-                value={target.location}
-                placeholder="Location"
-                onChange={(event) => updateApplicationTarget(index, { location: event.target.value })}
-              />
-              <div className="flex flex-wrap gap-1">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-foreground">Target name</span>
+                <Input
+                  value={target.label}
+                  placeholder="Malaga"
+                  onChange={(event) => updateApplicationTarget(index, { label: event.target.value })}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-foreground">Geography</span>
+                <Input
+                  value={target.location}
+                  placeholder="Malaga, Spain"
+                  onChange={(event) => updateApplicationTarget(index, { location: event.target.value })}
+                />
+              </label>
+              <fieldset className="flex flex-col gap-1.5">
+                <legend className="text-xs font-medium text-foreground">Work modes</legend>
+                <div className="flex flex-wrap gap-1">
                 {(["onsite", "hybrid", "remote"] as WorkMode[]).map((mode) => (
                   <Button
                     key={mode}
@@ -635,7 +655,8 @@ export function ProfileScreen() {
                     {WORK_MODE_LABELS[mode]}
                   </Button>
                 ))}
-              </div>
+                </div>
+              </fieldset>
               <Button
                 aria-label={`Remove ${target.label}`}
                 size="icon"

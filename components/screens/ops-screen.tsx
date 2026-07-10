@@ -313,13 +313,13 @@ export function OpsScreen() {
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
       <PageHeader
         eyebrow="Operations"
         title="Automation control room"
         description="Run scans, import LinkedIn exports, queue ranking jobs, and monitor local worker operations."
       />
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1fr]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 xl:grid-cols-[1fr_1fr]">
       {busyCopy && (
         <Card className="border-primary/20 bg-primary/5 xl:col-span-2">
           <CardContent className="flex items-center gap-3 p-4">
@@ -613,16 +613,22 @@ export function OpsScreen() {
             Search APIs
           </CardTitle>
           <CardDescription className="text-xs">
-            Runs every enabled job API for every target and saves results into
-            the same ranking store.
+            Every enabled API runs against every target below. Results keep target metadata for later tuning.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <Textarea
-            value={queries}
-            onChange={(e) => setQueries(e.target.value)}
-            className="min-h-28 text-xs"
-          />
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-foreground">Role queries</span>
+            <Textarea
+              value={queries}
+              onChange={(e) => setQueries(e.target.value)}
+              className="min-h-28 text-xs"
+              aria-describedby="search-query-help"
+            />
+            <span id="search-query-help" className="text-xs text-muted-foreground">
+              One role or synonym per line. Each line is combined with every target.
+            </span>
+          </label>
           <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-medium text-foreground">Application targets</p>
@@ -643,25 +649,33 @@ export function OpsScreen() {
             <div className="flex flex-col gap-2">
               {applicationTargets.map((target, index) => (
                 <div key={`${target.label}-${index}`} className="grid grid-cols-1 gap-2 rounded-md border border-border p-2 lg:grid-cols-[1fr_1.2fr_auto_auto]">
-                  <Input
-                    value={target.label}
-                    placeholder="Label"
-                    onChange={(event) =>
-                      setApplicationTargets((current) =>
-                        current.map((item, i) => (i === index ? { ...item, label: event.target.value } : item)),
-                      )
-                    }
-                  />
-                  <Input
-                    value={target.location}
-                    placeholder="Location"
-                    onChange={(event) =>
-                      setApplicationTargets((current) =>
-                        current.map((item, i) => (i === index ? { ...item, location: event.target.value } : item)),
-                      )
-                    }
-                  />
-                  <div className="flex flex-wrap gap-1">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-medium text-foreground">Target name</span>
+                    <Input
+                      value={target.label}
+                      placeholder="Malaga"
+                      onChange={(event) =>
+                        setApplicationTargets((current) =>
+                          current.map((item, i) => (i === index ? { ...item, label: event.target.value } : item)),
+                        )
+                      }
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-medium text-foreground">Geography</span>
+                    <Input
+                      value={target.location}
+                      placeholder="Malaga, Spain"
+                      onChange={(event) =>
+                        setApplicationTargets((current) =>
+                          current.map((item, i) => (i === index ? { ...item, location: event.target.value } : item)),
+                        )
+                      }
+                    />
+                  </label>
+                  <fieldset className="flex flex-col gap-1.5">
+                    <legend className="text-xs font-medium text-foreground">Work modes</legend>
+                    <div className="flex flex-wrap gap-1">
                     {(["onsite", "hybrid", "remote"] as WorkMode[]).map((mode) => {
                       const active = target.work_modes.includes(mode)
                       return (
@@ -686,7 +700,8 @@ export function OpsScreen() {
                         </Button>
                       )
                     })}
-                  </div>
+                    </div>
+                  </fieldset>
                   <Button
                     aria-label={`Remove ${target.label}`}
                     size="icon"
@@ -701,10 +716,15 @@ export function OpsScreen() {
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              Each target runs against every enabled search API. Empty or weak sources stay visible in scan history for later tuning.
+              Planned API attempts: {queries.split("\n").filter((item) => item.trim()).length} queries x{" "}
+              {applicationTargets.reduce((sum, target) => sum + target.work_modes.length, 0)} target modes x{" "}
+              {searchProviders.length} APIs.
             </p>
           </div>
-          <Input value={location} onChange={(e) => setLocation(e.target.value)} />
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-foreground">Fallback location</span>
+            <Input value={location} onChange={(e) => setLocation(e.target.value)} />
+          </label>
           <Button
             disabled={busy !== null || searchProviders.length === 0}
             onClick={() =>

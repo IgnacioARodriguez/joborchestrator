@@ -91,8 +91,8 @@ export function AppShell() {
   }
 
   return (
-    <div className="min-h-dvh bg-background">
-      <div className="flex w-full">
+    <div className="h-dvh overflow-hidden bg-background">
+      <div className="flex h-full w-full">
         {/* Desktop sidebar */}
         <aside className="sticky top-0 hidden h-dvh w-[256px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-5 lg:flex">
           <div className="flex items-center gap-3 px-2 pb-7">
@@ -146,7 +146,7 @@ export function AppShell() {
         </aside>
 
         {/* Main column */}
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-30 flex min-h-[72px] items-center justify-between border-b border-border/80 bg-background/90 px-4 backdrop-blur lg:px-8">
             <div className="flex min-w-0 items-center gap-3">
               <div className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground lg:hidden">
@@ -190,8 +190,10 @@ export function AppShell() {
             </div>
           </header>
 
-          <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-10">
-            <DataLoadingBanner />
+          <main className="mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-8">
+            <div className="shrink-0">
+              <DataLoadingBanner />
+            </div>
             {section === "dashboard" && (
               <DashboardScreen onOpenJob={setOpenJobId} onNavigate={navigate} />
             )}

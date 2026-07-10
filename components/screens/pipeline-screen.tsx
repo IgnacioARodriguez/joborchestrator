@@ -1,17 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Building2, ChevronRight, Inbox } from "lucide-react"
+import { Building2, Inbox } from "lucide-react"
 import { toast } from "sonner"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { Card } from "@/components/ui/card"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import {
   Empty,
   EmptyDescription,
@@ -24,17 +14,21 @@ import { PageHeader } from "@/components/page-chrome"
 import { useStore } from "@/lib/store"
 import { PIPELINE_LABELS, relativeTime } from "@/lib/job-ui"
 import type { JobPosting, PipelineStatus } from "@/lib/types"
+import { cn } from "@/lib/utils"
 
-const TABS: PipelineStatus[] = ["shortlisted", "applied", "discarded", "opened"]
-const STATUS_OPTIONS: PipelineStatus[] = [
+const PIPELINE_COLUMNS: PipelineStatus[] = [
   "new",
   "shortlisted",
-  "applied",
   "opened",
+  "applied",
   "discarded",
 ]
 
-function PipelineItem({
+function moveMessage(status: PipelineStatus) {
+  return `Moved to ${PIPELINE_LABELS[status]}`
+}
+
+function PipelineCard({
   job,
   onOpen,
 }: {
@@ -43,53 +37,46 @@ function PipelineItem({
 }) {
   const { setPipelineStatus } = useStore()
   return (
-    <Card className="flex-row items-center gap-3 p-4" size="sm">
-      <ScoreBadge score={job.ranking.final_score} />
+    <article className="rounded-lg border border-border bg-card p-3 shadow-[0_1px_2px_rgba(16,24,40,0.03)]">
       <button
         type="button"
         onClick={() => onOpen(job.id)}
-        className="flex min-w-0 flex-1 flex-col gap-1 text-left"
+        className="w-full text-left"
       >
-        <span className="truncate text-sm font-medium text-foreground">
+        <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+          <ScoreBadge score={job.ranking.final_score} />
+          <DecisionBadge
+            decision={job.ranking.decision}
+            score={job.ranking.final_score}
+          />
+        </div>
+        <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
           {job.title}
-        </span>
-        <span className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
-          <Building2 className="size-3.5" />
-          {job.company}
-          <span aria-hidden>·</span>
-          {relativeTime(job.last_seen_at)}
-        </span>
-        <DecisionBadge
-          decision={job.ranking.decision}
-          score={job.ranking.final_score}
-          className="mt-0.5 w-fit"
-        />
+        </h3>
+        <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+          <Building2 className="size-3.5 shrink-0" />
+          <span className="truncate">{job.company}</span>
+        </p>
+        <p className="mt-1 text-[11px] text-muted-foreground/80">
+          {job.source} · {relativeTime(job.last_seen_at)}
+        </p>
       </button>
-      <Select
-        value={job.pipeline_status}
-        onValueChange={(v) => {
-          setPipelineStatus(job.id, v as PipelineStatus)
-          toast.success(`Moved to ${PIPELINE_LABELS[v as PipelineStatus]}`, {
-            description: job.title,
-          })
-        }}
-      >
-        <SelectTrigger
-          size="sm"
-          className="w-32 shrink-0"
-          aria-label="Change status"
-        >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {STATUS_OPTIONS.map((s) => (
-            <SelectItem key={s} value={s}>
-              {PIPELINE_LABELS[s]}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </Card>
+      <div className="mt-3 flex flex-wrap gap-1">
+        {PIPELINE_COLUMNS.filter((status) => status !== job.pipeline_status).map((status) => (
+          <button
+            key={status}
+            type="button"
+            onClick={() => {
+              setPipelineStatus(job.id, status)
+              toast.success(moveMessage(status), { description: job.title })
+            }}
+            className="rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          >
+            {PIPELINE_LABELS[status]}
+          </button>
+        ))}
+      </div>
+    </article>
   )
 }
 
@@ -99,7 +86,6 @@ export function PipelineScreen({
   onOpenJob: (id: string) => void
 }) {
   const { jobs } = useStore()
-  const [tab, setTab] = useState<PipelineStatus>("shortlisted")
 
   const byStatus = (status: PipelineStatus) =>
     jobs
@@ -107,53 +93,65 @@ export function PipelineScreen({
       .sort((a, b) => b.ranking.final_score - a.ranking.final_score)
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
       <PageHeader
         eyebrow="Pipeline"
         title="Application pipeline"
-        description="Move opportunities through shortlist, applied, discarded, and opened states."
+        description="Move opportunities through fixed workflow lanes. Each lane scrolls independently, so the board stays usable as volume grows."
       />
-      <Tabs value={tab} onValueChange={(v) => setTab(v as PipelineStatus)}>
-      <TabsList className="w-full rounded-2xl border border-border bg-card p-1 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-        {TABS.map((t) => {
-          const count = jobs.filter((j) => j.pipeline_status === t).length
-          return (
-            <TabsTrigger key={t} value={t} className="flex-1 gap-1.5 text-xs">
-              {PIPELINE_LABELS[t]}
-              <span className="rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
-                {count}
-              </span>
-            </TabsTrigger>
-          )
-        })}
-      </TabsList>
 
-      {TABS.map((t) => {
-        const items = byStatus(t)
-        return (
-          <TabsContent key={t} value={t} className="mt-4 flex flex-col gap-3">
-            {items.length === 0 ? (
-              <Empty className="border border-dashed">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <Inbox />
-                  </EmptyMedia>
-                  <EmptyTitle>Nothing here yet</EmptyTitle>
-                  <EmptyDescription>
-                    Jobs marked {PIPELINE_LABELS[t].toLowerCase()} will appear in
-                    this tab.
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : (
-              items.map((job) => (
-                <PipelineItem key={job.id} job={job} onOpen={onOpenJob} />
-              ))
-            )}
-          </TabsContent>
-        )
-      })}
-      </Tabs>
+      <div className="min-h-0 flex-1 overflow-x-auto pb-1">
+        <div className="grid h-full min-w-[1120px] grid-cols-5 gap-3">
+          {PIPELINE_COLUMNS.map((status) => {
+            const items = byStatus(status)
+            return (
+              <section
+                key={status}
+                aria-labelledby={`pipeline-${status}`}
+                className={cn(
+                  "flex min-h-0 flex-col rounded-lg border border-border bg-muted/25",
+                  status === "discarded" && "opacity-90",
+                )}
+              >
+                <div className="shrink-0 border-b border-border bg-card px-3 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2
+                      id={`pipeline-${status}`}
+                      className="text-sm font-semibold text-foreground"
+                    >
+                      {PIPELINE_LABELS[status]}
+                    </h2>
+                    <span className="rounded-md bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
+                      {items.length}
+                    </span>
+                  </div>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                  {items.length === 0 ? (
+                    <Empty className="h-full border border-dashed bg-background/70">
+                      <EmptyHeader>
+                        <EmptyMedia variant="icon">
+                          <Inbox />
+                        </EmptyMedia>
+                        <EmptyTitle>Empty lane</EmptyTitle>
+                        <EmptyDescription>
+                          Jobs moved to {PIPELINE_LABELS[status].toLowerCase()} appear here.
+                        </EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {items.map((job) => (
+                        <PipelineCard key={job.id} job={job} onOpen={onOpenJob} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )
+          })}
+        </div>
+      </div>
     </div>
   )
 }
