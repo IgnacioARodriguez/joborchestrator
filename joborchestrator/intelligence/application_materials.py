@@ -20,10 +20,10 @@ def build_recruiter_message(
     title = job.get("title") or "the role"
     company = job.get("company") or "your team"
     headline = str(profile.get("headline") or "my background").strip()
-    keyword_text = ", ".join(_truthful_keywords(profile, keywords, limit=4)) or "relevant experience"
+    keyword_text = ", ".join(_truthful_keywords(profile, keywords, limit=2)) or "relevant experience"
     return (
-        f"Hi, I saw the {title} role at {company} and it looks like a strong match for my background in {headline}. "
-        f"I have hands-on experience with {keyword_text}, and I would be happy to discuss where that could be useful for your team."
+        f"Hi, I saw the {title} role at {company}. My CV has relevant experience in {keyword_text}; "
+        "I'd be happy to send it over if useful."
     )
 
 

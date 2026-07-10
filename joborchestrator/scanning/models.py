@@ -5,6 +5,17 @@ from typing import Any
 
 
 @dataclass(slots=True)
+class HiringContact:
+    name: str
+    profile_url: str
+    headline: str | None = None
+    role: str | None = None
+    is_primary: bool = False
+    source: str = "linkedin_hiring_team"
+    id: str | None = None
+
+
+@dataclass(slots=True)
 class JobPosting:
     external_id: str
     source: str
@@ -24,6 +35,7 @@ class JobPosting:
     applicant_count_raw: str | None = None
     recruiter_name: str | None = None
     recruiter_profile_url: str | None = None
+    hiring_contacts: list[HiringContact] = field(default_factory=list)
     apply_type: str | None = None
     external_apply_url: str | None = None
     posted_at: str | None = None

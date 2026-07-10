@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from joborchestrator.scanning.models import JobPosting
+from joborchestrator.scanning.hiring_contacts import LEGACY_RECRUITER_SOURCE, normalize_linkedin_profile_url
 from joborchestrator.scanning.normalization import normalize_job_identity, normalize_text
 from joborchestrator.ranking.schemas import RankingResult
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
@@ -127,6 +128,28 @@ CREATE TABLE IF NOT EXISTS job_postings (
 CREATE INDEX IF NOT EXISTS idx_job_postings_status ON job_postings(status);
 CREATE INDEX IF NOT EXISTS idx_job_postings_last_seen ON job_postings(last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_job_postings_identity ON job_postings(identity_key);
+
+CREATE TABLE IF NOT EXISTS job_hiring_contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_posting_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    profile_url TEXT NOT NULL,
+    headline TEXT,
+    role TEXT,
+    source TEXT NOT NULL,
+    is_primary INTEGER DEFAULT 0,
+    position INTEGER DEFAULT 0,
+    is_active INTEGER DEFAULT 1,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(job_posting_id, profile_url),
+    FOREIGN KEY(job_posting_id) REFERENCES job_postings(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_hiring_contacts_job ON job_hiring_contacts(job_posting_id, position);
+CREATE INDEX IF NOT EXISTS idx_job_hiring_contacts_profile_url ON job_hiring_contacts(profile_url);
 
 CREATE TABLE IF NOT EXISTS scan_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -334,8 +357,10 @@ def _conn():
         if _scanner_migration_needed(conn):
             backup_database("before_speed_ranking_migration")
         _ensure_scanner_columns(conn)
+        _ensure_hiring_contacts_schema(conn)
         skill_catalog_repository.seed_skill_catalog(conn)
         _backfill_speed_ranking_columns(conn)
+        _backfill_legacy_hiring_contacts(conn)
         _migrate_pipeline_applications(conn)
         conn.commit()
         _SCHEMA_READY = True
@@ -373,6 +398,46 @@ def _ensure_scanner_columns(conn: sqlite3.Connection) -> None:
             columns.add(column)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_postings_repost_key ON job_postings(repost_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_postings_soft_identity ON job_postings(soft_identity_key)")
+
+
+def _ensure_hiring_contacts_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS job_hiring_contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_posting_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            profile_url TEXT NOT NULL,
+            headline TEXT,
+            role TEXT,
+            source TEXT NOT NULL,
+            is_primary INTEGER DEFAULT 0,
+            position INTEGER DEFAULT 0,
+            is_active INTEGER DEFAULT 1,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(job_posting_id, profile_url),
+            FOREIGN KEY(job_posting_id) REFERENCES job_postings(id)
+        )"""
+    )
+    columns = _table_columns(conn, "job_hiring_contacts")
+    for column, column_type in {
+        "headline": "TEXT",
+        "role": "TEXT",
+        "source": "TEXT",
+        "is_primary": "INTEGER DEFAULT 0",
+        "position": "INTEGER DEFAULT 0",
+        "is_active": "INTEGER DEFAULT 1",
+        "first_seen_at": "TEXT",
+        "last_seen_at": "TEXT",
+        "created_at": "TEXT",
+        "updated_at": "TEXT",
+    }.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE job_hiring_contacts ADD COLUMN {column} {column_type}")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_job_hiring_contacts_job ON job_hiring_contacts(job_posting_id, position)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_job_hiring_contacts_profile_url ON job_hiring_contacts(profile_url)")
 
 
 def _scanner_migration_needed(conn: sqlite3.Connection) -> bool:
@@ -447,6 +512,45 @@ def _backfill_speed_ranking_columns(conn: sqlite3.Connection) -> None:
                 repost_key,
                 soft_identity_key,
                 row["id"],
+            ),
+        )
+
+
+def _backfill_legacy_hiring_contacts(conn: sqlite3.Connection) -> None:
+    now = datetime.now().isoformat(timespec="seconds")
+    rows = conn.execute(
+        """SELECT id, recruiter_name, recruiter_profile_url, first_seen_at, last_seen_at
+           FROM job_postings
+           WHERE recruiter_profile_url IS NOT NULL
+             AND TRIM(recruiter_profile_url) != ''"""
+    ).fetchall()
+    for row in rows:
+        profile_url = normalize_linkedin_profile_url(row["recruiter_profile_url"])
+        name = (row["recruiter_name"] or "").strip()
+        if not profile_url or not name:
+            continue
+        conn.execute(
+            """INSERT INTO job_hiring_contacts (
+                   job_posting_id, name, profile_url, headline, role, source,
+                   is_primary, position, is_active, first_seen_at, last_seen_at,
+                   created_at, updated_at
+               ) VALUES (?, ?, ?, NULL, NULL, ?, 1, 0, 1, ?, ?, ?, ?)
+               ON CONFLICT(job_posting_id, profile_url) DO UPDATE SET
+                   name = excluded.name,
+                   is_primary = 1,
+                   position = 0,
+                   is_active = 1,
+                   last_seen_at = excluded.last_seen_at,
+                   updated_at = excluded.updated_at""",
+            (
+                row["id"],
+                name,
+                profile_url,
+                LEGACY_RECRUITER_SOURCE,
+                row["first_seen_at"] or now,
+                row["last_seen_at"] or now,
+                now,
+                now,
             ),
         )
 
@@ -714,6 +818,10 @@ def get_job_postings(statuses: list[str] | None = None, limit: int | None = 200)
 
 def get_job_posting(job_id: int) -> dict | None:
     return jobs_repository.get_job_posting(_conn, job_id)
+
+
+def list_job_hiring_contacts(job_id: int | None = None) -> list[dict]:
+    return jobs_repository.list_job_hiring_contacts(_conn, job_id)
 
 
 def update_job_status(job_id: int, status: str) -> None:

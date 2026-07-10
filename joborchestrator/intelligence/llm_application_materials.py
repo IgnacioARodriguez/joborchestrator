@@ -105,8 +105,9 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "Keep the base CV's overall section structure when possible, but rewrite wording and ordering for ATS fit against this job.",
             "If base_cv is empty, produce the best complete CV draft possible from the candidate profile and mark missing source limitations in risk_flags.",
             "Use job requirements as keywords only when the candidate can truthfully claim or position adjacent experience.",
-            "Recruiter_message must be one coherent outreach message to a recruiter or hiring contact, not a cover letter and not multiple variants.",
-            "Recruiter_message must not use letter salutations like 'Dear Hiring Manager', must not include a cover-letter body, and must not repeat the candidate introduction.",
+            "Recruiter_message must be a short LinkedIn connection note to a recruiter or hiring contact, not a cover letter and not multiple variants.",
+            "Recruiter_message must fit a LinkedIn invite: under 300 characters when possible, one paragraph, no formal letter salutation, no cover-letter body.",
+            "Recruiter_message should say why this specific role matches the CV and that the candidate would like to send/share the CV.",
             "Output language should match the job posting language unless the user profile clearly indicates otherwise.",
             "ATS CV text should be ready to copy, export to DOCX/PDF, and submit after human review.",
             "Cover letter can be empty only when application context clearly does not need one; otherwise provide a concise tailored letter.",
@@ -115,7 +116,7 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "Return only JSON matching the schema.",
         ],
         "output_shape": {
-            "recruiter_message": "single recruiter outreach message, ready to paste into LinkedIn/InMail/email",
+            "recruiter_message": "short recruiter connection note, ready to paste into LinkedIn invite/InMail/email",
             "cover_letter": "concise tailored cover letter or empty string",
             "ats_cv_text": "complete ATS-optimized CV only; no notes or internal instructions",
             "autofill_notes": "structured copy-paste application workflow",
@@ -611,7 +612,7 @@ Use only truthful facts from Context.candidate_profile and Context.base_cv.
 
 Shape:
 {
-  "recruiter_message": "short LinkedIn connection note followed by optional longer variant in the same plain string",
+  "recruiter_message": "short LinkedIn connection note",
   "cover_letter": "concise tailored cover letter or empty string",
   "autofill_notes": "structured copy-paste answers and application caveats"
 }
@@ -620,8 +621,9 @@ Rules:
 - Do not include the ATS CV in this response.
 - recruiter_message and autofill_notes are required.
 - Every value must be a plain string. Do not return nested objects or arrays for any field.
-- recruiter_message must be one coherent outreach message, not multiple variants, not a cover letter, and not a formal letter beginning with "Dear Hiring Manager".
-- recruiter_message should state fit and interest naturally, then invite a conversation. Do not repeat the same introduction twice.
+- recruiter_message must be one short LinkedIn invite note, not multiple variants, not a cover letter, and not a formal letter beginning with "Dear Hiring Manager".
+- recruiter_message should be under 300 characters when possible.
+- recruiter_message should say why the role matches the CV and that the candidate would like to send/share the CV.
 - Keep language aligned with the job posting language.
 - Do not invent facts.
 """.strip()
@@ -654,7 +656,7 @@ def _kit_response_validation_error(payload: dict[str, Any]) -> str | None:
         if not str(payload.get(field) or "").strip():
             problems.append(f"{field} is required")
     recruiter_message = str(payload.get("recruiter_message") or "")
-    if len(recruiter_message) > 2500:
+    if len(recruiter_message) > 500:
         problems.append("recruiter_message is too long")
     problems.extend(_recruiter_message_quality_problems(recruiter_message))
     return "; ".join(problems) if problems else None

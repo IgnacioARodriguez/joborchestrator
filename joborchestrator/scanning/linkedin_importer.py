@@ -9,7 +9,12 @@ from typing import Any
 
 import pandas as pd
 
-from joborchestrator.scanning.models import JobPosting
+from joborchestrator.scanning.hiring_contacts import (
+    LEGACY_RECRUITER_SOURCE,
+    parse_hiring_contacts_value,
+    primary_contact,
+)
+from joborchestrator.scanning.models import HiringContact, JobPosting
 from joborchestrator.scanning.normalization import clean_display_text, compute_content_hash, first_value
 from joborchestrator.storage import persistence as db
 
@@ -76,8 +81,22 @@ def linkedin_row_to_job_posting(row: dict[str, Any], scraped_at: str | None = No
     posted_at = _text(first_value(normalized.get("posted_at"), normalized.get("fecha_publicacion"), normalized.get("fecha_publicada"), normalized.get("fecha")))
     applicant_count = _int_or_none(first_value(normalized.get("applicant_count"), normalized.get("cantidad_solicitantes")))
     applicant_count_raw = _text(first_value(normalized.get("applicant_count_raw"), normalized.get("cantidad_solicitantes_raw")))
+    hiring_contacts = parse_hiring_contacts_value(normalized.get("hiring_contacts"))
     recruiter_name = _text(normalized.get("recruiter_name"))
     recruiter_profile_url = _text(normalized.get("recruiter_profile_url"))
+    if not hiring_contacts and recruiter_name and recruiter_profile_url:
+        hiring_contacts = [
+            HiringContact(
+                name=recruiter_name,
+                profile_url=recruiter_profile_url,
+                is_primary=True,
+                source=LEGACY_RECRUITER_SOURCE,
+            )
+        ]
+    primary_hiring_contact = primary_contact(hiring_contacts)
+    if primary_hiring_contact:
+        recruiter_name = primary_hiring_contact.name
+        recruiter_profile_url = primary_hiring_contact.profile_url
     apply_type = _text(normalized.get("apply_type"))
     external_apply_url = _text(normalized.get("external_apply_url"))
     salary_min = _float_or_none(normalized.get("salary_min"))
@@ -109,6 +128,7 @@ def linkedin_row_to_job_posting(row: dict[str, Any], scraped_at: str | None = No
         applicant_count_raw=applicant_count_raw,
         recruiter_name=recruiter_name,
         recruiter_profile_url=recruiter_profile_url,
+        hiring_contacts=hiring_contacts,
         apply_type=apply_type,
         external_apply_url=external_apply_url,
         posted_at=posted_at,

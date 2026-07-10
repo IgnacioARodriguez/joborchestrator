@@ -8,7 +8,8 @@ from typing import Callable
 
 import pandas as pd
 
-from joborchestrator.scanning.models import JobPosting
+from joborchestrator.scanning.hiring_contacts import deduplicate_hiring_contacts, primary_contact
+from joborchestrator.scanning.models import HiringContact, JobPosting
 from joborchestrator.scanning.normalization import normalize_job_identity, normalize_text
 from joborchestrator.storage import db_connection
 
@@ -124,7 +125,7 @@ def upsert_job_posting(connect: ConnectionFactory, job: JobPosting, seen_at: str
 
         if existing is None:
             status = "new"
-            conn.execute(
+            cursor = conn.execute(
                 """INSERT INTO job_postings (
                        external_id, source, company, title, location, workplace_type, department,
                        url, apply_url, description_html, description_text, salary_min, salary_max,
@@ -175,7 +176,9 @@ def upsert_job_posting(connect: ConnectionFactory, job: JobPosting, seen_at: str
                     identity_key,
                 ),
             )
+            job_id = _last_insert_id(conn, cursor)
         else:
+            job_id = int(existing["id"])
             status = "updated" if existing["content_hash"] != job.content_hash else "seen"
             conn.execute(
                 """UPDATE job_postings SET
@@ -226,6 +229,15 @@ def upsert_job_posting(connect: ConnectionFactory, job: JobPosting, seen_at: str
                     job.company,
                     job.external_id,
                 ),
+            )
+        sync_job_hiring_contacts_for_connection(conn, job_id, job.hiring_contacts, now=now)
+        primary_hiring_contact = primary_contact(job.hiring_contacts)
+        if primary_hiring_contact:
+            conn.execute(
+                """UPDATE job_postings
+                   SET recruiter_name = ?, recruiter_profile_url = ?
+                   WHERE id = ?""",
+                (primary_hiring_contact.name, primary_hiring_contact.profile_url, job_id),
             )
         conn.commit()
         return status
@@ -396,6 +408,74 @@ def get_job_posting(connect: ConnectionFactory, job_id: int) -> dict | None:
     try:
         row = conn.execute("SELECT * FROM job_postings WHERE id = ?", (job_id,)).fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def sync_job_hiring_contacts_for_connection(
+    conn: sqlite3.Connection | db_connection.LibsqlConnection,
+    job_id: int,
+    contacts: list[HiringContact],
+    *,
+    now: str | None = None,
+) -> None:
+    now = now or datetime.now().isoformat(timespec="seconds")
+    contacts = deduplicate_hiring_contacts(contacts)
+    seen_urls: list[str] = []
+    for position, contact in enumerate(contacts):
+        seen_urls.append(contact.profile_url)
+        conn.execute(
+            """INSERT INTO job_hiring_contacts (
+                   job_posting_id, name, profile_url, headline, role, source,
+                   is_primary, position, is_active, first_seen_at, last_seen_at,
+                   created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+               ON CONFLICT(job_posting_id, profile_url) DO UPDATE SET
+                   name = excluded.name,
+                   headline = excluded.headline,
+                   role = excluded.role,
+                   source = excluded.source,
+                   is_primary = excluded.is_primary,
+                   position = excluded.position,
+                   is_active = 1,
+                   last_seen_at = excluded.last_seen_at,
+                   updated_at = excluded.updated_at""",
+            (
+                job_id,
+                contact.name,
+                contact.profile_url,
+                contact.headline,
+                contact.role,
+                contact.source,
+                int(contact.is_primary),
+                position,
+                now,
+                now,
+                now,
+                now,
+            ),
+        )
+    if seen_urls:
+        placeholders = ",".join("?" for _ in seen_urls)
+        conn.execute(
+            f"""UPDATE job_hiring_contacts
+                SET is_active = 0, updated_at = ?
+                WHERE job_posting_id = ?
+                  AND profile_url NOT IN ({placeholders})""",
+            [now, job_id, *seen_urls],
+        )
+
+
+def list_job_hiring_contacts(connect: ConnectionFactory, job_id: int | None = None) -> list[dict]:
+    conn = connect()
+    try:
+        params: list[object] = []
+        query = "SELECT * FROM job_hiring_contacts WHERE is_active = 1"
+        if job_id is not None:
+            query += " AND job_posting_id = ?"
+            params.append(job_id)
+        query += " ORDER BY job_posting_id ASC, position ASC, id ASC"
+        return [dict(row) for row in conn.execute(query, params).fetchall()]
     finally:
         conn.close()
 

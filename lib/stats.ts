@@ -30,7 +30,7 @@ export function decisionDistribution(jobs: JobPosting[]) {
 }
 
 export function sourceDistribution(jobs: JobPosting[]) {
-  const sources: JobSource[] = ["LinkedIn", "Greenhouse", "Lever", "Ashby", "API"]
+  const sources: JobSource[] = ["LinkedIn", "Greenhouse", "Lever", "Ashby", "API", "Manual"]
   const counts = Object.fromEntries(sources.map((s) => [s, 0])) as Record<
     JobSource,
     number

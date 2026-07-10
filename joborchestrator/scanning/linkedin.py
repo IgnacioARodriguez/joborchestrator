@@ -32,6 +32,18 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
 from joborchestrator.ranking.role_catalog import role_catalog_from_profile
 from joborchestrator.ranking.schemas import CandidateProfile
+from joborchestrator.scanning.hiring_contacts import (
+    HIRING_TEAM_HEADINGS,
+    LINKEDIN_HIRING_CONTACT_SOURCE,
+    HiringContactsExtractionResult,
+    deduplicate_hiring_contacts,
+    extract_contact_headline,
+    extract_contact_name,
+    hiring_contacts_to_json,
+    normalize_linkedin_profile_url,
+    primary_contact,
+)
+from joborchestrator.scanning.models import HiringContact
 from joborchestrator.scanning.search_targets import build_search_intents
 from joborchestrator.storage import persistence as db
 
@@ -521,12 +533,7 @@ def extraer_salario_desde_texto(texto: str) -> dict[str, float | str | None]:
 
 
 def normalizar_linkedin_profile_url(url: str | None) -> str | None:
-    if not url:
-        return None
-    parsed = urlsplit(url)
-    if "/in/" not in parsed.path:
-        return None
-    return urlunsplit((parsed.scheme or "https", parsed.netloc or "www.linkedin.com", parsed.path.rstrip("/") + "/", "", ""))
+    return normalize_linkedin_profile_url(url)
 
 
 # ============================================================
@@ -1115,31 +1122,76 @@ async def extraer_texto_locator(locator, timeout: int = 1800) -> str:
 
 
 async def extraer_recruiter_desde_panel(panel) -> dict[str, str | None]:
-    empty = {"recruiter_name": None, "recruiter_profile_url": None}
-    headings = [
-        "Meet the hiring team",
-        "Conoce al equipo de contratación",
-        "Conoce al equipo de contrataciÃ³n",
-    ]
-    for heading in headings:
+    result = await extraer_hiring_contacts_desde_panel(panel)
+    contact = primary_contact(result.contacts)
+    return {
+        "recruiter_name": contact.name if contact else None,
+        "recruiter_profile_url": contact.profile_url if contact else None,
+    }
+
+
+async def extraer_hiring_contacts_desde_panel(panel) -> HiringContactsExtractionResult:
+    found_heading = False
+    contacts: list[HiringContact] = []
+    for heading in HIRING_TEAM_HEADINGS:
         try:
             heading_loc = panel.get_by_text(re.compile(rf"^{re.escape(heading)}$", re.IGNORECASE)).first
             if await heading_loc.count() == 0:
                 continue
+            found_heading = True
             block = heading_loc.locator("xpath=ancestor::*[self::section or self::div][.//a[contains(@href, '/in/')]][1]")
             if await block.count() == 0:
                 block = heading_loc.locator("xpath=following::*[.//a[contains(@href, '/in/')]][1]")
-            link = block.locator('a[href*="/in/"]').first
-            if await link.count() == 0:
+            if await block.count() == 0:
                 continue
-            href = normalizar_linkedin_profile_url(await link.get_attribute("href"))
-            name = limpiar_texto(await link.inner_text(timeout=1500))
-            if not name and href:
-                name = limpiar_texto(await block.inner_text(timeout=1500)).splitlines()[0]
-            return {"recruiter_name": name or None, "recruiter_profile_url": href}
-        except Exception:
+            links = block.locator('a[href*="/in/"]')
+            link_count = await links.count()
+            for index in range(link_count):
+                try:
+                    link = links.nth(index)
+                    href = normalize_linkedin_profile_url(await link.get_attribute("href"))
+                    if not href:
+                        continue
+                    link_text = ""
+                    try:
+                        link_text = await link.inner_text(timeout=1000)
+                    except Exception:
+                        link_text = ""
+                    card_text = ""
+                    try:
+                        card = link.locator("xpath=ancestor::*[self::li or self::div][1]")
+                        card_text = await card.inner_text(timeout=1000)
+                    except Exception:
+                        try:
+                            card_text = await block.inner_text(timeout=1000)
+                        except Exception:
+                            card_text = ""
+                    name = extract_contact_name(link_text, href)
+                    if not name:
+                        name = extract_contact_name(card_text, href)
+                    if not name:
+                        continue
+                    contacts.append(
+                        HiringContact(
+                            name=name,
+                            profile_url=href,
+                            headline=extract_contact_headline(card_text, name),
+                            role=None,
+                            source=LINKEDIN_HIRING_CONTACT_SOURCE,
+                        )
+                    )
+                except Exception as exc:
+                    print(f"linkedin_hiring_contact_parse_failed error={type(exc).__name__}")
+                    continue
+            contacts = deduplicate_hiring_contacts(contacts)
+            print(f"linkedin_hiring_contacts_extracted status=found count={len(contacts)}")
+            return HiringContactsExtractionResult("found", contacts)
+        except Exception as exc:
+            print(f"linkedin_hiring_contact_parse_failed error={type(exc).__name__}")
             continue
-    return empty
+    status = "not_present" if not found_heading else "parse_error"
+    print(f"linkedin_hiring_contacts_extracted status={status} count=0")
+    return HiringContactsExtractionResult(status, [])
 
 
 async def extraer_apply_desde_panel(panel) -> dict[str, str | None]:
@@ -1391,6 +1443,7 @@ async def extraer_datos_job_desde_panel(page) -> dict:
             "salary_currency": None,
             "recruiter_name": None,
             "recruiter_profile_url": None,
+            "hiring_contacts": "[]",
             "apply_type": "unknown",
             "external_apply_url": None,
             "descripcion": "",
@@ -1400,7 +1453,8 @@ async def extraer_datos_job_desde_panel(page) -> dict:
 
     header = await extraer_header_desde_panel(panel)
     descripcion = await extraer_descripcion_directa(page, panel)
-    recruiter = await extraer_recruiter_desde_panel(panel)
+    hiring_result = await extraer_hiring_contacts_desde_panel(panel)
+    primary_hiring_contact = primary_contact(hiring_result.contacts)
     apply_data = await extraer_apply_desde_panel(panel)
 
     return {
@@ -1413,8 +1467,10 @@ async def extraer_datos_job_desde_panel(page) -> dict:
         "salary_min": header["salary_min"],
         "salary_max": header["salary_max"],
         "salary_currency": header["salary_currency"],
-        "recruiter_name": recruiter["recruiter_name"],
-        "recruiter_profile_url": recruiter["recruiter_profile_url"],
+        "recruiter_name": primary_hiring_contact.name if primary_hiring_contact else None,
+        "recruiter_profile_url": primary_hiring_contact.profile_url if primary_hiring_contact else None,
+        "hiring_contacts": hiring_contacts_to_json(hiring_result.contacts),
+        "hiring_contacts_status": hiring_result.status,
         "apply_type": apply_data["apply_type"],
         "external_apply_url": apply_data["external_apply_url"],
         "descripcion": descripcion,

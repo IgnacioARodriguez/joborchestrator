@@ -160,7 +160,7 @@ export function AppShell() {
               <TodayScreen onOpenJob={setOpenJobId} onNavigate={navigate} />
             )}
             {section === "review" && <ReviewScreen onOpenJob={setOpenJobId} />}
-            {section === "applications" && <ApplicationsScreen />}
+            {section === "applications" && <ApplicationsScreen onOpenJob={setOpenJobId} />}
             {section === "profile" && <ProfileScreen />}
             {section === "automations" && <OpsScreen />}
             {section === "insights" && <InsightsScreen />}

@@ -1,7 +1,7 @@
 // Core domain types for Job Orchestrator.
 // Structured to map cleanly onto Supabase tables later.
 
-export type JobSource = "LinkedIn" | "Greenhouse" | "Lever" | "Ashby" | "API"
+export type JobSource = "LinkedIn" | "Greenhouse" | "Lever" | "Ashby" | "API" | "Manual"
 
 export type Decision =
   | "APPLY_NOW"
@@ -78,6 +78,16 @@ export interface ApplicationMaterials {
   autofill_notes: string
 }
 
+export interface HiringContact {
+  id?: string
+  name: string
+  profile_url: string
+  headline?: string | null
+  role?: string | null
+  is_primary: boolean
+  source: "linkedin_hiring_team" | string
+}
+
 export interface JobPosting {
   id: string
   title: string
@@ -95,6 +105,8 @@ export interface JobPosting {
   salary_currency?: string | null
   recruiter_name?: string | null
   recruiter_profile_url?: string | null
+  hiring_contacts?: HiringContact[]
+  hiring_contacts_count?: number
   apply_type?: string | null
   external_apply_url?: string | null
   description_text: string

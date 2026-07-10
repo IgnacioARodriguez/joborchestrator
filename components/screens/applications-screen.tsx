@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Building2, Inbox, Plus, Send } from "lucide-react"
+import { Building2, BriefcaseBusiness, Inbox, MailSearch, Plus, Send } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -36,18 +36,20 @@ const LABELS: Record<ApplicationStatus, string> = {
   withdrawn: "Withdrawn",
 }
 
-function ApplicationCard({ application }: { application: ApplicationRecord }) {
+function ApplicationCard({ application, onOpenJob }: { application: ApplicationRecord; onOpenJob: (id: string) => void }) {
   const { setApplicationStatus } = useStore()
   return (
     <article className="rounded-lg border border-border bg-card p-3 shadow-[0_1px_2px_rgba(16,24,40,0.03)]">
-      <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
-        {application.job_title || `Application ${application.id}`}
-      </h3>
-      <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-        <Building2 className="size-3.5 shrink-0" />
-        <span className="truncate">{application.company || "Unknown company"}</span>
-      </p>
-      <p className="mt-1 text-[11px] uppercase text-muted-foreground/80">{application.channel.replace("_", " ")}</p>
+      <button type="button" onClick={() => onOpenJob(String(application.job_id))} className="block w-full text-left">
+        <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
+          {application.job_title || `Application ${application.id}`}
+        </h3>
+        <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+          <Building2 className="size-3.5 shrink-0" />
+          <span className="truncate">{application.company || "Unknown company"}</span>
+        </p>
+        <p className="mt-1 text-[11px] uppercase text-muted-foreground/80">{application.channel.replace("_", " ")}</p>
+      </button>
       <div className="mt-3 flex flex-wrap gap-1">
         {APPLICATION_COLUMNS.filter((status) => status !== application.status).map((status) => (
           <button
@@ -67,12 +69,15 @@ function ApplicationCard({ application }: { application: ApplicationRecord }) {
   )
 }
 
-export function ApplicationsScreen() {
-  const { applications } = useStore()
+export function ApplicationsScreen({ onOpenJob }: { onOpenJob: (id: string) => void }) {
+  const { applications, refresh } = useStore()
   const [contacts, setContacts] = useState<JobContact[]>([])
   const [followUps, setFollowUps] = useState<FollowUp[]>([])
+  const [jobDraft, setJobDraft] = useState({ title: "", company: "", url: "", apply_url: "", description_text: "" })
   const [contactDraft, setContactDraft] = useState({ company: "", name: "", role: "", linkedin_url: "" })
   const [followUpDraft, setFollowUpDraft] = useState({ application_id: "", due_at: "", note: "" })
+  const [gmailDraft, setGmailDraft] = useState({ sender: "", subject: "", body: "" })
+  const [gmailSignal, setGmailSignal] = useState("")
   const [suggestion, setSuggestion] = useState("")
 
   useEffect(() => {
@@ -124,6 +129,26 @@ export function ApplicationsScreen() {
     }
   }
 
+  async function createJob() {
+    if (!jobDraft.title.trim() || !jobDraft.company.trim() || !jobDraft.url.trim()) return
+    try {
+      const response = await api.createJob({
+        title: jobDraft.title,
+        company: jobDraft.company,
+        url: jobDraft.url,
+        apply_url: jobDraft.apply_url || jobDraft.url,
+        source: "manual",
+        description_text: jobDraft.description_text,
+      })
+      setJobDraft({ title: "", company: "", url: "", apply_url: "", description_text: "" })
+      await refresh()
+      onOpenJob(response.job.id)
+      toast.success("Job added", { description: response.job.title })
+    } catch (e) {
+      toast.error("Could not add job", { description: e instanceof Error ? e.message : "Backend request failed." })
+    }
+  }
+
   async function createFollowUp() {
     const application_id = Number(followUpDraft.application_id)
     if (!application_id || !followUpDraft.due_at) return
@@ -138,6 +163,19 @@ export function ApplicationsScreen() {
       toast.success("Follow-up recorded")
     } catch (e) {
       toast.error("Could not save follow-up", { description: e instanceof Error ? e.message : "Backend request failed." })
+    }
+  }
+
+  async function previewGmail() {
+    try {
+      const response = await api.previewGmailRules(gmailDraft)
+      setGmailSignal(
+        response.signal
+          ? `${response.signal.event_type} (${Math.round(response.signal.confidence * 100)}%) - ${response.signal.note}`
+          : "No recruiter signal detected.",
+      )
+    } catch (e) {
+      toast.error("Could not preview Gmail rules", { description: e instanceof Error ? e.message : "Backend request failed." })
     }
   }
 
@@ -182,7 +220,7 @@ export function ApplicationsScreen() {
                     </Empty>
                   ) : (
                     <div className="flex flex-col gap-2">
-                      {items.map((application) => <ApplicationCard key={application.id} application={application} />)}
+                      {items.map((application) => <ApplicationCard key={application.id} application={application} onOpenJob={onOpenJob} />)}
                     </div>
                   )}
                 </div>
@@ -192,6 +230,40 @@ export function ApplicationsScreen() {
         </div>
       </div>
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm"><BriefcaseBusiness className="size-4" /> Add job</CardTitle>
+            <CardDescription className="text-xs">Add an opportunity you already have and open it for applying/contacting.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr]">
+              <Input placeholder="Title" value={jobDraft.title} onChange={(event) => setJobDraft((current) => ({ ...current, title: event.target.value }))} />
+              <Input placeholder="Company" value={jobDraft.company} onChange={(event) => setJobDraft((current) => ({ ...current, company: event.target.value }))} />
+            </div>
+            <Input placeholder="Posting URL" value={jobDraft.url} onChange={(event) => setJobDraft((current) => ({ ...current, url: event.target.value }))} />
+            <Input placeholder="Apply URL (optional)" value={jobDraft.apply_url} onChange={(event) => setJobDraft((current) => ({ ...current, apply_url: event.target.value }))} />
+            <Textarea placeholder="Description or notes" value={jobDraft.description_text} onChange={(event) => setJobDraft((current) => ({ ...current, description_text: event.target.value }))} className="min-h-24 text-xs" />
+            <Button onClick={() => void createJob()} disabled={!jobDraft.title.trim() || !jobDraft.company.trim() || !jobDraft.url.trim()}>
+              <Plus data-icon="inline-start" />
+              Add job
+            </Button>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm"><MailSearch className="size-4" /> Gmail rules</CardTitle>
+            <CardDescription className="text-xs">Read-only preview for recruiter reply, rejection and interview signals.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <Input placeholder="Sender" value={gmailDraft.sender} onChange={(event) => setGmailDraft((current) => ({ ...current, sender: event.target.value }))} />
+            <Input placeholder="Subject" value={gmailDraft.subject} onChange={(event) => setGmailDraft((current) => ({ ...current, subject: event.target.value }))} />
+            <Textarea placeholder="Email body" value={gmailDraft.body} onChange={(event) => setGmailDraft((current) => ({ ...current, body: event.target.value }))} className="min-h-24 text-xs" />
+            <Button variant="outline" onClick={() => void previewGmail()} disabled={!gmailDraft.sender && !gmailDraft.subject && !gmailDraft.body}>
+              Preview signal
+            </Button>
+            {gmailSignal ? <p className="rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">{gmailSignal}</p> : null}
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader>
             <CardTitle className="text-sm">Contacts</CardTitle>

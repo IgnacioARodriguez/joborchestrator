@@ -23,6 +23,7 @@ def parse_json_value(value: Any, fallback: Any) -> Any:
 def job_dto(job: dict[str, Any], ranking_row: dict[str, Any] | None) -> dict[str, Any]:
     ranking = ranking_dto(ranking_row)
     location_mode = _string(job.get("location") or job.get("workplace_type")).lower()
+    hiring_contacts = _hiring_contacts_for_job(job)
     return {
         "id": str(job["id"]),
         "title": _string(job.get("title"), "Untitled role"),
@@ -40,6 +41,8 @@ def job_dto(job: dict[str, Any], ranking_row: dict[str, Any] | None) -> dict[str
         "salary_currency": _nullable_string(job.get("salary_currency")),
         "recruiter_name": _nullable_string(job.get("recruiter_name")),
         "recruiter_profile_url": _nullable_string(job.get("recruiter_profile_url")),
+        "hiring_contacts": hiring_contacts,
+        "hiring_contacts_count": len(hiring_contacts),
         "apply_type": _nullable_string(job.get("apply_type")),
         "external_apply_url": _nullable_string(job.get("external_apply_url")),
         "description_text": _string(job.get("description_text")),
@@ -55,6 +58,26 @@ def job_dto(job: dict[str, Any], ranking_row: dict[str, Any] | None) -> dict[str
             "autofill_notes": _string(job.get("autofill_notes")),
         },
     }
+
+
+def _hiring_contacts_for_job(job: dict[str, Any]) -> list[dict[str, Any]]:
+    job_id = _int_or_none(job.get("id"))
+    if job_id is None:
+        return []
+    contacts = db.list_job_hiring_contacts(job_id)
+    return [
+        {
+            "id": str(contact["id"]),
+            "name": _string(contact.get("name")),
+            "profile_url": _string(contact.get("profile_url")),
+            "headline": _nullable_string(contact.get("headline")),
+            "role": _nullable_string(contact.get("role")),
+            "is_primary": bool(contact.get("is_primary")),
+            "source": _string(contact.get("source"), "linkedin_hiring_team"),
+        }
+        for contact in contacts
+        if contact.get("name") and contact.get("profile_url")
+    ]
 
 
 def ranking_dto(row: dict[str, Any] | None) -> dict[str, Any]:
@@ -173,6 +196,8 @@ def _source_label(source: str | None) -> str:
         "arbeitnow": "API",
         "adzuna": "API",
         "themuse": "API",
+        "infojobs": "API",
+        "manual": "Manual",
     }
     return mapping.get(raw, "API")
 

@@ -108,6 +108,20 @@ export const api = {
     })
   },
 
+  async createJob(input: {
+    title: string
+    company: string
+    url: string
+    apply_url?: string
+    source?: string
+    description_text?: string
+  }) {
+    return request<{ job: JobPosting }>("/api/jobs", {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  },
+
   async generateMaterials(id: string, provider: "heuristic" | "openai" | "nvidia" = "openai") {
     return request<{ job?: JobPosting; operation_id?: number; status?: string }>(`/api/jobs/${id}/materials`, {
       method: "POST",
@@ -189,6 +203,15 @@ export const api = {
   async patchApplication(id: number, input: Partial<{ status: ApplicationStatus }>) {
     return request<{ application: ApplicationRecord }>(`/api/applications/${id}`, {
       method: "PATCH",
+      body: JSON.stringify(input),
+    })
+  },
+
+  async previewGmailRules(input: { sender: string; subject: string; body: string }) {
+    return request<{
+      signal: null | { event_type: string; confidence: number; note: string }
+    }>("/api/gmail/rules/preview", {
+      method: "POST",
       body: JSON.stringify(input),
     })
   },

@@ -20,6 +20,7 @@ import {
   Sparkles,
   Users,
   WalletCards,
+  UserRoundSearch,
 } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -43,7 +44,7 @@ import {
   rankingSummaryText,
   salaryLabel,
 } from "@/lib/job-ui"
-import type { JobPosting } from "@/lib/types"
+import type { JobContact, JobPosting } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 function EvidenceList({
@@ -222,12 +223,33 @@ function DetailBody({
 }) {
   const { setPipelineStatus, markOpened, generateMaterials, refresh, applications } = useStore()
   const [materialsOperationId, setMaterialsOperationId] = useState<number | null>(null)
+  const [contacts, setContacts] = useState<JobContact[]>([])
   const { evidence } = job.ranking
   const applicants = applicantLabel(job)
   const salary = salaryLabel(job)
+  const [showAllHiringContacts, setShowAllHiringContacts] = useState(false)
+  const hiringContacts = job.hiring_contacts ?? []
+  const visibleHiringContacts = showAllHiringContacts ? hiringContacts : hiringContacts.slice(0, 3)
   const companyHistory = applications.filter(
     (application) => application.company?.toLowerCase() === job.company.toLowerCase(),
   )
+  const jobContacts = contacts.filter((contact) => {
+    const sameJob = contact.job_id === Number(job.id)
+    const sameCompany = (contact.company || "").toLowerCase() === job.company.toLowerCase()
+    return sameJob || sameCompany
+  })
+  const recruiterCandidates = [
+    ...(job.recruiter_name
+      ? [{
+          id: -1,
+          name: job.recruiter_name,
+          role: "Job poster",
+          linkedin_url: job.recruiter_profile_url,
+          source: "linkedin_scraper" as const,
+        }]
+      : []),
+    ...jobContacts,
+  ]
 
   useEffect(() => {
     if (!materialsOperationId) return
@@ -269,9 +291,37 @@ function DetailBody({
     }
   }, [job.title, materialsOperationId, refresh])
 
+  useEffect(() => {
+    let cancelled = false
+    async function loadContacts() {
+      try {
+        const response = await api.getContacts()
+        if (!cancelled) setContacts(response.contacts)
+      } catch {
+        if (!cancelled) setContacts([])
+      }
+    }
+    void loadContacts()
+    return () => {
+      cancelled = true
+    }
+  }, [job.id])
+
   function openExternal(url: string) {
     markOpened(job.id)
     window.open(url, "_blank", "noopener,noreferrer")
+  }
+
+  async function copyRecruiterMessage() {
+    await navigator.clipboard.writeText(job.materials.recruiter_message)
+    toast.success("Recruiter message copied")
+  }
+
+  function openRecruiterSearch(spainOnly: boolean) {
+    const query = spainOnly
+      ? `site:linkedin.com/in recruiter ${job.company} Spain`
+      : `site:linkedin.com/in recruiter ${job.company}`
+    window.open(`https://www.google.com/search?q=${encodeURIComponent(query)}`, "_blank", "noopener,noreferrer")
   }
 
   return (
@@ -506,24 +556,103 @@ function DetailBody({
           </div>
         </section>
 
+        {hiringContacts.length > 0 ? (
+          <section className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-foreground">Hiring team</h3>
+              {hiringContacts.length > 3 ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowAllHiringContacts((value) => !value)}
+                >
+                  {showAllHiringContacts ? "Show less" : "Show all"}
+                </Button>
+              ) : null}
+            </div>
+            <div className="flex flex-col gap-2">
+              {visibleHiringContacts.map((contact) => (
+                <div
+                  key={`${contact.profile_url}-${contact.name}`}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 p-3"
+                >
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <p className="max-w-full truncate text-xs font-semibold text-foreground">
+                        {contact.name}
+                      </p>
+                      {contact.is_primary ? (
+                        <span className="rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                          Primary contact
+                        </span>
+                      ) : null}
+                    </div>
+                    {contact.headline ? (
+                      <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                        {contact.headline}
+                      </p>
+                    ) : null}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => window.open(contact.profile_url, "_blank", "noopener,noreferrer")}
+                  >
+                    <ExternalLink data-icon="inline-start" />
+                    LinkedIn
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
         <section className="flex flex-col gap-2">
-          <h3 className="text-sm font-semibold text-foreground">
-            Strategy
-          </h3>
-          <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
-            {job.recruiter_name ? (
-              <p>
-                Contact {job.recruiter_name}
-                {job.recruiter_profile_url ? " before or after applying." : "."}
-              </p>
-            ) : (
-              <p>
-                Apply through the available link, then look for a recruiter or referral path if the score stays strong.
-              </p>
-            )}
-            <p className="mt-2">
-              Recommended CV emphasis: {job.ranking.cv_keywords_to_emphasize.slice(0, 6).join(", ") || "No keyword guidance available."}
+          <h3 className="text-sm font-semibold text-foreground">Recruiter contact strategy</h3>
+          <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs leading-relaxed text-muted-foreground">
+            <p className="font-medium text-foreground">
+              Best path: apply with the least friction, then message the job poster. If there is no poster, contact a company recruiter, preferably Spain-based for Spain roles.
             </p>
+            <p className="mt-2">
+              CV emphasis: {job.ranking.cv_keywords_to_emphasize.slice(0, 6).join(", ") || "No keyword guidance available."}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => openRecruiterSearch(true)}>
+                <UserRoundSearch data-icon="inline-start" />
+                Spain recruiters
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => openRecruiterSearch(false)}>
+                <UserRoundSearch data-icon="inline-start" />
+                Company recruiters
+              </Button>
+              {job.materials.recruiter_message ? (
+                <Button variant="outline" size="sm" onClick={() => void copyRecruiterMessage()}>
+                  <Copy data-icon="inline-start" />
+                  Copy recruiter note
+                </Button>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            {recruiterCandidates.length ? recruiterCandidates.map((contact) => (
+              <div key={`${contact.id}-${contact.name}`} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/30 p-3">
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-semibold text-foreground">{contact.name || "Recruiter"}</p>
+                  <p className="truncate text-xs text-muted-foreground">{contact.role || "Recruiter"}{contact.source === "linkedin_scraper" ? " - scraped" : ""}</p>
+                </div>
+                {contact.linkedin_url ? (
+                  <Button variant="outline" size="sm" onClick={() => window.open(contact.linkedin_url || "", "_blank", "noopener,noreferrer")}>
+                    <UserRoundSearch data-icon="inline-start" />
+                    LinkedIn
+                  </Button>
+                ) : null}
+              </div>
+            )) : (
+              <div className="rounded-lg border border-dashed border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+                No recruiter saved yet. After applying, search LinkedIn for a recruiter at {job.company}; for Spain roles, prioritize Spain-based recruiters.
+              </div>
+            )}
           </div>
         </section>
 

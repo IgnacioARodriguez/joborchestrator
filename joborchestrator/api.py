@@ -134,7 +134,7 @@ class JobCreatePayload(BaseModel):
     company: str = "Unknown company"
     url: str
     apply_url: str | None = None
-    source: str = "greenhouse"
+    source: str = "manual"
     external_id: str | None = None
     description_text: str = ""
 
