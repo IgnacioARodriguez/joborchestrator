@@ -155,7 +155,7 @@ export function AppShell() {
             </div>
           </header>
 
-          <main className="mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col px-4 pb-24 pt-3 sm:px-6 lg:px-6 lg:pb-6">
+          <main className="mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col overflow-y-auto px-4 pb-24 pt-3 sm:px-6 lg:px-6 lg:pb-6">
             <div className="shrink-0">
               <DataLoadingBanner />
             </div>

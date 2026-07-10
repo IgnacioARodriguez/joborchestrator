@@ -380,13 +380,13 @@ export function ProfileScreen() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <div className="flex flex-col gap-4 pb-6">
       <PageHeader
         eyebrow="Profile"
         title="Candidate profile"
         description="Roles, geography, skills, and ranking context."
       />
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
       {busy && (
         <Card className="border-primary/20 bg-primary/5 xl:col-span-2">
           <CardContent className="flex items-center gap-3 p-4">
