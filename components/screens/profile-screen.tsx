@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { PageHeader } from "@/components/page-chrome"
 import { api } from "@/lib/api"
 import type {
   CandidateProfile,
@@ -348,7 +349,13 @@ export function ProfileScreen() {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        eyebrow="Profile"
+        title="Candidate profile"
+        description="Maintain the editable profile used by rankings, role matching, and application materials."
+      />
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       {busy && (
         <Card className="border-primary/20 bg-primary/5 xl:col-span-2">
           <CardContent className="flex items-center gap-3 p-4">
@@ -689,6 +696,7 @@ export function ProfileScreen() {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   )
 }

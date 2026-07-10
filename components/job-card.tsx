@@ -39,11 +39,11 @@ export function JobCard({
   }
 
   return (
-    <Card className="gap-0 overflow-hidden p-0">
+    <Card className="gap-0 overflow-hidden p-0 transition-shadow hover:shadow-[0_1px_2px_rgba(16,24,40,0.05),0_16px_34px_rgba(16,24,40,0.06)]">
       <button
         type="button"
         onClick={() => onOpen(job.id)}
-        className="flex w-full flex-col gap-3 p-4 text-left transition-colors hover:bg-accent/40"
+        className="flex w-full flex-col gap-4 p-5 text-left transition-colors hover:bg-accent/30"
       >
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 flex-col gap-1">
@@ -57,13 +57,13 @@ export function JobCard({
                 </span>
               ) : null}
             </div>
-            <h3 className="text-pretty text-sm font-semibold leading-snug text-foreground">
+            <h3 className="text-pretty text-base font-semibold leading-snug text-foreground">
               {job.title}
             </h3>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1">
             <Building2 className="size-3.5" />
             {job.company}
@@ -86,11 +86,11 @@ export function JobCard({
         </span>
       </button>
 
-      <div className="flex items-center gap-1.5 border-t border-border bg-muted/30 p-2">
+      <div className="grid grid-cols-2 gap-1.5 border-t border-border bg-muted/30 p-2 sm:grid-cols-4">
         <Button
           size="sm"
           variant="ghost"
-          className="h-8 flex-1 px-2 text-xs"
+          className="h-8 px-2 text-xs"
           onClick={() => openExternal(job.url)}
         >
           <ExternalLink data-icon="inline-start" />
@@ -99,7 +99,7 @@ export function JobCard({
         <Button
           size="sm"
           variant="ghost"
-          className="h-8 flex-1 px-2 text-xs"
+          className="h-8 px-2 text-xs"
           onClick={() => openExternal(job.apply_url)}
         >
           <Send data-icon="inline-start" />
@@ -108,7 +108,7 @@ export function JobCard({
         <Button
           size="sm"
           variant="ghost"
-          className="h-8 flex-1 px-2 text-xs"
+          className="h-8 px-2 text-xs"
           onClick={() => {
             setPipelineStatus(job.id, "shortlisted")
             toast.success("Shortlisted", { description: job.title })
@@ -120,7 +120,7 @@ export function JobCard({
         <Button
           size="sm"
           variant="ghost"
-          className="h-8 flex-1 px-2 text-xs text-muted-foreground"
+          className="h-8 px-2 text-xs text-muted-foreground"
           onClick={() => {
             setPipelineStatus(job.id, "discarded")
             toast("Discarded", { description: job.title })

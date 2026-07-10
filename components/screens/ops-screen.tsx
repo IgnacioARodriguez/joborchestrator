@@ -34,6 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
+import { PageHeader } from "@/components/page-chrome"
 import { api } from "@/lib/api"
 import { useStore } from "@/lib/store"
 import type { CompanySource, OperationRun, RankingJobRecord, ScanResult } from "@/lib/types"
@@ -295,7 +296,13 @@ export function OpsScreen() {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1fr]">
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        eyebrow="Operations"
+        title="Automation control room"
+        description="Run scans, import LinkedIn exports, queue ranking jobs, and monitor local worker operations."
+      />
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1fr]">
       {busyCopy && (
         <Card className="border-primary/20 bg-primary/5 xl:col-span-2">
           <CardContent className="flex items-center gap-3 p-4">
@@ -418,6 +425,7 @@ export function OpsScreen() {
             <Select
               value={linkedinProfile}
               onValueChange={(value) => {
+                if (!value) return
                 setLinkedinProfile(value)
                 setLinkedinProfileInput(value)
               }}
@@ -793,6 +801,7 @@ export function OpsScreen() {
           <ResultList results={results} />
         </CardContent>
       </Card>
+      </div>
     </div>
   )
 }

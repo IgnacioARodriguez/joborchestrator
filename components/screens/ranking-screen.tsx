@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/select"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { JobCard } from "@/components/job-card"
+import { PageHeader } from "@/components/page-chrome"
 import { cn } from "@/lib/utils"
 import { useStore } from "@/lib/store"
 import type { JobPosting } from "@/lib/types"
@@ -121,8 +122,15 @@ export function RankingScreen({
   }, [jobs, query, active, sort])
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-2 sm:flex-row">
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        eyebrow="Ranking"
+        title="Prioritized opportunities"
+        description="Search, filter, and sort ranked jobs without changing the underlying scoring data."
+      />
+
+      <div className="rounded-2xl border border-border bg-card p-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+        <div className="flex flex-col gap-2 sm:flex-row">
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -164,7 +172,7 @@ export function RankingScreen({
         </Select>
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="mt-3 flex flex-wrap gap-1.5">
         {FILTERS.map((f) => {
           const on = active.has(f.key)
           return (
@@ -176,8 +184,8 @@ export function RankingScreen({
               className={cn(
                 "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                 on
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-card text-muted-foreground hover:bg-accent",
+                  ? "border-primary/20 bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
               )}
             >
               {f.label}
@@ -185,8 +193,9 @@ export function RankingScreen({
           )
         })}
       </div>
+      </div>
 
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs font-medium text-muted-foreground">
         {results.length} {results.length === 1 ? "job" : "jobs"}
         {selectedRankingVersion
           ? ` ranked with ${rankingVersionLabel(selectedRankingVersion)}`
@@ -203,7 +212,7 @@ export function RankingScreen({
           </EmptyHeader>
         </Empty>
       ) : (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {results.map((job) => (
             <JobCard key={job.id} job={job} onOpen={onOpenJob} />
           ))}

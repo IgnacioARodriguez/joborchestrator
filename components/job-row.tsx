@@ -16,7 +16,7 @@ export function JobRow({
     <button
       type="button"
       onClick={() => onOpen(job.id)}
-      className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-accent/50"
+      className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors hover:bg-accent/50"
     >
       <ScoreBadge score={job.ranking.final_score} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">

@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
+import { MoreHorizontal } from "lucide-react"
 import {
   Card,
   CardContent,
@@ -51,10 +52,19 @@ function ChartCard({
   children: React.ReactNode
 }) {
   return (
-    <Card className="gap-3">
-      <CardHeader className="gap-0.5 pb-0">
-        <CardTitle className="text-sm">{title}</CardTitle>
-        <CardDescription className="text-xs">{description}</CardDescription>
+    <Card className="gap-4">
+      <CardHeader className="grid-cols-[1fr_auto] gap-1 pb-0">
+        <div>
+          <CardTitle className="text-sm">{title}</CardTitle>
+          <CardDescription className="text-xs">{description}</CardDescription>
+        </div>
+        <button
+          type="button"
+          aria-label={`${title} options`}
+          className="flex size-8 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <MoreHorizontal className="size-4" />
+        </button>
       </CardHeader>
       <CardContent>{children}</CardContent>
     </Card>
@@ -77,14 +87,14 @@ export function DashboardCharts({ jobs }: { jobs: JobPosting[] }) {
   } satisfies ChartConfig
 
   return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
       <ChartCard
         title="Decision distribution"
         description="How opportunities are ranked"
       >
-        <ChartContainer config={barConfig} className="h-48 w-full">
-          <BarChart accessibilityLayer data={decisions} margin={{ left: -20 }}>
-            <CartesianGrid vertical={false} strokeDasharray="3 3" />
+        <ChartContainer config={barConfig} className="h-64 w-full">
+          <BarChart accessibilityLayer data={decisions} margin={{ left: -12, right: 8, top: 8 }}>
+            <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis
               dataKey="label"
               tickLine={false}
@@ -100,7 +110,7 @@ export function DashboardCharts({ jobs }: { jobs: JobPosting[] }) {
               allowDecimals={false}
             />
             <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-            <Bar dataKey="count" radius={6}>
+            <Bar dataKey="count" radius={[8, 8, 0, 0]} barSize={34}>
               {decisions.map((d) => (
                 <Cell key={d.decision} fill={d.fill} />
               ))}
@@ -113,14 +123,14 @@ export function DashboardCharts({ jobs }: { jobs: JobPosting[] }) {
         title="Opportunities by source"
         description="Where jobs are coming from"
       >
-        <ChartContainer config={barConfig} className="h-48 w-full">
+        <ChartContainer config={barConfig} className="h-64 w-full">
           <BarChart
             accessibilityLayer
             data={sources}
             layout="vertical"
-            margin={{ left: 8 }}
+            margin={{ left: 8, right: 16, top: 8 }}
           >
-            <CartesianGrid horizontal={false} strokeDasharray="3 3" />
+            <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis type="number" hide allowDecimals={false} />
             <YAxis
               type="category"
@@ -131,11 +141,15 @@ export function DashboardCharts({ jobs }: { jobs: JobPosting[] }) {
               width={72}
             />
             <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-            <Bar
-              dataKey="count"
-              radius={6}
-              fill="var(--chart-1)"
-            />
+            <Bar dataKey="count" radius={[0, 8, 8, 0]} fill="var(--chart-1)" barSize={22}>
+              {sources.map((source) => (
+                <Cell
+                  key={source.source}
+                  fill={source.source.toLowerCase().includes("linkedin") ? "var(--chart-1)" : "var(--chart-2)"}
+                  opacity={source.source.toLowerCase().includes("linkedin") ? 1 : 0.68}
+                />
+              ))}
+            </Bar>
           </BarChart>
         </ChartContainer>
       </ChartCard>
@@ -144,9 +158,9 @@ export function DashboardCharts({ jobs }: { jobs: JobPosting[] }) {
         title="Weekly trend"
         description="New jobs found per day"
       >
-        <ChartContainer config={barConfig} className="h-48 w-full">
-          <LineChart accessibilityLayer data={trend} margin={{ left: -20 }}>
-            <CartesianGrid vertical={false} strokeDasharray="3 3" />
+        <ChartContainer config={barConfig} className="h-64 w-full">
+          <LineChart accessibilityLayer data={trend} margin={{ left: -12, right: 16, top: 12 }}>
+            <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis
               dataKey="label"
               tickLine={false}
@@ -165,8 +179,9 @@ export function DashboardCharts({ jobs }: { jobs: JobPosting[] }) {
               dataKey="count"
               type="monotone"
               stroke="var(--chart-1)"
-              strokeWidth={2}
-              dot={{ r: 3, fill: "var(--chart-1)" }}
+              strokeWidth={2.25}
+              dot={{ r: 3.5, fill: "var(--card)", stroke: "var(--chart-1)", strokeWidth: 2 }}
+              activeDot={{ r: 5, fill: "var(--chart-1)", stroke: "var(--card)", strokeWidth: 2 }}
             />
           </LineChart>
         </ChartContainer>
@@ -176,14 +191,14 @@ export function DashboardCharts({ jobs }: { jobs: JobPosting[] }) {
         title="Pipeline funnel"
         description="Progress from new to applied"
       >
-        <ChartContainer config={barConfig} className="h-48 w-full">
+        <ChartContainer config={barConfig} className="h-64 w-full">
           <BarChart
             accessibilityLayer
             data={funnel}
             layout="vertical"
-            margin={{ left: 8 }}
+            margin={{ left: 8, right: 16, top: 8 }}
           >
-            <CartesianGrid horizontal={false} strokeDasharray="3 3" />
+            <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis type="number" hide allowDecimals={false} />
             <YAxis
               type="category"
@@ -194,7 +209,7 @@ export function DashboardCharts({ jobs }: { jobs: JobPosting[] }) {
               width={72}
             />
             <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-            <Bar dataKey="count" radius={6} fill="var(--chart-2)" />
+            <Bar dataKey="count" radius={[0, 8, 8, 0]} fill="var(--chart-2)" barSize={22} />
           </BarChart>
         </ChartContainer>
       </ChartCard>
@@ -203,9 +218,9 @@ export function DashboardCharts({ jobs }: { jobs: JobPosting[] }) {
         title="Score distribution"
         description="Spread of ranking scores"
       >
-        <ChartContainer config={barConfig} className="h-48 w-full">
-          <BarChart accessibilityLayer data={histogram} margin={{ left: -20 }}>
-            <CartesianGrid vertical={false} strokeDasharray="3 3" />
+        <ChartContainer config={barConfig} className="h-64 w-full">
+          <BarChart accessibilityLayer data={histogram} margin={{ left: -12, right: 8, top: 8 }}>
+            <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis
               dataKey="range"
               tickLine={false}
@@ -221,7 +236,7 @@ export function DashboardCharts({ jobs }: { jobs: JobPosting[] }) {
               allowDecimals={false}
             />
             <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-            <Bar dataKey="count" radius={6} fill="var(--chart-3)" />
+            <Bar dataKey="count" radius={[8, 8, 0, 0]} fill="var(--chart-3)" barSize={34} />
           </BarChart>
         </ChartContainer>
       </ChartCard>

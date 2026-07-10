@@ -1,10 +1,19 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Compass, LoaderCircle } from "lucide-react"
+import {
+  Compass,
+  Download,
+  LoaderCircle,
+  RefreshCw,
+  Search,
+  Settings,
+  Zap,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { NAV_ITEMS, type Section } from "@/lib/nav"
 import { useStore } from "@/lib/store"
+import { Button } from "@/components/ui/button"
 import { DashboardScreen } from "@/components/screens/dashboard-screen"
 import { RankingScreen } from "@/components/screens/ranking-screen"
 import { PipelineScreen } from "@/components/screens/pipeline-screen"
@@ -37,7 +46,7 @@ function DataLoadingBanner() {
 
   if (!loading && backendOnline && jobs.length > 0) {
     return (
-      <div className="mb-4 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+      <div className="mb-5 rounded-2xl border border-border bg-card px-4 py-3 text-xs text-muted-foreground shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
         Loaded {jobsMeta?.returned ?? jobs.length} opportunities
         {jobsMeta?.total && jobsMeta.total !== (jobsMeta.returned ?? jobs.length)
           ? ` of ${jobsMeta.total}`
@@ -55,8 +64,8 @@ function DataLoadingBanner() {
       : "Loading opportunities from the backend."
 
   return (
-    <div className="mb-4 flex items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+    <div className="mb-5 flex items-center gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
         <LoaderCircle className="size-4 animate-spin" />
       </div>
       <div className="min-w-0 flex-1">
@@ -75,6 +84,7 @@ function DataLoadingBanner() {
 export function AppShell() {
   const [section, setSection] = useState<Section>("dashboard")
   const [openJobId, setOpenJobId] = useState<string | null>(null)
+  const { jobs, jobsMeta, backendOnline, loading, refresh } = useStore()
 
   function navigate(next: Section) {
     setSection(next)
@@ -82,18 +92,21 @@ export function AppShell() {
 
   return (
     <div className="min-h-dvh bg-background">
-      <div className="mx-auto flex w-full max-w-6xl">
+      <div className="flex w-full">
         {/* Desktop sidebar */}
-        <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-border bg-sidebar px-3 py-5 lg:flex">
-          <div className="flex items-center gap-2 px-2 pb-6">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <Compass className="size-4.5" />
+        <aside className="sticky top-0 hidden h-dvh w-[256px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-5 lg:flex">
+          <div className="flex items-center gap-3 px-2 pb-7">
+            <div className="flex size-10 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-[0_8px_18px_rgba(65,105,225,0.22)]">
+              <Compass className="size-5" />
             </div>
-            <span className="text-sm font-semibold text-sidebar-foreground">
-              Job Orchestrator
-            </span>
+            <div>
+              <span className="block text-sm font-semibold text-sidebar-foreground">
+                Job Orchestrator
+              </span>
+              <span className="text-xs text-muted-foreground">Career ops system</span>
+            </div>
           </div>
-          <nav className="flex flex-col gap-1">
+          <nav className="flex flex-col gap-1.5">
             {NAV_ITEMS.map((item) => {
               const active = section === item.id
               const Icon = item.icon
@@ -103,34 +116,81 @@ export function AppShell() {
                   type="button"
                   onClick={() => navigate(item.id)}
                   className={cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                    "flex h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors",
                     active
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                      : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-[inset_0_0_0_1px_rgba(65,105,225,0.08)]"
+                      : "text-muted-foreground hover:bg-muted hover:text-sidebar-foreground",
                   )}
                 >
-                  <Icon className="size-4.5" />
+                  <Icon className="size-4.5 shrink-0" />
                   <span className="flex-1 text-left">{item.label}</span>
                 </button>
               )
             })}
           </nav>
+          <div className="mt-auto rounded-2xl border border-border bg-muted/40 p-4">
+            <div className="flex items-center gap-2">
+              <span className="flex size-8 items-center justify-center rounded-xl bg-success/10 text-success-foreground">
+                <Zap className="size-4" />
+              </span>
+              <div>
+                <p className="text-xs font-semibold text-foreground">
+                  {backendOnline ? "System ready" : "API offline"}
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  {jobsMeta?.db_mode ? `Synced from ${jobsMeta.db_mode}` : `${jobs.length} opportunities`}
+                </p>
+              </div>
+            </div>
+          </div>
         </aside>
 
         {/* Main column */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-background/85 px-4 py-3 backdrop-blur lg:px-6">
-            <div className="flex items-center gap-2">
-              <div className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground lg:hidden">
+          <header className="sticky top-0 z-30 flex min-h-[72px] items-center justify-between border-b border-border/80 bg-background/90 px-4 backdrop-blur lg:px-8">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground lg:hidden">
                 <Compass className="size-4" />
               </div>
-              <h1 className="text-base font-semibold text-foreground">
-                {SECTION_TITLES[section]}
-              </h1>
+              <div className="min-w-0">
+                <h1 className="text-base font-semibold text-foreground">{SECTION_TITLES[section]}</h1>
+                <p className="hidden text-xs text-muted-foreground sm:block">
+                  {jobsMeta?.returned ?? jobs.length} opportunities loaded
+                  {jobsMeta?.db_mode ? ` from ${jobsMeta.db_mode}` : ""}
+                </p>
+              </div>
+            </div>
+            <div className="hidden min-w-0 flex-1 justify-center px-6 xl:flex">
+              <div className="relative w-full max-w-sm">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  aria-label="Search placeholder"
+                  disabled
+                  placeholder="Search is available in Ranking"
+                  className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-3 text-sm text-muted-foreground shadow-[0_1px_2px_rgba(16,24,40,0.03)]"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={loading}
+                onClick={() => void refresh()}
+              >
+                {loading ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+                Sync
+              </Button>
+              <Button variant="outline" size="icon-sm" aria-label="Export" disabled title="Export needs a backend endpoint">
+                <Download className="size-4" />
+              </Button>
+              <Button variant="outline" size="icon-sm" aria-label="Settings" onClick={() => navigate("ops")}>
+                <Settings className="size-4" />
+              </Button>
             </div>
           </header>
 
-          <main className="flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-10">
+          <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-10">
             <DataLoadingBanner />
             {section === "dashboard" && (
               <DashboardScreen onOpenJob={setOpenJobId} onNavigate={navigate} />
@@ -146,7 +206,7 @@ export function AppShell() {
       </div>
 
       {/* Mobile bottom navigation */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-md items-stretch justify-around">
           {NAV_ITEMS.map((item) => {
             const active = section === item.id

@@ -20,6 +20,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { ScoreBadge, DecisionBadge } from "@/components/badges"
+import { PageHeader } from "@/components/page-chrome"
 import { useStore } from "@/lib/store"
 import { PIPELINE_LABELS, relativeTime } from "@/lib/job-ui"
 import type { JobPosting, PipelineStatus } from "@/lib/types"
@@ -42,7 +43,7 @@ function PipelineItem({
 }) {
   const { setPipelineStatus } = useStore()
   return (
-    <Card className="flex-row items-center gap-2 p-3">
+    <Card className="flex-row items-center gap-3 p-4" size="sm">
       <ScoreBadge score={job.ranking.final_score} />
       <button
         type="button"
@@ -102,8 +103,14 @@ export function PipelineScreen({
       .sort((a, b) => b.ranking.final_score - a.ranking.final_score)
 
   return (
-    <Tabs value={tab} onValueChange={(v) => setTab(v as PipelineStatus)}>
-      <TabsList className="w-full">
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        eyebrow="Pipeline"
+        title="Application pipeline"
+        description="Move opportunities through shortlist, applied, discarded, and opened states."
+      />
+      <Tabs value={tab} onValueChange={(v) => setTab(v as PipelineStatus)}>
+      <TabsList className="w-full rounded-2xl border border-border bg-card p-1 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
         {TABS.map((t) => {
           const count = jobs.filter((j) => j.pipeline_status === t).length
           return (
@@ -120,7 +127,7 @@ export function PipelineScreen({
       {TABS.map((t) => {
         const items = byStatus(t)
         return (
-          <TabsContent key={t} value={t} className="mt-3 flex flex-col gap-2">
+          <TabsContent key={t} value={t} className="mt-4 flex flex-col gap-3">
             {items.length === 0 ? (
               <Empty className="border border-dashed">
                 <EmptyHeader>
@@ -142,6 +149,7 @@ export function PipelineScreen({
           </TabsContent>
         )
       })}
-    </Tabs>
+      </Tabs>
+    </div>
   )
 }

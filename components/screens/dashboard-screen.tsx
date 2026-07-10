@@ -7,6 +7,8 @@ import {
   Sparkles,
   Gauge,
   ArrowRight,
+  Download,
+  RefreshCw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -18,6 +20,7 @@ import {
 import { KpiCard } from "@/components/kpi-card"
 import { DashboardCharts } from "@/components/dashboard-charts"
 import { JobRow } from "@/components/job-row"
+import { PageHeader } from "@/components/page-chrome"
 import { useStore } from "@/lib/store"
 import { computeKpis } from "@/lib/stats"
 import type { Section } from "@/lib/nav"
@@ -36,14 +39,14 @@ function TodayCard({
   action?: React.ReactNode
 }) {
   return (
-    <Card className="gap-2">
+    <Card className="gap-3">
       <CardHeader className="flex-row items-center justify-between pb-0">
         <CardTitle className="text-sm">{title}</CardTitle>
         {action}
       </CardHeader>
       <CardContent>
         {jobs.length === 0 ? (
-          <p className="px-2 py-4 text-center text-xs text-muted-foreground">
+          <p className="rounded-xl border border-dashed border-border bg-muted/30 px-3 py-6 text-center text-xs text-muted-foreground">
             {emptyText}
           </p>
         ) : (
@@ -69,7 +72,7 @@ export function DashboardScreen({
   onOpenJob: (id: string) => void
   onNavigate: (section: Section) => void
 }) {
-  const { jobs } = useStore()
+  const { jobs, jobsMeta, loading, refresh } = useStore()
   const kpis = computeKpis(jobs)
 
   const topCandidates = [...jobs]
@@ -91,34 +94,67 @@ export function DashboardScreen({
     .slice(0, 5)
 
   return (
-    <div className="flex flex-col gap-5">
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        eyebrow="Overview"
+        title="Dashboard"
+        description={`${jobsMeta?.returned ?? jobs.length} opportunities loaded${jobsMeta?.db_mode ? ` from ${jobsMeta.db_mode}` : ""}. Track ranking quality, pipeline movement, and today’s best next actions.`}
+        actions={
+          <>
+            <Button variant="outline" onClick={() => void refresh()} disabled={loading}>
+              <RefreshCw data-icon="inline-start" className={loading ? "animate-spin" : undefined} />
+              Sync
+            </Button>
+            <Button variant="outline" disabled title="Export will be wired when a backend export endpoint exists">
+              <Download data-icon="inline-start" />
+              Export
+            </Button>
+          </>
+        }
+      />
+
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard
-          label="Total"
+          label="Total opportunities"
           value={kpis.total}
           icon={Briefcase}
-          hint="opportunities"
+          hint="all time"
+          description="Imported and ranked opportunities."
         />
         <KpiCard
-          label="Apply"
+          label="Apply now"
           value={kpis.applyCandidates}
           icon={Send}
           tone="primary"
-          hint="candidates"
+          hint="ready"
+          description="Strong matches worth action."
         />
-        <KpiCard label="Applied" value={kpis.applied} icon={CheckCircle2} />
         <KpiCard
-          label="New"
+          label="Applied"
+          value={kpis.applied}
+          icon={CheckCircle2}
+          tone="success"
+          description="Moved through the pipeline."
+        />
+        <KpiCard
+          label="New this week"
           value={kpis.newThisWeek}
           icon={Sparkles}
-          hint="this week"
+          hint="7 days"
+          tone="warning"
+          description="Fresh roles since last scan."
         />
-        <KpiCard label="Avg score" value={kpis.avgScore} icon={Gauge} />
+        <KpiCard
+          label="Average score"
+          value={kpis.avgScore}
+          icon={Gauge}
+          description="Mean ranking quality."
+        />
       </section>
 
       <DashboardCharts jobs={jobs} />
 
-      <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <TodayCard
           title="Top application candidates"
           jobs={topCandidates}
