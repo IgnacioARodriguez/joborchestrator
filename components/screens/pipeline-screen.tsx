@@ -59,7 +59,11 @@ function PipelineItem({
           <span aria-hidden>·</span>
           {relativeTime(job.last_seen_at)}
         </span>
-        <DecisionBadge decision={job.ranking.decision} className="mt-0.5 w-fit" />
+        <DecisionBadge
+          decision={job.ranking.decision}
+          score={job.ranking.final_score}
+          className="mt-0.5 w-fit"
+        />
       </button>
       <Select
         value={job.pipeline_status}

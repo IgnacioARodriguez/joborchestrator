@@ -70,6 +70,33 @@ export function scoreTone(score: number): {
   }
 }
 
+export function isActionableApplyDecision(
+  decision: Decision,
+  score: number,
+): boolean {
+  if (decision === "APPLY_NOW") return score >= 65
+  if (decision === "APPLY_WITH_TAILORED_CV") return score >= 50
+  return false
+}
+
+export function hasDecisionScoreMismatch(decision: Decision, score: number): boolean {
+  return (
+    (decision === "APPLY_NOW" || decision === "APPLY_WITH_TAILORED_CV") &&
+    !isActionableApplyDecision(decision, score)
+  )
+}
+
+export function rankingSummaryText(
+  decision: Decision,
+  score: number,
+  summary: string,
+): string {
+  if (hasDecisionScoreMismatch(decision, score)) {
+    return "Ranking incomplete: the recommendation and score disagree. Re-run ranking before treating this as an apply candidate."
+  }
+  return summary || "No ranking explanation available."
+}
+
 export function relativeTime(iso: string): string {
   const then = new Date(iso).getTime()
   const now = Date.now()

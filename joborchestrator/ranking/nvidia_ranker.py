@@ -273,6 +273,11 @@ def _apply_nvidia_batch_result(
                 summary["failed"] += 1
                 continue
             try:
+                if _decision_score_inconsistent(
+                    by_id[job_id].get("decision"),
+                    by_id[job_id].get("final_score"),
+                ):
+                    raise ValueError("decision/score mismatch")
                 ranking = _ranking_from_payload(by_id[job_id], ranking_version)
                 ranking.evidence.requires_llm_review = False
                 reasons = list(ranking.evidence.llm_escalation_reasons or [])
@@ -328,29 +333,33 @@ def _response_contract() -> str:
 Return exactly one ranking for every job in Context.jobs.
 Use only these decision values: APPLY_NOW, APPLY_WITH_TAILORED_CV, MAYBE, SKIP, AVOID.
 Never return the pipe-separated placeholder text as a value.
+Decision/score consistency rules:
+- APPLY_NOW requires final_score >= 65.
+- APPLY_WITH_TAILORED_CV requires final_score >= 50.
+- Scores below those thresholds must use MAYBE, SKIP, or AVOID.
 
 Shape:
 {
   "rankings": [
     {
       "job_id": 123,
-      "final_score": 0,
+      "final_score": 82,
       "decision": "APPLY_NOW",
-      "confidence": 0.0,
+      "confidence": 0.88,
       "scores": {
-        "technical_fit": 0,
-        "seniority_fit": 0,
-        "role_fit": 0,
-        "opportunity_quality": 0,
-        "application_roi": 0,
-        "market_alignment": 0,
-        "risk_penalty": 0,
-        "technical_readiness": 0,
-        "central_requirement_coverage": 0,
-        "role_confidence": 0,
-        "application_effort_signal": 0,
-        "data_quality_signal": 0,
-        "source_reliability_signal": 0
+        "technical_fit": 80,
+        "seniority_fit": 75,
+        "role_fit": 85,
+        "opportunity_quality": 75,
+        "application_roi": 85,
+        "market_alignment": 80,
+        "risk_penalty": 5,
+        "technical_readiness": 80,
+        "central_requirement_coverage": 82,
+        "role_confidence": 85,
+        "application_effort_signal": 80,
+        "data_quality_signal": 80,
+        "source_reliability_signal": 80
       },
       "evidence": {
         "strong_matches": [],
@@ -416,12 +425,35 @@ def _nvidia_batch_validation_error(result: dict[str, Any], jobs: list[dict[str, 
             if isinstance(item, dict) and str(item.get("decision")) not in VALID_DECISIONS
         }
     )
+    inconsistent_decisions = sorted(
+        {
+            int(item.get("job_id"))
+            for item in rankings
+            if isinstance(item, dict)
+            and item.get("job_id") is not None
+            and _decision_score_inconsistent(item.get("decision"), item.get("final_score"))
+        }
+    )
     problems = []
     if missing_ids:
         problems.append(f"missing job_id values {missing_ids}")
     if invalid_decisions:
         problems.append(f"invalid decision values {invalid_decisions}")
+    if inconsistent_decisions:
+        problems.append(f"decision/score mismatch for job_id values {inconsistent_decisions}")
     return "; ".join(problems) if problems else None
+
+
+def _decision_score_inconsistent(decision: Any, score: Any) -> bool:
+    try:
+        numeric_score = int(score)
+    except (TypeError, ValueError):
+        return True
+    if decision == "APPLY_NOW":
+        return numeric_score < 65
+    if decision == "APPLY_WITH_TAILORED_CV":
+        return numeric_score < 50
+    return False
 
 
 def _exception_summary(exc: Exception) -> str:

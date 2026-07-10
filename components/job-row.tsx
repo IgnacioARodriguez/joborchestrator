@@ -27,7 +27,10 @@ export function JobRow({
           {job.company} · {relativeTime(job.last_seen_at)}
         </span>
       </div>
-      <DecisionBadge decision={job.ranking.decision} />
+      <DecisionBadge
+        decision={job.ranking.decision}
+        score={job.ranking.final_score}
+      />
       <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
     </button>
   )

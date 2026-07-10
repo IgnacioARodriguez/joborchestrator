@@ -16,7 +16,7 @@ import { Card } from "@/components/ui/card"
 import { DecisionBadge, ScoreBadge } from "@/components/badges"
 import { useStore } from "@/lib/store"
 import type { JobPosting } from "@/lib/types"
-import { relativeTime } from "@/lib/job-ui"
+import { rankingSummaryText, relativeTime } from "@/lib/job-ui"
 
 export function JobCard({
   job,
@@ -49,7 +49,10 @@ export function JobCard({
           <div className="flex min-w-0 flex-col gap-1">
             <div className="flex flex-wrap items-center gap-1.5">
               <ScoreBadge score={job.ranking.final_score} />
-              <DecisionBadge decision={job.ranking.decision} />
+              <DecisionBadge
+                decision={job.ranking.decision}
+                score={job.ranking.final_score}
+              />
               {hasMaterials ? (
                 <span className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                   <FileText className="size-3" />
@@ -79,7 +82,11 @@ export function JobCard({
         </div>
 
         <p className="line-clamp-2 text-pretty text-xs leading-relaxed text-muted-foreground">
-          {job.ranking.reasoning_summary}
+          {rankingSummaryText(
+            job.ranking.decision,
+            job.ranking.final_score,
+            job.ranking.reasoning_summary,
+          )}
         </p>
         <span className="text-[11px] text-muted-foreground/80">
           Last seen {relativeTime(job.last_seen_at)}

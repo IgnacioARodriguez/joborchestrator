@@ -34,7 +34,7 @@ import { DecisionBadge } from "@/components/badges"
 import { ScoreRing } from "@/components/badges"
 import { useStore } from "@/lib/store"
 import { api } from "@/lib/api"
-import { PIPELINE_LABELS } from "@/lib/job-ui"
+import { PIPELINE_LABELS, rankingSummaryText } from "@/lib/job-ui"
 import type { JobPosting } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -269,7 +269,10 @@ function DetailBody({
           <ScoreRing score={job.ranking.final_score} />
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             <div className="flex flex-wrap items-center gap-1.5">
-              <DecisionBadge decision={job.ranking.decision} />
+              <DecisionBadge
+                decision={job.ranking.decision}
+                score={job.ranking.final_score}
+              />
               <span className="rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
                 {PIPELINE_LABELS[job.pipeline_status]}
               </span>
@@ -393,7 +396,11 @@ function DetailBody({
           </h3>
           <div className="flex flex-col gap-1 rounded-lg border border-border bg-muted/30 p-3">
             <p className="text-xs leading-relaxed text-foreground">
-              {job.ranking.reasoning_summary}
+              {rankingSummaryText(
+                job.ranking.decision,
+                job.ranking.final_score,
+                job.ranking.reasoning_summary,
+              )}
             </p>
           </div>
           <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">

@@ -1,13 +1,11 @@
 import type { Decision, JobPosting, JobSource } from "./types"
 import { DECISION_ORDER } from "./types"
-import { isNewThisWeek } from "./job-ui"
+import { isActionableApplyDecision, isNewThisWeek } from "./job-ui"
 
 export function computeKpis(jobs: JobPosting[]) {
   const total = jobs.length
   const applyCandidates = jobs.filter(
-    (j) =>
-      j.ranking.decision === "APPLY_NOW" ||
-      j.ranking.decision === "APPLY_WITH_TAILORED_CV",
+    (j) => isActionableApplyDecision(j.ranking.decision, j.ranking.final_score),
   ).length
   const applied = jobs.filter((j) => j.pipeline_status === "applied").length
   const newThisWeek = jobs.filter(isNewThisWeek).length

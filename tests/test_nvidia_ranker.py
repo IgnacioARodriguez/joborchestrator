@@ -296,6 +296,36 @@ def test_nvidia_batch_validation_reports_missing_ids_and_invalid_decisions():
     assert "invalid decision values" in error
 
 
+def test_nvidia_batch_validation_rejects_apply_with_zero_score():
+    result = {"rankings": [_ranking_payload(1, 0, "APPLY_NOW")]}
+
+    error = nvidia_ranker._nvidia_batch_validation_error(result, [{"id": 1}])
+
+    assert error is not None
+    assert "decision/score mismatch for job_id values [1]" in error
+
+
+def test_rank_jobs_with_nvidia_skips_inconsistent_partial_result(monkeypatch):
+    jobs = pd.DataFrame(
+        [{"id": 1, "title": "Backend Engineer", "company": "Acme", "description_text": "Python"}]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        return {"rankings": [_ranking_payload(1, 0, "APPLY_NOW")]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["saved"] == 0
+    assert summary["failed"] == 1
+    assert saved == {}
+
+
 def _ranking_payload(job_id: int, score: int, decision: str) -> dict:
     return {
         "job_id": job_id,

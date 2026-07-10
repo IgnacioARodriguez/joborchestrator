@@ -16,6 +16,7 @@ import { PageHeader } from "@/components/page-chrome"
 import { cn } from "@/lib/utils"
 import { useStore } from "@/lib/store"
 import type { JobPosting } from "@/lib/types"
+import { isActionableApplyDecision } from "@/lib/job-ui"
 
 type FilterKey =
   | "apply"
@@ -49,9 +50,9 @@ function rankingVersionLabel(version: string): string {
 function matchesFilter(job: JobPosting, key: FilterKey): boolean {
   switch (key) {
     case "apply":
-      return (
-        job.ranking.decision === "APPLY_NOW" ||
-        job.ranking.decision === "APPLY_WITH_TAILORED_CV"
+      return isActionableApplyDecision(
+        job.ranking.decision,
+        job.ranking.final_score,
       )
     case "maybe":
       return job.ranking.decision === "MAYBE"

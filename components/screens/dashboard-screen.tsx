@@ -24,6 +24,7 @@ import { PageHeader } from "@/components/page-chrome"
 import { useStore } from "@/lib/store"
 import { computeKpis } from "@/lib/stats"
 import type { Section } from "@/lib/nav"
+import { isActionableApplyDecision } from "@/lib/job-ui"
 
 function TodayCard({
   title,
@@ -79,8 +80,10 @@ export function DashboardScreen({
     .filter(
       (j) =>
         j.pipeline_status !== "discarded" &&
-        (j.ranking.decision === "APPLY_NOW" ||
-          j.ranking.decision === "APPLY_WITH_TAILORED_CV"),
+        isActionableApplyDecision(
+          j.ranking.decision,
+          j.ranking.final_score,
+        ),
     )
     .sort((a, b) => b.ranking.final_score - a.ranking.final_score)
     .slice(0, 5)

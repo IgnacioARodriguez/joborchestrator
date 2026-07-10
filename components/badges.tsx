@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils"
-import { DECISION_STYLES, scoreTone } from "@/lib/job-ui"
+import { DECISION_STYLES, hasDecisionScoreMismatch, scoreTone } from "@/lib/job-ui"
 import type { Decision } from "@/lib/types"
 
 export function ScoreBadge({
@@ -25,11 +25,31 @@ export function ScoreBadge({
 
 export function DecisionBadge({
   decision,
+  score,
   className,
 }: {
   decision: Decision
+  score?: number
   className?: string
 }) {
+  if (
+    score !== undefined &&
+    hasDecisionScoreMismatch(decision, score)
+  ) {
+    return (
+      <span
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium",
+          "border-warning/30 bg-warning/15 text-warning-foreground",
+          className,
+        )}
+        title="Ranking decision and score disagree. Re-run ranking before applying."
+      >
+        <span className="size-1.5 rounded-full bg-warning" />
+        Needs review
+      </span>
+    )
+  }
   const style = DECISION_STYLES[decision]
   return (
     <span
