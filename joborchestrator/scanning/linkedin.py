@@ -32,6 +32,7 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
 from joborchestrator.ranking.role_catalog import role_catalog_from_profile
 from joborchestrator.ranking.schemas import CandidateProfile
+from joborchestrator.scanning.search_targets import build_search_intents
 from joborchestrator.storage import persistence as db
 
 
@@ -54,21 +55,25 @@ def build_busquedas_from_profile(profile: CandidateProfile, max_terms: int = 40)
         for term in entry.search_terms:
             role_terms.append((term, entry.priority, window_seconds))
     role_terms = role_terms[:max_terms]
-    locations = profile.preferred_locations or ["Spain"]
-    if any(str(mode).lower() == "remote" for mode in profile.preferred_work_modes):
-        locations = [*locations, "European Union"]
+    intents = build_search_intents(
+        application_targets=profile.application_targets,
+        location=(profile.preferred_locations or ["Spain"])[0],
+        remote=any(str(mode).lower() == "remote" for mode in profile.preferred_work_modes),
+    )
     searches = []
     seen = set()
     for term, priority, window_seconds in role_terms:
-        for location in locations:
-            key = (term.lower(), str(location).lower())
+        for intent in intents:
+            key = (term.lower(), intent.location.lower(), intent.work_mode)
             if key in seen:
                 continue
             seen.add(key)
             searches.append(
                 {
                     "keywords": term,
-                    "ubicacion": str(location),
+                    "ubicacion": intent.location,
+                    "work_mode": intent.work_mode,
+                    "application_target": intent.label,
                     "categoria": _category_from_role(term),
                     "role_priority": priority,
                     "freshness_window_seconds": window_seconds,

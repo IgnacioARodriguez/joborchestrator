@@ -7,6 +7,7 @@ from datetime import datetime
 from joborchestrator.scanning.models import ScanResult
 from joborchestrator.scanning.providers import ProviderError
 from joborchestrator.scanning.search_providers import get_search_provider
+from joborchestrator.scanning.search_targets import SearchIntent, build_search_intents
 from joborchestrator.storage import persistence as db
 
 DEFAULT_SEARCH_CONCURRENCY = 4
@@ -18,11 +19,13 @@ async def search_provider_jobs(
     location: str | None = None,
     *,
     remote: bool = True,
+    work_mode: str | None = None,
+    target_label: str | None = None,
     max_pages: int = 1,
 ) -> ScanResult:
     started = datetime.now().isoformat(timespec="seconds")
     started_timer = time.perf_counter()
-    display_ref = f"{query} / {location or 'anywhere'}"
+    display_ref = f"{query} / {location or 'anywhere'} / {work_mode or ('remote' if remote else 'onsite')}"
     result = ScanResult(
         source_type=provider_name,
         company_name=query,
@@ -36,7 +39,14 @@ async def search_provider_jobs(
     try:
         jobs = []
         for page in range(1, max(1, max_pages) + 1):
-            jobs.extend(await provider.search_jobs(query, location, remote=remote, page=page))
+            page_jobs = await provider.search_jobs(query, location, remote=remote, page=page)
+            for job in page_jobs:
+                job.raw_payload = {
+                    **(job.raw_payload or {}),
+                    "search_target": target_label,
+                    "search_work_mode": work_mode or ("remote" if remote else "onsite"),
+                }
+            jobs.extend(page_jobs)
         seen_at = datetime.now().isoformat(timespec="seconds")
         buckets = db.upsert_job_postings(jobs, seen_at=seen_at)
         result.jobs = jobs
@@ -83,17 +93,43 @@ async def search_jobs_concurrently(
     max_pages: int = 1,
     max_concurrency: int = DEFAULT_SEARCH_CONCURRENCY,
 ) -> list[ScanResult]:
+    intents = build_search_intents(location=location, remote=remote)
+    return await search_intents_concurrently(
+        providers,
+        queries,
+        intents,
+        max_pages=max_pages,
+        max_concurrency=max_concurrency,
+    )
+
+
+async def search_intents_concurrently(
+    providers: list[str],
+    queries: list[str],
+    intents: list[SearchIntent],
+    *,
+    max_pages: int = 1,
+    max_concurrency: int = DEFAULT_SEARCH_CONCURRENCY,
+) -> list[ScanResult]:
     semaphore = asyncio.Semaphore(max(1, int(max_concurrency or DEFAULT_SEARCH_CONCURRENCY)))
 
-    async def _run(provider_name: str, query: str) -> ScanResult:
+    async def _run(provider_name: str, query: str, intent: SearchIntent) -> ScanResult:
         async with semaphore:
             return await search_provider_jobs(
                 provider_name,
                 query,
-                location,
-                remote=remote,
+                intent.location,
+                remote=intent.work_mode == "remote",
+                work_mode=intent.work_mode,
+                target_label=intent.label,
                 max_pages=max_pages,
             )
 
-    tasks = [_run(provider, query) for provider in providers for query in queries if query.strip()]
+    tasks = [
+        _run(provider, query, intent)
+        for provider in providers
+        for query in queries
+        for intent in intents
+        if query.strip()
+    ]
     return await asyncio.gather(*tasks) if tasks else []

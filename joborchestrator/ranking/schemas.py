@@ -23,6 +23,7 @@ class CandidateProfile:
     industries: list[str] = field(default_factory=list)
     preferred_locations: list[str] = field(default_factory=list)
     preferred_work_modes: list[str] = field(default_factory=list)
+    application_targets: list[dict[str, Any]] = field(default_factory=list)
     min_salary: int | None = None
     dealbreakers: list[str] = field(default_factory=list)
     avoid_roles: list[str] = field(default_factory=list)

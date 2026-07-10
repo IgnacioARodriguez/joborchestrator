@@ -43,6 +43,7 @@ from joborchestrator.scanning import linkedin
 from joborchestrator.scanning.orchestrator import run_unified_job_scan
 from joborchestrator.scanning.providers import PROVIDERS
 from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS
+from joborchestrator.scanning.search_targets import build_search_intents
 from joborchestrator.storage import db_connection
 from joborchestrator.storage import persistence as db
 
@@ -82,6 +83,7 @@ class AtsScanPayload(BaseModel):
 class SearchPayload(BaseModel):
     providers: list[str]
     queries: list[str]
+    application_targets: list[dict[str, Any]] = Field(default_factory=list)
     location: str | None = "Spain"
     remote: bool = True
     max_pages: int = Field(default=1, ge=1, le=10)
@@ -95,6 +97,7 @@ class UnifiedScanPayload(BaseModel):
     source_ids: list[int] | None = None
     search_providers: list[str] = Field(default_factory=list)
     queries: list[str] = Field(default_factory=list)
+    application_targets: list[dict[str, Any]] = Field(default_factory=list)
     location: str | None = "Spain"
     remote: bool = True
     max_pages: int = Field(default=1, ge=1, le=10)
@@ -361,14 +364,23 @@ async def scan_search(payload: SearchPayload) -> dict[str, Any]:
     if bad:
         raise HTTPException(status_code=400, detail=f"Unsupported search providers: {bad}")
     queries = [query.strip() for query in payload.queries if query.strip()]
-    results = await search_scanner.search_jobs_concurrently(
-        payload.providers,
-        queries,
-        payload.location,
-        remote=payload.remote,
-        max_pages=payload.max_pages,
-        max_concurrency=payload.max_concurrency,
-    )
+    if payload.application_targets:
+        results = await search_scanner.search_intents_concurrently(
+            payload.providers,
+            queries,
+            build_search_intents(application_targets=payload.application_targets),
+            max_pages=payload.max_pages,
+            max_concurrency=payload.max_concurrency,
+        )
+    else:
+        results = await search_scanner.search_jobs_concurrently(
+            payload.providers,
+            queries,
+            payload.location,
+            remote=payload.remote,
+            max_pages=payload.max_pages,
+            max_concurrency=payload.max_concurrency,
+        )
     return {"results": [scan_result_dto(result) for result in results]}
 
 

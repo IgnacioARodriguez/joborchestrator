@@ -32,11 +32,13 @@ import { Textarea } from "@/components/ui/textarea"
 import { PageHeader } from "@/components/page-chrome"
 import { api } from "@/lib/api"
 import type {
+  ApplicationTarget,
   CandidateProfile,
   OperationRun,
   ProfileSkill,
   SkillCatalogItem,
   SkillLevel,
+  WorkMode,
 } from "@/lib/types"
 
 const EMPTY_PROFILE: CandidateProfile = {
@@ -49,6 +51,11 @@ const EMPTY_PROFILE: CandidateProfile = {
   industries: [],
   preferred_locations: [],
   preferred_work_modes: [],
+  application_targets: [
+    { label: "Malaga", location: "Malaga, Spain", work_modes: ["onsite", "hybrid", "remote"] },
+    { label: "Europe Remote", location: "Europe", work_modes: ["remote"] },
+    { label: "Barcelona", location: "Barcelona, Spain", work_modes: ["onsite"] },
+  ],
   dealbreakers: [],
   avoid_roles: [],
   real_experience_years: 0,
@@ -60,6 +67,12 @@ const LEVEL_LABELS: Record<SkillLevel, string> = {
   strong: "Strong",
   medium: "Medium",
   weak: "Learning",
+}
+
+const WORK_MODE_LABELS: Record<WorkMode, string> = {
+  onsite: "Onsite",
+  hybrid: "Hybrid",
+  remote: "Remote",
 }
 
 function lines(value: string[]) {
@@ -348,6 +361,24 @@ export function ProfileScreen() {
     }
   }
 
+  function updateApplicationTarget(index: number, update: Partial<ApplicationTarget>) {
+    patch({
+      application_targets: profile.application_targets.map((target, i) =>
+        i === index ? { ...target, ...update } : target,
+      ),
+    })
+  }
+
+  function toggleTargetWorkMode(index: number, mode: WorkMode) {
+    const target = profile.application_targets[index]
+    if (!target) return
+    const active = target.work_modes.includes(mode)
+    const work_modes = active
+      ? target.work_modes.filter((item) => item !== mode)
+      : [...target.work_modes, mode]
+    updateApplicationTarget(index, { work_modes: work_modes.length ? work_modes : [mode] })
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
@@ -569,6 +600,76 @@ export function ProfileScreen() {
             {busy === "save" ? <LoadingIcon /> : <Save data-icon="inline-start" />}
             {busy === "save" ? "Saving profile" : "Save profile"}
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Application geography</CardTitle>
+          <CardDescription className="text-xs">
+            Define exactly where and how scans should search. Each target is sent to every enabled search API.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {(profile.application_targets ?? []).map((target, index) => (
+            <div key={`${target.label}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-border p-3 lg:grid-cols-[1fr_1.2fr_auto_auto]">
+              <Input
+                value={target.label}
+                placeholder="Label"
+                onChange={(event) => updateApplicationTarget(index, { label: event.target.value })}
+              />
+              <Input
+                value={target.location}
+                placeholder="Location"
+                onChange={(event) => updateApplicationTarget(index, { location: event.target.value })}
+              />
+              <div className="flex flex-wrap gap-1">
+                {(["onsite", "hybrid", "remote"] as WorkMode[]).map((mode) => (
+                  <Button
+                    key={mode}
+                    type="button"
+                    size="sm"
+                    variant={target.work_modes.includes(mode) ? "default" : "outline"}
+                    onClick={() => toggleTargetWorkMode(index, mode)}
+                  >
+                    {WORK_MODE_LABELS[mode]}
+                  </Button>
+                ))}
+              </div>
+              <Button
+                aria-label={`Remove ${target.label}`}
+                size="icon"
+                variant="ghost"
+                onClick={() =>
+                  patch({
+                    application_targets: profile.application_targets.filter((_, i) => i !== index),
+                  })
+                }
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() =>
+                patch({
+                  application_targets: [
+                    ...(profile.application_targets ?? []),
+                    { label: "New target", location: "", work_modes: ["remote"] },
+                  ],
+                })
+              }
+            >
+              <Plus data-icon="inline-start" />
+              Add target
+            </Button>
+            <Button disabled={busy !== null} onClick={() => void saveProfile()}>
+              {busy === "save" ? <LoadingIcon /> : <Save data-icon="inline-start" />}
+              Save geography
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

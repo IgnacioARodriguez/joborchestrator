@@ -1,7 +1,9 @@
 from joborchestrator.scanning.search_providers import (
     AdzunaSearchProvider,
     ArbeitnowSearchProvider,
+    HimalayasSearchProvider,
     RemotiveSearchProvider,
+    RemoteOkSearchProvider,
     TheMuseSearchProvider,
 )
 
@@ -101,3 +103,48 @@ def test_themuse_normalization():
     assert job.company == "Acme"
     assert job.location == "Remote, Europe"
     assert "APIs" in job.description_text
+
+
+def test_remoteok_normalization():
+    provider = RemoteOkSearchProvider()
+    job = provider.normalize_job(
+        {
+            "id": "remoteok-1",
+            "position": "Backend Engineer",
+            "company": "Acme",
+            "location": "Europe",
+            "url": "https://remoteok.com/remote-jobs/remoteok-1",
+            "description": "<p>Python APIs.</p>",
+            "tags": ["python", "api"],
+            "date": "2026-07-01T00:00:00Z",
+        },
+        "backend engineer",
+        "Europe",
+    )
+
+    assert job.source == "remoteok"
+    assert job.external_id == "remoteok-1"
+    assert job.workplace_type == "Remote"
+    assert job.department == "python, api"
+
+
+def test_himalayas_normalization():
+    provider = HimalayasSearchProvider()
+    job = provider.normalize_job(
+        {
+            "id": "him-1",
+            "title": "Platform Engineer",
+            "company": {"name": "Acme"},
+            "locations": [{"name": "Remote, Europe"}],
+            "applicationUrl": "https://himalayas.app/jobs/him-1",
+            "description": "<p>Build platforms.</p>",
+            "publishedAt": "2026-07-01T00:00:00Z",
+        },
+        "platform engineer",
+        "Europe",
+    )
+
+    assert job.source == "himalayas"
+    assert job.external_id == "him-1"
+    assert job.company == "Acme"
+    assert job.location == "Remote, Europe"

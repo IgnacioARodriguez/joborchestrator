@@ -14,6 +14,7 @@ import {
   Search,
   Sparkles,
   Upload,
+  X,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -37,7 +38,7 @@ import { Badge } from "@/components/ui/badge"
 import { PageHeader } from "@/components/page-chrome"
 import { api } from "@/lib/api"
 import { useStore } from "@/lib/store"
-import type { CompanySource, OperationRun, RankingJobRecord, ScanResult } from "@/lib/types"
+import type { ApplicationTarget, CompanySource, OperationRun, RankingJobRecord, ScanResult, WorkMode } from "@/lib/types"
 
 const DEFAULT_QUERIES = [
   "software engineer",
@@ -45,6 +46,18 @@ const DEFAULT_QUERIES = [
   "python developer",
   "solutions engineer",
 ].join("\n")
+
+const DEFAULT_TARGETS: ApplicationTarget[] = [
+  { label: "Malaga", location: "Malaga, Spain", work_modes: ["onsite", "hybrid", "remote"] },
+  { label: "Europe Remote", location: "Europe", work_modes: ["remote"] },
+  { label: "Barcelona", location: "Barcelona, Spain", work_modes: ["onsite"] },
+]
+
+const WORK_MODE_LABELS: Record<WorkMode, string> = {
+  onsite: "Onsite",
+  hybrid: "Hybrid",
+  remote: "Remote",
+}
 
 function operationCopy(name: string | null) {
   if (!name) return null
@@ -151,6 +164,7 @@ export function OpsScreen() {
   const [companyRef, setCompanyRef] = useState("")
   const [queries, setQueries] = useState(DEFAULT_QUERIES)
   const [location, setLocation] = useState("Spain")
+  const [applicationTargets, setApplicationTargets] = useState<ApplicationTarget[]>(DEFAULT_TARGETS)
   const [busy, setBusy] = useState<string | null>(null)
   const [busyDetail, setBusyDetail] = useState("")
   const [busyStartedAt, setBusyStartedAt] = useState<number | null>(null)
@@ -180,6 +194,9 @@ export function OpsScreen() {
       setHasProfile(Boolean(profileData.profile))
       setProviders(sourceData.providers)
       setSearchProviders(sourceData.search_providers)
+      if (profileData.profile?.application_targets?.length) {
+        setApplicationTargets(profileData.profile.application_targets)
+      }
       setProvider(sourceData.providers[0] ?? "greenhouse")
       setRankingJobs(rankingData.jobs)
       setOperations(operationData.operations)
@@ -376,6 +393,7 @@ export function OpsScreen() {
                     include_linkedin: false,
                     search_providers: searchProviders,
                     queries: queries.split("\n"),
+                    application_targets: applicationTargets,
                     location,
                     remote: true,
                     max_pages: 1,
@@ -595,7 +613,7 @@ export function OpsScreen() {
             Search APIs
           </CardTitle>
           <CardDescription className="text-xs">
-            Searches public job APIs by keyword/location and saves results into
+            Runs every enabled job API for every target and saves results into
             the same ranking store.
           </CardDescription>
         </CardHeader>
@@ -605,6 +623,87 @@ export function OpsScreen() {
             onChange={(e) => setQueries(e.target.value)}
             className="min-h-28 text-xs"
           />
+          <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-medium text-foreground">Application targets</p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setApplicationTargets((current) => [
+                    ...current,
+                    { label: "New target", location: "", work_modes: ["remote"] },
+                  ])
+                }
+              >
+                <Plus data-icon="inline-start" />
+                Add target
+              </Button>
+            </div>
+            <div className="flex flex-col gap-2">
+              {applicationTargets.map((target, index) => (
+                <div key={`${target.label}-${index}`} className="grid grid-cols-1 gap-2 rounded-md border border-border p-2 lg:grid-cols-[1fr_1.2fr_auto_auto]">
+                  <Input
+                    value={target.label}
+                    placeholder="Label"
+                    onChange={(event) =>
+                      setApplicationTargets((current) =>
+                        current.map((item, i) => (i === index ? { ...item, label: event.target.value } : item)),
+                      )
+                    }
+                  />
+                  <Input
+                    value={target.location}
+                    placeholder="Location"
+                    onChange={(event) =>
+                      setApplicationTargets((current) =>
+                        current.map((item, i) => (i === index ? { ...item, location: event.target.value } : item)),
+                      )
+                    }
+                  />
+                  <div className="flex flex-wrap gap-1">
+                    {(["onsite", "hybrid", "remote"] as WorkMode[]).map((mode) => {
+                      const active = target.work_modes.includes(mode)
+                      return (
+                        <Button
+                          key={mode}
+                          type="button"
+                          size="sm"
+                          variant={active ? "default" : "outline"}
+                          onClick={() =>
+                            setApplicationTargets((current) =>
+                              current.map((item, i) => {
+                                if (i !== index) return item
+                                const nextModes = active
+                                  ? item.work_modes.filter((itemMode) => itemMode !== mode)
+                                  : [...item.work_modes, mode]
+                                return { ...item, work_modes: nextModes.length ? nextModes : [mode] }
+                              }),
+                            )
+                          }
+                        >
+                          {WORK_MODE_LABELS[mode]}
+                        </Button>
+                      )
+                    })}
+                  </div>
+                  <Button
+                    aria-label={`Remove ${target.label}`}
+                    size="icon"
+                    variant="ghost"
+                    onClick={() =>
+                      setApplicationTargets((current) => current.filter((_, i) => i !== index))
+                    }
+                  >
+                    <X className="size-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Each target runs against every enabled search API. Empty or weak sources stay visible in scan history for later tuning.
+            </p>
+          </div>
           <Input value={location} onChange={(e) => setLocation(e.target.value)} />
           <Button
             disabled={busy !== null || searchProviders.length === 0}
@@ -613,6 +712,7 @@ export function OpsScreen() {
                 const res = await api.scanSearch({
                   providers: searchProviders,
                   queries: queries.split("\n"),
+                  application_targets: applicationTargets,
                   location,
                   remote: true,
                   max_pages: 1,

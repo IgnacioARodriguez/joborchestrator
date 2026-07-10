@@ -159,6 +159,14 @@ export interface SkillCatalogItem {
   sort_order: number
 }
 
+export type WorkMode = "onsite" | "hybrid" | "remote"
+
+export interface ApplicationTarget {
+  label: string
+  location: string
+  work_modes: WorkMode[]
+}
+
 export interface CandidateProfile {
   schema_version: number
   headline: string
@@ -169,6 +177,7 @@ export interface CandidateProfile {
   industries: string[]
   preferred_locations: string[]
   preferred_work_modes: string[]
+  application_targets: ApplicationTarget[]
   dealbreakers: string[]
   avoid_roles: string[]
   real_experience_years: number

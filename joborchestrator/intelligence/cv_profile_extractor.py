@@ -10,6 +10,8 @@ from typing import Any
 import httpx
 import yaml
 
+from joborchestrator.scanning.search_targets import targets_from_profile
+
 NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1"
 DEFAULT_PROFILE_EXTRACTION_MODEL = (
     os.getenv("PROFILE_EXTRACTION_MODEL")
@@ -158,6 +160,7 @@ def normalize_profile_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "industries": _clean_list(payload.get("industries")),
         "preferred_locations": _clean_list(payload.get("preferred_locations")),
         "preferred_work_modes": _clean_list(payload.get("preferred_work_modes")),
+        "application_targets": targets_from_profile(payload),
         "dealbreakers": _clean_list(payload.get("dealbreakers")),
         "avoid_roles": _clean_list(payload.get("avoid_roles")),
         "real_experience_years": _number(payload.get("real_experience_years"), 0.0),
@@ -182,6 +185,7 @@ def profile_payload_to_candidate_profile(profile: dict[str, Any]) -> dict[str, A
         "industries": _clean_list(profile.get("industries")),
         "preferred_locations": _clean_list(profile.get("preferred_locations")),
         "preferred_work_modes": _clean_list(profile.get("preferred_work_modes")),
+        "application_targets": targets_from_profile(profile),
         "dealbreakers": _clean_list(profile.get("dealbreakers")),
         "avoid_roles": _clean_list(profile.get("avoid_roles")),
         "real_experience_years": _number(profile.get("real_experience_years"), 0.0),

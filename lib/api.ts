@@ -142,6 +142,7 @@ export const api = {
   async scanSearch(input: {
     providers: string[]
     queries: string[]
+    application_targets?: Array<{ label: string; location: string; work_modes: string[] }>
     location: string
     remote: boolean
     max_pages: number
@@ -158,6 +159,7 @@ export const api = {
     include_linkedin?: boolean
     search_providers: string[]
     queries: string[]
+    application_targets?: Array<{ label: string; location: string; work_modes: string[] }>
     location: string
     remote: boolean
     max_pages: number

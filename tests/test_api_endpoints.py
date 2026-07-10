@@ -80,6 +80,7 @@ def profile_payload() -> dict:
         "industries": [],
         "preferred_locations": ["Remote"],
         "preferred_work_modes": ["remote"],
+        "application_targets": [{"label": "Remote", "location": "Remote", "work_modes": ["remote"]}],
         "dealbreakers": [],
         "avoid_roles": [],
         "real_experience_years": 4,
@@ -176,6 +177,9 @@ def test_scan_all_queues_job_scan_operation(tmp_path, monkeypatch):
             "include_search": True,
             "search_providers": ["remotive"],
             "queries": ["backend engineer"],
+            "application_targets": [
+                {"label": "Malaga", "location": "Malaga, Spain", "work_modes": ["onsite", "hybrid", "remote"]}
+            ],
             "location": "Spain",
         },
     )
@@ -186,6 +190,7 @@ def test_scan_all_queues_job_scan_operation(tmp_path, monkeypatch):
     assert body["status"] == "queued"
     assert operation["type"] == "job_scan"
     assert operation["input_json"]["queries"] == ["backend engineer"]
+    assert operation["input_json"]["application_targets"][0]["location"] == "Malaga, Spain"
     assert operation["progress_message"] == "Queued unified job scan. Waiting for local worker."
 
 

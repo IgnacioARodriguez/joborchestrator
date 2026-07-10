@@ -10,6 +10,7 @@ from joborchestrator.scanning import scanner as source_scanner
 from joborchestrator.scanning import search_scanner
 from joborchestrator.scanning.linkedin_importer import import_linkedin_dataframe_to_job_postings
 from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS
+from joborchestrator.scanning.search_targets import build_search_intents, targets_from_profile
 from joborchestrator.storage import persistence as db
 
 ProgressCallback = Callable[[str], None]
@@ -38,12 +39,16 @@ async def run_unified_job_scan(input_payload: dict[str, Any], progress: Progress
             raise ValueError(f"Unsupported search providers: {bad}")
         queries = [query.strip() for query in payload["queries"] if str(query).strip()]
         if providers and queries:
-            _progress(progress, f"Launching search APIs for {len(queries)} query(s).")
-            tasks["search"] = search_scanner.search_jobs_concurrently(
+            intents = build_search_intents(
+                application_targets=payload["application_targets"],
+                location=payload["location"],
+                remote=payload["remote"],
+            )
+            _progress(progress, f"Launching search APIs for {len(queries)} query(s) across {len(intents)} target(s).")
+            tasks["search"] = search_scanner.search_intents_concurrently(
                 providers,
                 queries,
-                payload["location"],
-                remote=payload["remote"],
+                intents,
                 max_pages=payload["max_pages"],
                 max_concurrency=payload["search_max_concurrency"],
             )
@@ -71,6 +76,7 @@ async def run_unified_job_scan(input_payload: dict[str, Any], progress: Progress
 
 
 def normalize_job_scan_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    profile_targets = targets_from_profile(db.get_candidate_profile_payload())
     return {
         "include_ats": bool(payload.get("include_ats", True)),
         "include_search": bool(payload.get("include_search", True)),
@@ -78,6 +84,7 @@ def normalize_job_scan_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "source_ids": payload.get("source_ids") or None,
         "search_providers": list(payload.get("search_providers") or []),
         "queries": list(payload.get("queries") or []),
+        "application_targets": list(payload.get("application_targets") or profile_targets),
         "location": payload.get("location") or "Spain",
         "remote": bool(payload.get("remote", True)),
         "max_pages": max(1, min(int(payload.get("max_pages") or 1), 10)),
