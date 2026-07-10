@@ -22,20 +22,25 @@ const API_BASE =
   process.env.NEXT_PUBLIC_JOB_API_URL ??
   (process.env.NODE_ENV === "production" ? "" : "http://127.0.0.1:8000")
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+type ApiRequestInit = RequestInit & {
+  fresh?: boolean
+}
+
+async function request<T>(path: string, init?: ApiRequestInit): Promise<T> {
   const isFormData = init?.body instanceof FormData
   const method = init?.method ?? "GET"
+  const fresh = Boolean(init?.fresh)
   const url =
-    method === "GET"
+    method === "GET" && fresh
       ? `${API_BASE}${path}${path.includes("?") ? "&" : "?"}_=${Date.now()}`
       : `${API_BASE}${path}`
+  const { fresh: _fresh, ...fetchInit } = init ?? {}
   const res = await fetch(url, {
-    ...init,
-    cache: "no-store",
+    ...fetchInit,
+    ...(fresh ? { cache: "no-store" as RequestCache } : {}),
     headers: {
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
-      "Cache-Control": "no-store",
-      Pragma: "no-cache",
+      ...(fresh ? { "Cache-Control": "no-store", Pragma: "no-cache" } : {}),
       ...(init?.headers ?? {}),
     },
     ...(method === "GET" ? { method: "GET" } : {}),
@@ -91,16 +96,16 @@ export const api = {
   },
 
   async getOperation(id: number) {
-    return request<{ operation: OperationRun }>(`/api/operations/${id}`)
+    return request<{ operation: OperationRun }>(`/api/operations/${id}`, { fresh: true })
   },
 
   async getLatestOperation(type?: string) {
     const query = type ? `?type=${encodeURIComponent(type)}` : ""
-    return request<{ operation: OperationRun | null }>(`/api/operations/latest${query}`)
+    return request<{ operation: OperationRun | null }>(`/api/operations/latest${query}`, { fresh: true })
   },
 
   async getOperations(limit = 10) {
-    return request<{ operations: OperationRun[] }>(`/api/operations?limit=${limit}`)
+    return request<{ operations: OperationRun[] }>(`/api/operations?limit=${limit}`, { fresh: true })
   },
 
   async setPipelineStatus(id: string, status: PipelineStatus) {
@@ -316,7 +321,7 @@ export const api = {
   },
 
   async getRankingJobs() {
-    return request<{ jobs: RankingJobRecord[] }>("/api/ranking/jobs")
+    return request<{ jobs: RankingJobRecord[] }>("/api/ranking/jobs", { fresh: true })
   },
 
   async cancelRankingJob(id: number) {
