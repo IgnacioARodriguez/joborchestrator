@@ -6,7 +6,6 @@ import {
   Download,
   LoaderCircle,
   RefreshCw,
-  Search,
   Settings,
   Zap,
 } from "lucide-react"
@@ -21,16 +20,8 @@ import { ProfileScreen } from "@/components/screens/profile-screen"
 import { OpsScreen } from "@/components/screens/ops-screen"
 import { JobDetailDrawer } from "@/components/job-detail-drawer"
 
-const SECTION_TITLES: Record<Section, string> = {
-  dashboard: "Dashboard",
-  ranking: "Ranking",
-  pipeline: "Pipeline",
-  profile: "Profile",
-  ops: "Operations",
-}
-
 function DataLoadingBanner() {
-  const { loading, backendOnline, jobs, jobsMeta } = useStore()
+  const { loading } = useStore()
   const [elapsed, setElapsed] = useState(0)
 
   useEffect(() => {
@@ -44,18 +35,6 @@ function DataLoadingBanner() {
     return () => window.clearInterval(timer)
   }, [loading])
 
-  if (!loading && backendOnline && jobs.length > 0) {
-    return (
-      <div className="mb-5 rounded-2xl border border-border bg-card px-4 py-3 text-xs text-muted-foreground shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-        Loaded {jobsMeta?.returned ?? jobs.length} opportunities
-        {jobsMeta?.total && jobsMeta.total !== (jobsMeta.returned ?? jobs.length)
-          ? ` of ${jobsMeta.total}`
-          : ""}
-        {jobsMeta?.db_mode ? ` from ${jobsMeta.db_mode}` : ""}.
-      </div>
-    )
-  }
-
   if (!loading) return null
 
   const detail =
@@ -64,7 +43,7 @@ function DataLoadingBanner() {
       : "Loading opportunities from the backend."
 
   return (
-    <div className="mb-5 flex items-center gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+    <div className="mb-3 flex items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
       <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
         <LoaderCircle className="size-4 animate-spin" />
       </div>
@@ -91,8 +70,8 @@ export function AppShell() {
   }
 
   return (
-    <div className="h-dvh overflow-hidden bg-background">
-      <div className="flex h-full w-full">
+    <div className="min-h-dvh bg-background lg:h-dvh lg:overflow-hidden">
+      <div className="flex min-h-dvh w-full lg:h-full">
         {/* Desktop sidebar */}
         <aside className="sticky top-0 hidden h-dvh w-[256px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-5 lg:flex">
           <div className="flex items-center gap-3 px-2 pb-7">
@@ -147,29 +126,15 @@ export function AppShell() {
 
         {/* Main column */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-30 flex min-h-[72px] items-center justify-between border-b border-border/80 bg-background/90 px-4 backdrop-blur lg:px-8">
+          <header className="sticky top-0 z-30 flex min-h-12 items-center justify-between border-b border-border/80 bg-background/90 px-4 backdrop-blur lg:px-6">
             <div className="flex min-w-0 items-center gap-3">
               <div className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground lg:hidden">
                 <Compass className="size-4" />
               </div>
-              <div className="min-w-0">
-                <h1 className="text-base font-semibold text-foreground">{SECTION_TITLES[section]}</h1>
-                <p className="hidden text-xs text-muted-foreground sm:block">
-                  {jobsMeta?.returned ?? jobs.length} opportunities loaded
-                  {jobsMeta?.db_mode ? ` from ${jobsMeta.db_mode}` : ""}
-                </p>
-              </div>
-            </div>
-            <div className="hidden min-w-0 flex-1 justify-center px-6 xl:flex">
-              <div className="relative w-full max-w-sm">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  aria-label="Search placeholder"
-                  disabled
-                  placeholder="Search is available in Ranking"
-                  className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-3 text-sm text-muted-foreground shadow-[0_1px_2px_rgba(16,24,40,0.03)]"
-                />
-              </div>
+              <span className="text-xs text-muted-foreground">
+                {jobsMeta?.returned ?? jobs.length} jobs
+                {jobsMeta?.db_mode ? ` · ${jobsMeta.db_mode}` : ""}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <Button
@@ -190,7 +155,7 @@ export function AppShell() {
             </div>
           </header>
 
-          <main className="mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-8">
+          <main className="mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col px-4 pb-24 pt-3 sm:px-6 lg:px-6 lg:pb-6">
             <div className="shrink-0">
               <DataLoadingBanner />
             </div>

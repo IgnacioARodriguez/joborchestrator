@@ -14,18 +14,18 @@ export function PageHeader({
   actions?: ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-4 py-1 sm:flex-row sm:items-end sm:justify-between">
+    <div className="flex shrink-0 flex-col gap-2 py-0 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
         {eyebrow ? (
-          <p className="mb-1 text-xs font-semibold uppercase tracking-[0.08em] text-primary">
+          <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">
             {eyebrow}
           </p>
         ) : null}
-        <h1 className="text-2xl font-semibold tracking-normal text-foreground sm:text-3xl">
+        <h1 className="text-lg font-semibold tracking-normal text-foreground sm:text-xl">
           {title}
         </h1>
         {description ? (
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+          <p className="mt-0.5 max-w-3xl text-xs leading-5 text-muted-foreground">
             {description}
           </p>
         ) : null}

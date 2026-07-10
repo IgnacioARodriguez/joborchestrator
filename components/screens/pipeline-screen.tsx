@@ -97,11 +97,11 @@ export function PipelineScreen({
       <PageHeader
         eyebrow="Pipeline"
         title="Application pipeline"
-        description="Move opportunities through fixed workflow lanes. Each lane scrolls independently, so the board stays usable as volume grows."
+        description="Move opportunities through fixed workflow lanes."
       />
 
-      <div className="min-h-0 flex-1 overflow-x-auto pb-1">
-        <div className="grid h-full min-w-[1120px] grid-cols-5 gap-3">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {PIPELINE_COLUMNS.map((status) => {
             const items = byStatus(status)
             return (
@@ -109,7 +109,7 @@ export function PipelineScreen({
                 key={status}
                 aria-labelledby={`pipeline-${status}`}
                 className={cn(
-                  "flex min-h-0 flex-col rounded-lg border border-border bg-muted/25",
+                  "flex min-h-[500px] flex-col rounded-lg border border-border bg-muted/25 xl:min-h-[620px]",
                   status === "discarded" && "opacity-90",
                 )}
               >
@@ -126,7 +126,7 @@ export function PipelineScreen({
                     </span>
                   </div>
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                <div className="min-h-0 flex-1 overflow-y-auto p-3">
                   {items.length === 0 ? (
                     <Empty className="h-full border border-dashed bg-background/70">
                       <EmptyHeader>

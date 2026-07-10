@@ -101,7 +101,7 @@ export function DashboardScreen({
       <PageHeader
         eyebrow="Overview"
         title="Dashboard"
-        description={`${jobsMeta?.returned ?? jobs.length} opportunities loaded${jobsMeta?.db_mode ? ` from ${jobsMeta.db_mode}` : ""}. Track ranking quality, pipeline movement, and today’s best next actions.`}
+        description={`${jobsMeta?.returned ?? jobs.length} opportunities${jobsMeta?.db_mode ? ` · ${jobsMeta.db_mode}` : ""}.`}
         actions={
           <>
             <Button variant="outline" onClick={() => void refresh()} disabled={loading}>

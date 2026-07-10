@@ -317,9 +317,9 @@ export function OpsScreen() {
       <PageHeader
         eyebrow="Operations"
         title="Automation control room"
-        description="Run scans, import LinkedIn exports, queue ranking jobs, and monitor local worker operations."
+        description="Scans, imports, workers, and source health."
       />
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 xl:grid-cols-[1fr_1fr]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 xl:grid-cols-2">
       {busyCopy && (
         <Card className="border-primary/20 bg-primary/5 xl:col-span-2">
           <CardContent className="flex items-center gap-3 p-4">
@@ -648,7 +648,7 @@ export function OpsScreen() {
             </div>
             <div className="flex flex-col gap-2">
               {applicationTargets.map((target, index) => (
-                <div key={`${target.label}-${index}`} className="grid grid-cols-1 gap-2 rounded-md border border-border p-2 lg:grid-cols-[1fr_1.2fr_auto_auto]">
+                <div key={`${target.label}-${index}`} className="grid grid-cols-1 gap-3 rounded-md border border-border p-3 2xl:grid-cols-[1fr_1.2fr_auto_auto]">
                   <label className="flex flex-col gap-1.5">
                     <span className="text-xs font-medium text-foreground">Target name</span>
                     <Input

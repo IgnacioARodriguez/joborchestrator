@@ -384,9 +384,9 @@ export function ProfileScreen() {
       <PageHeader
         eyebrow="Profile"
         title="Candidate profile"
-        description="Maintain the editable profile used by rankings, role matching, and application materials."
+        description="Roles, geography, skills, and ranking context."
       />
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 xl:grid-cols-[0.9fr_1.1fr]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 xl:grid-cols-2">
       {busy && (
         <Card className="border-primary/20 bg-primary/5 xl:col-span-2">
           <CardContent className="flex items-center gap-3 p-4">
@@ -624,7 +624,7 @@ export function ProfileScreen() {
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {(profile.application_targets ?? []).map((target, index) => (
-            <div key={`${target.label}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-border p-3 lg:grid-cols-[1fr_1.2fr_auto_auto]">
+            <div key={`${target.label}-${index}`} className="grid grid-cols-1 gap-3 rounded-lg border border-border p-3 2xl:grid-cols-[1fr_1.2fr_auto_auto]">
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs font-medium text-foreground">Target name</span>
                 <Input

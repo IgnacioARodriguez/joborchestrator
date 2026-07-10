@@ -141,12 +141,12 @@ export function RankingScreen({
       <PageHeader
         eyebrow="Ranking"
         title="Prioritized opportunities"
-        description="Review ranked jobs by recommendation. Each decision lane has its own scroll, so the board stays stable while you triage."
+        description="Ranked jobs grouped by recommendation."
       />
 
       <section
         aria-label="Ranking controls"
-        className="rounded-lg border border-border bg-card p-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)]"
+        className="rounded-lg border border-border bg-card p-2 shadow-[0_1px_2px_rgba(16,24,40,0.04)]"
       >
         <div className="grid grid-cols-1 gap-2 lg:grid-cols-[1fr_13rem_10rem]">
           <label className="relative block">
@@ -190,7 +190,7 @@ export function RankingScreen({
           </Select>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {FILTERS.map((filter) => {
             const on = active.has(filter.key)
             return (
@@ -216,15 +216,15 @@ export function RankingScreen({
         </div>
       </section>
 
-      <div className="min-h-0 flex-1 overflow-x-auto pb-1">
-        <div className="grid h-full min-w-[1120px] grid-cols-5 gap-3">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {DECISION_COLUMNS.map((decision) => {
             const laneJobs = grouped.get(decision) ?? []
             return (
               <section
                 key={decision}
                 aria-labelledby={`ranking-lane-${decision}`}
-                className="flex min-h-0 flex-col rounded-lg border border-border bg-muted/25"
+                className="flex min-h-[520px] flex-col rounded-lg border border-border bg-muted/25 xl:min-h-[640px]"
               >
                 <div className="shrink-0 border-b border-border bg-card px-3 py-3">
                   <div className="flex items-center justify-between gap-2">
@@ -242,7 +242,7 @@ export function RankingScreen({
                     Avg score {averageScore(laneJobs)}
                   </p>
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                <div className="min-h-0 flex-1 overflow-y-auto p-3">
                   {laneJobs.length === 0 ? (
                     <Empty className="h-full border border-dashed bg-background/70">
                       <EmptyHeader>
