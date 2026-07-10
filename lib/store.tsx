@@ -11,6 +11,8 @@ import {
 } from "react"
 import type {
   JobPosting,
+  ApplicationRecord,
+  ApplicationStatus,
   JobsMeta,
   PipelineStatus,
 } from "./types"
@@ -18,6 +20,7 @@ import { api } from "./api"
 
 interface StoreValue {
   jobs: JobPosting[]
+  applications: ApplicationRecord[]
   loading: boolean
   backendOnline: boolean
   jobsMeta: JobsMeta | null
@@ -27,6 +30,7 @@ interface StoreValue {
   refresh: (rankingVersion?: string | null) => Promise<void>
   getJob: (id: string) => JobPosting | undefined
   setPipelineStatus: (id: string, status: PipelineStatus) => void
+  setApplicationStatus: (id: number, status: ApplicationStatus) => void
   markOpened: (id: string) => void
   generateMaterials: (
     id: string,
@@ -38,6 +42,7 @@ const StoreContext = createContext<StoreValue | null>(null)
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [jobs, setJobs] = useState<JobPosting[]>([])
+  const [applications, setApplications] = useState<ApplicationRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [backendOnline, setBackendOnline] = useState(false)
   const [jobsMeta, setJobsMeta] = useState<JobsMeta | null>(null)
@@ -48,8 +53,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async (rankingVersion?: string | null) => {
     setLoading(true)
     try {
-      const data = await api.getJobs(rankingVersion ?? selectedRankingVersion)
+      const [data, applicationData] = await Promise.all([
+        api.getJobs(rankingVersion ?? selectedRankingVersion),
+        api.getApplications(),
+      ])
       setJobs(data.jobs)
+      setApplications(applicationData.applications)
       setRankingVersions(data.ranking_versions)
       setSelectedRankingVersionState(
         data.selected_ranking_version ?? data.ranking_versions[0] ?? null,
@@ -59,6 +68,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch {
       setBackendOnline(false)
       setJobs([])
+      setApplications([])
       setJobsMeta(null)
     } finally {
       setLoading(false)
@@ -97,6 +107,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  const setApplicationStatus = useCallback((id: number, status: ApplicationStatus) => {
+    setApplications((prev) =>
+      prev.map((application) =>
+        application.id === id
+          ? { ...application, status, updated_at: new Date().toISOString() }
+          : application,
+      ),
+    )
+    void api.patchApplication(id, { status }).catch(() => {
+      setBackendOnline(false)
+    })
+  }, [])
+
   const markOpened = useCallback((id: string) => {
     setJobs((prev) =>
       prev.map((j) =>
@@ -105,7 +128,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               ...j,
               last_seen_at: new Date().toISOString(),
               pipeline_status:
-                j.pipeline_status === "new" ? "opened" : j.pipeline_status,
+                j.pipeline_status === "new" ? "new" : j.pipeline_status,
             }
           : j,
       ),
@@ -127,6 +150,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       jobs,
+      applications,
       loading,
       backendOnline,
       jobsMeta,
@@ -136,11 +160,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       refresh,
       getJob,
       setPipelineStatus,
+      setApplicationStatus,
       markOpened,
       generateMaterials,
     }),
     [
       jobs,
+      applications,
       loading,
       backendOnline,
       jobsMeta,
@@ -150,6 +176,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       refresh,
       getJob,
       setPipelineStatus,
+      setApplicationStatus,
       markOpened,
       generateMaterials,
     ],

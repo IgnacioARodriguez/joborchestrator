@@ -16,6 +16,7 @@ from joborchestrator.paths import DB_PATH
 from joborchestrator.storage import db_connection
 from joborchestrator.storage import (
     jobs_repository,
+    applications_repository,
     operations_repository,
     ranking_jobs_repository,
     rankings_repository,
@@ -54,6 +55,7 @@ LINKEDIN_ENRICHMENT_COLUMNS = {
     "external_apply_url": "TEXT",
 }
 _SCHEMA_READY = False
+_SCHEMA_READY_PATH: str | None = None
 
 SCANNER_SCHEMA = """
 CREATE TABLE IF NOT EXISTS company_sources (
@@ -239,15 +241,94 @@ CREATE TABLE IF NOT EXISTS skill_catalog (
 );
 
 CREATE INDEX IF NOT EXISTS idx_skill_catalog_category ON skill_catalog(category, sort_order, name);
+
+CREATE TABLE IF NOT EXISTS applications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    ats_type TEXT,
+    status TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    resume_variant_id INTEGER,
+    created_at TEXT NOT NULL,
+    submitted_at TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(job_id) REFERENCES job_postings(id),
+    FOREIGN KEY(resume_variant_id) REFERENCES resume_variants(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
+CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(job_id);
+
+CREATE TABLE IF NOT EXISTS application_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    event_at TEXT NOT NULL,
+    note TEXT,
+    FOREIGN KEY(application_id) REFERENCES applications(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_application_events_application ON application_events(application_id, event_at);
+
+CREATE TABLE IF NOT EXISTS resume_variants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label TEXT NOT NULL,
+    file_ref TEXT,
+    base_version TEXT,
+    created_at TEXT NOT NULL,
+    diff_summary TEXT
+);
+
+CREATE TABLE IF NOT EXISTS answer_definitions (
+    canonical_key TEXT PRIMARY KEY,
+    question_patterns TEXT NOT NULL,
+    answer_type TEXT,
+    value TEXT,
+    source TEXT NOT NULL,
+    sensitivity TEXT NOT NULL,
+    requires_confirmation INTEGER DEFAULT 0,
+    last_confirmed_at TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS job_contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER,
+    company TEXT,
+    name TEXT,
+    role TEXT,
+    linkedin_url TEXT,
+    source TEXT NOT NULL,
+    contacted_at TEXT,
+    last_reply_at TEXT,
+    FOREIGN KEY(job_id) REFERENCES job_postings(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_contacts_job ON job_contacts(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_contacts_company ON job_contacts(company);
+
+CREATE TABLE IF NOT EXISTS follow_ups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL,
+    due_at TEXT NOT NULL,
+    note TEXT,
+    done_at TEXT,
+    FOREIGN KEY(application_id) REFERENCES applications(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_follow_ups_due ON follow_ups(done_at, due_at);
 """
 
 
 def _conn():
-    global _SCHEMA_READY
+    global _SCHEMA_READY, _SCHEMA_READY_PATH
     conn = db_connection.connect(DB_PATH)
     if not getattr(conn, "is_cloud", False):
         conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute("PRAGMA journal_mode = WAL")
+    current_path = str(DB_PATH)
+    if _SCHEMA_READY_PATH != current_path:
+        _SCHEMA_READY = False
     if not getattr(conn, "is_cloud", False) or not _SCHEMA_READY:
         conn.executescript(SCANNER_SCHEMA)
         if _scanner_migration_needed(conn):
@@ -255,8 +336,10 @@ def _conn():
         _ensure_scanner_columns(conn)
         skill_catalog_repository.seed_skill_catalog(conn)
         _backfill_speed_ranking_columns(conn)
+        _migrate_pipeline_applications(conn)
         conn.commit()
         _SCHEMA_READY = True
+        _SCHEMA_READY_PATH = current_path
     return conn
 
 
@@ -366,6 +449,62 @@ def _backfill_speed_ranking_columns(conn: sqlite3.Connection) -> None:
                 row["id"],
             ),
         )
+
+
+def _migrate_pipeline_applications(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "job_postings")
+    if "pipeline_status" not in columns:
+        return
+    rows = conn.execute(
+        """SELECT id, pipeline_status, first_seen_at, last_seen_at
+           FROM job_postings
+           WHERE pipeline_status IN ('applied', 'opened')"""
+    ).fetchall()
+    for row in rows:
+        existing = conn.execute(
+            "SELECT id FROM applications WHERE job_id = ? ORDER BY id LIMIT 1",
+            (row["id"],),
+        ).fetchone()
+        if existing:
+            application_id = existing["id"]
+        else:
+            status = "submitted" if row["pipeline_status"] == "applied" else "preparing"
+            submitted_at = row["last_seen_at"] if row["pipeline_status"] == "applied" else None
+            cursor = conn.execute(
+                """INSERT INTO applications (
+                       job_id, ats_type, status, channel, resume_variant_id,
+                       created_at, submitted_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    row["id"],
+                    None,
+                    status,
+                    "portal",
+                    None,
+                    row["first_seen_at"] or row["last_seen_at"] or datetime.now().isoformat(timespec="seconds"),
+                    submitted_at,
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+            application_id = _last_insert_id(conn, cursor)
+        event_type = "submitted" if row["pipeline_status"] == "applied" else "opened"
+        event_exists = conn.execute(
+            "SELECT 1 FROM application_events WHERE application_id = ? AND event_type = ? LIMIT 1",
+            (application_id, event_type),
+        ).fetchone()
+        if not event_exists:
+            conn.execute(
+                """INSERT INTO application_events (application_id, event_type, event_at, note)
+                   VALUES (?, ?, ?, ?)""",
+                (
+                    application_id,
+                    event_type,
+                    row["last_seen_at"] or row["first_seen_at"] or datetime.now().isoformat(timespec="seconds"),
+                    "Migrated from job_postings.pipeline_status.",
+                ),
+            )
+        replacement = "ready_to_apply" if row["pipeline_status"] == "applied" else "new"
+        conn.execute("UPDATE job_postings SET pipeline_status = ? WHERE id = ?", (replacement, row["id"]))
 
 
 def _compute_backfill_repost_key(
@@ -579,6 +718,58 @@ def get_job_posting(job_id: int) -> dict | None:
 
 def update_job_status(job_id: int, status: str) -> None:
     jobs_repository.update_job_status(_conn, job_id, status)
+
+
+def create_application(payload: dict) -> dict:
+    return applications_repository.create_application(_conn, payload)
+
+
+def list_applications() -> list[dict]:
+    return applications_repository.list_applications(_conn, _read_sql_query)
+
+
+def get_application(application_id: int) -> dict | None:
+    return applications_repository.get_application(_conn, application_id)
+
+
+def update_application(application_id: int, payload: dict) -> dict | None:
+    return applications_repository.update_application(_conn, application_id, payload)
+
+
+def create_application_event(application_id: int, payload: dict) -> dict:
+    return applications_repository.create_application_event(_conn, application_id, payload)
+
+
+def create_resume_variant(payload: dict) -> dict:
+    return applications_repository.create_resume_variant(_conn, payload)
+
+
+def list_resume_variants() -> list[dict]:
+    return applications_repository.list_resume_variants(_conn, _read_sql_query)
+
+
+def upsert_answer_definition(payload: dict) -> dict:
+    return applications_repository.upsert_answer_definition(_conn, payload)
+
+
+def list_answer_definitions() -> list[dict]:
+    return applications_repository.list_answer_definitions(_conn, _read_sql_query)
+
+
+def create_contact(payload: dict) -> dict:
+    return applications_repository.create_contact(_conn, payload)
+
+
+def list_contacts() -> list[dict]:
+    return applications_repository.list_contacts(_conn, _read_sql_query)
+
+
+def create_follow_up(payload: dict) -> dict:
+    return applications_repository.create_follow_up(_conn, payload)
+
+
+def list_follow_ups() -> list[dict]:
+    return applications_repository.list_follow_ups(_conn, _read_sql_query)
 
 
 def update_job_application_materials(

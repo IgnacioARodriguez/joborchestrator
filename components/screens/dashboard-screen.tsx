@@ -7,7 +7,6 @@ import {
   Sparkles,
   Gauge,
   ArrowRight,
-  Download,
   RefreshCw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -89,7 +88,7 @@ export function DashboardScreen({
     .slice(0, 5)
 
   const recentlyOpened = [...jobs]
-    .filter((j) => j.pipeline_status === "opened")
+    .filter((j) => j.pipeline_status === "ready_to_apply")
     .sort(
       (a, b) =>
         new Date(b.last_seen_at).getTime() - new Date(a.last_seen_at).getTime(),
@@ -107,10 +106,6 @@ export function DashboardScreen({
             <Button variant="outline" onClick={() => void refresh()} disabled={loading}>
               <RefreshCw data-icon="inline-start" className={loading ? "animate-spin" : undefined} />
               Sync
-            </Button>
-            <Button variant="outline" disabled title="Export will be wired when a backend export endpoint exists">
-              <Download data-icon="inline-start" />
-              Export
             </Button>
           </>
         }
@@ -170,18 +165,18 @@ export function DashboardScreen({
                   variant="ghost"
                   size="sm"
                   className="h-7 px-2 text-xs"
-                  onClick={() => onNavigate("ranking")}
+                  onClick={() => onNavigate("review")}
                 >
-                  Ranking
+                  Review
                   <ArrowRight data-icon="inline-end" />
                 </Button>
               }
             />
             <TodayCard
-              title="Recently opened"
+              title="Ready to apply"
               jobs={recentlyOpened}
               onOpenJob={onOpenJob}
-              emptyText="Nothing opened yet."
+              emptyText="Nothing ready yet."
             />
           </section>
         </div>

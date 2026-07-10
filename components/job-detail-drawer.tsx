@@ -18,6 +18,8 @@ import {
   Target,
   Lightbulb,
   Sparkles,
+  Users,
+  WalletCards,
 } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -34,7 +36,13 @@ import { DecisionBadge } from "@/components/badges"
 import { ScoreRing } from "@/components/badges"
 import { useStore } from "@/lib/store"
 import { api } from "@/lib/api"
-import { PIPELINE_LABELS, rankingSummaryText } from "@/lib/job-ui"
+import {
+  applicantLabel,
+  applyUrlForJob,
+  PIPELINE_LABELS,
+  rankingSummaryText,
+  salaryLabel,
+} from "@/lib/job-ui"
 import type { JobPosting } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -212,9 +220,14 @@ function DetailBody({
   job: JobPosting
   onClose: () => void
 }) {
-  const { setPipelineStatus, markOpened, generateMaterials, refresh } = useStore()
+  const { setPipelineStatus, markOpened, generateMaterials, refresh, applications } = useStore()
   const [materialsOperationId, setMaterialsOperationId] = useState<number | null>(null)
   const { evidence } = job.ranking
+  const applicants = applicantLabel(job)
+  const salary = salaryLabel(job)
+  const companyHistory = applications.filter(
+    (application) => application.company?.toLowerCase() === job.company.toLowerCase(),
+  )
 
   useEffect(() => {
     if (!materialsOperationId) return
@@ -276,6 +289,18 @@ function DetailBody({
               <span className="rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
                 {PIPELINE_LABELS[job.pipeline_status]}
               </span>
+              {applicants ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                  <Users className="size-3" />
+                  {applicants}
+                </span>
+              ) : null}
+              {salary ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                  <WalletCards className="size-3" />
+                  {salary}
+                </span>
+              ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1">
@@ -290,6 +315,20 @@ function DetailBody({
                 <Radio className="size-3.5" />
                 {job.source}
               </span>
+              {job.recruiter_name ? (
+                <a
+                  href={job.recruiter_profile_url || undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={cn(
+                    "inline-flex items-center gap-1",
+                    job.recruiter_profile_url && "text-primary hover:underline",
+                  )}
+                >
+                  <ExternalLink className="size-3.5" />
+                  {job.recruiter_name}
+                </a>
+              ) : null}
             </div>
           </div>
         </div>
@@ -300,7 +339,7 @@ function DetailBody({
             <ExternalLink data-icon="inline-start" />
             Open posting
           </Button>
-          <Button size="sm" onClick={() => openExternal(job.apply_url)}>
+          <Button size="sm" onClick={() => openExternal(applyUrlForJob(job))}>
             <Send data-icon="inline-start" />
             Open apply
           </Button>
@@ -365,12 +404,12 @@ function DetailBody({
             size="sm"
             variant="outline"
             onClick={() => {
-              setPipelineStatus(job.id, "applied")
-              toast.success("Marked applied", { description: job.title })
+              setPipelineStatus(job.id, "ready_to_apply")
+              toast.success("Ready to apply", { description: job.title })
             }}
           >
             <CheckCircle2 data-icon="inline-start" />
-            Mark applied
+            Ready to apply
           </Button>
           <Button
             size="sm"
@@ -389,10 +428,10 @@ function DetailBody({
 
         <Separator />
 
-        {/* Ranking explanation */}
+        {/* Recommendation */}
         <section className="flex flex-col gap-3">
           <h3 className="text-sm font-semibold text-foreground">
-            Ranking explanation
+            Recommendation
           </h3>
           <div className="flex flex-col gap-1 rounded-lg border border-border bg-muted/30 p-3">
             <p className="text-xs leading-relaxed text-foreground">
@@ -414,10 +453,22 @@ function DetailBody({
               </p>
             </div>
           </div>
+        </section>
 
-          <div className="flex flex-col gap-3 pt-1">
+        {/* Constraints and evidence */}
+        <section className="flex flex-col gap-3">
+          <h3 className="text-sm font-semibold text-foreground">
+            Constraints and evidence
+          </h3>
+          <div className="flex flex-col gap-3">
             <EvidenceList
-              title="Strong matches"
+              title="Hard constraints and dealbreakers"
+              items={[...evidence.dealbreakers, ...evidence.red_flags]}
+              icon={CircleX}
+              tone="text-destructive"
+            />
+            <EvidenceList
+              title="Must-haves with evidence"
               items={evidence.strong_matches}
               icon={CircleCheck}
               tone="text-success"
@@ -429,16 +480,10 @@ function DetailBody({
               tone="text-info"
             />
             <EvidenceList
-              title="Missing requirements"
+              title="Gaps"
               items={evidence.missing_requirements}
               icon={CircleAlert}
               tone="text-warning-foreground"
-            />
-            <EvidenceList
-              title="Red flags"
-              items={evidence.red_flags}
-              icon={CircleX}
-              tone="text-destructive"
             />
             <EvidenceList
               title="Central requirements"
@@ -449,15 +494,80 @@ function DetailBody({
           </div>
         </section>
 
-        {/* Description */}
         <section className="flex flex-col gap-2">
           <h3 className="text-sm font-semibold text-foreground">
-            Job description
+            Job data
           </h3>
-          <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+          <div className="flex flex-wrap gap-1.5">
+            {salary ? <span className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">Salary {salary}</span> : null}
+            {applicants ? <span className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">{applicants}</span> : null}
+            <span className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">Source {job.source}</span>
+            <span className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">Pipeline {PIPELINE_LABELS[job.pipeline_status]}</span>
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold text-foreground">
+            Strategy
+          </h3>
+          <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
+            {job.recruiter_name ? (
+              <p>
+                Contact {job.recruiter_name}
+                {job.recruiter_profile_url ? " before or after applying." : "."}
+              </p>
+            ) : (
+              <p>
+                Apply through the available link, then look for a recruiter or referral path if the score stays strong.
+              </p>
+            )}
+            <p className="mt-2">
+              Recommended CV emphasis: {job.ranking.cv_keywords_to_emphasize.slice(0, 6).join(", ") || "No keyword guidance available."}
+            </p>
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold text-foreground">
+            Company history
+          </h3>
+          {companyHistory.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+              No previous applications recorded for {job.company}.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              {companyHistory.slice(0, 4).map((application) => (
+                <div key={application.id} className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  {application.job_title || "Application"} - {application.status.replace("_", " ")}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <details className="rounded-lg border border-border bg-muted/20 p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-foreground">
+            Job description
+          </summary>
+          <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
             {job.description_text}
           </p>
-        </section>
+        </details>
+
+        <details className="rounded-lg border border-border bg-muted/20 p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-foreground">
+            Ranking technical detail
+          </summary>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+            {Object.entries(job.ranking.scores).map(([key, value]) => (
+              <div key={key} className="rounded-md border border-border bg-background/60 px-2 py-1">
+                <span className="block text-[11px] uppercase text-muted-foreground/70">{key.replaceAll("_", " ")}</span>
+                <span className="font-semibold text-foreground">{String(value)}</span>
+              </div>
+            ))}
+          </div>
+        </details>
 
         {/* Application materials */}
         {(job.materials.recruiter_message ||

@@ -1,13 +1,14 @@
 import {
-  LayoutDashboard,
-  ListOrdered,
+  CalendarCheck,
+  ChartNoAxesCombined,
+  ClipboardList,
   KanbanSquare,
   UserRound,
   Wrench,
   type LucideIcon,
 } from "lucide-react"
 
-export type Section = "dashboard" | "ranking" | "pipeline" | "profile" | "ops"
+export type Section = "today" | "review" | "applications" | "profile" | "automations" | "insights"
 
 export interface NavItem {
   id: Section
@@ -16,9 +17,10 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "ranking", label: "Ranking", icon: ListOrdered },
-  { id: "pipeline", label: "Pipeline", icon: KanbanSquare },
+  { id: "today", label: "Today", icon: CalendarCheck },
+  { id: "review", label: "Review", icon: ClipboardList },
+  { id: "applications", label: "Applications", icon: KanbanSquare },
   { id: "profile", label: "Profile", icon: UserRound },
-  { id: "ops", label: "Ops", icon: Wrench },
+  { id: "automations", label: "Automations", icon: Wrench },
+  { id: "insights", label: "Insights", icon: ChartNoAxesCombined },
 ]

@@ -150,6 +150,73 @@ def test_application_material_update_preserves_unspecified_fields(tmp_path, monk
     assert stored["autofill_notes"] == "Initial autofill"
 
 
+def test_application_entities_and_events_are_persisted(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+
+    resume = db.create_resume_variant(
+        {"label": "Backend CV", "file_ref": "cv/backend.pdf", "base_version": "base-v1", "diff_summary": "Python focus"}
+    )
+    application = db.create_application(
+        {
+            "job_id": job_id,
+            "ats_type": "greenhouse",
+            "status": "submitted",
+            "channel": "portal",
+            "resume_variant_id": resume["id"],
+            "submitted_at": "2026-01-02T10:00:00",
+        }
+    )
+    event = db.create_application_event(
+        application["id"],
+        {"event_type": "submitted", "event_at": "2026-01-02T10:00:00", "note": "Manual submit"},
+    )
+
+    stored = db.get_application(application["id"])
+    assert stored["status"] == "submitted"
+    assert stored["channel"] == "portal"
+    assert stored["job_title"] == "Backend Engineer"
+    assert event["event_type"] == "submitted"
+    assert stored["events"][0]["note"] == "Manual submit"
+    assert db.list_resume_variants()[0]["label"] == "Backend CV"
+
+
+def test_answer_contacts_and_followups_are_persisted(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+    application = db.create_application({"job_id": job_id, "status": "preparing", "channel": "easy_apply"})
+
+    answer = db.upsert_answer_definition(
+        {
+            "canonical_key": "work_authorization",
+            "question_patterns": ["Are you authorized to work?"],
+            "answer_type": "boolean",
+            "value": "yes",
+            "source": "approved",
+            "sensitivity": "sensitive",
+            "requires_confirmation": True,
+        }
+    )
+    contact = db.create_contact(
+        {"job_id": job_id, "company": "Acme", "name": "Jane Recruiter", "source": "linkedin_scraper"}
+    )
+    follow_up = db.create_follow_up(
+        {"application_id": application["id"], "due_at": "2026-01-10T09:00:00", "note": "Ping recruiter"}
+    )
+
+    assert answer["question_patterns"] == ["Are you authorized to work?"]
+    assert answer["requires_confirmation"] is True
+    assert db.list_answer_definitions()[0]["canonical_key"] == "work_authorization"
+    assert contact["name"] == "Jane Recruiter"
+    assert db.list_contacts()[0]["company"] == "Acme"
+    assert follow_up["note"] == "Ping recruiter"
+    assert db.list_follow_ups()[0]["application_id"] == application["id"]
+
+
 def test_delete_job_rankings_clears_current_rankings(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()
@@ -371,3 +438,67 @@ def test_speed_ranking_migration_is_additive_and_backfills(tmp_path, monkeypatch
     assert row["soft_identity_key"] == "backend engineer|acme|remote"
     assert row["repost_key"]
     assert backups
+
+
+def test_pipeline_status_applied_and_opened_migrate_to_applications(tmp_path, monkeypatch):
+    db_path = tmp_path / "legacy_pipeline.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """CREATE TABLE job_postings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            external_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            company TEXT NOT NULL,
+            title TEXT,
+            location TEXT,
+            apply_url TEXT,
+            url TEXT,
+            posted_at TEXT,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            content_hash TEXT,
+            status TEXT DEFAULT 'seen',
+            pipeline_status TEXT,
+            identity_key TEXT,
+            UNIQUE(source, company, external_id)
+        )"""
+    )
+    for external_id, pipeline_status in [("job-applied", "applied"), ("job-opened", "opened")]:
+        conn.execute(
+            """INSERT INTO job_postings (
+                external_id, source, company, title, location, apply_url, url,
+                posted_at, first_seen_at, last_seen_at, content_hash, pipeline_status, identity_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                external_id,
+                "greenhouse",
+                "Acme",
+                "Backend Engineer",
+                "Remote",
+                "https://apply.test",
+                "https://job.test",
+                "2026-01-01",
+                "2026-01-01T09:00:00",
+                "2026-01-02T09:00:00",
+                external_id,
+                pipeline_status,
+                f"{external_id}|acme|remote",
+            ),
+        )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+
+    db.init_db()
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    jobs = {row["external_id"]: dict(row) for row in conn.execute("SELECT * FROM job_postings").fetchall()}
+    applications = [dict(row) for row in conn.execute("SELECT * FROM applications ORDER BY job_id").fetchall()]
+    events = [dict(row) for row in conn.execute("SELECT * FROM application_events ORDER BY id").fetchall()]
+    conn.close()
+
+    assert jobs["job-applied"]["pipeline_status"] == "ready_to_apply"
+    assert jobs["job-opened"]["pipeline_status"] == "new"
+    assert [app["status"] for app in applications] == ["submitted", "preparing"]
+    assert [event["event_type"] for event in events] == ["submitted", "opened"]

@@ -6,14 +6,14 @@ import re
 import asyncio
 import logging
 from dataclasses import asdict
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import httpx
 import pandas as pd
 
 from joborchestrator.ranking.llm_ranker import _ranking_from_payload
 from joborchestrator.ranking.ranking_rules import NVIDIA_EXTRA_RULES, RANKING_GOAL, RANKING_RULES, SCORING_RUBRIC
-from joborchestrator.ranking.schemas import CandidateProfile, VALID_DECISIONS
+from joborchestrator.ranking.schemas import CandidateProfile, Decision, VALID_DECISIONS
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.storage import persistence as db
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
@@ -266,6 +266,7 @@ def _apply_nvidia_batch_result(
         missing = sorted(set(expected_ids) - set(by_id))
         if missing:
             logger.warning("NVIDIA response is missing job_id values: %s", missing)
+        active_dealbreakers = _active_profile_dealbreakers()
 
         for row in batch:
             job_id = int(row.get("id") or row.get("job_id"))
@@ -285,6 +286,7 @@ def _apply_nvidia_batch_result(
                     reasons.append("nvidia_ranking_applied")
                 ranking.evidence.llm_escalation_reasons = reasons
                 ranking.ranking_version = ranking_version
+                _apply_hard_override_gate(row, ranking, active_dealbreakers)
                 db.save_job_ranking(job_id, ranking)
                 summary["saved"] += 1
                 summary[ranking.decision] += 1
@@ -454,6 +456,90 @@ def _decision_score_inconsistent(decision: Any, score: Any) -> bool:
     if decision == "APPLY_WITH_TAILORED_CV":
         return numeric_score < 50
     return False
+
+
+def _active_profile_dealbreakers() -> list[str]:
+    profile_payload = db.get_candidate_profile_payload() or {}
+    return [
+        str(item).strip()
+        for item in profile_payload.get("dealbreakers", [])
+        if str(item).strip()
+    ]
+
+
+def _apply_hard_override_gate(
+    job: dict[str, Any],
+    ranking: Any,
+    active_dealbreakers: list[str],
+) -> None:
+    triggered = _triggered_dealbreakers(job, ranking, active_dealbreakers)
+    if not triggered:
+        return
+    for item in triggered:
+        if item not in ranking.evidence.dealbreakers:
+            ranking.evidence.dealbreakers.append(item)
+        flag = f"profile dealbreaker: {item}"
+        if flag not in ranking.evidence.red_flags:
+            ranking.evidence.red_flags.append(flag)
+    reason = "hard_override_dealbreaker"
+    if reason not in ranking.evidence.llm_escalation_reasons:
+        ranking.evidence.llm_escalation_reasons.append(reason)
+    ranking.decision = cast(Decision, "AVOID")
+    ranking.final_score = min(int(ranking.final_score), 20)
+    ranking.scores.risk_penalty = 40
+    prefix = f"Forced AVOID because profile dealbreaker(s) matched: {', '.join(triggered)}."
+    ranking.reasoning_summary = f"{prefix} {ranking.reasoning_summary}".strip()
+
+
+def _triggered_dealbreakers(
+    job: dict[str, Any],
+    ranking: Any,
+    active_dealbreakers: list[str],
+) -> list[str]:
+    haystack = _normalized_job_and_ranking_text(job, ranking)
+    triggered = []
+    for dealbreaker in active_dealbreakers:
+        normalized = _normalize_text(dealbreaker)
+        if _dealbreaker_matches(normalized, haystack):
+            triggered.append(dealbreaker)
+    return triggered
+
+
+def _dealbreaker_matches(dealbreaker: str, haystack: str) -> bool:
+    if not dealbreaker:
+        return False
+    if "unpaid" in dealbreaker:
+        return any(marker in haystack for marker in ["unpaid", "no salary", "without pay", "unremunerated"])
+    if "commission" in dealbreaker:
+        return any(marker in haystack for marker in ["commission only", "commission-only", "100% commission"])
+    if "relocation" in dealbreaker:
+        requires_relocation = "relocation" in haystack and any(
+            marker in haystack
+            for marker in ["mandatory", "required", "requires", "must relocate", "relocation package"]
+        )
+        has_exception = any(marker in haystack for marker in ["remote", "spain", "espana", "eu", "europe", "hybrid"])
+        return requires_relocation and not has_exception
+    return dealbreaker in haystack
+
+
+def _normalized_job_and_ranking_text(job: dict[str, Any], ranking: Any) -> str:
+    parts = [
+        job.get("title"),
+        job.get("company"),
+        job.get("location"),
+        job.get("workplace_type"),
+        job.get("description_text"),
+        ranking.reasoning_summary,
+        ranking.recommended_application_angle,
+        *ranking.evidence.dealbreakers,
+        *ranking.evidence.red_flags,
+        *ranking.evidence.missing_requirements,
+    ]
+    return _normalize_text(" ".join(str(part) for part in parts if part))
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text.lower().replace("-", " ")).strip()
 
 
 def _exception_summary(exc: Exception) -> str:

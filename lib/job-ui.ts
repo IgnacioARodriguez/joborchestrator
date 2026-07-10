@@ -40,9 +40,8 @@ export const DECISION_STYLES: Record<Decision, DecisionStyle> = {
 export const PIPELINE_LABELS: Record<PipelineStatus, string> = {
   new: "New",
   shortlisted: "Shortlisted",
-  applied: "Applied",
+  ready_to_apply: "Ready to apply",
   discarded: "Discarded",
-  opened: "Opened",
 }
 
 export function scoreTone(score: number): {
@@ -115,4 +114,39 @@ export function relativeTime(iso: string): string {
 export function isNewThisWeek(job: JobPosting): boolean {
   const seen = new Date(job.first_seen_at).getTime()
   return Date.now() - seen <= 7 * 24 * 60 * 60 * 1000
+}
+
+export function applyUrlForJob(job: JobPosting): string {
+  if (job.apply_type === "external" && job.external_apply_url) {
+    return job.external_apply_url
+  }
+  return job.apply_url || job.url
+}
+
+export function applicantLabel(job: JobPosting): string | null {
+  if (typeof job.applicant_count === "number") {
+    return `${job.applicant_count.toLocaleString()} applicants`
+  }
+  return job.applicant_count_raw || null
+}
+
+export function salaryLabel(job: JobPosting): string | null {
+  const currency = job.salary_currency || ""
+  if (typeof job.salary_min !== "number" && typeof job.salary_max !== "number") {
+    return null
+  }
+  if (job.salary_min === job.salary_max || typeof job.salary_max !== "number") {
+    return formatSalaryValue(job.salary_min, currency)
+  }
+  if (typeof job.salary_min !== "number") {
+    return formatSalaryValue(job.salary_max, currency)
+  }
+  return `${formatSalaryValue(job.salary_min, currency)}-${formatSalaryValue(job.salary_max, currency)}`
+}
+
+function formatSalaryValue(value: number | null | undefined, currency: string): string {
+  if (typeof value !== "number") return ""
+  const rounded = Number.isInteger(value) ? value : Math.round(value)
+  const amount = rounded >= 1000 ? `${Math.round(rounded / 1000)}k` : rounded.toLocaleString()
+  return currency ? `${amount} ${currency}` : amount
 }

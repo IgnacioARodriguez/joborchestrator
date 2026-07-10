@@ -22,6 +22,7 @@ def profile_payload() -> dict:
         "role_aliases": {"Backend Engineer": ["API Engineer"]},
         "skills": [{"name": "Python", "category": "Programming", "level": "strong"}],
         "real_experience_years": 4,
+        "dealbreakers": ["unpaid", "commission only", "mandatory relocation outside Spain/EU without remote option"],
     }
 
 
@@ -186,7 +187,7 @@ def test_rank_jobs_with_nvidia_saves_partial_batch_when_response_omits_job(monke
     assert set(saved) == {1}
 
 
-def test_nvidia_ranking_is_not_capped_by_heuristic_guards(monkeypatch):
+def test_nvidia_ranking_is_capped_by_profile_dealbreaker_guards(monkeypatch):
     jobs = pd.DataFrame(
         [
             {
@@ -215,9 +216,12 @@ def test_nvidia_ranking_is_not_capped_by_heuristic_guards(monkeypatch):
     summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
 
     assert summary["saved"] == 1
-    assert summary["APPLY_NOW"] == 1
-    assert saved[1].final_score == 91
-    assert saved[1].decision == "APPLY_NOW"
+    assert summary["APPLY_NOW"] == 0
+    assert summary["AVOID"] == 1
+    assert saved[1].final_score == 20
+    assert saved[1].decision == "AVOID"
+    assert "commission only" in saved[1].evidence.dealbreakers
+    assert "hard_override_dealbreaker" in saved[1].evidence.llm_escalation_reasons
 
 
 def test_call_nvidia_batch_uses_chat_completions(monkeypatch):

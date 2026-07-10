@@ -65,7 +65,65 @@ app.add_middleware(
 
 
 class PipelinePatch(BaseModel):
-    status: Literal["new", "shortlisted", "applied", "discarded", "opened"]
+    status: Literal["new", "shortlisted", "ready_to_apply", "discarded", "applied", "opened"]
+
+
+class ApplicationPayload(BaseModel):
+    ats_type: str | None = None
+    status: str = "preparing"
+    channel: str = "portal"
+    resume_variant_id: int | None = None
+    submitted_at: str | None = None
+
+
+class ApplicationPatch(BaseModel):
+    ats_type: str | None = None
+    status: str | None = None
+    channel: str | None = None
+    resume_variant_id: int | None = None
+    submitted_at: str | None = None
+
+
+class ApplicationEventPayload(BaseModel):
+    event_type: str
+    event_at: str | None = None
+    note: str | None = None
+
+
+class ResumePayload(BaseModel):
+    label: str
+    file_ref: str | None = None
+    base_version: str | None = None
+    diff_summary: str | None = None
+
+
+class AnswerPayload(BaseModel):
+    canonical_key: str
+    question_patterns: list[str] = Field(default_factory=list)
+    answer_type: str | None = None
+    value: str | None = None
+    source: str = "approved"
+    sensitivity: str = "public"
+    requires_confirmation: bool = False
+    last_confirmed_at: str | None = None
+
+
+class ContactPayload(BaseModel):
+    job_id: int | None = None
+    company: str | None = None
+    name: str | None = None
+    role: str | None = None
+    linkedin_url: str | None = None
+    source: str = "manual"
+    contacted_at: str | None = None
+    last_reply_at: str | None = None
+
+
+class FollowUpPayload(BaseModel):
+    application_id: int
+    due_at: str
+    note: str | None = None
+    done_at: str | None = None
 
 
 class SourcePayload(BaseModel):
@@ -257,6 +315,113 @@ def update_pipeline(job_id: int, payload: PipelinePatch) -> dict[str, Any]:
 def mark_opened(job_id: int) -> dict[str, Any]:
     db.update_job_status(job_id, "opened")
     return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/applications")
+def create_job_application(job_id: int, payload: ApplicationPayload) -> dict[str, Any]:
+    if not db.get_job_posting(job_id):
+        raise HTTPException(status_code=404, detail="Job not found")
+    data = payload.model_dump()
+    data["job_id"] = job_id
+    try:
+        return {"application": db.create_application(data)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/applications")
+def list_applications() -> dict[str, Any]:
+    return {"applications": db.list_applications()}
+
+
+@app.get("/api/applications/{application_id}")
+def get_application(application_id: int) -> dict[str, Any]:
+    application = db.get_application(application_id)
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return {"application": application}
+
+
+@app.patch("/api/applications/{application_id}")
+def update_application(application_id: int, payload: ApplicationPatch) -> dict[str, Any]:
+    try:
+        application = db.update_application(
+            application_id,
+            {key: value for key, value in payload.model_dump().items() if value is not None},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return {"application": application}
+
+
+@app.post("/api/applications/{application_id}/events")
+def create_application_event(application_id: int, payload: ApplicationEventPayload) -> dict[str, Any]:
+    if not db.get_application(application_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+    try:
+        return {"event": db.create_application_event(application_id, payload.model_dump())}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/resumes")
+def list_resumes() -> dict[str, Any]:
+    return {"resumes": db.list_resume_variants()}
+
+
+@app.post("/api/resumes")
+def create_resume(payload: ResumePayload) -> dict[str, Any]:
+    return {"resume": db.create_resume_variant(payload.model_dump())}
+
+
+@app.get("/api/answers")
+def list_answers() -> dict[str, Any]:
+    return {"answers": db.list_answer_definitions()}
+
+
+@app.post("/api/answers")
+def create_answer(payload: AnswerPayload) -> dict[str, Any]:
+    try:
+        return {"answer": db.upsert_answer_definition(payload.model_dump())}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/api/answers/{canonical_key}")
+def update_answer(canonical_key: str, payload: AnswerPayload) -> dict[str, Any]:
+    data = payload.model_dump()
+    data["canonical_key"] = canonical_key
+    try:
+        return {"answer": db.upsert_answer_definition(data)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/contacts")
+def list_contacts() -> dict[str, Any]:
+    return {"contacts": db.list_contacts()}
+
+
+@app.post("/api/contacts")
+def create_contact(payload: ContactPayload) -> dict[str, Any]:
+    try:
+        return {"contact": db.create_contact(payload.model_dump())}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/follow-ups")
+def list_follow_ups() -> dict[str, Any]:
+    return {"follow_ups": db.list_follow_ups()}
+
+
+@app.post("/api/follow-ups")
+def create_follow_up(payload: FollowUpPayload) -> dict[str, Any]:
+    if not db.get_application(payload.application_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+    return {"follow_up": db.create_follow_up(payload.model_dump())}
 
 
 @app.post("/api/jobs/{job_id}/materials")

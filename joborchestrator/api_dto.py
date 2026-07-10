@@ -33,6 +33,15 @@ def job_dto(job: dict[str, Any], ranking_row: dict[str, Any] | None) -> dict[str
         "source_raw": job.get("source"),
         "url": _string(job.get("url") or job.get("apply_url"), "#"),
         "apply_url": _string(job.get("apply_url") or job.get("url"), "#"),
+        "applicant_count": _int_or_none(job.get("applicant_count")),
+        "applicant_count_raw": _nullable_string(job.get("applicant_count_raw")),
+        "salary_min": _float_or_none(job.get("salary_min")),
+        "salary_max": _float_or_none(job.get("salary_max")),
+        "salary_currency": _nullable_string(job.get("salary_currency")),
+        "recruiter_name": _nullable_string(job.get("recruiter_name")),
+        "recruiter_profile_url": _nullable_string(job.get("recruiter_profile_url")),
+        "apply_type": _nullable_string(job.get("apply_type")),
+        "external_apply_url": _nullable_string(job.get("external_apply_url")),
         "description_text": _string(job.get("description_text")),
         "first_seen_at": _string(job.get("first_seen_at")),
         "last_seen_at": _string(job.get("last_seen_at")),
@@ -68,6 +77,7 @@ def ranking_dto(row: dict[str, Any] | None) -> dict[str, Any]:
     evidence.setdefault("strong_matches", [])
     evidence.setdefault("partial_matches", [])
     evidence.setdefault("missing_requirements", [])
+    evidence.setdefault("dealbreakers", [])
     evidence.setdefault("red_flags", [])
     evidence.setdefault("central_requirements", [])
     evidence["central_requirements"] = [
@@ -84,6 +94,8 @@ def ranking_dto(row: dict[str, Any] | None) -> dict[str, Any]:
         "evidence": evidence,
         "reasoning_summary": row.get("reasoning_summary") or "",
         "recommended_application_angle": row.get("recommended_application_angle") or "",
+        "cv_keywords_to_emphasize": parse_json_value(row.get("cv_keywords_to_emphasize_json"), []),
+        "cv_keywords_to_avoid_overclaiming": parse_json_value(row.get("cv_keywords_to_avoid_overclaiming_json"), []),
         "ranking_version": row.get("ranking_version") or NVIDIA_RANKING_VERSION,
     }
 
@@ -137,11 +149,14 @@ def _default_ranking() -> dict[str, Any]:
             "strong_matches": [],
             "partial_matches": [],
             "missing_requirements": [],
+            "dealbreakers": [],
             "red_flags": [],
             "central_requirements": [],
         },
         "reasoning_summary": "Not ranked yet.",
         "recommended_application_angle": "",
+        "cv_keywords_to_emphasize": [],
+        "cv_keywords_to_avoid_overclaiming": [],
         "ranking_version": "unranked",
     }
 
@@ -166,3 +181,26 @@ def _string(value: Any, fallback: str = "") -> str:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return fallback
     return str(value)
+
+
+def _nullable_string(value: Any) -> str | None:
+    text = _string(value).strip()
+    return text or None
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

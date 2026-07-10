@@ -189,7 +189,7 @@ export function DashboardCharts({ jobs }: { jobs: JobPosting[] }) {
 
       <ChartCard
         title="Pipeline funnel"
-        description="Progress from new to applied"
+        description="Progress from new to ready"
       >
         <ChartContainer config={barConfig} className="h-64 w-full">
           <BarChart

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react"
 import {
   Compass,
-  Download,
   LoaderCircle,
   RefreshCw,
   Settings,
@@ -13,11 +12,12 @@ import { cn } from "@/lib/utils"
 import { NAV_ITEMS, type Section } from "@/lib/nav"
 import { useStore } from "@/lib/store"
 import { Button } from "@/components/ui/button"
-import { DashboardScreen } from "@/components/screens/dashboard-screen"
-import { RankingScreen } from "@/components/screens/ranking-screen"
-import { PipelineScreen } from "@/components/screens/pipeline-screen"
+import { TodayScreen } from "@/components/screens/today-screen"
+import { ReviewScreen } from "@/components/screens/review-screen"
+import { ApplicationsScreen } from "@/components/screens/applications-screen"
 import { ProfileScreen } from "@/components/screens/profile-screen"
 import { OpsScreen } from "@/components/screens/ops-screen"
+import { InsightsScreen } from "@/components/screens/insights-screen"
 import { JobDetailDrawer } from "@/components/job-detail-drawer"
 
 function DataLoadingBanner() {
@@ -61,7 +61,7 @@ function DataLoadingBanner() {
 }
 
 export function AppShell() {
-  const [section, setSection] = useState<Section>("dashboard")
+  const [section, setSection] = useState<Section>("today")
   const [openJobId, setOpenJobId] = useState<string | null>(null)
   const { jobs, jobsMeta, backendOnline, loading, refresh } = useStore()
 
@@ -146,10 +146,7 @@ export function AppShell() {
                 {loading ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
                 Sync
               </Button>
-              <Button variant="outline" size="icon-sm" aria-label="Export" disabled title="Export needs a backend endpoint">
-                <Download className="size-4" />
-              </Button>
-              <Button variant="outline" size="icon-sm" aria-label="Settings" onClick={() => navigate("ops")}>
+              <Button variant="outline" size="icon-sm" aria-label="Settings" onClick={() => navigate("automations")}>
                 <Settings className="size-4" />
               </Button>
             </div>
@@ -159,15 +156,14 @@ export function AppShell() {
             <div className="shrink-0">
               <DataLoadingBanner />
             </div>
-            {section === "dashboard" && (
-              <DashboardScreen onOpenJob={setOpenJobId} onNavigate={navigate} />
+            {section === "today" && (
+              <TodayScreen onOpenJob={setOpenJobId} onNavigate={navigate} />
             )}
-            {section === "ranking" && <RankingScreen onOpenJob={setOpenJobId} />}
-            {section === "pipeline" && (
-              <PipelineScreen onOpenJob={setOpenJobId} />
-            )}
+            {section === "review" && <ReviewScreen onOpenJob={setOpenJobId} />}
+            {section === "applications" && <ApplicationsScreen />}
             {section === "profile" && <ProfileScreen />}
-            {section === "ops" && <OpsScreen />}
+            {section === "automations" && <OpsScreen />}
+            {section === "insights" && <InsightsScreen />}
           </main>
         </div>
       </div>

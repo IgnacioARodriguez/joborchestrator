@@ -19,8 +19,7 @@ import { cn } from "@/lib/utils"
 const PIPELINE_COLUMNS: PipelineStatus[] = [
   "new",
   "shortlisted",
-  "opened",
-  "applied",
+  "ready_to_apply",
   "discarded",
 ]
 

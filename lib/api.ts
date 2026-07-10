@@ -1,6 +1,8 @@
 import type {
   CompanySource,
   CandidateProfile,
+  ApplicationRecord,
+  ApplicationStatus,
   JobPosting,
   JobsResponse,
   LinkedInProfileSetting,
@@ -149,6 +151,17 @@ export const api = {
   }) {
     return request<{ results: ScanResult[] }>("/api/scans/search", {
       method: "POST",
+      body: JSON.stringify(input),
+    })
+  },
+
+  async getApplications() {
+    return request<{ applications: ApplicationRecord[] }>("/api/applications")
+  },
+
+  async patchApplication(id: number, input: Partial<{ status: ApplicationStatus }>) {
+    return request<{ application: ApplicationRecord }>(`/api/applications/${id}`, {
+      method: "PATCH",
       body: JSON.stringify(input),
     })
   },

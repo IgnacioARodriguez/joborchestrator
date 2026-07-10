@@ -339,6 +339,68 @@ def test_generate_materials_persists_application_kit(tmp_path, monkeypatch):
     assert job["materials"]["ats_cv_notes"] == "Python\nFastAPI"
 
 
+def test_application_rest_endpoints(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+
+    created = client.post(
+        f"/api/jobs/{job_id}/applications",
+        json={"ats_type": "greenhouse", "status": "preparing", "channel": "portal"},
+    )
+    assert created.status_code == 200
+    app_id = created.json()["application"]["id"]
+
+    patched = client.patch(f"/api/applications/{app_id}", json={"status": "submitted"})
+    assert patched.status_code == 200
+    assert patched.json()["application"]["status"] == "submitted"
+
+    event = client.post(
+        f"/api/applications/{app_id}/events",
+        json={"event_type": "submitted", "note": "Submitted manually"},
+    )
+    assert event.status_code == 200
+    assert event.json()["event"]["event_type"] == "submitted"
+
+    listed = client.get("/api/applications")
+    assert listed.status_code == 200
+    assert listed.json()["applications"][0]["job_title"] == "Backend Engineer"
+
+
+def test_profile_support_rest_endpoints(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    application = db.create_application({"job_id": job_id, "status": "preparing", "channel": "portal"})
+
+    assert client.post("/api/resumes", json={"label": "Backend CV"}).status_code == 200
+    assert client.get("/api/resumes").json()["resumes"][0]["label"] == "Backend CV"
+
+    answer = client.post(
+        "/api/answers",
+        json={
+            "canonical_key": "salary_expectation",
+            "question_patterns": ["Expected salary"],
+            "answer_type": "text",
+            "value": "Open to discuss",
+            "source": "approved",
+            "sensitivity": "preference",
+        },
+    )
+    assert answer.status_code == 200
+    assert client.get("/api/answers").json()["answers"][0]["canonical_key"] == "salary_expectation"
+
+    assert client.post("/api/contacts", json={"job_id": job_id, "name": "Jane"}).status_code == 200
+    assert client.get("/api/contacts").json()["contacts"][0]["name"] == "Jane"
+
+    follow_up = client.post(
+        "/api/follow-ups",
+        json={"application_id": application["id"], "due_at": "2026-01-10T09:00:00", "note": "Follow up"},
+    )
+    assert follow_up.status_code == 200
+    assert client.get("/api/follow-ups").json()["follow_ups"][0]["note"] == "Follow up"
+
+
 def test_generate_materials_queues_nvidia_provider(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
     job_id = save_job_with_rankings()

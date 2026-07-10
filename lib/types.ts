@@ -13,9 +13,24 @@ export type Decision =
 export type PipelineStatus =
   | "new"
   | "shortlisted"
-  | "applied"
+  | "ready_to_apply"
   | "discarded"
-  | "opened"
+
+export type ApplicationStatus =
+  | "preparing"
+  | "submitted"
+  | "recruiter_screen"
+  | "interview"
+  | "technical"
+  | "offer"
+  | "rejected"
+  | "withdrawn"
+
+export type ApplicationChannel =
+  | "portal"
+  | "easy_apply"
+  | "referral"
+  | "direct_contact"
 
 export type JobStatus = "active" | "expired" | "filled"
 
@@ -38,6 +53,7 @@ export interface RankingEvidence {
   strong_matches: string[]
   partial_matches: string[]
   missing_requirements: string[]
+  dealbreakers: string[]
   red_flags: string[]
   central_requirements: string[]
 }
@@ -50,6 +66,8 @@ export interface JobRanking {
   evidence: RankingEvidence
   reasoning_summary: string
   recommended_application_angle: string
+  cv_keywords_to_emphasize: string[]
+  cv_keywords_to_avoid_overclaiming: string[]
   ranking_version: string
 }
 
@@ -70,6 +88,15 @@ export interface JobPosting {
   source_raw?: string
   url: string
   apply_url: string
+  applicant_count?: number | null
+  applicant_count_raw?: string | null
+  salary_min?: number | null
+  salary_max?: number | null
+  salary_currency?: string | null
+  recruiter_name?: string | null
+  recruiter_profile_url?: string | null
+  apply_type?: string | null
+  external_apply_url?: string | null
   description_text: string
   first_seen_at: string
   last_seen_at: string
@@ -77,6 +104,30 @@ export interface JobPosting {
   pipeline_status: PipelineStatus
   ranking: JobRanking
   materials: ApplicationMaterials
+}
+
+export interface ApplicationEvent {
+  id: number
+  application_id: number
+  event_type: string
+  event_at: string
+  note?: string | null
+}
+
+export interface ApplicationRecord {
+  id: number
+  job_id: number
+  ats_type?: string | null
+  status: ApplicationStatus
+  channel: ApplicationChannel
+  resume_variant_id?: number | null
+  created_at: string
+  submitted_at?: string | null
+  updated_at: string
+  job_title?: string | null
+  company?: string | null
+  job_url?: string | null
+  events?: ApplicationEvent[]
 }
 
 export interface JobsMeta {

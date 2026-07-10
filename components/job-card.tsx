@@ -9,6 +9,8 @@ import {
   X,
   Radio,
   FileText,
+  Users,
+  WalletCards,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -16,7 +18,13 @@ import { Card } from "@/components/ui/card"
 import { DecisionBadge, ScoreBadge } from "@/components/badges"
 import { useStore } from "@/lib/store"
 import type { JobPosting } from "@/lib/types"
-import { rankingSummaryText, relativeTime } from "@/lib/job-ui"
+import {
+  applicantLabel,
+  applyUrlForJob,
+  rankingSummaryText,
+  relativeTime,
+  salaryLabel,
+} from "@/lib/job-ui"
 
 export function JobCard({
   job,
@@ -32,6 +40,8 @@ export function JobCard({
       job.materials.ats_cv_notes ||
       job.materials.autofill_notes,
   )
+  const applicants = applicantLabel(job)
+  const salary = salaryLabel(job)
 
   function openExternal(url: string) {
     markOpened(job.id)
@@ -57,6 +67,18 @@ export function JobCard({
                 <span className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                   <FileText className="size-3" />
                   Kit ready
+                </span>
+              ) : null}
+              {applicants ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                  <Users className="size-3" />
+                  {applicants}
+                </span>
+              ) : null}
+              {salary ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                  <WalletCards className="size-3" />
+                  {salary}
                 </span>
               ) : null}
             </div>
@@ -107,7 +129,7 @@ export function JobCard({
           size="sm"
           variant="ghost"
           className="h-8 px-2 text-xs"
-          onClick={() => openExternal(job.apply_url)}
+          onClick={() => openExternal(applyUrlForJob(job))}
         >
           <Send data-icon="inline-start" />
           Apply

@@ -7,7 +7,7 @@ export function computeKpis(jobs: JobPosting[]) {
   const applyCandidates = jobs.filter(
     (j) => isActionableApplyDecision(j.ranking.decision, j.ranking.final_score),
   ).length
-  const applied = jobs.filter((j) => j.pipeline_status === "applied").length
+  const applied = jobs.filter((j) => j.pipeline_status === "ready_to_apply").length
   const newThisWeek = jobs.filter(isNewThisWeek).length
   const avgScore = total
     ? Math.round(
@@ -64,14 +64,14 @@ export function pipelineFunnel(jobs: JobPosting[]) {
   const shortlisted = jobs.filter(
     (j) =>
       j.pipeline_status === "shortlisted" ||
-      j.pipeline_status === "applied",
+      j.pipeline_status === "ready_to_apply",
   ).length
-  const applied = jobs.filter((j) => j.pipeline_status === "applied").length
+  const applied = jobs.filter((j) => j.pipeline_status === "ready_to_apply").length
   const discarded = jobs.filter((j) => j.pipeline_status === "discarded").length
   return [
     { stage: "New", count: jobs.length },
     { stage: "Shortlisted", count: shortlisted },
-    { stage: "Applied", count: applied },
+    { stage: "Ready", count: applied },
     { stage: "Discarded", count: discarded },
   ]
 }
