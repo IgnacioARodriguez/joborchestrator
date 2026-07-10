@@ -3,6 +3,10 @@ import type {
   CandidateProfile,
   ApplicationRecord,
   ApplicationStatus,
+  AnswerDefinition,
+  ResumeVariant,
+  JobContact,
+  FollowUp,
   JobPosting,
   JobsResponse,
   LinkedInProfileSetting,
@@ -10,6 +14,7 @@ import type {
   PipelineStatus,
   RankingJobRecord,
   ScanResult,
+  DuplicateRateSummary,
   SkillCatalogItem,
 } from "./types"
 
@@ -149,7 +154,7 @@ export const api = {
     remote: boolean
     max_pages: number
   }) {
-    return request<{ results: ScanResult[] }>("/api/scans/search", {
+    return request<{ results: ScanResult[]; duplicate_rates: DuplicateRateSummary[] }>("/api/scans/search", {
       method: "POST",
       body: JSON.stringify(input),
     })
@@ -159,9 +164,53 @@ export const api = {
     return request<{ applications: ApplicationRecord[] }>("/api/applications")
   },
 
+  async getResumes() {
+    return request<{ resumes: ResumeVariant[] }>("/api/resumes")
+  },
+
+  async createResume(input: Pick<ResumeVariant, "label"> & Partial<ResumeVariant>) {
+    return request<{ resume: ResumeVariant }>("/api/resumes", {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  },
+
+  async getAnswers() {
+    return request<{ answers: AnswerDefinition[] }>("/api/answers")
+  },
+
+  async saveAnswer(input: AnswerDefinition) {
+    return request<{ answer: AnswerDefinition }>("/api/answers", {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  },
+
   async patchApplication(id: number, input: Partial<{ status: ApplicationStatus }>) {
     return request<{ application: ApplicationRecord }>(`/api/applications/${id}`, {
       method: "PATCH",
+      body: JSON.stringify(input),
+    })
+  },
+
+  async getContacts() {
+    return request<{ contacts: JobContact[] }>("/api/contacts")
+  },
+
+  async createContact(input: Partial<JobContact>) {
+    return request<{ contact: JobContact }>("/api/contacts", {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  },
+
+  async getFollowUps() {
+    return request<{ follow_ups: FollowUp[] }>("/api/follow-ups")
+  },
+
+  async createFollowUp(input: Pick<FollowUp, "application_id" | "due_at"> & Partial<FollowUp>) {
+    return request<{ follow_up: FollowUp }>("/api/follow-ups", {
+      method: "POST",
       body: JSON.stringify(input),
     })
   },

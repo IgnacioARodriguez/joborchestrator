@@ -113,6 +113,11 @@ def test_worker_processes_application_materials_generation(monkeypatch):
     )
     monkeypatch.setattr(
         worker.db,
+        "register_generated_resume_variant",
+        lambda job_id, label, ats_cv_text: {"id": 9, "label": label},
+    )
+    monkeypatch.setattr(
+        worker.db,
         "complete_operation",
         lambda op_id, output, message: completed.update({"id": op_id, "output": output, "message": message}),
     )
@@ -124,6 +129,7 @@ def test_worker_processes_application_materials_generation(monkeypatch):
     assert saved["pipeline_status"] == "shortlisted"
     assert saved["recruiter_message"] == "Hi recruiter"
     assert completed["output"]["materials_saved"] is True
+    assert completed["output"]["resume_variant_id"] == 9
     assert "Generating nvidia application materials." in progress
 
 

@@ -217,6 +217,25 @@ def test_answer_contacts_and_followups_are_persisted(tmp_path, monkeypatch):
     assert db.list_follow_ups()[0]["application_id"] == application["id"]
 
 
+def test_generated_resume_variant_links_to_application(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+
+    resume = db.register_generated_resume_variant(
+        job_id,
+        "Acme - Backend Engineer ATS CV",
+        "Professional Summary\nBackend engineer\n\nTechnical Skills\nPython",
+    )
+
+    application = db.list_applications()[0]
+    assert resume["label"] == "Acme - Backend Engineer ATS CV"
+    assert application["job_id"] == job_id
+    assert application["resume_variant_id"] == resume["id"]
+    assert db.get_application(application["id"])["events"][0]["event_type"] == "answer_saved"
+
+
 def test_delete_job_rankings_clears_current_rankings(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()

@@ -740,12 +740,20 @@ def create_application_event(application_id: int, payload: dict) -> dict:
     return applications_repository.create_application_event(_conn, application_id, payload)
 
 
+def record_job_opened(job_id: int) -> dict:
+    return applications_repository.record_job_opened(_conn, job_id)
+
+
 def create_resume_variant(payload: dict) -> dict:
     return applications_repository.create_resume_variant(_conn, payload)
 
 
 def list_resume_variants() -> list[dict]:
     return applications_repository.list_resume_variants(_conn, _read_sql_query)
+
+
+def register_generated_resume_variant(job_id: int, label: str, ats_cv_text: str) -> dict:
+    return applications_repository.register_generated_resume_variant(_conn, job_id, label, ats_cv_text)
 
 
 def upsert_answer_definition(payload: dict) -> dict:

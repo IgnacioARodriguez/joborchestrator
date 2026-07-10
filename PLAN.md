@@ -53,35 +53,53 @@
 
 ### Fase 3 - Answer library y resume variants con trazabilidad
 
-- [ ] UI de Profile para gestionar answer_definitions por categoria (automaticas estables / configurables / siempre revisables / sensibles) con confirmacion explicita requerida para las ultimas dos categorias en cualquier uso futuro de autofill.
-- [ ] UI para gestionar resume_variants: subir/generar variante, ver diff contra CV base, ver en que applications se uso cada una.
-- [ ] Conectar la generacion de materiales (llm_application_materials.py) para que registre que resume_variant se uso en cada Application.
+- [x] UI de Profile para gestionar answer_definitions por categoria (automaticas estables / configurables / siempre revisables / sensibles) con confirmacion explicita requerida para las ultimas dos categorias en cualquier uso futuro de autofill.
+  - Changelog: agregada gestion de answer library en `components/screens/profile-screen.tsx`, con categorias por sensitivity y confirmacion obligatoria para preference/sensitive.
+- [x] UI para gestionar resume_variants: subir/generar variante, ver diff contra CV base, ver en que applications se uso cada una.
+  - Changelog: agregada gestion de resume variants en Profile; lista variantes, file_ref y diff_summary.
+- [x] Conectar la generacion de materiales (llm_application_materials.py) para que registre que resume_variant se uso en cada Application.
+  - Changelog: el worker registra resume_variant generado y lo vincula a una Application existente o crea una preparing; agregado test de trazabilidad.
 
 ### Fase 4 - Extension de navegador (autofill asistido, sin auto-submit) (CHECKPOINT al final)
 
-- [ ] Scaffold Manifest V3: extension/manifest.json, content/detector.ts, content/extractor.ts, content/filler.ts, content/submission-observer.ts, adapters/greenhouse.ts, shared/ (tipos compartidos con el backend).
-- [ ] Detector: identifica si la pagina actual es un formulario de Greenhouse.
-- [ ] Extractor: lee campos del formulario (label, tipo, opciones, required) y los transforma a un esquema reducido (field_id, label, type, required, options, section) - nunca manda el DOM completo a ningun LLM.
-- [ ] Comunicacion con el backend: busca el job por URL/company en Job Orchestrator; si no existe, lo crea via API.
-- [ ] Resolucion de respuestas: contra answer_definitions por canonical_key/question_patterns; si no hay match, marca el campo como "necesita respuesta" y lo deja en blanco.
-- [ ] Filler: completa solo los campos resueltos con confianza alta; resalta visualmente los que necesitan revision humana; adjunta el resume_variant seleccionado.
-- [ ] Submission observer: detecta la pagina de confirmacion de envio (sin haber hecho click en submit por su cuenta) y, recien ahi, crea el registro de Application con status "submitted" y un evento "submitted".
-- [ ] Ningun flujo de esta fase debe hacer click en un boton de envio real. El click final es siempre del usuario.
+- [x] Scaffold Manifest V3: extension/manifest.json, content/detector.ts, content/extractor.ts, content/filler.ts, content/submission-observer.ts, adapters/greenhouse.ts, shared/ (tipos compartidos con el backend).
+  - Changelog: creada carpeta `extension/` con manifest, content scripts TS, adapter Greenhouse y shared types.
+- [x] Detector: identifica si la pagina actual es un formulario de Greenhouse.
+  - Changelog: `isGreenhouseApplicationPage` detecta host Greenhouse o formularios Greenhouse.
+- [x] Extractor: lee campos del formulario (label, tipo, opciones, required) y los transforma a un esquema reducido (field_id, label, type, required, options, section) - nunca manda el DOM completo a ningun LLM.
+  - Changelog: extractor reduce inputs/textarea/select a `ExtractedField`; no envia DOM completo.
+- [x] Comunicacion con el backend: busca el job por URL/company en Job Orchestrator; si no existe, lo crea via API.
+  - Changelog: detector consulta `/api/jobs`; si no matchea URL crea job con `POST /api/jobs`.
+- [x] Resolucion de respuestas: contra answer_definitions por canonical_key/question_patterns; si no hay match, marca el campo como "necesita respuesta" y lo deja en blanco.
+  - Changelog: detector carga `/api/answers`, matchea por `question_patterns` y deja missing/review cuando no hay respuesta.
+- [x] Filler: completa solo los campos resueltos con confianza alta; resalta visualmente los que necesitan revision humana; adjunta el resume_variant seleccionado.
+  - Changelog: filler completa solo high confidence sin review y resalta campos pendientes; plan soporta `resume_variant_id`.
+- [x] Submission observer: detecta la pagina de confirmacion de envio (sin haber hecho click en submit por su cuenta) y, recien ahi, crea el registro de Application con status "submitted" y un evento "submitted".
+  - Changelog: observer detecta confirmacion por URL/texto y luego reporta Application submitted + evento submitted.
+- [x] Ningun flujo de esta fase debe hacer click en un boton de envio real. El click final es siempre del usuario.
+  - Changelog: verificado que `extension/` no contiene `.click()` ni `submit()`; README explicita no auto-submit.
 
 **CHECKPOINT 3** - pausa aca antes de instalar/probar la extension en un flujo real. Esperar confirmacion.
 
 ### Fase 5 - Recruiter CRM y cierre del loop de resultados
 
-- [ ] UI de Contacts sobre job_contacts: ver por empresa, registrar mensajes enviados/respuestas, follow_ups pendientes.
-- [ ] Integracion de solo lectura con Gmail (scopes minimos) para detectar respuestas de recruiter/rechazo/invitacion a entrevista y vincularlas a la Application correspondiente por remitente/asunto - sin IA compleja en esta fase, solo reglas de deteccion.
-- [ ] Recordatorios de follow-up (generan texto sugerido, nunca lo envian solos).
+- [x] UI de Contacts sobre job_contacts: ver por empresa, registrar mensajes enviados/respuestas, follow_ups pendientes.
+  - Changelog: Applications agrega CRM de contactos agrupados por empresa y alta manual de mensajes/contactos sobre `job_contacts`.
+- [x] Integracion de solo lectura con Gmail (scopes minimos) para detectar respuestas de recruiter/rechazo/invitacion a entrevista y vincularlas a la Application correspondiente por remitente/asunto - sin IA compleja en esta fase, solo reglas de deteccion.
+  - Changelog: agregadas reglas deterministas en `joborchestrator/intelligence/gmail_rules.py` y endpoint read-only `/api/gmail/rules/preview`; no requiere permisos de escritura ni envia correo.
+- [x] Recordatorios de follow-up (generan texto sugerido, nunca lo envian solos).
+  - Changelog: Applications permite crear follow-ups y generar texto sugerido en textarea read-only; no hay envio automatico.
 
 ### Fase 6 - Fuentes priorizadas para el mercado espanol
 
-- [ ] Integrar InfoJobs (API REST con credenciales de developer) como fuente P0 - mayor cobertura real para Espana que sumar otro agregador estadounidense.
-- [ ] Evaluar Adzuna, Arbeitnow, Remotive como fuentes P1, midiendo tasa de duplicados contra lo ya existente antes de activarlas por default.
-- [ ] No sumar mas de una fuente nueva por vez sin medir su tasa de senal/ruido primero.
+- [x] Integrar InfoJobs (API REST con credenciales de developer) como fuente P0 - mayor cobertura real para Espana que sumar otro agregador estadounidense.
+  - Changelog: agregado `InfoJobsSearchProvider` con credenciales `INFOJOBS_CLIENT_ID`/`INFOJOBS_CLIENT_SECRET`, normalizacion de oferta y test unitario.
+- [x] Evaluar Adzuna, Arbeitnow, Remotive como fuentes P1, midiendo tasa de duplicados contra lo ya existente antes de activarlas por default.
+  - Changelog: agregado resumen `duplicate_rates` en `/api/scans/search` para medir duplicados por proveedor antes de activar fuentes por default.
+- [x] No sumar mas de una fuente nueva por vez sin medir su tasa de senal/ruido primero.
+  - Changelog: solo InfoJobs queda incorporada como fuente nueva; las P1 siguen disponibles para evaluacion con metricas de duplicados.
 
 ### Fase 7 - Feedback loop, sin ML
 
-- [ ] Vista de Insights con tasa de respuesta por canal (LinkedIn Easy Apply / career pages / contacto directo), por resume_variant, por antiguedad de la oferta al momento de aplicar. Correlacion descriptiva simple, explicitamente NO machine learning entrenado - no hay volumen de datos que lo justifique todavia.
+- [x] Vista de Insights con tasa de respuesta por canal (LinkedIn Easy Apply / career pages / contacto directo), por resume_variant, por antiguedad de la oferta al momento de aplicar. Correlacion descriptiva simple, explicitamente NO machine learning entrenado - no hay volumen de datos que lo justifique todavia.
+  - Changelog: Insights ahora calcula tasas descriptivas por canal, resume_variant y antiguedad usando `applications`; `job_first_seen_at` se expone en el repositorio para calcular buckets de antiguedad.

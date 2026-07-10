@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Job Orchestrator Assistant",
+  "version": "0.1.0",
+  "description": "Assisted autofill for supported ATS forms. No auto-submit.",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["http://127.0.0.1:8000/*", "http://localhost:8000/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://*.greenhouse.io/*", "https://*.greenhouse.com/*"],
+      "js": ["content/detector.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

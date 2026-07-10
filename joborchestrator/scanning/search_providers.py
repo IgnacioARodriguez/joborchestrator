@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import base64
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -333,6 +334,77 @@ class HimalayasSearchProvider(BaseSearchProvider):
         return self._finalize_search_job(job, query, location)
 
 
+class InfoJobsSearchProvider(BaseSearchProvider):
+    source = "infojobs"
+
+    async def search_jobs(
+        self,
+        query: str,
+        location: str | None = None,
+        *,
+        remote: bool = True,
+        page: int = 1,
+    ) -> list[JobPosting]:
+        client_id = os.getenv("INFOJOBS_CLIENT_ID")
+        client_secret = os.getenv("INFOJOBS_CLIENT_SECRET")
+        if not client_id or not client_secret:
+            raise ProviderError("InfoJobs requires INFOJOBS_CLIENT_ID and INFOJOBS_CLIENT_SECRET")
+        token = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
+        params: dict[str, Any] = {
+            "q": query,
+            "page": page,
+            "maxResults": 50,
+        }
+        if location:
+            params["province"] = location
+        data = await self._get_json(
+            "https://api.infojobs.net/api/9/offer",
+            params=params,
+            headers={"Authorization": f"Basic {token}"},
+        )
+        offers = first_value(data.get("offers"), data.get("items"), data.get("results"), []) if isinstance(data, dict) else []
+        return [
+            self.normalize_job(offer, query, location)
+            for offer in offers
+            if isinstance(offer, dict) and _matches_location(offer, location, remote)
+        ]
+
+    def normalize_job(self, payload: dict[str, Any], query: str, location: str | None) -> JobPosting:
+        company_data = payload.get("author") if isinstance(payload.get("author"), dict) else {}
+        city_data = payload.get("city") if isinstance(payload.get("city"), dict) else {}
+        province_data = payload.get("province") if isinstance(payload.get("province"), dict) else {}
+        salary = payload.get("salary") if isinstance(payload.get("salary"), dict) else {}
+        offer_id = str(first_value(payload.get("id"), payload.get("code"), payload.get("link")) or "")
+        title = first_value(payload.get("title"), payload.get("name"))
+        url = first_value(payload.get("link"), payload.get("url"), f"https://www.infojobs.net/oferta/{offer_id}" if offer_id else None)
+        location_name = first_value(
+            city_data.get("value"),
+            province_data.get("value"),
+            payload.get("city"),
+            payload.get("province"),
+            location,
+        )
+        job = JobPosting(
+            external_id=offer_id or str(url or title or ""),
+            source=self.source,
+            company=first_value(company_data.get("name"), payload.get("company"), "UNKNOWN"),
+            title=title,
+            location=location_name,
+            workplace_type="Remote" if _contains_remote(payload) else None,
+            url=url,
+            apply_url=url,
+            description_text=first_value(payload.get("description"), payload.get("summary")),
+            salary_min=_to_float(first_value(salary.get("minimum"), salary.get("min"))),
+            salary_max=_to_float(first_value(salary.get("maximum"), salary.get("max"))),
+            salary_currency="EUR",
+            posted_at=first_value(payload.get("published"), payload.get("publishedAt"), payload.get("updated")),
+            posted_at_raw=first_value(payload.get("published"), payload.get("publishedAt"), payload.get("updated")),
+            posted_at_confidence="medium",
+            raw_payload=payload,
+        )
+        return self._finalize_search_job(job, query, location)
+
+
 SEARCH_PROVIDERS: dict[str, SearchProvider] = {
     "remotive": RemotiveSearchProvider(),
     "arbeitnow": ArbeitnowSearchProvider(),
@@ -340,6 +412,7 @@ SEARCH_PROVIDERS: dict[str, SearchProvider] = {
     "themuse": TheMuseSearchProvider(),
     "remoteok": RemoteOkSearchProvider(),
     "himalayas": HimalayasSearchProvider(),
+    "infojobs": InfoJobsSearchProvider(),
 }
 
 
@@ -348,7 +421,11 @@ def get_search_provider(source_type: str) -> SearchProvider | None:
 
 
 def provider_requires_configuration(source_type: str) -> bool:
-    return source_type == "adzuna" and not (os.getenv("ADZUNA_APP_ID") and os.getenv("ADZUNA_APP_KEY"))
+    if source_type == "adzuna":
+        return not (os.getenv("ADZUNA_APP_ID") and os.getenv("ADZUNA_APP_KEY"))
+    if source_type == "infojobs":
+        return not (os.getenv("INFOJOBS_CLIENT_ID") and os.getenv("INFOJOBS_CLIENT_SECRET"))
+    return False
 
 
 def _matches_query(payload: dict[str, Any], query: str) -> bool:

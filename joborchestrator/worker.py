@@ -137,17 +137,30 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
         raise RuntimeError(f"Unsupported materials provider: {provider}")
 
     db.update_operation_progress(operation_id, "Saving generated application materials.")
+    ats_cv_text = kit.get("ats_cv_text") or kit.get("ats_cv_notes")
     db.update_job_application_materials(
         job_id,
         pipeline_status="shortlisted" if shortlist else None,
         recruiter_message=kit.get("recruiter_message"),
         cover_letter=kit.get("cover_letter"),
-        ats_cv_text=kit.get("ats_cv_text") or kit.get("ats_cv_notes"),
+        ats_cv_text=ats_cv_text,
         autofill_notes=kit.get("autofill_notes"),
     )
+    resume_variant = None
+    if ats_cv_text:
+        resume_variant = db.register_generated_resume_variant(
+            job_id,
+            f"{job.get('company') or 'Company'} - {job.get('title') or 'Role'} ATS CV",
+            str(ats_cv_text),
+        )
     db.complete_operation(
         operation_id,
-        {"job_id": job_id, "provider": provider, "materials_saved": True},
+        {
+            "job_id": job_id,
+            "provider": provider,
+            "materials_saved": True,
+            "resume_variant_id": resume_variant.get("id") if resume_variant else None,
+        },
         "Application materials ready.",
     )
     logger.info("Completed application materials operation=%s job_id=%s provider=%s", operation_id, job_id, provider)

@@ -134,6 +134,26 @@ def test_jobs_reject_heuristic_ranking_versions(tmp_path, monkeypatch):
     assert "Heuristic rankings" in response.json()["detail"]
 
 
+def test_create_job_endpoint_for_extension(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/api/jobs",
+        json={
+            "title": "Greenhouse Role",
+            "company": "Acme",
+            "url": "https://boards.greenhouse.io/acme/jobs/1",
+            "source": "greenhouse",
+        },
+    )
+
+    assert response.status_code == 200
+    job = response.json()["job"]
+    assert job["title"] == "Greenhouse Role"
+    assert job["company"] == "Acme"
+    assert job["apply_url"] == "https://boards.greenhouse.io/acme/jobs/1"
+
+
 def test_skill_catalog_can_be_extended_via_api(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
 
@@ -365,6 +385,22 @@ def test_application_rest_endpoints(tmp_path, monkeypatch):
     listed = client.get("/api/applications")
     assert listed.status_code == 200
     assert listed.json()["applications"][0]["job_title"] == "Backend Engineer"
+    assert listed.json()["applications"][0]["job_first_seen_at"] == "2026-01-01T10:00:00"
+
+
+def test_mark_opened_creates_application_event_without_pipeline_state(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+
+    response = client.post(f"/api/jobs/{job_id}/opened", json={})
+
+    assert response.status_code == 200
+    assert response.json()["event"]["event_type"] == "opened"
+    assert db.get_job_posting(job_id)["pipeline_status"] == "new"
+    application = db.list_applications()[0]
+    assert application["status"] == "preparing"
+    assert db.get_application(application["id"])["events"][0]["event_type"] == "opened"
 
 
 def test_profile_support_rest_endpoints(tmp_path, monkeypatch):
@@ -399,6 +435,24 @@ def test_profile_support_rest_endpoints(tmp_path, monkeypatch):
     )
     assert follow_up.status_code == 200
     assert client.get("/api/follow-ups").json()["follow_ups"][0]["note"] == "Follow up"
+
+
+def test_gmail_rule_preview_is_read_only(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/api/gmail/rules/preview",
+        json={
+            "sender": "recruiter@example.com",
+            "subject": "Interview schedule",
+            "body": "Can we schedule a technical screen next week?",
+        },
+    )
+
+    assert response.status_code == 200
+    signal = response.json()["signal"]
+    assert signal["event_type"] == "interview_scheduled"
+    assert signal["confidence"] > 0
 
 
 def test_generate_materials_queues_nvidia_provider(tmp_path, monkeypatch):

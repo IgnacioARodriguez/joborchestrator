@@ -33,9 +33,12 @@ import { PageHeader } from "@/components/page-chrome"
 import { api } from "@/lib/api"
 import type {
   ApplicationTarget,
+  AnswerDefinition,
+  AnswerSensitivity,
   CandidateProfile,
   OperationRun,
   ProfileSkill,
+  ResumeVariant,
   SkillCatalogItem,
   SkillLevel,
   WorkMode,
@@ -75,6 +78,23 @@ const WORK_MODE_LABELS: Record<WorkMode, string> = {
   remote: "Remote",
 }
 
+const ANSWER_CATEGORY: Record<AnswerSensitivity, string> = {
+  public: "Automatic stable",
+  preference: "Configurable",
+  sensitive: "Always review",
+}
+
+const EMPTY_ANSWER: AnswerDefinition = {
+  canonical_key: "",
+  question_patterns: [],
+  answer_type: "text",
+  value: "",
+  source: "approved",
+  sensitivity: "public",
+  requires_confirmation: false,
+  last_confirmed_at: null,
+}
+
 function lines(value: string[]) {
   return value.join("\n")
 }
@@ -105,6 +125,10 @@ export function ProfileScreen() {
   const [newCatalogSkill, setNewCatalogSkill] = useState("")
   const [newCatalogCategory, setNewCatalogCategory] = useState("General")
   const [aliasDrafts, setAliasDrafts] = useState<Record<string, string>>({})
+  const [answers, setAnswers] = useState<AnswerDefinition[]>([])
+  const [answerDraft, setAnswerDraft] = useState<AnswerDefinition>(EMPTY_ANSWER)
+  const [resumes, setResumes] = useState<ResumeVariant[]>([])
+  const [resumeDraft, setResumeDraft] = useState({ label: "", file_ref: "", base_version: "", diff_summary: "" })
 
   useEffect(() => {
     let cancelled = false
@@ -115,6 +139,14 @@ export function ProfileScreen() {
         const catalog = await api.getSkillCatalog()
         if (!cancelled) setSkillCatalog(catalog.skills)
         const latest = await api.getLatestOperation("cv_profile_import")
+        const [answerData, resumeData] = await Promise.all([
+          api.getAnswers(),
+          api.getResumes(),
+        ])
+        if (!cancelled) {
+          setAnswers(answerData.answers)
+          setResumes(resumeData.resumes)
+        }
         if (
           !cancelled &&
           latest.operation &&
@@ -195,6 +227,17 @@ export function ProfileScreen() {
     }
     return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))
   }, [profile.skills, skillCatalog])
+
+  const groupedAnswers = useMemo(() => {
+    const groups = new Map<AnswerSensitivity, AnswerDefinition[]>()
+    for (const sensitivity of ["public", "preference", "sensitive"] as AnswerSensitivity[]) {
+      groups.set(sensitivity, [])
+    }
+    for (const answer of answers) {
+      groups.set(answer.sensitivity, [...(groups.get(answer.sensitivity) ?? []), answer])
+    }
+    return [...groups.entries()]
+  }, [answers])
 
   function patch(update: Partial<CandidateProfile>) {
     setProfile((current) => ({ ...current, ...update }))
@@ -358,6 +401,51 @@ export function ProfileScreen() {
       })
     } finally {
       setBusy(null)
+    }
+  }
+
+  async function saveAnswerDraft() {
+    const canonical_key = answerDraft.canonical_key.trim()
+    if (!canonical_key) return
+    try {
+      const payload = {
+        ...answerDraft,
+        canonical_key,
+        question_patterns: answerDraft.question_patterns.filter(Boolean),
+        requires_confirmation:
+          answerDraft.requires_confirmation || answerDraft.sensitivity !== "public",
+      }
+      const response = await api.saveAnswer(payload)
+      setAnswers((current) => {
+        const others = current.filter((answer) => answer.canonical_key !== response.answer.canonical_key)
+        return [...others, response.answer].sort((a, b) => a.canonical_key.localeCompare(b.canonical_key))
+      })
+      setAnswerDraft(EMPTY_ANSWER)
+      toast.success("Answer saved", { description: canonical_key })
+    } catch (e) {
+      toast.error("Could not save answer", {
+        description: e instanceof Error ? e.message : "Backend request failed.",
+      })
+    }
+  }
+
+  async function createResumeVariant() {
+    const label = resumeDraft.label.trim()
+    if (!label) return
+    try {
+      const response = await api.createResume({
+        label,
+        file_ref: resumeDraft.file_ref || null,
+        base_version: resumeDraft.base_version || null,
+        diff_summary: resumeDraft.diff_summary || null,
+      })
+      setResumes((current) => [response.resume, ...current])
+      setResumeDraft({ label: "", file_ref: "", base_version: "", diff_summary: "" })
+      toast.success("Resume variant saved", { description: label })
+    } catch (e) {
+      toast.error("Could not save resume variant", {
+        description: e instanceof Error ? e.message : "Backend request failed.",
+      })
     }
   }
 
@@ -816,6 +904,134 @@ export function ProfileScreen() {
               </div>
             </section>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Answer library</CardTitle>
+          <CardDescription className="text-xs">
+            Keep reusable answers explicit. Preference and sensitive answers require review before future autofill.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_10rem]">
+            <Input
+              value={answerDraft.canonical_key}
+              placeholder="canonical_key"
+              onChange={(event) => setAnswerDraft((current) => ({ ...current, canonical_key: event.target.value }))}
+            />
+            <Input
+              value={answerDraft.question_patterns.join("\n")}
+              placeholder="Question patterns"
+              onChange={(event) =>
+                setAnswerDraft((current) => ({ ...current, question_patterns: listFromText(event.target.value) }))
+              }
+            />
+            <Select
+              value={answerDraft.sensitivity}
+              onValueChange={(value) =>
+                setAnswerDraft((current) => ({
+                  ...current,
+                  sensitivity: value as AnswerSensitivity,
+                  requires_confirmation: value !== "public" || current.requires_confirmation,
+                }))
+              }
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="public">Stable</SelectItem>
+                <SelectItem value="preference">Configurable</SelectItem>
+                <SelectItem value="sensitive">Sensitive</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Textarea
+            value={answerDraft.value ?? ""}
+            placeholder="Approved answer value"
+            className="min-h-20 text-xs"
+            onChange={(event) => setAnswerDraft((current) => ({ ...current, value: event.target.value }))}
+          />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={answerDraft.requires_confirmation}
+                onChange={(event) => setAnswerDraft((current) => ({ ...current, requires_confirmation: event.target.checked }))}
+              />
+              Requires confirmation
+            </label>
+            <Button onClick={() => void saveAnswerDraft()} disabled={!answerDraft.canonical_key.trim()}>
+              <Save data-icon="inline-start" />
+              Save answer
+            </Button>
+          </div>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+            {groupedAnswers.map(([sensitivity, items]) => (
+              <section key={sensitivity} className="rounded-lg border border-border p-3">
+                <h3 className="text-xs font-semibold text-foreground">{ANSWER_CATEGORY[sensitivity]}</h3>
+                <div className="mt-2 flex flex-col gap-2">
+                  {items.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No answers yet.</p>
+                  ) : (
+                    items.map((answer) => (
+                      <button
+                        key={answer.canonical_key}
+                        type="button"
+                        className="rounded-md border border-border bg-muted/30 p-2 text-left text-xs"
+                        onClick={() => setAnswerDraft(answer)}
+                      >
+                        <span className="font-medium text-foreground">{answer.canonical_key}</span>
+                        <span className="mt-1 block line-clamp-2 text-muted-foreground">{answer.value}</span>
+                        {answer.requires_confirmation ? (
+                          <span className="mt-1 block text-warning-foreground">review required</span>
+                        ) : null}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </section>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Resume variants</CardTitle>
+          <CardDescription className="text-xs">
+            Track tailored CV versions and where they are used by applications.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            <Input value={resumeDraft.label} placeholder="Variant label" onChange={(event) => setResumeDraft((current) => ({ ...current, label: event.target.value }))} />
+            <Input value={resumeDraft.file_ref} placeholder="File reference" onChange={(event) => setResumeDraft((current) => ({ ...current, file_ref: event.target.value }))} />
+            <Input value={resumeDraft.base_version} placeholder="Base version" onChange={(event) => setResumeDraft((current) => ({ ...current, base_version: event.target.value }))} />
+            <Input value={resumeDraft.diff_summary} placeholder="Diff summary" onChange={(event) => setResumeDraft((current) => ({ ...current, diff_summary: event.target.value }))} />
+          </div>
+          <Button onClick={() => void createResumeVariant()} disabled={!resumeDraft.label.trim()}>
+            <Plus data-icon="inline-start" />
+            Add variant
+          </Button>
+          <div className="flex flex-col gap-2">
+            {resumes.length === 0 ? (
+              <p className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
+                Generated or manually added resume variants appear here.
+              </p>
+            ) : (
+              resumes.map((resume) => (
+                <div key={resume.id} className="rounded-lg border border-border p-3 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-semibold text-foreground">{resume.label}</p>
+                    <span className="text-muted-foreground">{new Date(resume.created_at).toLocaleDateString()}</span>
+                  </div>
+                  <p className="mt-1 text-muted-foreground">{resume.diff_summary || "No diff summary recorded."}</p>
+                  {resume.file_ref ? <p className="mt-1 font-mono text-[11px] text-muted-foreground">{resume.file_ref}</p> : null}
+                </div>
+              ))
+            )}
+          </div>
         </CardContent>
       </Card>
       </div>

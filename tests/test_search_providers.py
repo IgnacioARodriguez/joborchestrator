@@ -2,10 +2,13 @@ from joborchestrator.scanning.search_providers import (
     AdzunaSearchProvider,
     ArbeitnowSearchProvider,
     HimalayasSearchProvider,
+    InfoJobsSearchProvider,
     RemotiveSearchProvider,
     RemoteOkSearchProvider,
     TheMuseSearchProvider,
 )
+from joborchestrator.scanning.search_scanner import summarize_duplicate_rates
+from joborchestrator.scanning.models import JobPosting, ScanResult
 
 
 def test_remotive_normalization():
@@ -148,3 +151,55 @@ def test_himalayas_normalization():
     assert job.external_id == "him-1"
     assert job.company == "Acme"
     assert job.location == "Remote, Europe"
+
+
+def test_infojobs_normalization():
+    provider = InfoJobsSearchProvider()
+    job = provider.normalize_job(
+        {
+            "id": "ij-1",
+            "title": "Backend Developer",
+            "author": {"name": "Acme"},
+            "city": {"value": "Malaga"},
+            "province": {"value": "Malaga"},
+            "link": "https://www.infojobs.net/malaga/backend-developer/of-ij-1",
+            "description": "Python APIs.",
+            "salary": {"minimum": 40000, "maximum": 55000},
+            "published": "2026-07-01T00:00:00Z",
+        },
+        "backend developer",
+        "Malaga",
+    )
+
+    assert job.source == "infojobs"
+    assert job.external_id == "ij-1"
+    assert job.company == "Acme"
+    assert job.location == "Malaga"
+    assert job.salary_min == 40000.0
+    assert job.salary_currency == "EUR"
+
+
+def test_duplicate_rate_summary_for_source_evaluation():
+    new_job = JobPosting(external_id="new", source="adzuna", company="Acme")
+    duplicate_job = JobPosting(external_id="old", source="adzuna", company="Acme")
+    result = ScanResult(
+        source_type="adzuna",
+        company_name="backend",
+        company_ref="backend / Spain",
+        jobs=[new_job, duplicate_job],
+        new_jobs=[new_job],
+        unchanged_jobs=[duplicate_job],
+    )
+
+    summary = summarize_duplicate_rates([result])
+
+    assert summary == [
+        {
+            "provider": "adzuna",
+            "found": 2,
+            "new": 1,
+            "updated": 0,
+            "duplicates": 1,
+            "duplicate_rate": 0.5,
+        }
+    ]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import asdict
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
@@ -18,6 +19,7 @@ from joborchestrator.api_dto import (
 )
 from joborchestrator.batching import MIN_DESCRIPCION_LEN_DEFAULT, filtrar_ofertas
 from joborchestrator.intelligence.application_materials import ApplicationMaterialsError, build_application_kit
+from joborchestrator.intelligence.gmail_rules import classify_recruiter_message
 from joborchestrator.intelligence.cv_profile_extractor import (
     CVProfileError,
     extract_text_from_cv,
@@ -40,6 +42,7 @@ from joborchestrator.ranking.worker import run_worker_once
 from joborchestrator.scanning import scanner as source_scanner
 from joborchestrator.scanning import search_scanner
 from joborchestrator.scanning import linkedin
+from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.orchestrator import run_unified_job_scan
 from joborchestrator.scanning.providers import PROVIDERS
 from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS
@@ -65,7 +68,7 @@ app.add_middleware(
 
 
 class PipelinePatch(BaseModel):
-    status: Literal["new", "shortlisted", "ready_to_apply", "discarded", "applied", "opened"]
+    status: Literal["new", "shortlisted", "ready_to_apply", "discarded"]
 
 
 class ApplicationPayload(BaseModel):
@@ -124,6 +127,22 @@ class FollowUpPayload(BaseModel):
     due_at: str
     note: str | None = None
     done_at: str | None = None
+
+
+class JobCreatePayload(BaseModel):
+    title: str = "External application"
+    company: str = "Unknown company"
+    url: str
+    apply_url: str | None = None
+    source: str = "greenhouse"
+    external_id: str | None = None
+    description_text: str = ""
+
+
+class GmailPreviewPayload(BaseModel):
+    sender: str = ""
+    subject: str = ""
+    body: str = ""
 
 
 class SourcePayload(BaseModel):
@@ -305,6 +324,32 @@ def list_jobs(limit: int | None = None, ranking_version: str | None = None) -> d
     }
 
 
+@app.post("/api/jobs")
+def create_job(payload: JobCreatePayload) -> dict[str, Any]:
+    job = JobPosting(
+        external_id=payload.external_id or payload.url,
+        source=payload.source,
+        company=payload.company,
+        title=payload.title,
+        url=payload.url,
+        apply_url=payload.apply_url or payload.url,
+        description_text=payload.description_text,
+        raw_payload={"created_by": "api", "url": payload.url},
+    )
+    db.upsert_job_posting(job)
+    jobs = db.get_job_postings(limit=None)
+    row = jobs[
+        (jobs["source"] == job.source)
+        & (jobs["company"] == job.company)
+        & (jobs["external_id"] == job.external_id)
+    ]
+    if row.empty:
+        raise HTTPException(status_code=500, detail="Job was not created")
+    job_id = int(row.iloc[0]["id"])
+    rankings = latest_rankings_by_job_id()
+    return {"job": job_dto(db.get_job_posting(job_id), rankings.get(job_id))}
+
+
 @app.post("/api/jobs/{job_id}/pipeline")
 def update_pipeline(job_id: int, payload: PipelinePatch) -> dict[str, Any]:
     db.update_job_status(job_id, payload.status)
@@ -313,8 +358,11 @@ def update_pipeline(job_id: int, payload: PipelinePatch) -> dict[str, Any]:
 
 @app.post("/api/jobs/{job_id}/opened")
 def mark_opened(job_id: int) -> dict[str, Any]:
-    db.update_job_status(job_id, "opened")
-    return {"ok": True}
+    try:
+        event = db.record_job_opened(job_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Job not found") from exc
+    return {"ok": True, "event": event}
 
 
 @app.post("/api/jobs/{job_id}/applications")
@@ -422,6 +470,12 @@ def create_follow_up(payload: FollowUpPayload) -> dict[str, Any]:
     if not db.get_application(payload.application_id):
         raise HTTPException(status_code=404, detail="Application not found")
     return {"follow_up": db.create_follow_up(payload.model_dump())}
+
+
+@app.post("/api/gmail/rules/preview")
+def preview_gmail_rules(payload: GmailPreviewPayload) -> dict[str, Any]:
+    signal = classify_recruiter_message(payload.sender, payload.subject, payload.body)
+    return {"signal": None if signal is None else asdict(signal)}
 
 
 @app.post("/api/jobs/{job_id}/materials")
@@ -546,7 +600,10 @@ async def scan_search(payload: SearchPayload) -> dict[str, Any]:
             max_pages=payload.max_pages,
             max_concurrency=payload.max_concurrency,
         )
-    return {"results": [scan_result_dto(result) for result in results]}
+    return {
+        "results": [scan_result_dto(result) for result in results],
+        "duplicate_rates": search_scanner.summarize_duplicate_rates(results),
+    }
 
 
 @app.get("/api/linkedin/profile")

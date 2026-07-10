@@ -13,6 +13,24 @@ from joborchestrator.storage import persistence as db
 DEFAULT_SEARCH_CONCURRENCY = 4
 
 
+def summarize_duplicate_rates(results: list[ScanResult]) -> list[dict[str, float | int | str]]:
+    summary: dict[str, dict[str, float | int | str]] = {}
+    for result in results:
+        row = summary.setdefault(
+            result.source_type,
+            {"provider": result.source_type, "found": 0, "new": 0, "updated": 0, "duplicates": 0, "duplicate_rate": 0.0},
+        )
+        row["found"] = int(row["found"]) + len(result.jobs)
+        row["new"] = int(row["new"]) + len(result.new_jobs)
+        row["updated"] = int(row["updated"]) + len(result.updated_jobs)
+        row["duplicates"] = int(row["duplicates"]) + len(result.unchanged_jobs)
+    for row in summary.values():
+        found = int(row["found"])
+        duplicate_count = int(row["duplicates"])
+        row["duplicate_rate"] = round(duplicate_count / found, 4) if found else 0.0
+    return sorted(summary.values(), key=lambda item: str(item["provider"]))
+
+
 async def search_provider_jobs(
     provider_name: str,
     query: str,

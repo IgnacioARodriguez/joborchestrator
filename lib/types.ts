@@ -127,7 +127,52 @@ export interface ApplicationRecord {
   job_title?: string | null
   company?: string | null
   job_url?: string | null
+  job_first_seen_at?: string | null
   events?: ApplicationEvent[]
+}
+
+export interface ResumeVariant {
+  id: number
+  label: string
+  file_ref?: string | null
+  base_version?: string | null
+  created_at: string
+  diff_summary?: string | null
+}
+
+export type AnswerSource = "approved" | "generated"
+export type AnswerSensitivity = "public" | "preference" | "sensitive"
+
+export interface AnswerDefinition {
+  canonical_key: string
+  question_patterns: string[]
+  answer_type?: string | null
+  value?: string | null
+  source: AnswerSource
+  sensitivity: AnswerSensitivity
+  requires_confirmation: boolean
+  last_confirmed_at?: string | null
+  updated_at?: string | null
+}
+
+export interface JobContact {
+  id: number
+  job_id?: number | null
+  company?: string | null
+  name?: string | null
+  role?: string | null
+  linkedin_url?: string | null
+  source: "linkedin_scraper" | "manual"
+  contacted_at?: string | null
+  last_reply_at?: string | null
+}
+
+export interface FollowUp {
+  id: number
+  application_id: number
+  due_at: string
+  note?: string | null
+  done_at?: string | null
 }
 
 export interface JobsMeta {
@@ -165,6 +210,15 @@ export interface ScanResult {
   unchanged_count: number
   errors: string[]
   duration_seconds: number
+}
+
+export interface DuplicateRateSummary {
+  provider: string
+  found: number
+  new: number
+  updated: number
+  duplicates: number
+  duplicate_rate: number
 }
 
 export interface LinkedInProfileSetting {
