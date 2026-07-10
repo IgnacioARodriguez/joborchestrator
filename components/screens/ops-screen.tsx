@@ -239,9 +239,8 @@ export function OpsScreen() {
         setBusyDetail(operation.progress_message || "Unified job scan is running.")
         if (["queued", "running"].includes(operation.status)) {
           const now = Date.now()
-          if (now - liveRefreshAtRef.current >= 4000) {
+          if (now - liveRefreshAtRef.current >= 10000) {
             liveRefreshAtRef.current = now
-            await refresh()
             await loadOps()
           }
         }
@@ -402,8 +401,8 @@ export function OpsScreen() {
                   })
                   setScanOperationId(res.operation_id)
                   liveRefreshAtRef.current = 0
-                  setBusyDetail("Queued. Waiting for the local worker.")
-                  toast.success("Unified scrape queued", {
+                  setBusyDetail(res.progress_message ?? "Queued. Waiting for the local worker.")
+                  toast.success(res.already_running ? "Unified scrape already running" : "Unified scrape queued", {
                     description: `Operation #${res.operation_id}`,
                   })
                   await loadOps()

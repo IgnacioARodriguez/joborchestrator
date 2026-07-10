@@ -67,9 +67,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setBackendOnline(true)
     } catch {
       setBackendOnline(false)
-      setJobs([])
-      setApplications([])
-      setJobsMeta(null)
     } finally {
       setLoading(false)
     }

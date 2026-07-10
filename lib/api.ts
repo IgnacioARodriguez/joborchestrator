@@ -24,12 +24,21 @@ const API_BASE =
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const isFormData = init?.body instanceof FormData
-  const res = await fetch(`${API_BASE}${path}`, {
+  const method = init?.method ?? "GET"
+  const url =
+    method === "GET"
+      ? `${API_BASE}${path}${path.includes("?") ? "&" : "?"}_=${Date.now()}`
+      : `${API_BASE}${path}`
+  const res = await fetch(url, {
     ...init,
+    cache: "no-store",
     headers: {
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      "Cache-Control": "no-store",
+      Pragma: "no-cache",
       ...(init?.headers ?? {}),
     },
+    ...(method === "GET" ? { method: "GET" } : {}),
   })
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`
@@ -253,6 +262,8 @@ export const api = {
     return request<{
       operation_id: number
       status: string
+      already_running?: boolean
+      progress_message?: string | null
     }>("/api/scans/all", {
       method: "POST",
       body: JSON.stringify(input),

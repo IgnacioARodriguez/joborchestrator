@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -52,6 +52,16 @@ from joborchestrator.storage import persistence as db
 
 
 app = FastAPI(title="Job Orchestrator API")
+
+
+@app.middleware("http")
+async def no_store_api_responses(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -623,6 +633,10 @@ def set_linkedin_profile(payload: LinkedInProfilePayload) -> dict[str, Any]:
 
 @app.post("/api/scans/all")
 def queue_scan_all(payload: UnifiedScanPayload) -> dict[str, Any]:
+    db.requeue_stale_operations(
+        ["job_scan"],
+        stale_seconds=int(os.getenv("JOB_SCAN_ACTIVE_STALE_SECONDS", os.getenv("JOB_WORKER_STALE_SECONDS", "3600"))),
+    )
     active = db.get_active_operation("job_scan")
     if active:
         return {
