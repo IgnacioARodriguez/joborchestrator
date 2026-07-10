@@ -217,16 +217,16 @@ export function RankingScreen({
       </section>
 
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
           {DECISION_COLUMNS.map((decision) => {
             const laneJobs = grouped.get(decision) ?? []
             return (
               <section
                 key={decision}
                 aria-labelledby={`ranking-lane-${decision}`}
-                className="flex min-h-[520px] flex-col rounded-lg border border-border bg-muted/25 xl:min-h-[640px]"
+                className="flex h-[min(72dvh,520px)] min-h-0 flex-col rounded-lg border border-border bg-muted/25 xl:h-[34dvh] xl:min-h-[300px]"
               >
-                <div className="shrink-0 border-b border-border bg-card px-3 py-3">
+                <div className="shrink-0 border-b border-border bg-card px-3 py-2.5">
                   <div className="flex items-center justify-between gap-2">
                     <h2
                       id={`ranking-lane-${decision}`}
@@ -242,7 +242,7 @@ export function RankingScreen({
                     Avg score {averageScore(laneJobs)}
                   </p>
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
                   {laneJobs.length === 0 ? (
                     <Empty className="h-full border border-dashed bg-background/70">
                       <EmptyHeader>

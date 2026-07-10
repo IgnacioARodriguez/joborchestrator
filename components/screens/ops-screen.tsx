@@ -313,7 +313,7 @@ export function OpsScreen() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
       <PageHeader
         eyebrow="Operations"
         title="Automation control room"
