@@ -8,6 +8,8 @@
   },
   "scripts": {
     "dev": "next dev",
+    "dev:all": "node scripts/dev-all.mjs",
+    "workers": "node scripts/workers.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint app components lib --max-warnings=0",

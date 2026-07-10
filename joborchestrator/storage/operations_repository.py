@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable
 
 import pandas as pd
@@ -58,6 +58,26 @@ def get_latest_operation(connect: ConnectionFactory, operation_type: str | None 
         conn.close()
 
 
+def get_active_operation(connect: ConnectionFactory, operation_type: str) -> dict | None:
+    conn = connect()
+    try:
+        row = conn.execute(
+            """SELECT *
+               FROM operation_runs
+               WHERE type = ?
+                 AND status IN ('queued', 'running')
+               ORDER BY
+                 CASE status WHEN 'running' THEN 0 ELSE 1 END,
+                 updated_at DESC,
+                 created_at DESC
+               LIMIT 1""",
+            (operation_type,),
+        ).fetchone()
+        return operation_row_to_dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def list_operations(connect: ConnectionFactory, limit: int = 20) -> list[dict]:
     conn = connect()
     try:
@@ -108,6 +128,34 @@ def claim_next_operation(
         if not claimed or claimed["status"] != "running" or claimed["claimed_by"] != worker_id:
             return None
         return operation_row_to_dict(claimed)
+    finally:
+        conn.close()
+
+
+def requeue_stale_operations(
+    connect: ConnectionFactory,
+    operation_types: list[str] | None = None,
+    stale_seconds: int = 3600,
+) -> int:
+    now = datetime.now()
+    cutoff = (now - timedelta(seconds=max(1, int(stale_seconds)))).isoformat(timespec="seconds")
+    conn = connect()
+    try:
+        params: list[object] = [now.isoformat(timespec="seconds"), cutoff]
+        query = """UPDATE operation_runs
+                   SET status = 'queued',
+                       claimed_by = NULL,
+                       progress_message = 'Requeued after worker timeout.',
+                       updated_at = ?
+                   WHERE status = 'running'
+                     AND updated_at < ?"""
+        if operation_types:
+            placeholders = ",".join("?" for _ in operation_types)
+            query += f" AND type IN ({placeholders})"
+            params.extend(operation_types)
+        cursor = conn.execute(query, params)
+        conn.commit()
+        return int(getattr(cursor, "rowcount", 0) or 0)
     finally:
         conn.close()
 

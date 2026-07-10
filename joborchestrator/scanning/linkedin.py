@@ -1490,6 +1490,7 @@ async def procesar_pagina_actual(
     todas: list[dict],
     seen_ids: set[str],
     busqueda: dict,
+    limit: int = LIMITE_RESULTADOS,
 ) -> int:
     ids = [x["id"] for x in visibles]
     nuevos_visibles = [x for x in visibles if x["id"] not in seen_ids]
@@ -1609,8 +1610,8 @@ async def procesar_pagina_actual(
 
         nuevos_agregados += 1
 
-        if len(todas) >= LIMITE_RESULTADOS:
-            print(f"âœ… Alcanzado lÃ­mite de {LIMITE_RESULTADOS} ofertas Ãºnicas.")
+        if len(todas) >= limit:
+            print(f"âœ… Alcanzado lÃ­mite de {limit} ofertas Ãºnicas.")
             return nuevos_agregados
 
         await asyncio.sleep(jitter_seconds(1.2))
@@ -1680,12 +1681,14 @@ def exportar_resultados(ofertas: list[dict], nombre_archivo: str):
 # MAIN
 # ============================================================
 
-async def run_linkedin_scrape() -> pd.DataFrame:
+async def run_linkedin_scrape(limit: int = LIMITE_RESULTADOS) -> pd.DataFrame:
     print("\n" + "=" * 60)
     print("LinkedIn Job Scraper â€” Backend Python RAW")
     print("=" * 60)
 
     print(f"ARCHIVO EJECUTADO: {Path(__file__).resolve()}")
+    limit = max(1, int(limit or LIMITE_RESULTADOS))
+    print(f"LIMITE_RESULTADOS_ACTIVO: {limit}")
     busquedas = load_profile_busquedas()
     random.shuffle(busquedas)
     print("BUSQUEDAS ACTIVAS:")
@@ -1759,6 +1762,7 @@ async def run_linkedin_scrape() -> pd.DataFrame:
                         todas=todas,
                         seen_ids=seen_ids,
                         busqueda=busqueda,
+                        limit=limit,
                     )
 
                     guardar_estado_checkpoint(busqueda, start, len(todas))
@@ -1779,10 +1783,10 @@ async def run_linkedin_scrape() -> pd.DataFrame:
                         print("â›” BÃºsqueda agotada: pÃ¡ginas consecutivas sin ofertas nuevas.")
                         break
 
-                    if len(todas) >= LIMITE_RESULTADOS:
+                    if len(todas) >= limit:
                         break
 
-                if len(todas) >= LIMITE_RESULTADOS:
+                if len(todas) >= limit:
                     break
 
             print("\nANTES DE EXPORTAR")

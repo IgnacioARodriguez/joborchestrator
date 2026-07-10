@@ -24,6 +24,8 @@ from joborchestrator.storage import persistence as db
 
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 DEFAULT_POLL_SECONDS = float(os.getenv("JOB_WORKER_POLL_SECONDS", "5"))
+DEFAULT_STALE_SECONDS = int(os.getenv("JOB_WORKER_STALE_SECONDS", "3600"))
+OPERATION_TYPES = ["cv_profile_import", "application_materials_generation", "job_scan"]
 
 
 def configure_logging() -> logging.Logger:
@@ -46,7 +48,10 @@ logger = configure_logging()
 
 
 def process_once(worker_id: str = WORKER_ID) -> bool:
-    operation = db.claim_next_operation(worker_id, ["cv_profile_import", "application_materials_generation", "job_scan"])
+    requeued = db.requeue_stale_operations(OPERATION_TYPES, stale_seconds=DEFAULT_STALE_SECONDS)
+    if requeued:
+        logger.warning("Requeued stale operations count=%s stale_seconds=%s", requeued, DEFAULT_STALE_SECONDS)
+    operation = db.claim_next_operation(worker_id, OPERATION_TYPES)
     if not operation:
         return False
     operation_id = int(operation["id"])
@@ -172,6 +177,7 @@ def _process_job_scan(operation: dict[str, Any]) -> None:
     logger.info("Processing job scan operation=%s", operation_id)
 
     def progress(message: str) -> None:
+        logger.info("Job scan operation=%s progress=%s", operation_id, message)
         db.update_operation_progress(operation_id, message)
 
     output = asyncio.run(run_unified_job_scan(input_payload, progress=progress))

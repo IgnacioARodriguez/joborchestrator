@@ -8,6 +8,7 @@ def test_worker_processes_cv_profile_import(monkeypatch):
     completed = {}
     progress = []
 
+    monkeypatch.setattr(worker.db, "requeue_stale_operations", lambda operation_types, stale_seconds: 0)
     monkeypatch.setattr(
         worker.db,
         "claim_next_operation",
@@ -47,6 +48,7 @@ def test_worker_processes_cv_profile_import(monkeypatch):
 def test_worker_persists_cv_profile_import_failure(monkeypatch):
     failed = {}
 
+    monkeypatch.setattr(worker.db, "requeue_stale_operations", lambda operation_types, stale_seconds: 0)
     monkeypatch.setattr(
         worker.db,
         "claim_next_operation",
@@ -81,6 +83,7 @@ def test_worker_processes_application_materials_generation(monkeypatch):
     completed = {}
     progress = []
 
+    monkeypatch.setattr(worker.db, "requeue_stale_operations", lambda operation_types, stale_seconds: 0)
     monkeypatch.setattr(
         worker.db,
         "claim_next_operation",
@@ -137,6 +140,7 @@ def test_worker_processes_job_scan(monkeypatch):
     completed = {}
     progress = []
 
+    monkeypatch.setattr(worker.db, "requeue_stale_operations", lambda operation_types, stale_seconds: 0)
     monkeypatch.setattr(
         worker.db,
         "claim_next_operation",
@@ -173,3 +177,22 @@ def test_worker_processes_job_scan(monkeypatch):
     assert completed["output"]["summary"]["new"] == 2
     assert completed["message"] == "Job scan completed: 2 new, 1 updated, 0 errors."
     assert "Fake scan running." in progress
+
+
+def test_worker_requeues_stale_operations_before_claiming(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        worker.db,
+        "requeue_stale_operations",
+        lambda operation_types, stale_seconds: calls.append(("requeue", operation_types, stale_seconds)) or 1,
+    )
+    monkeypatch.setattr(
+        worker.db,
+        "claim_next_operation",
+        lambda worker_id, operation_types: calls.append(("claim", operation_types)) or None,
+    )
+
+    assert worker.process_once("worker-1") is False
+    assert calls[0] == ("requeue", worker.OPERATION_TYPES, worker.DEFAULT_STALE_SECONDS)
+    assert calls[1] == ("claim", worker.OPERATION_TYPES)

@@ -315,6 +315,34 @@ def test_operation_run_lifecycle(tmp_path, monkeypatch):
     assert completed["output_json"] == {"profile_saved": True}
 
 
+def test_stale_operation_runs_are_requeued(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+
+    operation_id = db.create_operation("job_scan", {"include_ats": True}, "Queued.")
+    claimed = db.claim_next_operation("worker-1", ["job_scan"])
+    assert claimed["status"] == "running"
+
+    conn = db._conn()
+    try:
+        conn.execute(
+            """UPDATE operation_runs
+               SET updated_at = '2026-01-01T00:00:00'
+               WHERE id = ?""",
+            (operation_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert db.requeue_stale_operations(["job_scan"], stale_seconds=1) == 1
+
+    operation = db.get_operation(operation_id)
+    assert operation["status"] == "queued"
+    assert operation["claimed_by"] is None
+    assert operation["progress_message"] == "Requeued after worker timeout."
+
+
 def test_skill_catalog_is_seeded(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()

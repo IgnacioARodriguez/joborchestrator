@@ -171,6 +171,7 @@ class UnifiedScanPayload(BaseModel):
     include_ats: bool = True
     include_search: bool = True
     include_linkedin: bool = False
+    linkedin_limit: int = Field(default=50, ge=1, le=500)
     source_ids: list[int] | None = None
     search_providers: list[str] = Field(default_factory=list)
     queries: list[str] = Field(default_factory=list)
@@ -622,12 +623,20 @@ def set_linkedin_profile(payload: LinkedInProfilePayload) -> dict[str, Any]:
 
 @app.post("/api/scans/all")
 def queue_scan_all(payload: UnifiedScanPayload) -> dict[str, Any]:
+    active = db.get_active_operation("job_scan")
+    if active:
+        return {
+            "operation_id": active["id"],
+            "status": active["status"],
+            "already_running": True,
+            "progress_message": active.get("progress_message"),
+        }
     operation_id = db.create_operation(
         "job_scan",
         payload.model_dump(),
         "Queued unified job scan. Waiting for local worker.",
     )
-    return {"operation_id": operation_id, "status": "queued"}
+    return {"operation_id": operation_id, "status": "queued", "already_running": False}
 
 
 @app.post("/api/scans/all/run")

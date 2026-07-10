@@ -3,7 +3,6 @@
 import sqlite3
 import hashlib
 import re
-import shutil
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
@@ -354,7 +353,7 @@ def _conn():
         _SCHEMA_READY = False
     if not getattr(conn, "is_cloud", False) or not _SCHEMA_READY:
         conn.executescript(SCANNER_SCHEMA)
-        if _scanner_migration_needed(conn):
+        if not getattr(conn, "is_cloud", False) and _scanner_migration_needed(conn):
             backup_database("before_speed_ranking_migration")
         _ensure_scanner_columns(conn)
         _ensure_hiring_contacts_schema(conn)
@@ -379,7 +378,15 @@ def backup_database(reason: str = "manual") -> Path | None:
     backup_dir = db_path.parent / BACKUP_DIR_NAME
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup_path = backup_dir / f"{db_path.stem}_{timestamp}_{safe_reason}{db_path.suffix}"
-    shutil.copy2(db_path, backup_path)
+    source = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        target = sqlite3.connect(backup_path)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+    finally:
+        source.close()
     return backup_path
 
 
@@ -697,12 +704,20 @@ def get_latest_operation(operation_type: str | None = None) -> dict | None:
     return operations_repository.get_latest_operation(_conn, operation_type)
 
 
+def get_active_operation(operation_type: str) -> dict | None:
+    return operations_repository.get_active_operation(_conn, operation_type)
+
+
 def list_operations(limit: int = 20) -> list[dict]:
     return operations_repository.list_operations(_conn, limit)
 
 
 def claim_next_operation(worker_id: str, operation_types: list[str] | None = None) -> dict | None:
     return operations_repository.claim_next_operation(_conn, worker_id, operation_types)
+
+
+def requeue_stale_operations(operation_types: list[str] | None = None, stale_seconds: int = 3600) -> int:
+    return operations_repository.requeue_stale_operations(_conn, operation_types, stale_seconds)
 
 
 def update_operation_progress(operation_id: int, message: str) -> None:

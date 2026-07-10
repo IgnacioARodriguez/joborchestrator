@@ -242,6 +242,7 @@ export const api = {
     include_ats: boolean
     include_search: boolean
     include_linkedin?: boolean
+    linkedin_limit?: number
     search_providers: string[]
     queries: string[]
     application_targets?: Array<{ label: string; location: string; work_modes: string[] }>

@@ -175,6 +175,7 @@ export function OpsScreen() {
   const [linkedinProfile, setLinkedinProfile] = useState("main")
   const [linkedinProfileInput, setLinkedinProfileInput] = useState("main")
   const [linkedinProfileDir, setLinkedinProfileDir] = useState("")
+  const [linkedinLimit, setLinkedinLimit] = useState(50)
   const [scanOperationId, setScanOperationId] = useState<number | null>(null)
   const liveRefreshAtRef = useRef(0)
   const busyCopy = operationCopy(busy)
@@ -390,7 +391,8 @@ export function OpsScreen() {
                   const res = await api.scanAll({
                     include_ats: sources.length > 0,
                     include_search: searchProviders.length > 0,
-                    include_linkedin: false,
+                    include_linkedin: true,
+                    linkedin_limit: linkedinLimit,
                     search_providers: searchProviders,
                     queries: queries.split("\n"),
                     application_targets: applicationTargets,
@@ -424,6 +426,20 @@ export function OpsScreen() {
             )}
             {busy === "all" ? "Scraping all" : "Scrap all"}
           </Button>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">LinkedIn max</span>
+            <Input
+              className="h-9 w-24"
+              min={1}
+              max={500}
+              type="number"
+              value={linkedinLimit}
+              onChange={(event) => {
+                const value = Number(event.target.value)
+                setLinkedinLimit(Number.isFinite(value) ? Math.max(1, Math.min(500, value)) : 50)
+              }}
+            />
+          </div>
         </CardContent>
       </Card>
 

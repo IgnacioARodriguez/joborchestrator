@@ -200,6 +200,7 @@ def test_scan_all_queues_job_scan_operation(tmp_path, monkeypatch):
             "application_targets": [
                 {"label": "Malaga", "location": "Malaga, Spain", "work_modes": ["onsite", "hybrid", "remote"]}
             ],
+            "linkedin_limit": 50,
             "location": "Spain",
         },
     )
@@ -210,8 +211,34 @@ def test_scan_all_queues_job_scan_operation(tmp_path, monkeypatch):
     assert body["status"] == "queued"
     assert operation["type"] == "job_scan"
     assert operation["input_json"]["queries"] == ["backend engineer"]
+    assert operation["input_json"]["linkedin_limit"] == 50
     assert operation["input_json"]["application_targets"][0]["location"] == "Malaga, Spain"
     assert operation["progress_message"] == "Queued unified job scan. Waiting for local worker."
+
+
+def test_scan_all_reuses_active_job_scan_operation(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    operation_id = db.create_operation("job_scan", {"include_ats": True}, "Still scanning.")
+    claimed = db.claim_next_operation("worker-1", ["job_scan"])
+    assert claimed["id"] == operation_id
+
+    response = client.post(
+        "/api/scans/all",
+        json={
+            "include_ats": True,
+            "include_search": True,
+            "queries": ["backend engineer"],
+            "location": "Spain",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["operation_id"] == operation_id
+    assert body["status"] == "running"
+    assert body["already_running"] is True
+    assert body["progress_message"] == "Worker started processing."
+    assert len(db.list_operations(limit=10)) == 1
 
 
 def test_ranking_job_requires_profile(tmp_path, monkeypatch):

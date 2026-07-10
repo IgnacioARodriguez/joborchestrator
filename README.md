@@ -30,6 +30,42 @@ copy .env.example .env
 
 ## Run Locally
 
+Start the full local stack in one terminal:
+
+```bash
+npm run dev:all
+```
+
+On Windows you can also run:
+
+```bash
+run_all.bat
+```
+
+This starts the Next.js dashboard, FastAPI backend, operation worker, and
+NVIDIA ranking worker together. Console logs are prefixed with the service name
+so you can tell where each line comes from.
+
+Open:
+
+- Dashboard: `http://127.0.0.1:3000`
+- API health: `http://127.0.0.1:8000/api/health`
+
+You can still start each service separately when needed.
+
+For v0/local dashboard usage where the API and UI already run elsewhere, start
+only the operation worker and NVIDIA ranking worker:
+
+```bash
+npm run workers
+```
+
+On Windows you can also run:
+
+```bash
+run_workers.bat
+```
+
 Start the API:
 
 ```bash
