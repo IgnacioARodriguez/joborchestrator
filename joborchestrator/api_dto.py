@@ -20,10 +20,16 @@ def parse_json_value(value: Any, fallback: Any) -> Any:
         return fallback
 
 
-def job_dto(job: dict[str, Any], ranking_row: dict[str, Any] | None) -> dict[str, Any]:
+def job_dto(
+    job: dict[str, Any],
+    ranking_row: dict[str, Any] | None,
+    *,
+    include_hiring_contacts: bool = True,
+    compact: bool = False,
+) -> dict[str, Any]:
     ranking = ranking_dto(ranking_row)
     location_mode = _string(job.get("location") or job.get("workplace_type")).lower()
-    hiring_contacts = _hiring_contacts_for_job(job)
+    hiring_contacts = _hiring_contacts_for_job(job) if include_hiring_contacts else []
     return {
         "id": str(job["id"]),
         "title": _string(job.get("title"), "Untitled role"),
@@ -45,17 +51,17 @@ def job_dto(job: dict[str, Any], ranking_row: dict[str, Any] | None) -> dict[str
         "hiring_contacts_count": len(hiring_contacts),
         "apply_type": _nullable_string(job.get("apply_type")),
         "external_apply_url": _nullable_string(job.get("external_apply_url")),
-        "description_text": _string(job.get("description_text")),
+        "description_text": _string(job.get("description_text")) if not compact else _string(job.get("description_text"))[:1200],
         "first_seen_at": _string(job.get("first_seen_at")),
         "last_seen_at": _string(job.get("last_seen_at")),
         "status": "active" if int(job.get("is_active") or 0) else "expired",
         "pipeline_status": job.get("pipeline_status") or "new",
         "ranking": ranking,
         "materials": {
-            "recruiter_message": _string(job.get("recruiter_message")),
-            "cover_letter": _string(job.get("cover_letter")),
-            "ats_cv_notes": _string(job.get("ats_cv_text")),
-            "autofill_notes": _string(job.get("autofill_notes")),
+            "recruiter_message": _string(job.get("recruiter_message")) if not compact else "",
+            "cover_letter": _string(job.get("cover_letter")) if not compact else "",
+            "ats_cv_notes": _string(job.get("ats_cv_text")) if not compact else "",
+            "autofill_notes": _string(job.get("autofill_notes")) if not compact else "",
         },
     }
 
@@ -124,7 +130,7 @@ def ranking_dto(row: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def latest_rankings_by_job_id(ranking_version: str | None = None) -> dict[int, dict[str, Any]]:
-    versions = [ranking_version] if ranking_version else filter_llm_ranking_versions(db.get_ranking_versions())
+    versions = [ranking_version] if ranking_version else filter_llm_ranking_versions(db.get_ranking_versions())[:1]
     rankings: dict[int, dict[str, Any]] = {}
     for version in versions:
         if not version:

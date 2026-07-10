@@ -59,8 +59,13 @@ async function request<T>(path: string, init?: ApiRequestInit): Promise<T> {
 }
 
 export const api = {
-  async getJobs(rankingVersion?: string | null) {
-    const query = rankingVersion ? `?ranking_version=${encodeURIComponent(rankingVersion)}` : ""
+  async getJobs(rankingVersion?: string | null, limit = 100) {
+    const params = new URLSearchParams()
+    params.set("limit", String(limit))
+    if (rankingVersion) {
+      params.set("ranking_version", rankingVersion)
+    }
+    const query = `?${params.toString()}`
     return request<JobsResponse>(`/api/jobs${query}`)
   },
 

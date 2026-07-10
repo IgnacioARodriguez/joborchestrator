@@ -965,6 +965,10 @@ def get_ranking_versions() -> list[str]:
     return rankings_repository.get_ranking_versions(_conn)
 
 
+def get_rankings_for_job_ids(ranking_version: str, job_ids: list[int]) -> pd.DataFrame:
+    return rankings_repository.get_rankings_for_job_ids(_conn, _read_sql_query, ranking_version, job_ids)
+
+
 def get_unranked_jobs(ranking_version: str = NVIDIA_RANKING_VERSION, limit: int = 500) -> pd.DataFrame:
     return rankings_repository.get_unranked_jobs(_conn, _read_sql_query, ranking_version, limit)
 

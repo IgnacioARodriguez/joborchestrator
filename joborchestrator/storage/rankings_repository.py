@@ -179,6 +179,29 @@ def get_ranking_versions(connect: ConnectionFactory) -> list[str]:
         conn.close()
 
 
+def get_rankings_for_job_ids(
+    connect: ConnectionFactory,
+    read_sql_query: ReadSqlQuery,
+    ranking_version: str,
+    job_ids: list[int],
+) -> pd.DataFrame:
+    if not job_ids:
+        return pd.DataFrame()
+    placeholders = ",".join("?" for _ in job_ids)
+    conn = connect()
+    try:
+        return read_sql_query(
+            f"""SELECT *
+                FROM job_rankings
+                WHERE ranking_version = ?
+                  AND job_id IN ({placeholders})""",
+            conn,
+            params=[ranking_version, *job_ids],
+        )
+    finally:
+        conn.close()
+
+
 def get_unranked_jobs(
     connect: ConnectionFactory,
     read_sql_query: ReadSqlQuery,

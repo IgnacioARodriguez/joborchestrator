@@ -308,18 +308,30 @@ def get_operation(operation_id: int) -> dict[str, Any]:
 def list_jobs(limit: int | None = None, ranking_version: str | None = None) -> dict[str, Any]:
     if ranking_version and is_heuristic_ranking_version(ranking_version):
         raise HTTPException(status_code=400, detail="Heuristic rankings are no longer supported in the dashboard.")
-    jobs = db.get_job_postings(limit=limit)
-    rankings = latest_rankings_by_job_id(ranking_version)
+    effective_limit = 100 if limit is None else max(1, min(int(limit), 1000))
+    jobs = db.get_job_postings(limit=effective_limit)
     ranking_versions = filter_llm_ranking_versions(db.get_ranking_versions())
+    selected_ranking_version = ranking_version or (ranking_versions[0] if ranking_versions else None)
+    rows = jobs.to_dict("records")
+    job_ids = [int(row["id"]) for row in rows]
+    ranking_rows = (
+        db.get_rankings_for_job_ids(selected_ranking_version, job_ids).to_dict("records")
+        if selected_ranking_version
+        else []
+    )
+    rankings = {int(row["job_id"]): row for row in ranking_rows}
     total = db.count_job_postings()
     return {
-        "jobs": [job_dto(row, rankings.get(int(row["id"]))) for row in jobs.to_dict("records")],
+        "jobs": [
+            job_dto(row, rankings.get(int(row["id"])), include_hiring_contacts=False, compact=True)
+            for row in rows
+        ],
         "ranking_versions": ranking_versions,
-        "selected_ranking_version": ranking_version or (ranking_versions[0] if ranking_versions else None),
+        "selected_ranking_version": selected_ranking_version,
         "meta": {
             "total": total,
             "returned": len(jobs),
-            "limited": limit is not None and len(jobs) < total,
+            "limited": effective_limit is not None and len(jobs) < total,
             "db_mode": db_connection.connection_mode(),
         },
     }
