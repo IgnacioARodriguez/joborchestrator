@@ -408,15 +408,21 @@ CREATE INDEX IF NOT EXISTS idx_follow_ups_due ON follow_ups(done_at, due_at);
 def _conn():
     global _SCHEMA_READY, _SCHEMA_READY_PATH
     conn = db_connection.connect(DB_PATH)
-    if not getattr(conn, "is_cloud", False):
+    is_cloud = getattr(conn, "is_cloud", False)
+    if not is_cloud:
         conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute("PRAGMA journal_mode = WAL")
     current_path = str(DB_PATH)
     if _SCHEMA_READY_PATH != current_path:
         _SCHEMA_READY = False
-    if not getattr(conn, "is_cloud", False) or not _SCHEMA_READY:
+
+    if is_cloud and not _SCHEMA_READY and _cloud_schema_ready(conn):
+        _SCHEMA_READY = True
+        _SCHEMA_READY_PATH = current_path
+
+    if not is_cloud or not _SCHEMA_READY:
         conn.executescript(SCANNER_SCHEMA)
-        if not getattr(conn, "is_cloud", False) and _scanner_migration_needed(conn):
+        if not is_cloud and _scanner_migration_needed(conn):
             backup_database("before_speed_ranking_migration")
         _ensure_scanner_columns(conn)
         _ensure_hiring_contacts_schema(conn)
@@ -428,6 +434,25 @@ def _conn():
         _SCHEMA_READY = True
         _SCHEMA_READY_PATH = current_path
     return conn
+
+
+def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
+    required_tables = {
+        "job_postings",
+        "job_rankings",
+        "ranking_jobs",
+        "operation_runs",
+        "applications",
+        "application_sessions",
+        "application_session_events",
+    }
+    placeholders = ",".join("?" for _ in required_tables)
+    rows = conn.execute(
+        f"SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ({placeholders})",
+        tuple(sorted(required_tables)),
+    ).fetchall()
+    existing = {row["name"] for row in rows}
+    return required_tables.issubset(existing)
 
 
 def backup_database(reason: str = "manual") -> Path | None:

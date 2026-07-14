@@ -73,7 +73,7 @@ export const api = {
     return request<JobsResponse>(`/api/jobs${query}`)
   },
 
-  async getApplyQueue(rankingVersion?: string | null, limit = 100) {
+  async getApplyQueue(rankingVersion?: string | null, limit = 250) {
     const params = new URLSearchParams()
     params.set("limit", String(limit))
     if (rankingVersion) {

@@ -417,7 +417,7 @@ def list_jobs(limit: int | None = None, ranking_version: str | None = None) -> d
 
 
 @app.get("/api/apply-queue")
-def apply_queue(limit: int = 100, ranking_version: str | None = None) -> dict[str, Any]:
+def apply_queue(limit: int = 250, ranking_version: str | None = None) -> dict[str, Any]:
     data = list_jobs(limit=limit, ranking_version=ranking_version)
     jobs = sorted(
         data["jobs"],

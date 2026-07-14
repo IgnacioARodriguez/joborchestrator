@@ -65,6 +65,8 @@ export function AppShell() {
   const [openJobId, setOpenJobId] = useState<string | null>(null)
   const { jobs, jobsMeta, backendOnline, loading, refresh } = useStore()
   const backendReady = backendOnline || jobsMeta !== null || jobs.length > 0
+  const totalJobs = jobsMeta?.total ?? jobs.length
+  const returnedJobs = jobsMeta?.returned ?? jobs.length
 
   function navigate(next: Section) {
     setSection(next)
@@ -118,7 +120,7 @@ export function AppShell() {
                   {backendReady ? "System ready" : "API offline"}
                 </p>
                 <p className="text-[11px] text-muted-foreground">
-                  {jobsMeta?.db_mode ? `Synced from ${jobsMeta.db_mode}` : `${jobs.length} opportunities`}
+                  {jobsMeta?.db_mode ? `Synced from ${jobsMeta.db_mode}` : `${totalJobs} opportunities`}
                 </p>
               </div>
             </div>
@@ -133,7 +135,7 @@ export function AppShell() {
                 <Compass className="size-4" />
               </div>
               <span className="text-xs text-muted-foreground">
-                {jobsMeta?.returned ?? jobs.length} jobs
+                {returnedJobs === totalJobs ? `${totalJobs} jobs` : `${returnedJobs} / ${totalJobs} jobs`}
                 {jobsMeta?.db_mode ? ` - ${jobsMeta.db_mode}` : ""}
               </span>
             </div>

@@ -23,7 +23,10 @@ def is_heuristic_ranking_version(version: str | None) -> bool:
 
 
 def is_llm_ranking_version(version: str | None) -> bool:
-    return bool(version) and not is_heuristic_ranking_version(version)
+    if not version or is_heuristic_ranking_version(version):
+        return False
+    normalized = version.lower()
+    return normalized.startswith("ranking_") or "nvidia" in normalized or "openai" in normalized
 
 
 def filter_llm_ranking_versions(versions: list[str]) -> list[str]:
