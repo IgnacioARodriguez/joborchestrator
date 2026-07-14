@@ -12,6 +12,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  ServerCog,
   Sparkles,
   Upload,
   X,
@@ -38,7 +39,7 @@ import { Badge } from "@/components/ui/badge"
 import { PageHeader } from "@/components/page-chrome"
 import { api } from "@/lib/api"
 import { useStore } from "@/lib/store"
-import type { ApplicationTarget, CompanySource, OperationRun, RankingJobRecord, ScanResult, WorkMode } from "@/lib/types"
+import type { ApplicationTarget, AutomationAccount, CompanySource, OperationRun, RankingJobRecord, ScanResult, WorkMode, WorkerStatus } from "@/lib/types"
 
 const DEFAULT_QUERIES = [
   "software engineer",
@@ -153,12 +154,15 @@ function ResultList({ results }: { results: ScanResult[] }) {
 
 export function OpsScreen() {
   const { refresh, backendOnline, jobs } = useStore()
+  const backendReady = backendOnline || jobs.length > 0
   const [sources, setSources] = useState<CompanySource[]>([])
   const [hasProfile, setHasProfile] = useState(false)
   const [providers, setProviders] = useState<string[]>([])
   const [searchProviders, setSearchProviders] = useState<string[]>([])
   const [rankingJobs, setRankingJobs] = useState<RankingJobRecord[]>([])
   const [operations, setOperations] = useState<OperationRun[]>([])
+  const [workerStatus, setWorkerStatus] = useState<WorkerStatus | null>(null)
+  const [automationAccounts, setAutomationAccounts] = useState<AutomationAccount[]>([])
   const [provider, setProvider] = useState("greenhouse")
   const [companyName, setCompanyName] = useState("")
   const [companyRef, setCompanyRef] = useState("")
@@ -182,10 +186,12 @@ export function OpsScreen() {
 
   async function loadOps() {
     try {
-      const [sourceData, rankingData, operationData] = await Promise.all([
+      const [sourceData, rankingData, operationData, workerData, accountData] = await Promise.all([
         api.getSources(),
         api.getRankingJobs(),
         api.getOperations(8),
+        api.getWorkerStatus(),
+        api.getAutomationAccounts(),
       ])
       const [profileData, linkedinProfileData] = await Promise.all([
         api.getProfile(),
@@ -201,13 +207,15 @@ export function OpsScreen() {
       setProvider(sourceData.providers[0] ?? "greenhouse")
       setRankingJobs(rankingData.jobs)
       setOperations(operationData.operations)
+      setWorkerStatus(workerData)
+      setAutomationAccounts(accountData.accounts)
       setLinkedinProfiles(linkedinProfileData.linkedin_profile.profiles)
       setLinkedinProfile(linkedinProfileData.linkedin_profile.current)
       setLinkedinProfileInput(linkedinProfileData.linkedin_profile.current)
       setLinkedinProfileDir(linkedinProfileData.linkedin_profile.profile_dir)
     } catch (e) {
       toast.error("Backend unavailable", {
-        description: e instanceof Error ? e.message : "Start the API server.",
+        description: e instanceof Error ? e.message : "Check the v0/API deployment or NEXT_PUBLIC_JOB_API_URL.",
       })
     }
   }
@@ -348,9 +356,9 @@ export function OpsScreen() {
             Backend
           </CardTitle>
           <CardDescription className="text-xs">
-            {backendOnline
-              ? `Connected to local API. Tracking ${jobs.length} opportunities.`
-              : "Start the local API to use real scans and ranking."}
+            {backendReady
+              ? `Connected to API. Tracking ${jobs.length} opportunities from ${workerStatus?.mode ?? "storage"}.`
+              : "API unavailable. Check the v0 deployment or local API fallback."}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
@@ -438,6 +446,77 @@ export function OpsScreen() {
                 setLinkedinLimit(Number.isFinite(value) ? Math.max(1, Math.min(500, value)) : 50)
               }}
             />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <ServerCog className="size-4 text-primary" />
+            Site accounts
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Domains where the application worker has seen login state or a reusable browser session.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {automationAccounts.slice(0, 8).map((account) => (
+            <div key={account.id} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/20 p-2 text-xs">
+              <div className="min-w-0">
+                <p className="truncate font-medium text-foreground">{account.domain}</p>
+                <p className="truncate text-muted-foreground">
+                  {account.provider}
+                  {account.username ? ` - ${account.username}` : ""}
+                  {account.has_password ? " - password saved" : ""}
+                </p>
+              </div>
+              <Badge variant={account.status === "ready" ? "default" : account.status === "blocked" ? "destructive" : "secondary"}>
+                {account.status.replaceAll("_", " ")}
+              </Badge>
+            </div>
+          ))}
+          {automationAccounts.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No site accounts tracked yet.</p>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <ServerCog className="size-4 text-primary" />
+            Local workers
+          </CardTitle>
+          <CardDescription className="text-xs">
+            v0/API queues work in Turso; your PC processes long jobs and browser automation.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-lg border border-border bg-muted/30 p-3">
+              <span className="block text-muted-foreground">Queued</span>
+              <span className="text-lg font-semibold text-foreground">{workerStatus?.pending_count ?? 0}</span>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/30 p-3">
+              <span className="block text-muted-foreground">Running</span>
+              <span className="text-lg font-semibold text-foreground">{workerStatus?.running_count ?? 0}</span>
+            </div>
+          </div>
+          <div className="rounded-lg border border-border bg-background p-3 text-xs">
+            <p className="font-medium text-foreground">
+              {workerStatus?.needs_local_worker ? "Keep local workers running" : "No queued local work right now"}
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              {workerStatus?.latest_worker_operation
+                ? `Latest: #${workerStatus.latest_worker_operation.id} ${workerStatus.latest_worker_operation.type} - ${workerStatus.latest_worker_operation.status}`
+                : "No recent worker operations found."}
+            </p>
+          </div>
+          <div className="flex flex-col gap-1 rounded-lg border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+            <code>python -m joborchestrator.worker</code>
+            <code>python -m joborchestrator.ranking.worker</code>
+            <span>Or run <code>npm run workers</code> from this repo.</span>
           </div>
         </CardContent>
       </Card>
@@ -905,7 +984,7 @@ export function OpsScreen() {
             >
               <div className="flex items-center justify-between gap-2">
                 <p className="font-medium text-foreground">
-                  #{operation.id} Â· {operation.type}
+                  #{operation.id} - {operation.type}
                 </p>
                 <Badge variant={statusVariant(operation.status)}>
                   {operation.status}

@@ -74,7 +74,14 @@ def build_busquedas_from_profile(profile: CandidateProfile, max_terms: int = 40)
     )
     searches = []
     seen = set()
+    legacy_seen = set()
     for term, priority, window_seconds in role_terms:
+        category = _category_from_role(term)
+        for legacy_location in ["Spain", "European Union"]:
+            legacy_key = (term.lower(), legacy_location.lower(), category)
+            if legacy_key not in legacy_seen:
+                legacy_seen.add(legacy_key)
+                searches.append({"keywords": term, "ubicacion": legacy_location, "categoria": category})
         for intent in intents:
             key = (term.lower(), intent.location.lower(), intent.work_mode)
             if key in seen:
@@ -86,7 +93,7 @@ def build_busquedas_from_profile(profile: CandidateProfile, max_terms: int = 40)
                     "ubicacion": intent.location,
                     "work_mode": intent.work_mode,
                     "application_target": intent.label,
-                    "categoria": _category_from_role(term),
+                    "categoria": category,
                     "role_priority": priority,
                     "freshness_window_seconds": window_seconds,
                 }

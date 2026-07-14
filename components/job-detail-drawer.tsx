@@ -21,6 +21,9 @@ import {
   Users,
   WalletCards,
   UserRoundSearch,
+  ClipboardCheck,
+  FileSearch,
+  Play,
 } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -31,8 +34,10 @@ import {
   DrawerDescription,
 } from "@/components/ui/drawer"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Textarea } from "@/components/ui/textarea"
 import { DecisionBadge } from "@/components/badges"
 import { ScoreRing } from "@/components/badges"
 import { useStore } from "@/lib/store"
@@ -44,7 +49,7 @@ import {
   rankingSummaryText,
   salaryLabel,
 } from "@/lib/job-ui"
-import type { JobContact, JobPosting } from "@/lib/types"
+import type { ApplicationSession, JobContact, JobPosting } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 function EvidenceList({
@@ -214,6 +219,102 @@ function AutofillPlanBlock({ text }: { text: string }) {
   )
 }
 
+function detectProvider(job: JobPosting) {
+  const url = `${job.apply_url} ${job.external_apply_url ?? ""} ${job.url} ${job.source_raw ?? ""}`.toLowerCase()
+  if (url.includes("greenhouse") || url.includes("grnh.se")) return "greenhouse"
+  if (url.includes("lever.co")) return "lever"
+  if (url.includes("ashbyhq")) return "ashby"
+  if (url.includes("workday")) return "workday"
+  return "generic"
+}
+
+function primaryActionLabel(session: ApplicationSession | null, job: JobPosting) {
+  if (!session) return job.materials.ats_cv_notes ? "Prepare application" : "Prepare materials"
+  if (session.state === "needs_user_input") return `Resolve ${session.unknown_fields_json.length || "missing"} fields`
+  if (session.state === "ready_for_review") return "Review and apply"
+  if (["created", "preflight", "preparing_materials", "ready_to_fill", "filling"].includes(session.state)) {
+    return "Continue application"
+  }
+  if (session.state === "submitted") return "Verify submission"
+  return "Continue application"
+}
+
+function SessionReview({
+  session,
+  onContinue,
+  busy,
+}: {
+  session: ApplicationSession
+  onContinue: () => void
+  busy: boolean
+}) {
+  const unknown = session.unknown_fields_json ?? []
+  const answers = Array.isArray(session.mapped_answers_json?.answers)
+    ? session.mapped_answers_json.answers
+    : []
+  return (
+    <section className="flex flex-col gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <ClipboardCheck className="size-4 text-primary" />
+          Application session
+        </h3>
+        <Badge variant="outline">{session.state.replaceAll("_", " ")}</Badge>
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-xs">
+        <div className="rounded-md border border-border bg-background/70 p-2">
+          <span className="block text-muted-foreground">Provider</span>
+          <span className="font-semibold text-foreground">{session.provider}</span>
+        </div>
+        <div className="rounded-md border border-border bg-background/70 p-2">
+          <span className="block text-muted-foreground">Fields</span>
+          <span className="font-semibold text-foreground">{session.fields_autofilled}/{session.fields_detected}</span>
+        </div>
+        <div className="rounded-md border border-border bg-background/70 p-2">
+          <span className="block text-muted-foreground">Clicks</span>
+          <span className="font-semibold text-foreground">{session.user_clicks}</span>
+        </div>
+      </div>
+      {unknown.length > 0 ? (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-xs font-semibold text-foreground">Needs input</p>
+          <div className="flex flex-wrap gap-1.5">
+            {unknown.map((field, index) => (
+              <Badge key={`${String(field.name ?? field.label ?? "field")}-${index}`} variant="destructive">
+                {String(field.label ?? field.name ?? "Unknown field")}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {answers.length > 0 ? (
+        <details className="rounded-md border border-border bg-background/70 p-2">
+          <summary className="cursor-pointer text-xs font-semibold text-foreground">Mapped answers</summary>
+          <div className="mt-2 flex flex-col gap-1.5">
+            {answers.slice(0, 8).map((answer, index) => (
+              <div key={`${String(answer.field_name ?? index)}`} className="rounded-md bg-muted/40 px-2 py-1 text-xs">
+                <span className="font-medium text-foreground">{String(answer.field_name ?? "field")}</span>
+                <span className="text-muted-foreground"> - {answer.requires_confirmation ? "needs review" : "ready"}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+      {session.state === "needs_user_input" ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-background/70 p-2">
+          <p className="text-xs text-muted-foreground">
+            Resolve the manual step in the company page, then continue the same session.
+          </p>
+          <Button size="sm" variant="outline" disabled={busy} onClick={onContinue}>
+            <Play data-icon="inline-start" />
+            Continue after manual step
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
 function DetailBody({
   job,
   onClose,
@@ -223,7 +324,12 @@ function DetailBody({
 }) {
   const { setPipelineStatus, markOpened, generateMaterials, refresh, applications } = useStore()
   const [materialsOperationId, setMaterialsOperationId] = useState<number | null>(null)
+  const [applicationOperationId, setApplicationOperationId] = useState<number | null>(null)
   const [contacts, setContacts] = useState<JobContact[]>([])
+  const [sessions, setSessions] = useState<ApplicationSession[]>([])
+  const [sessionBusy, setSessionBusy] = useState(false)
+  const [dryRunHtml, setDryRunHtml] = useState("")
+  const [showDryRunInput, setShowDryRunInput] = useState(false)
   const { evidence } = job.ranking
   const applicants = applicantLabel(job)
   const salary = salaryLabel(job)
@@ -250,6 +356,8 @@ function DetailBody({
       : []),
     ...jobContacts,
   ]
+  const latestSession = sessions[0] ?? null
+  const provider = detectProvider(job)
 
   useEffect(() => {
     if (!materialsOperationId) return
@@ -292,6 +400,47 @@ function DetailBody({
   }, [job.title, materialsOperationId, refresh])
 
   useEffect(() => {
+    if (!applicationOperationId) return
+    let stopped = false
+    let timer: number | undefined
+    const poll = async () => {
+      try {
+        const response = await api.getOperation(applicationOperationId)
+        if (stopped) return
+        if (response.operation.status === "completed") {
+          const sessionsResponse = await api.getApplicationSessions(job.id)
+          if (!stopped) {
+            setSessions(sessionsResponse.sessions)
+            setApplicationOperationId(null)
+            toast.success("Application dry-run ready", { description: job.title })
+          }
+          return
+        }
+        if (response.operation.status === "failed") {
+          setApplicationOperationId(null)
+          toast.error("Application dry-run failed", {
+            description: response.operation.error ?? "Check local worker logs.",
+          })
+          return
+        }
+        timer = window.setTimeout(poll, 2500)
+      } catch (e) {
+        if (!stopped) {
+          setApplicationOperationId(null)
+          toast.error("Could not check application dry-run", {
+            description: e instanceof Error ? e.message : "Backend request failed.",
+          })
+        }
+      }
+    }
+    timer = window.setTimeout(poll, 1000)
+    return () => {
+      stopped = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [applicationOperationId, job.id, job.title])
+
+  useEffect(() => {
     let cancelled = false
     async function loadContacts() {
       try {
@@ -306,6 +455,83 @@ function DetailBody({
       cancelled = true
     }
   }, [job.id])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadSessions() {
+      try {
+        const response = await api.getApplicationSessions(job.id)
+        if (!cancelled) setSessions(response.sessions)
+      } catch {
+        if (!cancelled) setSessions([])
+      }
+    }
+    void loadSessions()
+    return () => {
+      cancelled = true
+    }
+  }, [job.id])
+
+  async function prepareApplication(html?: string) {
+    if (latestSession && !html) {
+      if (latestSession.state === "needs_user_input") {
+        setShowDryRunInput(true)
+        toast("Resolve missing fields", { description: `${latestSession.unknown_fields_json.length} fields need review.` })
+        return
+      }
+      toast("Application session loaded", { description: latestSession.state.replaceAll("_", " ") })
+      return
+    }
+    setSessionBusy(true)
+    try {
+      if (!job.materials.ats_cv_notes) {
+        const result = await generateMaterials(job.id, "heuristic")
+        if (result.operation_id) setMaterialsOperationId(result.operation_id)
+      }
+      const response = await api.createApplicationSession(job.id, {
+        provider,
+        mode: "review_before_submit",
+        html,
+        dry_run: true,
+      })
+      if (response.operation_id) {
+        setApplicationOperationId(response.operation_id)
+        toast.success("Browser dry-run queued", { description: "Keep the local worker running; the API can stay on v0." })
+      }
+      setSessions((prev) => [response.session, ...prev.filter((item) => item.id !== response.session.id)])
+      if (response.session.state === "needs_user_input") {
+        toast.warning("Application needs input", { description: `${response.session.unknown_fields_json.length} fields need review.` })
+      } else {
+        toast.success("Application session ready", { description: response.session.state.replaceAll("_", " ") })
+      }
+      await refresh()
+    } catch (e) {
+      toast.error("Could not prepare application", {
+        description: e instanceof Error ? e.message : "Backend request failed.",
+      })
+    } finally {
+      setSessionBusy(false)
+    }
+  }
+
+  async function continueApplicationSession() {
+    if (!latestSession) return
+    setSessionBusy(true)
+    try {
+      const response = await api.continueApplicationSession(latestSession.id)
+      if (response.operation_id) {
+        setApplicationOperationId(response.operation_id)
+        toast.success("Continuation queued", { description: "The local worker will inspect the page again." })
+      }
+      setSessions((prev) => [response.session, ...prev.filter((item) => item.id !== response.session.id)])
+    } catch (e) {
+      toast.error("Could not continue session", {
+        description: e instanceof Error ? e.message : "Backend request failed.",
+      })
+    } finally {
+      setSessionBusy(false)
+    }
+  }
 
   function openExternal(url: string) {
     markOpened(job.id)
@@ -384,15 +610,62 @@ function DetailBody({
         </div>
 
         {/* Primary actions */}
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold text-foreground">{primaryActionLabel(latestSession, job)}</p>
+              <p className="text-xs text-muted-foreground">
+                {provider === "greenhouse" ? "Greenhouse dry-run supported." : "Assisted mode for this provider."}
+              </p>
+            </div>
+            <Button size="sm" disabled={sessionBusy} onClick={() => void prepareApplication()}>
+              <Play data-icon="inline-start" />
+              {primaryActionLabel(latestSession, job)}
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => openExternal(job.url)}>
+              <ExternalLink data-icon="inline-start" />
+              Open posting
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => openExternal(applyUrlForJob(job))}>
+              <Send data-icon="inline-start" />
+              Open apply page
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setShowDryRunInput((value) => !value)}>
+              <FileSearch data-icon="inline-start" />
+              Greenhouse dry-run
+            </Button>
+          </div>
+          {showDryRunInput ? (
+            <div className="flex flex-col gap-2">
+              <Textarea
+                value={dryRunHtml}
+                onChange={(event) => setDryRunHtml(event.target.value)}
+                placeholder="Paste Greenhouse form HTML here for a local dry-run review."
+                className="min-h-28 text-xs"
+              />
+              <Button
+                size="sm"
+                disabled={sessionBusy || dryRunHtml.trim().length < 20}
+                onClick={() => void prepareApplication(dryRunHtml)}
+              >
+                <FileSearch data-icon="inline-start" />
+                Run dry-run review
+              </Button>
+            </div>
+          ) : null}
+        </div>
+
+        {latestSession ? (
+          <SessionReview
+            session={latestSession}
+            busy={sessionBusy}
+            onContinue={() => void continueApplicationSession()}
+          />
+        ) : null}
+
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          <Button size="sm" variant="outline" onClick={() => openExternal(job.url)}>
-            <ExternalLink data-icon="inline-start" />
-            Open posting
-          </Button>
-          <Button size="sm" onClick={() => openExternal(applyUrlForJob(job))}>
-            <Send data-icon="inline-start" />
-            Open apply
-          </Button>
           <Button
             size="sm"
             variant="outline"

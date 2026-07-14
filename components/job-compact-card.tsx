@@ -1,6 +1,6 @@
 "use client"
 
-import { Building2, ExternalLink, MapPin } from "lucide-react"
+import { Building2, Clock3, ExternalLink, MapPin, UserRoundCheck } from "lucide-react"
 import { DecisionBadge, ScoreBadge } from "@/components/badges"
 import { Button } from "@/components/ui/button"
 import type { JobPosting } from "@/lib/types"
@@ -59,15 +59,24 @@ export function JobCompactCard({
           <span className="truncate">{job.location}</span>
         </span>
       </div>
+      <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] text-muted-foreground">
+        <span className="flex items-center gap-1">
+          <Clock3 className="size-3" />
+          {job.priority.estimated_minutes} min
+        </span>
+        <span className="flex items-center gap-1">
+          <UserRoundCheck className="size-3" />
+          {job.priority.recruiter_advantage_score >= 70 ? "Recruiter" : "No recruiter"}
+        </span>
+        <span>Fresh {job.priority.freshness_score}</span>
+        <span>Effort {job.priority.application_effort_score}</span>
+      </div>
       <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-        {rankingSummaryText(
-          job.ranking.decision,
-          job.ranking.final_score,
-          job.ranking.reasoning_summary,
-        )}
+        {job.priority.blocker ?? job.priority.next_action}:{" "}
+        {rankingSummaryText(job.ranking.decision, job.ranking.final_score, job.ranking.reasoning_summary)}
       </p>
       <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground/80">
-        <span>{job.source}</span>
+        <span>Priority {job.priority.priority_score}</span>
         <span>{relativeTime(job.last_seen_at)}</span>
       </div>
     </article>

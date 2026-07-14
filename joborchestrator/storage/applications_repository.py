@@ -7,6 +7,7 @@ from typing import Callable
 
 import pandas as pd
 
+from joborchestrator.application_sessions import dumps, loads, new_idempotency_key, now as session_now, validate_transition
 from joborchestrator.storage import db_connection
 
 ConnectionFactory = Callable[[], db_connection.LibsqlConnection]
@@ -38,6 +39,7 @@ APPLICATION_EVENTS = {
 ANSWER_SOURCES = {"approved", "generated"}
 ANSWER_SENSITIVITIES = {"public", "preference", "sensitive"}
 CONTACT_SOURCES = {"linkedin_scraper", "manual"}
+ACCOUNT_STATUSES = {"unknown", "needs_login", "ready", "failed", "blocked"}
 
 
 def create_application(connect: ConnectionFactory, payload: dict) -> dict:
@@ -46,6 +48,16 @@ def create_application(connect: ConnectionFactory, payload: dict) -> dict:
     channel = _validated(payload.get("channel") or "portal", APPLICATION_CHANNELS, "channel")
     conn = connect()
     try:
+        existing = conn.execute(
+            """SELECT id FROM applications
+               WHERE job_id = ?
+                 AND status NOT IN ('rejected', 'withdrawn')
+               ORDER BY updated_at DESC, id DESC
+               LIMIT 1""",
+            (payload["job_id"],),
+        ).fetchone()
+        if existing:
+            return get_application(connect, int(existing["id"])) or {"id": int(existing["id"])}
         cursor = conn.execute(
             """INSERT INTO applications (
                    job_id, ats_type, status, channel, resume_variant_id,
@@ -351,6 +363,245 @@ def list_follow_ups(connect: ConnectionFactory, read_sql_query: ReadSqlQuery) ->
     return _list_table(connect, read_sql_query, "follow_ups", "done_at IS NOT NULL ASC, due_at ASC")
 
 
+def create_application_session(connect: ConnectionFactory, payload: dict) -> dict:
+    now = session_now()
+    job_id = int(payload["job_id"])
+    provider = str(payload.get("provider") or "generic")
+    mode = str(payload.get("mode") or "review_before_submit")
+    idempotency_key = str(payload.get("idempotency_key") or new_idempotency_key(job_id, provider, mode))
+    conn = connect()
+    try:
+        job = conn.execute("SELECT id FROM job_postings WHERE id = ?", (job_id,)).fetchone()
+        if not job:
+            raise LookupError(f"Job not found: {job_id}")
+        application_id = payload.get("application_id")
+        if application_id is None:
+            existing = conn.execute(
+                """SELECT id FROM applications
+                   WHERE job_id = ? AND status NOT IN ('rejected', 'withdrawn')
+                   ORDER BY updated_at DESC, id DESC LIMIT 1""",
+                (job_id,),
+            ).fetchone()
+            if existing:
+                application_id = int(existing["id"])
+            else:
+                cursor = conn.execute(
+                    """INSERT INTO applications (
+                           job_id, ats_type, status, channel, resume_variant_id,
+                           created_at, submitted_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (job_id, provider, "preparing", "portal", None, now, None, now),
+                )
+                application_id = _last_insert_id(conn, cursor)
+        cursor = conn.execute(
+            """INSERT INTO application_sessions (
+                   job_id, application_id, provider, mode, state, current_step,
+                   idempotency_key, browser_session_ref, form_schema_json,
+                   mapped_answers_json, unknown_fields_json, validation_errors_json,
+                   artifacts_json, started_at, updated_at, completed_at, manual_seconds,
+                   total_seconds, user_clicks, fields_detected, fields_autofilled,
+                   requires_review, last_error
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                job_id,
+                application_id,
+                provider,
+                mode,
+                payload.get("state") or "created",
+                payload.get("current_step"),
+                idempotency_key,
+                payload.get("browser_session_ref"),
+                dumps(payload.get("form_schema_json")),
+                dumps(payload.get("mapped_answers_json")),
+                dumps(payload.get("unknown_fields_json") or []),
+                dumps(payload.get("validation_errors_json") or []),
+                dumps(payload.get("artifacts_json") or {}),
+                now,
+                now,
+                payload.get("completed_at"),
+                int(payload.get("manual_seconds") or 0),
+                int(payload.get("total_seconds") or 0),
+                int(payload.get("user_clicks") or 0),
+                int(payload.get("fields_detected") or 0),
+                int(payload.get("fields_autofilled") or 0),
+                int(bool(payload.get("requires_review", True))),
+                payload.get("last_error"),
+            ),
+        )
+        session_id = _last_insert_id(conn, cursor)
+        conn.execute(
+            """INSERT INTO application_session_events (session_id, from_state, to_state, event_at, note, payload_json)
+               VALUES (?, NULL, ?, ?, ?, ?)""",
+            (session_id, payload.get("state") or "created", now, "Session created.", dumps({})),
+        )
+        conn.commit()
+        return _session_row(conn, session_id)
+    finally:
+        conn.close()
+
+
+def get_application_session(connect: ConnectionFactory, session_id: int) -> dict | None:
+    conn = connect()
+    try:
+        row = conn.execute("SELECT * FROM application_sessions WHERE id = ?", (session_id,)).fetchone()
+        return _hydrate_session(conn, dict(row)) if row else None
+    finally:
+        conn.close()
+
+
+def get_latest_application_session_for_job(connect: ConnectionFactory, job_id: int) -> dict | None:
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM application_sessions WHERE job_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1",
+            (job_id,),
+        ).fetchone()
+        return _hydrate_session(conn, dict(row)) if row else None
+    finally:
+        conn.close()
+
+
+def transition_application_session(connect: ConnectionFactory, session_id: int, state: str, payload: dict) -> dict:
+    conn = connect()
+    try:
+        row = conn.execute("SELECT * FROM application_sessions WHERE id = ?", (session_id,)).fetchone()
+        if not row:
+            raise LookupError(f"Application session not found: {session_id}")
+        current = str(row["state"])
+        transition = validate_transition(current, state)
+        now = session_now()
+        if not transition.idempotent:
+            updates = ["state = ?", "updated_at = ?"]
+            values: list[object] = [state, now]
+            if state == "submitted":
+                updates.append("completed_at = ?")
+                values.append(now)
+            for column in [
+                "current_step",
+                "browser_session_ref",
+                "form_schema_json",
+                "mapped_answers_json",
+                "unknown_fields_json",
+                "validation_errors_json",
+                "artifacts_json",
+                "manual_seconds",
+                "total_seconds",
+                "user_clicks",
+                "fields_detected",
+                "fields_autofilled",
+                "requires_review",
+                "last_error",
+            ]:
+                if column not in payload:
+                    continue
+                value = payload[column]
+                if column.endswith("_json"):
+                    value = dumps(value)
+                if column == "requires_review":
+                    value = int(bool(value))
+                updates.append(f"{column} = ?")
+                values.append(value)
+            values.append(session_id)
+            conn.execute(f"UPDATE application_sessions SET {', '.join(updates)} WHERE id = ?", values)
+            conn.execute(
+                """INSERT INTO application_session_events (session_id, from_state, to_state, event_at, note, payload_json)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (session_id, current, state, now, payload.get("note"), dumps(payload)),
+            )
+            if state == "submitted" and row["application_id"]:
+                conn.execute(
+                    "UPDATE applications SET status = 'submitted', submitted_at = COALESCE(submitted_at, ?), updated_at = ? WHERE id = ?",
+                    (now, now, row["application_id"]),
+                )
+            conn.commit()
+        return _session_row(conn, session_id)
+    finally:
+        conn.close()
+
+
+def list_application_sessions(connect: ConnectionFactory, read_sql_query: ReadSqlQuery, job_id: int | None, limit: int) -> list[dict]:
+    conn = connect()
+    try:
+        params: list[object] = []
+        query = "SELECT * FROM application_sessions"
+        if job_id is not None:
+            query += " WHERE job_id = ?"
+            params.append(job_id)
+        query += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(max(1, min(int(limit), 500)))
+        rows = read_sql_query(query, conn, params).to_dict("records")
+        return [_hydrate_session(conn, row) for row in rows]
+    finally:
+        conn.close()
+
+
+def upsert_automation_site_account(connect: ConnectionFactory, payload: dict) -> dict:
+    now = _now()
+    provider = str(payload.get("provider") or "generic")
+    domain = str(payload.get("domain") or "").lower().strip()
+    if not domain:
+        raise ValueError("domain is required")
+    status = _validated(payload.get("status") or "unknown", ACCOUNT_STATUSES, "status")
+    username = payload.get("username")
+    conn = connect()
+    try:
+        conn.execute(
+            """INSERT INTO automation_site_accounts (
+                   provider, domain, status, username, password_ref, browser_profile_ref,
+                   last_login_at, notes, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(provider, domain, username) DO UPDATE SET
+                   status = excluded.status,
+                   password_ref = COALESCE(excluded.password_ref, automation_site_accounts.password_ref),
+                   browser_profile_ref = COALESCE(excluded.browser_profile_ref, automation_site_accounts.browser_profile_ref),
+                   last_login_at = COALESCE(excluded.last_login_at, automation_site_accounts.last_login_at),
+                   notes = COALESCE(excluded.notes, automation_site_accounts.notes),
+                   updated_at = excluded.updated_at""",
+            (
+                provider,
+                domain,
+                status,
+                username,
+                payload.get("password_ref"),
+                payload.get("browser_profile_ref"),
+                payload.get("last_login_at"),
+                payload.get("notes"),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        return get_automation_site_account(connect, provider, domain, username) or {}
+    finally:
+        conn.close()
+
+
+def get_automation_site_account(connect: ConnectionFactory, provider: str, domain: str, username: str | None = None) -> dict | None:
+    conn = connect()
+    try:
+        if username:
+            row = conn.execute(
+                """SELECT * FROM automation_site_accounts
+                   WHERE provider = ? AND domain = ? AND username = ?
+                   ORDER BY updated_at DESC LIMIT 1""",
+                (provider, domain, username),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """SELECT * FROM automation_site_accounts
+                   WHERE provider = ? AND domain = ?
+                   ORDER BY status = 'ready' DESC, updated_at DESC LIMIT 1""",
+                (provider, domain),
+            ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def list_automation_site_accounts(connect: ConnectionFactory, read_sql_query: ReadSqlQuery) -> list[dict]:
+    return _list_table(connect, read_sql_query, "automation_site_accounts", "updated_at DESC")
+
+
 def _list_table(connect: ConnectionFactory, read_sql_query: ReadSqlQuery, table: str, order_by: str) -> list[dict]:
     conn = connect()
     try:
@@ -363,6 +614,31 @@ def _answer_row(conn: sqlite3.Connection | db_connection.LibsqlConnection, key: 
     row = dict(conn.execute("SELECT * FROM answer_definitions WHERE canonical_key = ?", (key,)).fetchone())
     row["question_patterns"] = json.loads(row.get("question_patterns") or "[]")
     row["requires_confirmation"] = bool(row.get("requires_confirmation"))
+    return row
+
+
+def _session_row(conn: sqlite3.Connection | db_connection.LibsqlConnection, session_id: int) -> dict:
+    row = conn.execute("SELECT * FROM application_sessions WHERE id = ?", (session_id,)).fetchone()
+    return _hydrate_session(conn, dict(row))
+
+
+def _hydrate_session(conn: sqlite3.Connection | db_connection.LibsqlConnection, row: dict) -> dict:
+    for key, fallback in {
+        "form_schema_json": {},
+        "mapped_answers_json": {},
+        "unknown_fields_json": [],
+        "validation_errors_json": [],
+        "artifacts_json": {},
+    }.items():
+        row[key] = loads(row.get(key), fallback)
+    row["requires_review"] = bool(row.get("requires_review"))
+    row["events"] = [
+        {**dict(event), "payload_json": loads(event["payload_json"], {})}
+        for event in conn.execute(
+            "SELECT * FROM application_session_events WHERE session_id = ? ORDER BY event_at ASC, id ASC",
+            (row["id"],),
+        ).fetchall()
+    ]
     return row
 
 

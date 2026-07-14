@@ -11,11 +11,15 @@ import type {
   JobsResponse,
   LinkedInProfileSetting,
   OperationRun,
+  WorkerStatus,
+  AutomationAccount,
   PipelineStatus,
   RankingJobRecord,
   ScanResult,
   DuplicateRateSummary,
   SkillCatalogItem,
+  ApplicationSession,
+  ApplicationSessionResponse,
 } from "./types"
 
 const API_BASE =
@@ -69,6 +73,15 @@ export const api = {
     return request<JobsResponse>(`/api/jobs${query}`)
   },
 
+  async getApplyQueue(rankingVersion?: string | null, limit = 100) {
+    const params = new URLSearchParams()
+    params.set("limit", String(limit))
+    if (rankingVersion) {
+      params.set("ranking_version", rankingVersion)
+    }
+    return request<JobsResponse>(`/api/apply-queue?${params.toString()}`, { fresh: true })
+  },
+
   async getProfile() {
     return request<{ profile: CandidateProfile | null }>("/api/profile")
   },
@@ -113,6 +126,14 @@ export const api = {
     return request<{ operations: OperationRun[] }>(`/api/operations?limit=${limit}`, { fresh: true })
   },
 
+  async getWorkerStatus() {
+    return request<WorkerStatus>("/api/workers/status", { fresh: true })
+  },
+
+  async getAutomationAccounts() {
+    return request<{ accounts: AutomationAccount[] }>("/api/automation/accounts", { fresh: true })
+  },
+
   async setPipelineStatus(id: string, status: PipelineStatus) {
     return request<{ ok: boolean }>(`/api/jobs/${id}/pipeline`, {
       method: "POST",
@@ -138,6 +159,40 @@ export const api = {
     return request<{ job: JobPosting }>("/api/jobs", {
       method: "POST",
       body: JSON.stringify(input),
+    })
+  },
+
+  async getApplicationSessions(jobId?: string) {
+    const query = jobId ? `?job_id=${encodeURIComponent(jobId)}` : ""
+    return request<{ sessions: ApplicationSession[] }>(`/api/application-sessions${query}`, { fresh: true })
+  },
+
+  async createApplicationSession(
+    jobId: string,
+    input: {
+      provider?: string
+      mode?: "assisted" | "review_before_submit" | "auto_submit_approved"
+      html?: string
+      dry_run?: boolean
+    },
+  ) {
+    return request<ApplicationSessionResponse>(`/api/jobs/${jobId}/application-sessions`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  },
+
+  async transitionApplicationSession(id: number, state: string, payload: Record<string, unknown> = {}) {
+    return request<{ session: ApplicationSession }>(`/api/application-sessions/${id}/transition`, {
+      method: "POST",
+      body: JSON.stringify({ state, payload }),
+    })
+  },
+
+  async continueApplicationSession(id: number) {
+    return request<ApplicationSessionResponse>(`/api/application-sessions/${id}/continue`, {
+      method: "POST",
+      body: JSON.stringify({}),
     })
   },
 

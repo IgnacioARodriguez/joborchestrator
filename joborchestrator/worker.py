@@ -19,13 +19,14 @@ from joborchestrator.intelligence.llm_application_materials import (
     build_application_kit_with_llm,
     build_application_kit_with_nvidia,
 )
+from joborchestrator.automation.executor import run_application_execution
 from joborchestrator.scanning.orchestrator import run_unified_job_scan
 from joborchestrator.storage import persistence as db
 
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 DEFAULT_POLL_SECONDS = float(os.getenv("JOB_WORKER_POLL_SECONDS", "5"))
 DEFAULT_STALE_SECONDS = int(os.getenv("JOB_WORKER_STALE_SECONDS", "3600"))
-OPERATION_TYPES = ["cv_profile_import", "application_materials_generation", "job_scan"]
+OPERATION_TYPES = ["cv_profile_import", "application_materials_generation", "job_scan", "application_execution"]
 
 
 def configure_logging() -> logging.Logger:
@@ -64,6 +65,8 @@ def process_once(worker_id: str = WORKER_ID) -> bool:
             _process_application_materials_generation(operation)
         elif operation_type == "job_scan":
             _process_job_scan(operation)
+        elif operation_type == "application_execution":
+            _process_application_execution(operation)
         else:
             raise RuntimeError(f"Unsupported operation type: {operation_type}")
     except Exception as exc:  # noqa: BLE001 - worker must persist failures.
@@ -193,6 +196,37 @@ def _process_job_scan(operation: dict[str, Any]) -> None:
         ),
     )
     logger.info("Completed job scan operation=%s summary=%s", operation_id, summary)
+
+
+def _process_application_execution(operation: dict[str, Any]) -> None:
+    operation_id = int(operation["id"])
+    input_payload = operation.get("input_json") or {}
+    session_id = int(input_payload.get("session_id") or 0)
+    job_id = int(input_payload.get("job_id") or 0)
+    apply_url = str(input_payload.get("apply_url") or "")
+    provider = str(input_payload.get("provider") or "generic")
+    dry_run = bool(input_payload.get("dry_run", True))
+    if not session_id or not job_id or not apply_url:
+        raise RuntimeError("application_execution requires session_id, job_id and apply_url.")
+
+    logger.info("Executing application operation=%s session=%s job=%s provider=%s", operation_id, session_id, job_id, provider)
+
+    def progress(message: str) -> None:
+        logger.info("Application execution operation=%s progress=%s", operation_id, message)
+        db.update_operation_progress(operation_id, message)
+
+    output = asyncio.run(
+        run_application_execution(
+            session_id=session_id,
+            job_id=job_id,
+            apply_url=apply_url,
+            provider_hint=provider,
+            dry_run=dry_run,
+            progress=progress,
+        )
+    )
+    db.complete_operation(operation_id, output, "Application dry-run completed.")
+    logger.info("Completed application execution operation=%s output=%s", operation_id, output)
 
 
 def _job_for_materials(job_id: int) -> tuple[dict[str, Any], dict[str, Any] | None]:

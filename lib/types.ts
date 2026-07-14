@@ -78,6 +78,22 @@ export interface ApplicationMaterials {
   autofill_notes: string
 }
 
+export interface PriorityBreakdown {
+  priority_score: number
+  fit_score: number
+  eligibility_score: number
+  freshness_score: number
+  application_effort_score: number
+  recruiter_advantage_score: number
+  data_quality_score: number
+  competition_signal: number
+  risk_penalty: number
+  estimated_minutes: number
+  next_action: string
+  blocker?: string | null
+  explanation: string
+}
+
 export interface HiringContact {
   id?: string
   name: string
@@ -115,6 +131,7 @@ export interface JobPosting {
   status: JobStatus
   pipeline_status: PipelineStatus
   ranking: JobRanking
+  priority: PriorityBreakdown
   materials: ApplicationMaterials
 }
 
@@ -185,6 +202,47 @@ export interface FollowUp {
   due_at: string
   note?: string | null
   done_at?: string | null
+}
+
+export interface ApplicationSessionEvent {
+  id: number
+  session_id: number
+  from_state?: string | null
+  to_state: string
+  event_at: string
+  note?: string | null
+  payload_json?: Record<string, unknown>
+}
+
+export interface ApplicationSession {
+  id: number
+  job_id: number
+  application_id?: number | null
+  provider: string
+  mode: "assisted" | "review_before_submit" | "auto_submit_approved" | string
+  state: string
+  current_step?: string | null
+  form_schema_json: { fields?: Array<Record<string, unknown>> } | Record<string, unknown>
+  mapped_answers_json: { answers?: Array<Record<string, unknown>>; unknown_fields?: Array<Record<string, unknown>> } | Record<string, unknown>
+  unknown_fields_json: Array<Record<string, unknown>>
+  validation_errors_json: Array<Record<string, unknown>>
+  artifacts_json: { review?: Record<string, unknown>; dry_run?: boolean } | Record<string, unknown>
+  started_at: string
+  updated_at: string
+  completed_at?: string | null
+  manual_seconds: number
+  total_seconds: number
+  user_clicks: number
+  fields_detected: number
+  fields_autofilled: number
+  requires_review: boolean
+  last_error?: string | null
+  events?: ApplicationSessionEvent[]
+}
+
+export interface ApplicationSessionResponse {
+  session: ApplicationSession
+  operation_id?: number | null
 }
 
 export interface JobsMeta {
@@ -318,6 +376,29 @@ export interface OperationRun {
   claimed_by?: string | null
   started_at?: string | null
   finished_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkerStatus {
+  mode: string
+  pending_count: number
+  running_count: number
+  latest_worker_operation?: OperationRun | null
+  needs_local_worker: boolean
+  expected_commands: string[]
+}
+
+export interface AutomationAccount {
+  id: number
+  provider: string
+  domain: string
+  status: "unknown" | "needs_login" | "ready" | "failed" | "blocked" | string
+  username?: string | null
+  has_password?: boolean
+  browser_profile_ref?: string | null
+  last_login_at?: string | null
+  notes?: string | null
   created_at: string
   updated_at: string
 }

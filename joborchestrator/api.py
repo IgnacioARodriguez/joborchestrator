@@ -31,6 +31,8 @@ from joborchestrator.intelligence.llm_application_materials import (
     export_ats_cv_docx_bytes,
     export_ats_cv_pdf_bytes,
 )
+from joborchestrator.automation.adapters import AdapterRegistry
+from joborchestrator.automation.accounts import site_identity_from_url, store_password
 from joborchestrator.paths import SALIDAS_DIR
 from joborchestrator.ranking.nvidia_ranker import (
     DEFAULT_NVIDIA_MAX_CONCURRENCY,
@@ -127,6 +129,29 @@ class FollowUpPayload(BaseModel):
     due_at: str
     note: str | None = None
     done_at: str | None = None
+
+
+class ApplicationSessionPayload(BaseModel):
+    provider: str = "generic"
+    mode: Literal["assisted", "review_before_submit", "auto_submit_approved"] = "review_before_submit"
+    html: str | None = None
+    dry_run: bool = True
+
+
+class ApplicationSessionTransitionPayload(BaseModel):
+    state: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AutomationAccountPayload(BaseModel):
+    provider: str = "generic"
+    domain: str
+    status: Literal["unknown", "needs_login", "ready", "failed", "blocked"] = "ready"
+    username: str | None = None
+    password: str | None = None
+    browser_profile_ref: str | None = None
+    last_login_at: str | None = None
+    notes: str | None = None
 
 
 class JobCreatePayload(BaseModel):
@@ -296,6 +321,60 @@ def list_operations(limit: int = 20) -> dict[str, Any]:
     return {"operations": db.list_operations(limit=max(1, min(int(limit), 100)))}
 
 
+@app.get("/api/workers/status")
+def worker_status() -> dict[str, Any]:
+    operations = db.list_operations(limit=25)
+    pending = [op for op in operations if op["status"] == "queued"]
+    running = [op for op in operations if op["status"] == "running"]
+    recent_local_types = {
+        "cv_profile_import",
+        "application_materials_generation",
+        "job_scan",
+        "application_execution",
+    }
+    recent_worker_ops = [op for op in operations if op["type"] in recent_local_types]
+    latest = recent_worker_ops[0] if recent_worker_ops else None
+    return {
+        "mode": db_connection.connection_mode(),
+        "pending_count": len(pending),
+        "running_count": len(running),
+        "latest_worker_operation": latest,
+        "needs_local_worker": bool(pending or running),
+        "expected_commands": [
+            "python -m joborchestrator.worker",
+            "python -m joborchestrator.ranking.worker",
+        ],
+    }
+
+
+@app.get("/api/automation/accounts")
+def list_automation_accounts() -> dict[str, Any]:
+    accounts = db.list_automation_site_accounts()
+    for account in accounts:
+        account["has_password"] = bool(account.get("password_ref"))
+        account.pop("password_ref", None)
+    return {"accounts": accounts}
+
+
+@app.post("/api/automation/accounts")
+def upsert_automation_account(payload: AutomationAccountPayload) -> dict[str, Any]:
+    password_ref = None
+    if payload.password and payload.username:
+        try:
+            password_ref = store_password(payload.domain, payload.username, payload.password)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    account = db.upsert_automation_site_account(
+        {
+            **payload.model_dump(exclude={"password"}),
+            "password_ref": password_ref,
+        }
+    )
+    account["has_password"] = bool(account.get("password_ref"))
+    account.pop("password_ref", None)
+    return {"account": account}
+
+
 @app.get("/api/operations/{operation_id}")
 def get_operation(operation_id: int) -> dict[str, Any]:
     operation = db.get_operation(operation_id)
@@ -335,6 +414,20 @@ def list_jobs(limit: int | None = None, ranking_version: str | None = None) -> d
             "db_mode": db_connection.connection_mode(),
         },
     }
+
+
+@app.get("/api/apply-queue")
+def apply_queue(limit: int = 100, ranking_version: str | None = None) -> dict[str, Any]:
+    data = list_jobs(limit=limit, ranking_version=ranking_version)
+    jobs = sorted(
+        data["jobs"],
+        key=lambda job: (
+            int(job.get("priority", {}).get("priority_score") or 0),
+            int(job.get("ranking", {}).get("final_score") or 0),
+        ),
+        reverse=True,
+    )
+    return {"jobs": jobs, "meta": data.get("meta"), "selected_ranking_version": data.get("selected_ranking_version")}
 
 
 @app.post("/api/jobs")
@@ -388,6 +481,152 @@ def create_job_application(job_id: int, payload: ApplicationPayload) -> dict[str
         return {"application": db.create_application(data)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/application-sessions")
+def create_job_application_session(job_id: int, payload: ApplicationSessionPayload) -> dict[str, Any]:
+    job = db.get_job_posting(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if payload.mode == "auto_submit_approved" and os.getenv("ENABLE_AUTO_SUBMIT_APPROVED") != "1":
+        raise HTTPException(status_code=409, detail="Auto-submit is disabled by default. Use review_before_submit.")
+    registry = AdapterRegistry()
+    html = payload.html or ""
+    adapter = registry.detect(html, job) if html else registry.detect("", {**job, "source": payload.provider})
+    provider = payload.provider if payload.provider != "generic" else adapter.provider
+    session = db.create_application_session({"job_id": job_id, "provider": provider, "mode": payload.mode})
+    operation_id = None
+    if html:
+        schema = adapter.extract_form_schema_html(html)
+        mapping = adapter.map_answers(schema, db.get_candidate_profile_payload() or {}, db.list_answer_definitions())
+        fill = adapter.fill_fields_html(html, mapping, dry_run=payload.dry_run)
+        review = adapter.prepare_review(schema, mapping, fill)
+        next_state = "needs_user_input" if mapping.get("unknown_fields") else "ready_for_review"
+        session = db.transition_application_session(
+            int(session["id"]),
+            "preflight",
+            {"note": "Detected application form.", "form_schema_json": schema},
+        )
+        session = db.transition_application_session(
+            int(session["id"]),
+            "ready_to_fill",
+            {"note": "Mapped available answers.", "mapped_answers_json": mapping},
+        )
+        session = db.transition_application_session(
+            int(session["id"]),
+            "filling",
+            {
+                "note": "Filled form in dry-run mode." if payload.dry_run else "Filled form.",
+                "fields_detected": review["fields_detected"],
+                "fields_autofilled": review["fields_autofilled"],
+                "unknown_fields_json": review["unknown_fields"],
+                "requires_review": True,
+            },
+        )
+        session = db.transition_application_session(
+            int(session["id"]),
+            next_state,
+            {
+                "note": "Ready for user review." if next_state == "ready_for_review" else "User input required.",
+                "artifacts_json": {"review": review, "dry_run": payload.dry_run},
+            },
+        )
+    else:
+        apply_url = str(job.get("external_apply_url") or job.get("apply_url") or job.get("url") or "")
+        identity = site_identity_from_url(apply_url, provider)
+        db.upsert_automation_site_account(
+            {
+                "provider": identity.provider,
+                "domain": identity.domain,
+                "status": "unknown",
+                "browser_profile_ref": os.getenv("APPLICATION_BROWSER_PROFILE_DIR"),
+            }
+        )
+        is_linkedin_only = "linkedin.com" in apply_url.lower() and provider == "generic"
+        if apply_url and not is_linkedin_only:
+            operation_id = db.create_operation(
+                "application_execution",
+                {
+                    "session_id": int(session["id"]),
+                    "job_id": job_id,
+                    "apply_url": apply_url,
+                    "provider": provider,
+                    "dry_run": payload.dry_run,
+                },
+                "Queued external application dry-run. Waiting for local worker.",
+            )
+            session = db.transition_application_session(
+                int(session["id"]),
+                "preflight",
+                {"note": "Queued browser dry-run worker.", "current_step": "queued_browser_dry_run"},
+            )
+        else:
+            session = db.transition_application_session(
+                int(session["id"]),
+                "preflight",
+                {
+                    "note": "No external apply URL available. Assisted mode only.",
+                    "current_step": "assisted",
+                    "last_error": "No external apply URL available.",
+                },
+            )
+            session = db.transition_application_session(
+                int(session["id"]),
+                "needs_user_input",
+                {"note": "Open LinkedIn manually or capture external apply URL.", "requires_review": True},
+            )
+    return {"session": session, "operation_id": operation_id}
+
+
+@app.get("/api/application-sessions")
+def list_application_sessions(job_id: int | None = None, limit: int = 100) -> dict[str, Any]:
+    return {"sessions": db.list_application_sessions(job_id=job_id, limit=limit)}
+
+
+@app.get("/api/application-sessions/{session_id}")
+def get_application_session(session_id: int) -> dict[str, Any]:
+    session = db.get_application_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Application session not found")
+    return {"session": session}
+
+
+@app.post("/api/application-sessions/{session_id}/transition")
+def transition_application_session(session_id: int, payload: ApplicationSessionTransitionPayload) -> dict[str, Any]:
+    try:
+        return {"session": db.transition_application_session(session_id, payload.state, payload.payload)}
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/application-sessions/{session_id}/continue")
+def continue_application_session(session_id: int) -> dict[str, Any]:
+    session = db.get_application_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Application session not found")
+    if session["state"] in {"submitted", "cancelled"}:
+        raise HTTPException(status_code=409, detail=f"Cannot continue a {session['state']} session.")
+    job = db.get_job_posting(int(session["job_id"]))
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    apply_url = str(job.get("external_apply_url") or job.get("apply_url") or job.get("url") or "")
+    if not apply_url:
+        raise HTTPException(status_code=400, detail="No apply URL available for this job.")
+    operation_id = db.create_operation(
+        "application_execution",
+        {
+            "session_id": session_id,
+            "job_id": int(session["job_id"]),
+            "apply_url": apply_url,
+            "provider": session.get("provider") or "generic",
+            "dry_run": True,
+            "continue_after_manual_step": True,
+        },
+        "Queued continuation after manual step. Waiting for local worker.",
+    )
+    return {"session": session, "operation_id": operation_id}
 
 
 @app.get("/api/applications")

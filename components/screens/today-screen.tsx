@@ -8,7 +8,6 @@ import { PageHeader } from "@/components/page-chrome"
 import { useStore } from "@/lib/store"
 import type { Section } from "@/lib/nav"
 import type { JobPosting } from "@/lib/types"
-import { isActionableApplyDecision } from "@/lib/job-ui"
 
 function Queue({
   title,
@@ -64,13 +63,9 @@ export function TodayScreen({
   onNavigate: (section: Section) => void
 }) {
   const { jobs, applications } = useStore()
-  const needsReview = jobs
-    .filter((job) => job.pipeline_status === "new" && job.ranking.final_score > 0)
-    .sort((a, b) => b.ranking.final_score - a.ranking.final_score)
-  const ready = jobs
-    .filter((job) => job.pipeline_status === "ready_to_apply" || job.pipeline_status === "shortlisted")
-    .filter((job) => isActionableApplyDecision(job.ranking.decision, job.ranking.final_score))
-    .sort((a, b) => b.ranking.final_score - a.ranking.final_score)
+  const ordered = [...jobs].sort((a, b) => b.priority.priority_score - a.priority.priority_score)
+  const needsReview = ordered.filter((job) => job.priority.next_action === "Review")
+  const ready = ordered.filter((job) => ["Apply now", "Prepare"].includes(job.priority.next_action))
   const waitingAnswerJobs = applications
     .filter((application) => application.status === "preparing")
     .map((application) => jobs.find((job) => Number(job.id) === application.job_id))
@@ -100,8 +95,8 @@ export function TodayScreen({
       />
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-          <Queue title="Needs review" icon={CircleHelp} jobs={needsReview} empty="No ranked jobs waiting for review." actionLabel="Review" onAction={() => onNavigate("review")} onOpenJob={onOpenJob} />
-          <Queue title="Ready to apply" icon={Send} jobs={ready} empty="No shortlisted apply candidates." actionLabel="Apply" onAction={() => onNavigate("review")} onOpenJob={onOpenJob} />
+          <Queue title="Review" icon={CircleHelp} jobs={needsReview} empty="No ranked jobs waiting for review." actionLabel="Review" onAction={() => onNavigate("review")} onOpenJob={onOpenJob} />
+          <Queue title="Apply now / Prepare" icon={Send} jobs={ready} empty="No high-priority apply candidates." actionLabel="Apply" onAction={() => onNavigate("review")} onOpenJob={onOpenJob} />
           <Queue title="Waiting for your answer" icon={Bell} jobs={waitingAnswerJobs} empty="No preparing applications need input." actionLabel="Applications" onAction={() => onNavigate("applications")} onOpenJob={onOpenJob} />
           <Queue title="Follow up today" icon={Clock} jobs={followUpJobs} empty="No follow-ups due in the current queue." actionLabel="Applications" onAction={() => onNavigate("applications")} onOpenJob={onOpenJob} />
           <Queue title="Interviews to prepare" icon={CheckCircle2} jobs={interviewJobs} empty="No interviews or technical stages yet." actionLabel="Applications" onAction={() => onNavigate("applications")} onOpenJob={onOpenJob} />

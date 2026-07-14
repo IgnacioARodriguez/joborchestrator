@@ -8,6 +8,9 @@ DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
 
 
 def load_local_env(path: str | Path = DEFAULT_ENV_PATH) -> None:
+    if os.getenv("JOB_ORCHESTRATOR_SKIP_ENV_FILE") == "1":
+        return
+
     env_path = Path(path)
     if not env_path.exists():
         return

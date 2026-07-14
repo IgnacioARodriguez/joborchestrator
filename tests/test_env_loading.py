@@ -25,3 +25,14 @@ EXISTING=from-file
     assert os.environ["TURSO_DATABASE_URL"] == "libsql://example"
     assert os.environ["TURSO_AUTH_TOKEN"] == "token with spaces"
     assert os.environ["EXISTING"] == "from-env"
+
+
+def test_load_local_env_can_be_skipped(tmp_path, monkeypatch):
+    monkeypatch.delenv("TURSO_DATABASE_URL", raising=False)
+    monkeypatch.setenv("JOB_ORCHESTRATOR_SKIP_ENV_FILE", "1")
+    env_path = tmp_path / ".env"
+    env_path.write_text("TURSO_DATABASE_URL=libsql://example\n", encoding="utf-8")
+
+    load_local_env(env_path)
+
+    assert "TURSO_DATABASE_URL" not in os.environ

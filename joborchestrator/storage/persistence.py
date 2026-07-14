@@ -292,6 +292,69 @@ CREATE TABLE IF NOT EXISTS application_events (
 
 CREATE INDEX IF NOT EXISTS idx_application_events_application ON application_events(application_id, event_at);
 
+CREATE TABLE IF NOT EXISTS application_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    application_id INTEGER,
+    provider TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    state TEXT NOT NULL,
+    current_step TEXT,
+    idempotency_key TEXT NOT NULL,
+    browser_session_ref TEXT,
+    form_schema_json TEXT,
+    mapped_answers_json TEXT,
+    unknown_fields_json TEXT,
+    validation_errors_json TEXT,
+    artifacts_json TEXT,
+    started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    manual_seconds INTEGER DEFAULT 0,
+    total_seconds INTEGER DEFAULT 0,
+    user_clicks INTEGER DEFAULT 0,
+    fields_detected INTEGER DEFAULT 0,
+    fields_autofilled INTEGER DEFAULT 0,
+    requires_review INTEGER DEFAULT 1,
+    last_error TEXT,
+    UNIQUE(job_id, provider, mode, idempotency_key),
+    FOREIGN KEY(job_id) REFERENCES job_postings(id),
+    FOREIGN KEY(application_id) REFERENCES applications(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_application_sessions_job ON application_sessions(job_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_application_sessions_state ON application_sessions(state, updated_at);
+
+CREATE TABLE IF NOT EXISTS application_session_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    from_state TEXT,
+    to_state TEXT NOT NULL,
+    event_at TEXT NOT NULL,
+    note TEXT,
+    payload_json TEXT,
+    FOREIGN KEY(session_id) REFERENCES application_sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_application_session_events_session ON application_session_events(session_id, event_at);
+
+CREATE TABLE IF NOT EXISTS automation_site_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    status TEXT NOT NULL,
+    username TEXT,
+    password_ref TEXT,
+    browser_profile_ref TEXT,
+    last_login_at TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(provider, domain, username)
+);
+
+CREATE INDEX IF NOT EXISTS idx_automation_site_accounts_domain ON automation_site_accounts(domain, provider);
+
 CREATE TABLE IF NOT EXISTS resume_variants (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     label TEXT NOT NULL,
@@ -901,6 +964,38 @@ def create_follow_up(payload: dict) -> dict:
 
 def list_follow_ups() -> list[dict]:
     return applications_repository.list_follow_ups(_conn, _read_sql_query)
+
+
+def create_application_session(payload: dict) -> dict:
+    return applications_repository.create_application_session(_conn, payload)
+
+
+def get_application_session(session_id: int) -> dict | None:
+    return applications_repository.get_application_session(_conn, session_id)
+
+
+def get_latest_application_session_for_job(job_id: int) -> dict | None:
+    return applications_repository.get_latest_application_session_for_job(_conn, job_id)
+
+
+def transition_application_session(session_id: int, state: str, payload: dict | None = None) -> dict:
+    return applications_repository.transition_application_session(_conn, session_id, state, payload or {})
+
+
+def list_application_sessions(job_id: int | None = None, limit: int = 100) -> list[dict]:
+    return applications_repository.list_application_sessions(_conn, _read_sql_query, job_id, limit)
+
+
+def upsert_automation_site_account(payload: dict) -> dict:
+    return applications_repository.upsert_automation_site_account(_conn, payload)
+
+
+def get_automation_site_account(provider: str, domain: str, username: str | None = None) -> dict | None:
+    return applications_repository.get_automation_site_account(_conn, provider, domain, username)
+
+
+def list_automation_site_accounts() -> list[dict]:
+    return applications_repository.list_automation_site_accounts(_conn, _read_sql_query)
 
 
 def update_job_application_materials(

@@ -64,6 +64,7 @@ export function AppShell() {
   const [section, setSection] = useState<Section>("today")
   const [openJobId, setOpenJobId] = useState<string | null>(null)
   const { jobs, jobsMeta, backendOnline, loading, refresh } = useStore()
+  const backendReady = backendOnline || jobsMeta !== null || jobs.length > 0
 
   function navigate(next: Section) {
     setSection(next)
@@ -114,7 +115,7 @@ export function AppShell() {
               </span>
               <div>
                 <p className="text-xs font-semibold text-foreground">
-                  {backendOnline ? "System ready" : "API offline"}
+                  {backendReady ? "System ready" : "API offline"}
                 </p>
                 <p className="text-[11px] text-muted-foreground">
                   {jobsMeta?.db_mode ? `Synced from ${jobsMeta.db_mode}` : `${jobs.length} opportunities`}
@@ -133,7 +134,7 @@ export function AppShell() {
               </div>
               <span className="text-xs text-muted-foreground">
                 {jobsMeta?.returned ?? jobs.length} jobs
-                {jobsMeta?.db_mode ? ` · ${jobsMeta.db_mode}` : ""}
+                {jobsMeta?.db_mode ? ` - ${jobsMeta.db_mode}` : ""}
               </span>
             </div>
             <div className="flex items-center gap-2">

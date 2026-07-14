@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react"
@@ -49,20 +50,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [rankingVersions, setRankingVersions] = useState<string[]>([])
   const [selectedRankingVersion, setSelectedRankingVersionState] =
     useState<string | null>(null)
+  const selectedRankingVersionRef = useRef<string | null>(null)
 
   const refresh = useCallback(async (rankingVersion?: string | null) => {
     setLoading(true)
     try {
+      const version = rankingVersion === undefined ? selectedRankingVersionRef.current : rankingVersion
       const [data, applicationData] = await Promise.all([
-        api.getJobs(rankingVersion ?? selectedRankingVersion),
+        api.getApplyQueue(version),
         api.getApplications(),
       ])
       setJobs(data.jobs)
       setApplications(applicationData.applications)
       setRankingVersions(data.ranking_versions)
-      setSelectedRankingVersionState(
-        data.selected_ranking_version ?? data.ranking_versions[0] ?? null,
-      )
+      const nextRankingVersion = data.selected_ranking_version ?? data.ranking_versions[0] ?? null
+      selectedRankingVersionRef.current = nextRankingVersion
+      setSelectedRankingVersionState(nextRankingVersion)
       setJobsMeta(data.meta ?? null)
       setBackendOnline(true)
     } catch {
@@ -70,15 +73,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false)
     }
-  }, [selectedRankingVersion])
+  }, [])
 
   const setSelectedRankingVersion = useCallback((version: string) => {
+    selectedRankingVersionRef.current = version
     setSelectedRankingVersionState(version)
   }, [])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void refresh()
+      void refresh(null)
     }, 0)
     return () => window.clearTimeout(timer)
   }, [refresh])

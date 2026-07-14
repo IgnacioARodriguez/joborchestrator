@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION, filter_llm_ranking_versions
+from joborchestrator.priority import compute_priority
 from joborchestrator.storage import persistence as db
 
 
@@ -28,6 +29,7 @@ def job_dto(
     compact: bool = False,
 ) -> dict[str, Any]:
     ranking = ranking_dto(ranking_row)
+    priority = compute_priority(job, ranking).to_dict()
     location_mode = _string(job.get("location") or job.get("workplace_type")).lower()
     hiring_contacts = _hiring_contacts_for_job(job) if include_hiring_contacts else []
     return {
@@ -57,6 +59,7 @@ def job_dto(
         "status": "active" if int(job.get("is_active") or 0) else "expired",
         "pipeline_status": job.get("pipeline_status") or "new",
         "ranking": ranking,
+        "priority": priority,
         "materials": {
             "recruiter_message": _string(job.get("recruiter_message")) if not compact else "",
             "cover_letter": _string(job.get("cover_letter")) if not compact else "",
