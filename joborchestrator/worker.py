@@ -182,7 +182,7 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
 
 def _process_job_scan(operation: dict[str, Any]) -> None:
     operation_id = int(operation["id"])
-    input_payload = operation.get("input_json") or {}
+    input_payload = {**(operation.get("input_json") or {}), "operation_id": operation_id}
     scan_started_at = str(operation.get("started_at") or operation.get("created_at") or "")
     logger.info("Processing job scan operation=%s", operation_id)
 

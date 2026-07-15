@@ -416,6 +416,79 @@ def test_linkedin_fresh_checkpoint_mode_uses_db_memory_without_old_results(tmp_p
     assert seen_ids == {"li-recent"}
 
 
+def test_linkedin_scan_logging_persists_run_and_page_details(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    started = datetime.now().isoformat(timespec="seconds")
+
+    run_id = db.create_linkedin_scan_run(
+        operation_id=12,
+        started_at=started,
+        limit_count=2000,
+        resume_from_checkpoint=False,
+        profile_name="test",
+        checkpoint_loaded_count=0,
+        db_seen_ids_count=3,
+        total_searches=8,
+        summary={"fresh_mode": True},
+    )
+    db.record_linkedin_scan_page(
+        run_id=run_id,
+        keywords="Backend Developer",
+        location="Spain",
+        role_priority="target",
+        freshness_window_seconds=172800,
+        page_index=0,
+        page_start=0,
+        url="https://www.linkedin.com/jobs/search/",
+        started_at=started,
+        finished_at=started,
+        status="success",
+        visible_count=2,
+        new_visible_count=1,
+        duplicate_visible_count=1,
+        added_count=1,
+        stop_reason="processed",
+        error=None,
+        duration_seconds=2.5,
+        visible_jobs=[
+            {"id": "li-1", "title": "Backend", "duplicate": False},
+            {"id": "li-2", "title": "Old Backend", "duplicate": True},
+        ],
+        added_jobs=[{"id": "li-1", "title": "Backend", "company": "Acme"}],
+    )
+    db.update_linkedin_scan_run(
+        run_id,
+        finished_at=started,
+        status="completed",
+        searches_run=1,
+        pages_checked=1,
+        visible_jobs=2,
+        duplicate_visible_jobs=1,
+        added_jobs=1,
+        exported_jobs=1,
+        imported_total=1,
+        imported_new=1,
+        imported_updated=0,
+        imported_seen=0,
+        inactive_count=0,
+        stop_reason="completed",
+        error=None,
+        duration_seconds=2.5,
+        summary={"done": True},
+    )
+
+    runs = db.get_recent_linkedin_scan_runs(limit=5)
+    pages = db.get_linkedin_scan_pages(run_id)
+
+    assert int(runs.iloc[0]["id"]) == run_id
+    assert runs.iloc[0]["status"] == "completed"
+    assert int(runs.iloc[0]["duplicate_visible_jobs"]) == 1
+    assert int(pages.iloc[0]["visible_count"]) == 2
+    assert "Old Backend" in pages.iloc[0]["visible_jobs_json"]
+    assert "Acme" in pages.iloc[0]["added_jobs_json"]
+
+
 def test_mark_jobs_inactive_by_last_seen_only_affects_old_matching_source(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()

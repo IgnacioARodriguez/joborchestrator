@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from joborchestrator.api_dto import scan_result_dto
@@ -58,6 +59,7 @@ async def run_unified_job_scan(input_payload: dict[str, Any], progress: Progress
         tasks["linkedin"] = _run_linkedin_scan(
             limit=payload["linkedin_limit"],
             resume_from_checkpoint=payload["linkedin_resume_from_checkpoint"],
+            operation_id=payload["operation_id"],
         )
 
     if not tasks:
@@ -97,6 +99,7 @@ def normalize_job_scan_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "include_search": bool(payload.get("include_search", True)),
         "include_linkedin": bool(payload.get("include_linkedin", False)),
         "linkedin_resume_from_checkpoint": bool(payload.get("linkedin_resume_from_checkpoint", True)),
+        "operation_id": int(payload["operation_id"]) if payload.get("operation_id") else None,
         "source_ids": payload.get("source_ids") or None,
         "search_providers": list(payload.get("search_providers") or []),
         "queries": list(payload.get("queries") or []),
@@ -114,11 +117,18 @@ def normalize_job_scan_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _run_linkedin_scan(limit: int = 50, resume_from_checkpoint: bool = True) -> dict[str, Any]:
+async def _run_linkedin_scan(
+    limit: int = 50,
+    resume_from_checkpoint: bool = True,
+    operation_id: int | None = None,
+) -> dict[str, Any]:
     scraped = await linkedin.run_linkedin_scrape(
         limit=limit,
         resume_from_checkpoint=resume_from_checkpoint,
+        operation_id=operation_id,
     )
+    run_id = scraped.attrs.get("linkedin_scan_run_id")
+    scrape_summary = scraped.attrs.get("linkedin_scan_summary") or {}
     import_stats = import_linkedin_dataframe_to_job_postings(scraped) if not scraped.empty else {
         "new": 0,
         "updated": 0,
@@ -129,7 +139,28 @@ async def _run_linkedin_scan(limit: int = 50, resume_from_checkpoint: bool = Tru
         "linkedin_scraper",
         linkedin.FRESHNESS_WINDOW_SECONDS,
     )
-    return {"import_stats": import_stats, "inactive": inactive}
+    if run_id:
+        db.update_linkedin_scan_run(
+            int(run_id),
+            finished_at=datetime.now().isoformat(timespec="seconds"),
+            status="completed",
+            searches_run=int(scrape_summary.get("searches_run") or 0),
+            pages_checked=int(scrape_summary.get("pages_checked") or 0),
+            visible_jobs=int(scrape_summary.get("visible_jobs") or 0),
+            duplicate_visible_jobs=int(scrape_summary.get("duplicate_visible_jobs") or 0),
+            added_jobs=int(scrape_summary.get("added_jobs") or 0),
+            exported_jobs=len(scraped),
+            imported_total=int(import_stats.get("total") or 0),
+            imported_new=int(import_stats.get("new") or 0),
+            imported_updated=int(import_stats.get("updated") or 0),
+            imported_seen=int(import_stats.get("seen") or 0),
+            inactive_count=int(inactive or 0),
+            stop_reason=str(scrape_summary.get("stop_reason") or "completed"),
+            error=None,
+            duration_seconds=float(scrape_summary.get("duration_seconds") or 0),
+            summary={**scrape_summary, "import_stats": import_stats, "inactive": inactive},
+        )
+    return {"import_stats": import_stats, "inactive": inactive, "run_id": run_id, "summary": scrape_summary}
 
 
 def _summary(ats: list[dict], search: list[dict], linkedin: dict[str, Any] | None, errors: dict[str, str]) -> dict[str, int]:

@@ -22,6 +22,7 @@ import json
 import os
 import random
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit, urlencode
@@ -245,7 +246,8 @@ def deduplicar_ofertas(ofertas: list[dict]) -> list[dict]:
 def cargar_checkpoint(
     freshness_window_seconds: int = FRESHNESS_WINDOW_SECONDS,
     resume_from_checkpoint: bool = True,
-) -> tuple[list[dict], set[str]]:
+    include_stats: bool = False,
+) -> tuple:
     db_seen_ids = db.get_recent_external_ids_for_source(
         "linkedin_scraper",
         freshness_window_seconds=freshness_window_seconds,
@@ -254,11 +256,15 @@ def cargar_checkpoint(
         if db_seen_ids:
             print(f"DB freshness cargada: {len(db_seen_ids)} IDs recientes de LinkedIn.")
         print("Fresh mode activo: no se cargan ofertas previas del checkpoint.")
+        if include_stats:
+            return [], db_seen_ids, {"checkpoint_loaded_count": 0, "db_seen_ids_count": len(db_seen_ids)}
         return [], db_seen_ids
 
     if not REANUDAR_DESDE_CHECKPOINT or not CHECKPOINT_JSONL.exists():
         if db_seen_ids:
             print(f"DB freshness cargada: {len(db_seen_ids)} IDs recientes de LinkedIn.")
+        if include_stats:
+            return [], db_seen_ids, {"checkpoint_loaded_count": 0, "db_seen_ids_count": len(db_seen_ids)}
         return [], db_seen_ids
 
     ofertas = []
@@ -289,6 +295,8 @@ def cargar_checkpoint(
     if lineas_invalidas:
         print(f"âš  LÃ­neas invÃ¡lidas ignoradas en checkpoint: {lineas_invalidas}")
 
+    if include_stats:
+        return ofertas, seen_ids, {"checkpoint_loaded_count": len(ofertas), "db_seen_ids_count": len(db_seen_ids)}
     return ofertas, seen_ids
 
 
@@ -1507,6 +1515,7 @@ async def procesar_pagina_actual(
     seen_ids: set[str],
     busqueda: dict,
     limit: int = LIMITE_RESULTADOS,
+    page_added: list[dict] | None = None,
 ) -> int:
     ids = [x["id"] for x in visibles]
     nuevos_visibles = [x for x in visibles if x["id"] not in seen_ids]
@@ -1613,6 +1622,22 @@ async def procesar_pagina_actual(
         todas.append(oferta)
         guardar_oferta_checkpoint(oferta)
         seen_ids.add(job["id"])
+        if page_added is not None:
+            page_added.append(
+                {
+                    "id": job["id"],
+                    "title": job["titulo"],
+                    "company": empresa,
+                    "location": ubicacion,
+                    "url": job["url"],
+                    "apply_type": apply_type,
+                    "external_apply_url": external_apply_url,
+                    "description_len": descripcion_len,
+                    "extraction_ok": extraccion_ok,
+                    "applicant_count": cantidad_solicitantes,
+                    "recruiter_name": recruiter_name,
+                }
+            )
 
         print(
             f"  empresa={empresa[:40]} | "
@@ -1700,7 +1725,19 @@ def exportar_resultados(ofertas: list[dict], nombre_archivo: str):
 async def run_linkedin_scrape(
     limit: int = LIMITE_RESULTADOS,
     resume_from_checkpoint: bool = True,
+    operation_id: int | None = None,
 ) -> pd.DataFrame:
+    run_started_at = datetime.now().isoformat(timespec="seconds")
+    run_timer = time.perf_counter()
+    run_id: int | None = None
+    run_stats = {
+        "searches_run": 0,
+        "pages_checked": 0,
+        "visible_jobs": 0,
+        "duplicate_visible_jobs": 0,
+        "added_jobs": 0,
+        "stop_reason": "not_started",
+    }
     print("\n" + "=" * 60)
     print("LinkedIn Job Scraper â€” Backend Python RAW")
     print("=" * 60)
@@ -1717,103 +1754,300 @@ async def run_linkedin_scrape(
             f"(freshness={b.get('freshness_window_seconds', FRESHNESS_WINDOW_SECONDS)}s)"
         )
 
-    async with async_playwright() as p:
-        context, page = await crear_contexto_linkedin(p)
+    todas, seen_ids, checkpoint_stats = cargar_checkpoint(
+        resume_from_checkpoint=resume_from_checkpoint,
+        include_stats=True,
+    )
+    profile_name = str(get_linkedin_profile_setting().get("current") or "")
+    run_id = db.create_linkedin_scan_run(
+        operation_id=operation_id,
+        started_at=run_started_at,
+        limit_count=limit,
+        resume_from_checkpoint=resume_from_checkpoint,
+        profile_name=profile_name,
+        checkpoint_loaded_count=int(checkpoint_stats.get("checkpoint_loaded_count") or 0),
+        db_seen_ids_count=int(checkpoint_stats.get("db_seen_ids_count") or 0),
+        total_searches=len(busquedas),
+        summary={
+            "active_searches": busquedas,
+            "fresh_mode": not resume_from_checkpoint,
+        },
+    )
 
-        try:
-            await asegurar_sesion_manual(page)
+    try:
+        async with async_playwright() as p:
+            context, page = await crear_contexto_linkedin(p)
+            try:
+                await asegurar_sesion_manual(page)
 
-            todas, seen_ids = cargar_checkpoint(resume_from_checkpoint=resume_from_checkpoint)
+                for busqueda in busquedas:
+                    run_stats["searches_run"] += 1
+                    print("\n" + "=" * 70)
+                    print(f"INICIANDO BÃšSQUEDA: {busqueda['keywords']} â€” {busqueda['ubicacion']}")
+                    print("=" * 70)
 
-            for busqueda in busquedas:
-                print("\n" + "=" * 70)
-                print(f"INICIANDO BÃšSQUEDA: {busqueda['keywords']} â€” {busqueda['ubicacion']}")
-                print("=" * 70)
+                    paginas_sin_nuevos = 0
 
-                paginas_sin_nuevos = 0
+                    for pagina in range(MAX_PAGINAS):
+                        start = pagina * 25
+                        params = build_linkedin_search_params(busqueda, start)
+                        url = f"{LINKEDIN_JOBS_URL}?{urlencode(params)}"
+                        page_started_at = datetime.now().isoformat(timespec="seconds")
+                        page_timer = time.perf_counter()
+                        page_status = "success"
+                        page_stop_reason = "processed"
+                        page_error = None
+                        visible_summaries: list[dict] = []
+                        added_summaries: list[dict] = []
 
-                for pagina in range(MAX_PAGINAS):
-                    start = pagina * 25
-                    params = build_linkedin_search_params(busqueda, start)
-
-                    url = f"{LINKEDIN_JOBS_URL}?{urlencode(params)}"
-
-                    print(
-                        f"\nðŸ” Buscando: "
-                        f"{busqueda['keywords']} â€” "
-                        f"{busqueda['ubicacion']} â€” "
-                        f"start={start}"
-                    )
-
-                    await navegar_estable(page, url)
-                    await page.wait_for_timeout(jitter_ms(2500))
-
-                    if await linkedin_pide_verificacion(page):
-                        raise RuntimeError(
-                            "LinkedIn pidiÃ³ verificaciÃ³n durante la navegaciÃ³n. "
-                            "Detengo el script."
-                        )
-
-                    sin_resultados_reales = await pagina_sin_resultados_reales(page)
-
-                    if DEBUG:
-                        safe_kw = re.sub(
-                            r"[^a-zA-Z0-9_-]+",
-                            "_",
-                            busqueda["keywords"],
-                        )
-                        await dump_debug_info(page, f"debug_{safe_kw}_{start}")
-
-                    if sin_resultados_reales:
-                        print("â›” LinkedIn indica que no hay mÃ¡s resultados para esta bÃºsqueda.")
-                        break
-
-                    visibles = await extraer_resultados_visibles(page)
-
-                    if not visibles:
-                        print("â›” No hay jobs visibles en esta pÃ¡gina. Cambio de bÃºsqueda.")
-                        break
-
-                    nuevos = await procesar_pagina_actual(
-                        page=page,
-                        visibles=visibles,
-                        start_value=start,
-                        todas=todas,
-                        seen_ids=seen_ids,
-                        busqueda=busqueda,
-                        limit=limit,
-                    )
-
-                    guardar_estado_checkpoint(busqueda, start, len(todas))
-
-                    if EXPORTAR_SNAPSHOT_CADA_PAGINA and nuevos > 0:
-                        exportar_snapshot_resultados(todas)
-
-                    if nuevos == 0:
-                        paginas_sin_nuevos += 1
                         print(
-                            f"âš  PÃ¡gina sin resultados nuevos. "
-                            f"consecutivas={paginas_sin_nuevos}"
+                            f"\nðŸ” Buscando: "
+                            f"{busqueda['keywords']} â€” "
+                            f"{busqueda['ubicacion']} â€” "
+                            f"start={start}"
                         )
-                    else:
-                        paginas_sin_nuevos = 0
 
-                    if paginas_sin_nuevos >= PAGINAS_CONSECUTIVAS_SIN_NUEVOS:
-                        print("â›” BÃºsqueda agotada: pÃ¡ginas consecutivas sin ofertas nuevas.")
-                        break
+                        await navegar_estable(page, url)
+                        await page.wait_for_timeout(jitter_ms(2500))
+
+                        if await linkedin_pide_verificacion(page):
+                            page_status = "error"
+                            page_stop_reason = "verification_required"
+                            page_error = "LinkedIn requested verification during navigation."
+                            _record_linkedin_page_event(
+                                run_id,
+                                busqueda,
+                                pagina,
+                                start,
+                                url,
+                                page_started_at,
+                                page_timer,
+                                page_status,
+                                page_stop_reason,
+                                page_error,
+                                [],
+                                [],
+                            )
+                            raise RuntimeError(
+                                "LinkedIn pidiÃ³ verificaciÃ³n durante la navegaciÃ³n. "
+                                "Detengo el script."
+                            )
+
+                        sin_resultados_reales = await pagina_sin_resultados_reales(page)
+
+                        if DEBUG:
+                            safe_kw = re.sub(r"[^a-zA-Z0-9_-]+", "_", busqueda["keywords"])
+                            await dump_debug_info(page, f"debug_{safe_kw}_{start}")
+
+                        if sin_resultados_reales:
+                            run_stats["pages_checked"] += 1
+                            page_stop_reason = "no_results"
+                            _record_linkedin_page_event(
+                                run_id,
+                                busqueda,
+                                pagina,
+                                start,
+                                url,
+                                page_started_at,
+                                page_timer,
+                                page_status,
+                                page_stop_reason,
+                                page_error,
+                                [],
+                                [],
+                            )
+                            print("â›” LinkedIn indica que no hay mÃ¡s resultados para esta bÃºsqueda.")
+                            break
+
+                        visibles = await extraer_resultados_visibles(page)
+                        seen_before_page = set(seen_ids)
+                        visible_summaries = [
+                            {
+                                "id": item.get("id"),
+                                "title": item.get("titulo"),
+                                "url": item.get("url"),
+                                "duplicate": item.get("id") in seen_before_page,
+                            }
+                            for item in visibles
+                        ]
+                        duplicate_count = sum(1 for item in visible_summaries if item["duplicate"])
+                        run_stats["pages_checked"] += 1
+                        run_stats["visible_jobs"] += len(visibles)
+                        run_stats["duplicate_visible_jobs"] += duplicate_count
+
+                        if not visibles:
+                            page_stop_reason = "no_visible_jobs"
+                            _record_linkedin_page_event(
+                                run_id,
+                                busqueda,
+                                pagina,
+                                start,
+                                url,
+                                page_started_at,
+                                page_timer,
+                                page_status,
+                                page_stop_reason,
+                                page_error,
+                                visible_summaries,
+                                added_summaries,
+                            )
+                            print("â›” No hay jobs visibles en esta pÃ¡gina. Cambio de bÃºsqueda.")
+                            break
+
+                        nuevos = await procesar_pagina_actual(
+                            page=page,
+                            visibles=visibles,
+                            start_value=start,
+                            todas=todas,
+                            seen_ids=seen_ids,
+                            busqueda=busqueda,
+                            limit=limit,
+                            page_added=added_summaries,
+                        )
+                        run_stats["added_jobs"] += nuevos
+
+                        guardar_estado_checkpoint(busqueda, start, len(todas))
+
+                        if EXPORTAR_SNAPSHOT_CADA_PAGINA and nuevos > 0:
+                            exportar_snapshot_resultados(todas)
+
+                        if nuevos == 0:
+                            paginas_sin_nuevos += 1
+                            print(
+                                f"âš  PÃ¡gina sin resultados nuevos. "
+                                f"consecutivas={paginas_sin_nuevos}"
+                            )
+                        else:
+                            paginas_sin_nuevos = 0
+
+                        if paginas_sin_nuevos >= PAGINAS_CONSECUTIVAS_SIN_NUEVOS:
+                            page_stop_reason = "consecutive_pages_without_new_jobs"
+                        elif len(todas) >= limit:
+                            page_stop_reason = "limit_reached"
+
+                        _record_linkedin_page_event(
+                            run_id,
+                            busqueda,
+                            pagina,
+                            start,
+                            url,
+                            page_started_at,
+                            page_timer,
+                            page_status,
+                            page_stop_reason,
+                            page_error,
+                            visible_summaries,
+                            added_summaries,
+                        )
+
+                        if paginas_sin_nuevos >= PAGINAS_CONSECUTIVAS_SIN_NUEVOS:
+                            print("â›” BÃºsqueda agotada: pÃ¡ginas consecutivas sin ofertas nuevas.")
+                            break
+
+                        if len(todas) >= limit:
+                            run_stats["stop_reason"] = "limit_reached"
+                            break
 
                     if len(todas) >= limit:
                         break
 
-                if len(todas) >= limit:
-                    break
+                print("\nANTES DE EXPORTAR")
+                exportar_resultados(todas, ARCHIVO_SALIDA)
+                if run_stats["stop_reason"] != "limit_reached":
+                    run_stats["stop_reason"] = "completed"
+                result = pd.DataFrame(deduplicar_ofertas(todas))
+                _finish_linkedin_run(run_id, run_started_at, run_timer, "completed", run_stats, len(result), None)
+                result.attrs["linkedin_scan_run_id"] = run_id
+                result.attrs["linkedin_scan_summary"] = {
+                    **run_stats,
+                    "run_id": run_id,
+                    "checkpoint_loaded_count": checkpoint_stats.get("checkpoint_loaded_count", 0),
+                    "db_seen_ids_count": checkpoint_stats.get("db_seen_ids_count", 0),
+                }
+                return result
+            finally:
+                await context.close()
+    except Exception as exc:
+        run_stats["stop_reason"] = "error"
+        _finish_linkedin_run(run_id, run_started_at, run_timer, "failed", run_stats, len(deduplicar_ofertas(todas)), str(exc))
+        raise
 
-            print("\nANTES DE EXPORTAR")
-            exportar_resultados(todas, ARCHIVO_SALIDA)
-            return pd.DataFrame(deduplicar_ofertas(todas))
 
-        finally:
-            await context.close()
+def _record_linkedin_page_event(
+    run_id: int | None,
+    busqueda: dict,
+    page_index: int,
+    page_start: int,
+    url: str,
+    started_at: str,
+    started_timer: float,
+    status: str,
+    stop_reason: str | None,
+    error: str | None,
+    visible_jobs: list[dict],
+    added_jobs: list[dict],
+) -> None:
+    if run_id is None:
+        return
+    db.record_linkedin_scan_page(
+        run_id=run_id,
+        keywords=str(busqueda.get("keywords") or ""),
+        location=str(busqueda.get("ubicacion") or ""),
+        role_priority=str(busqueda.get("role_priority") or "") or None,
+        freshness_window_seconds=int(busqueda.get("freshness_window_seconds") or FRESHNESS_WINDOW_SECONDS),
+        page_index=page_index,
+        page_start=page_start,
+        url=url,
+        started_at=started_at,
+        finished_at=datetime.now().isoformat(timespec="seconds"),
+        status=status,
+        visible_count=len(visible_jobs),
+        new_visible_count=sum(1 for item in visible_jobs if not item.get("duplicate")),
+        duplicate_visible_count=sum(1 for item in visible_jobs if item.get("duplicate")),
+        added_count=len(added_jobs),
+        stop_reason=stop_reason,
+        error=error,
+        duration_seconds=round(time.perf_counter() - started_timer, 3),
+        visible_jobs=visible_jobs,
+        added_jobs=added_jobs,
+    )
+
+
+def _finish_linkedin_run(
+    run_id: int | None,
+    started_at: str,
+    started_timer: float,
+    status: str,
+    run_stats: dict,
+    exported_jobs: int,
+    error: str | None,
+) -> None:
+    if run_id is None:
+        return
+    finished_at = datetime.now().isoformat(timespec="seconds")
+    duration_seconds = round(time.perf_counter() - started_timer, 3)
+    run_stats["finished_at"] = finished_at
+    run_stats["duration_seconds"] = duration_seconds
+    db.update_linkedin_scan_run(
+        run_id,
+        finished_at=finished_at,
+        status=status,
+        searches_run=int(run_stats.get("searches_run") or 0),
+        pages_checked=int(run_stats.get("pages_checked") or 0),
+        visible_jobs=int(run_stats.get("visible_jobs") or 0),
+        duplicate_visible_jobs=int(run_stats.get("duplicate_visible_jobs") or 0),
+        added_jobs=int(run_stats.get("added_jobs") or 0),
+        exported_jobs=int(exported_jobs),
+        stop_reason=str(run_stats.get("stop_reason") or status),
+        error=error,
+        duration_seconds=duration_seconds,
+        summary={
+            **run_stats,
+            "run_id": run_id,
+            "started_at": started_at,
+            "finished_at": finished_at,
+        },
+    )
 
 
 async def main():

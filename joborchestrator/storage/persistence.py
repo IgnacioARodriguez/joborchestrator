@@ -168,6 +168,69 @@ CREATE TABLE IF NOT EXISTS scan_events (
     FOREIGN KEY(source_id) REFERENCES company_sources(id)
 );
 
+CREATE TABLE IF NOT EXISTS linkedin_scan_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation_id INTEGER,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    limit_count INTEGER DEFAULT 0,
+    resume_from_checkpoint INTEGER DEFAULT 1,
+    profile_name TEXT,
+    checkpoint_loaded_count INTEGER DEFAULT 0,
+    db_seen_ids_count INTEGER DEFAULT 0,
+    total_searches INTEGER DEFAULT 0,
+    searches_run INTEGER DEFAULT 0,
+    pages_checked INTEGER DEFAULT 0,
+    visible_jobs INTEGER DEFAULT 0,
+    duplicate_visible_jobs INTEGER DEFAULT 0,
+    added_jobs INTEGER DEFAULT 0,
+    exported_jobs INTEGER DEFAULT 0,
+    imported_total INTEGER DEFAULT 0,
+    imported_new INTEGER DEFAULT 0,
+    imported_updated INTEGER DEFAULT 0,
+    imported_seen INTEGER DEFAULT 0,
+    inactive_count INTEGER DEFAULT 0,
+    stop_reason TEXT,
+    error TEXT,
+    duration_seconds REAL DEFAULT 0,
+    summary_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(operation_id) REFERENCES operation_runs(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_linkedin_scan_runs_operation ON linkedin_scan_runs(operation_id);
+CREATE INDEX IF NOT EXISTS idx_linkedin_scan_runs_started ON linkedin_scan_runs(started_at);
+
+CREATE TABLE IF NOT EXISTS linkedin_scan_pages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    keywords TEXT NOT NULL,
+    location TEXT NOT NULL,
+    role_priority TEXT,
+    freshness_window_seconds INTEGER DEFAULT 0,
+    page_index INTEGER DEFAULT 0,
+    page_start INTEGER DEFAULT 0,
+    url TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    visible_count INTEGER DEFAULT 0,
+    new_visible_count INTEGER DEFAULT 0,
+    duplicate_visible_count INTEGER DEFAULT 0,
+    added_count INTEGER DEFAULT 0,
+    stop_reason TEXT,
+    error TEXT,
+    duration_seconds REAL DEFAULT 0,
+    visible_jobs_json TEXT,
+    added_jobs_json TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(run_id) REFERENCES linkedin_scan_runs(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_linkedin_scan_pages_run ON linkedin_scan_pages(run_id, page_index);
+
 CREATE TABLE IF NOT EXISTS job_rankings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL,
@@ -445,6 +508,8 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
         "applications",
         "application_sessions",
         "application_session_events",
+        "linkedin_scan_runs",
+        "linkedin_scan_pages",
     }
     placeholders = ",".join("?" for _ in required_tables)
     rows = conn.execute(
@@ -911,6 +976,40 @@ def record_scan_event(
     )
 
 
+def create_linkedin_scan_run(
+    *,
+    operation_id: int | None,
+    started_at: str,
+    limit_count: int,
+    resume_from_checkpoint: bool,
+    profile_name: str | None,
+    checkpoint_loaded_count: int,
+    db_seen_ids_count: int,
+    total_searches: int,
+    summary: dict,
+) -> int:
+    return jobs_repository.create_linkedin_scan_run(
+        _conn,
+        operation_id=operation_id,
+        started_at=started_at,
+        limit_count=limit_count,
+        resume_from_checkpoint=resume_from_checkpoint,
+        profile_name=profile_name,
+        checkpoint_loaded_count=checkpoint_loaded_count,
+        db_seen_ids_count=db_seen_ids_count,
+        total_searches=total_searches,
+        summary=summary,
+    )
+
+
+def update_linkedin_scan_run(run_id: int, **kwargs) -> None:
+    jobs_repository.update_linkedin_scan_run(_conn, run_id, **kwargs)
+
+
+def record_linkedin_scan_page(**kwargs) -> int:
+    return jobs_repository.record_linkedin_scan_page(_conn, **kwargs)
+
+
 def count_job_postings(statuses: list[str] | None = None) -> int:
     return jobs_repository.count_job_postings(_conn, statuses)
 
@@ -1070,6 +1169,14 @@ def get_recent_scan_errors(limit: int = 5) -> pd.DataFrame:
 
 def get_recent_scan_events(limit: int = 20) -> pd.DataFrame:
     return jobs_repository.get_recent_scan_events(_conn, _read_sql_query, limit)
+
+
+def get_recent_linkedin_scan_runs(limit: int = 20) -> pd.DataFrame:
+    return jobs_repository.get_recent_linkedin_scan_runs(_conn, _read_sql_query, limit)
+
+
+def get_linkedin_scan_pages(run_id: int, limit: int = 500) -> pd.DataFrame:
+    return jobs_repository.get_linkedin_scan_pages(_conn, _read_sql_query, run_id, limit)
 
 
 def save_job_ranking(job_id: int, ranking: RankingResult) -> int:

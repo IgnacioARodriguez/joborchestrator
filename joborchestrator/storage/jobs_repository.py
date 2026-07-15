@@ -365,6 +365,186 @@ def record_scan_event(
         conn.close()
 
 
+def create_linkedin_scan_run(
+    connect: ConnectionFactory,
+    *,
+    operation_id: int | None,
+    started_at: str,
+    limit_count: int,
+    resume_from_checkpoint: bool,
+    profile_name: str | None,
+    checkpoint_loaded_count: int,
+    db_seen_ids_count: int,
+    total_searches: int,
+    summary: dict,
+) -> int:
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = connect()
+    try:
+        cursor = conn.execute(
+            """INSERT INTO linkedin_scan_runs (
+                   operation_id, started_at, status, limit_count, resume_from_checkpoint,
+                   profile_name, checkpoint_loaded_count, db_seen_ids_count,
+                   total_searches, summary_json, created_at, updated_at
+               ) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                operation_id,
+                started_at,
+                int(limit_count),
+                1 if resume_from_checkpoint else 0,
+                profile_name,
+                int(checkpoint_loaded_count),
+                int(db_seen_ids_count),
+                int(total_searches),
+                json.dumps(summary, ensure_ascii=False),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        return _last_insert_id(conn, cursor)
+    finally:
+        conn.close()
+
+
+def update_linkedin_scan_run(
+    connect: ConnectionFactory,
+    run_id: int,
+    *,
+    finished_at: str,
+    status: str,
+    searches_run: int,
+    pages_checked: int,
+    visible_jobs: int,
+    duplicate_visible_jobs: int,
+    added_jobs: int,
+    exported_jobs: int,
+    imported_total: int = 0,
+    imported_new: int = 0,
+    imported_updated: int = 0,
+    imported_seen: int = 0,
+    inactive_count: int = 0,
+    stop_reason: str | None = None,
+    error: str | None = None,
+    duration_seconds: float = 0,
+    summary: dict | None = None,
+) -> None:
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = connect()
+    try:
+        conn.execute(
+            """UPDATE linkedin_scan_runs
+               SET finished_at = ?,
+                   status = ?,
+                   searches_run = ?,
+                   pages_checked = ?,
+                   visible_jobs = ?,
+                   duplicate_visible_jobs = ?,
+                   added_jobs = ?,
+                   exported_jobs = ?,
+                   imported_total = ?,
+                   imported_new = ?,
+                   imported_updated = ?,
+                   imported_seen = ?,
+                   inactive_count = ?,
+                   stop_reason = ?,
+                   error = ?,
+                   duration_seconds = ?,
+                   summary_json = ?,
+                   updated_at = ?
+               WHERE id = ?""",
+            (
+                finished_at,
+                status,
+                int(searches_run),
+                int(pages_checked),
+                int(visible_jobs),
+                int(duplicate_visible_jobs),
+                int(added_jobs),
+                int(exported_jobs),
+                int(imported_total),
+                int(imported_new),
+                int(imported_updated),
+                int(imported_seen),
+                int(inactive_count),
+                stop_reason,
+                error,
+                float(duration_seconds),
+                json.dumps(summary or {}, ensure_ascii=False),
+                now,
+                int(run_id),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def record_linkedin_scan_page(
+    connect: ConnectionFactory,
+    *,
+    run_id: int,
+    keywords: str,
+    location: str,
+    role_priority: str | None,
+    freshness_window_seconds: int,
+    page_index: int,
+    page_start: int,
+    url: str,
+    started_at: str,
+    finished_at: str,
+    status: str,
+    visible_count: int,
+    new_visible_count: int,
+    duplicate_visible_count: int,
+    added_count: int,
+    stop_reason: str | None,
+    error: str | None,
+    duration_seconds: float,
+    visible_jobs: list[dict],
+    added_jobs: list[dict],
+) -> int:
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = connect()
+    try:
+        cursor = conn.execute(
+            """INSERT INTO linkedin_scan_pages (
+                   run_id, keywords, location, role_priority, freshness_window_seconds,
+                   page_index, page_start, url, started_at, finished_at, status,
+                   visible_count, new_visible_count, duplicate_visible_count,
+                   added_count, stop_reason, error, duration_seconds,
+                   visible_jobs_json, added_jobs_json, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                int(run_id),
+                keywords,
+                location,
+                role_priority,
+                int(freshness_window_seconds),
+                int(page_index),
+                int(page_start),
+                url,
+                started_at,
+                finished_at,
+                status,
+                int(visible_count),
+                int(new_visible_count),
+                int(duplicate_visible_count),
+                int(added_count),
+                stop_reason,
+                error,
+                float(duration_seconds),
+                json.dumps(visible_jobs, ensure_ascii=False),
+                json.dumps(added_jobs, ensure_ascii=False),
+                now,
+            ),
+        )
+        conn.commit()
+        return _last_insert_id(conn, cursor)
+    finally:
+        conn.close()
+
+
 def count_job_postings(connect: ConnectionFactory, statuses: list[str] | None = None) -> int:
     conn = connect()
     try:
@@ -701,6 +881,37 @@ def get_recent_scan_events(connect: ConnectionFactory, read_sql_query: ReadSqlQu
                LIMIT ?""",
             conn,
             (limit,),
+        )
+    finally:
+        conn.close()
+
+
+def get_recent_linkedin_scan_runs(connect: ConnectionFactory, read_sql_query: ReadSqlQuery, limit: int = 20) -> pd.DataFrame:
+    conn = connect()
+    try:
+        return read_sql_query(
+            """SELECT *
+               FROM linkedin_scan_runs
+               ORDER BY started_at DESC, id DESC
+               LIMIT ?""",
+            conn,
+            (int(limit),),
+        )
+    finally:
+        conn.close()
+
+
+def get_linkedin_scan_pages(connect: ConnectionFactory, read_sql_query: ReadSqlQuery, run_id: int, limit: int = 500) -> pd.DataFrame:
+    conn = connect()
+    try:
+        return read_sql_query(
+            """SELECT *
+               FROM linkedin_scan_pages
+               WHERE run_id = ?
+               ORDER BY page_index ASC, page_start ASC, id ASC
+               LIMIT ?""",
+            conn,
+            (int(run_id), int(limit)),
         )
     finally:
         conn.close()

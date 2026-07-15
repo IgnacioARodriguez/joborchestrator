@@ -1103,6 +1103,16 @@ def scan_overview() -> dict[str, Any]:
     }
 
 
+@app.get("/api/scans/linkedin/runs")
+def list_linkedin_scan_runs(limit: int = 20) -> dict[str, Any]:
+    return {"runs": db.get_recent_linkedin_scan_runs(limit=max(1, min(int(limit), 100))).to_dict("records")}
+
+
+@app.get("/api/scans/linkedin/runs/{run_id}/pages")
+def list_linkedin_scan_pages(run_id: int, limit: int = 500) -> dict[str, Any]:
+    return {"pages": db.get_linkedin_scan_pages(run_id, limit=max(1, min(int(limit), 2000))).to_dict("records")}
+
+
 @app.post("/api/linkedin/import-latest")
 def import_latest_linkedin(min_description_len: int = MIN_DESCRIPCION_LEN_DEFAULT) -> dict[str, Any]:
     if not SALIDAS_DIR.exists():
