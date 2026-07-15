@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pandas as pd
+
 from joborchestrator import worker
 
 
@@ -147,7 +149,7 @@ def test_worker_processes_job_scan(monkeypatch):
         lambda worker_id, operation_types: {
             "id": 31,
             "type": "job_scan",
-            "input_json": {"include_ats": True, "include_search": False},
+            "input_json": {"include_ats": True, "include_search": False, "auto_rank_new": False},
         },
     )
     monkeypatch.setattr(worker.db, "update_operation_progress", lambda op_id, message: progress.append(message))
@@ -177,6 +179,68 @@ def test_worker_processes_job_scan(monkeypatch):
     assert completed["output"]["summary"]["new"] == 2
     assert completed["message"] == "Job scan completed: 2 new, 1 updated, 0 errors."
     assert "Fake scan running." in progress
+
+
+def test_worker_queues_ranking_for_new_scan_jobs(monkeypatch):
+    completed = {}
+    progress = []
+    created_ranking_jobs = []
+
+    monkeypatch.setattr(worker.db, "requeue_stale_operations", lambda operation_types, stale_seconds: 0)
+    monkeypatch.setattr(
+        worker.db,
+        "claim_next_operation",
+        lambda worker_id, operation_types: {
+            "id": 32,
+            "type": "job_scan",
+            "created_at": "2026-07-15T10:00:00",
+            "started_at": "2026-07-15T10:00:01",
+            "input_json": {
+                "include_ats": True,
+                "include_search": False,
+                "auto_rank_new": True,
+                "ranking_limit": 10,
+                "ranking_version": "ranking_v1.1.0-nvidia",
+            },
+        },
+    )
+    monkeypatch.setattr(worker.db, "update_operation_progress", lambda op_id, message: progress.append(message))
+
+    async def fake_scan(input_payload, progress=None):
+        return {
+            "ats": [],
+            "search": [],
+            "linkedin": None,
+            "errors": {},
+            "summary": {"new": 1, "updated": 1, "errors": 0},
+        }
+
+    monkeypatch.setattr(worker, "run_unified_job_scan", fake_scan)
+    monkeypatch.setattr(worker.db, "get_candidate_profile_payload", lambda: {"headline": "Backend engineer"})
+    monkeypatch.setattr(
+        worker.db,
+        "get_jobs_for_post_scan_ranking",
+        lambda seen_since, ranking_version, limit: pd.DataFrame([{"id": 10}, {"id": 11}]),
+    )
+    monkeypatch.setattr(
+        worker.db,
+        "create_ranking_job",
+        lambda **kwargs: created_ranking_jobs.append(kwargs) or 77,
+    )
+    monkeypatch.setattr(
+        worker.db,
+        "complete_operation",
+        lambda op_id, output, message: completed.update({"id": op_id, "output": output, "message": message}),
+    )
+    monkeypatch.setattr(worker.db, "fail_operation", lambda *args: (_ for _ in ()).throw(AssertionError("unexpected failure")))
+
+    assert worker.process_once("worker-1") is True
+
+    assert completed["output"]["ranking_job"]["ranking_job_id"] == 77
+    assert completed["output"]["ranking_job"]["queued"] == 2
+    assert created_ranking_jobs[0]["job_ids"] == [10, 11]
+    assert created_ranking_jobs[0]["ranking_version"] == "ranking_v1.1.0-nvidia"
+    assert "Queueing NVIDIA ranking for 2 new or updated job(s)." in progress
 
 
 def test_worker_requeues_stale_operations_before_claiming(monkeypatch):

@@ -94,8 +94,8 @@ function operationCopy(name: string | null) {
       detail: "Contacting enabled company portals and saving new or updated jobs.",
     },
     all: {
-      title: "Running unified scrape",
-      detail: "Launching ATS portals and public job APIs in parallel.",
+      title: "Scanning fresh jobs",
+      detail: "Launching sources and queueing ranking for new or updated jobs.",
     },
     search: {
       title: "Searching public job APIs",
@@ -258,6 +258,7 @@ export function OpsScreen() {
             search?: ScanResult[]
             errors?: Record<string, string>
             summary?: { new?: number; updated?: number; errors?: number }
+            ranking_job?: { queued?: number; ranking_job_id?: number; skipped?: string }
           }
           setResults([...(output.ats ?? []), ...(output.search ?? [])])
           setScanOperationId(null)
@@ -268,7 +269,7 @@ export function OpsScreen() {
           await refresh()
           await loadOps()
           toast.success("Unified scrape finished", {
-            description: `${output.summary?.new ?? 0} new, ${output.summary?.updated ?? 0} updated.`,
+            description: `${output.summary?.new ?? 0} new, ${output.summary?.updated ?? 0} updated, ${output.ranking_job?.queued ?? 0} queued for ranking.`,
           })
         }
         if (operation.status === "failed") {
@@ -399,6 +400,8 @@ export function OpsScreen() {
                     include_ats: sources.length > 0,
                     include_search: searchProviders.length > 0,
                     include_linkedin: true,
+                    auto_rank_new: true,
+                    ranking_limit: 250,
                     linkedin_limit: linkedinLimit,
                     search_providers: searchProviders,
                     queries: queries.split("\n"),
@@ -431,7 +434,7 @@ export function OpsScreen() {
             ) : (
               <Play data-icon="inline-start" />
             )}
-            {busy === "all" ? "Scraping all" : "Scrap all"}
+            {busy === "all" ? "Scanning fresh jobs" : "Scan fresh jobs"}
           </Button>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">LinkedIn max</span>

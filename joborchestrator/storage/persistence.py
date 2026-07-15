@@ -1110,6 +1110,20 @@ def get_unranked_jobs(ranking_version: str = NVIDIA_RANKING_VERSION, limit: int 
     return rankings_repository.get_unranked_jobs(_conn, _read_sql_query, ranking_version, limit)
 
 
+def get_jobs_for_post_scan_ranking(
+    seen_since: str,
+    ranking_version: str = NVIDIA_RANKING_VERSION,
+    limit: int = 500,
+) -> pd.DataFrame:
+    return rankings_repository.get_jobs_for_post_scan_ranking(
+        _conn,
+        _read_sql_query,
+        seen_since=seen_since,
+        ranking_version=ranking_version,
+        limit=limit,
+    )
+
+
 def create_ranking_job(
     *,
     provider: str,

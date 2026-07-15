@@ -13,6 +13,7 @@ import {
 import { cn } from "@/lib/utils"
 import { NAV_ITEMS, type Section } from "@/lib/nav"
 import { useStore } from "@/lib/store"
+import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { TodayScreen } from "@/components/screens/today-screen"
 import { ReviewScreen } from "@/components/screens/review-screen"
@@ -21,6 +22,7 @@ import { ProfileScreen } from "@/components/screens/profile-screen"
 import { OpsScreen } from "@/components/screens/ops-screen"
 import { InsightsScreen } from "@/components/screens/insights-screen"
 import { JobDetailDrawer } from "@/components/job-detail-drawer"
+import { toast } from "sonner"
 
 function DataLoadingBanner() {
   const { loading } = useStore()
@@ -65,6 +67,7 @@ function DataLoadingBanner() {
 export function AppShell() {
   const [section, setSection] = useState<Section>("today")
   const [openJobId, setOpenJobId] = useState<string | null>(null)
+  const [scanBusy, setScanBusy] = useState(false)
   const {
     jobs,
     jobsMeta,
@@ -90,6 +93,23 @@ export function AppShell() {
 
   function navigate(next: Section) {
     setSection(next)
+  }
+
+  async function scanFreshJobs() {
+    setScanBusy(true)
+    try {
+      const response = await api.scanFresh()
+      toast.success(response.already_running ? "Fresh scan already running" : "Fresh scan queued", {
+        description: `Operation #${response.operation_id}`,
+      })
+      setSection("automations")
+    } catch (error) {
+      toast.error("Could not queue fresh scan", {
+        description: error instanceof Error ? error.message : "Backend request failed.",
+      })
+    } finally {
+      setScanBusy(false)
+    }
   }
 
   return (
@@ -183,6 +203,15 @@ export function AppShell() {
                   {hiddenStale} stale hidden
                 </span>
               ) : null}
+              <Button
+                variant="default"
+                size="sm"
+                disabled={loading || scanBusy}
+                onClick={() => void scanFreshJobs()}
+              >
+                {scanBusy ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+                {scanBusy ? "Queueing scan" : "Scan fresh jobs"}
+              </Button>
               <div className="hidden items-center gap-1 sm:flex">
                 <Button
                   variant="outline"

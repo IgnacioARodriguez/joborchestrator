@@ -182,6 +182,21 @@ def test_apply_queue_filters_stale_test_data(tmp_path, monkeypatch):
     assert active["meta"]["freshness_counts"]["stale"] == 1
 
 
+def test_scan_fresh_queues_scan_with_auto_ranking(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    client.put("/api/profile", json={"profile": profile_payload()})
+
+    response = client.post("/api/scans/fresh")
+
+    assert response.status_code == 200
+    body = response.json()
+    operation = client.get(f"/api/operations/{body['operation_id']}").json()["operation"]
+    assert operation["type"] == "job_scan"
+    assert operation["input_json"]["auto_rank_new"] is True
+    assert operation["input_json"]["include_linkedin"] is True
+    assert "Backend Engineer" in operation["input_json"]["queries"]
+
+
 def test_create_job_endpoint_for_extension(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
 

@@ -103,6 +103,10 @@ def normalize_job_scan_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "ats_max_concurrency": max(1, min(int(payload.get("ats_max_concurrency") or 6), 20)),
         "search_max_concurrency": max(1, min(int(payload.get("search_max_concurrency") or 4), 20)),
         "linkedin_limit": max(1, min(int(payload.get("linkedin_limit") or 50), 500)),
+        "auto_rank_new": bool(payload.get("auto_rank_new", True)),
+        "ranking_limit": max(1, min(int(payload.get("ranking_limit") or 250), 2000)),
+        "ranking_version": str(payload.get("ranking_version") or "ranking_v1.1.0-nvidia"),
+        "ranking_model": str(payload.get("ranking_model") or ""),
     }
 
 

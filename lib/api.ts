@@ -318,6 +318,8 @@ export const api = {
     include_ats: boolean
     include_search: boolean
     include_linkedin?: boolean
+    auto_rank_new?: boolean
+    ranking_limit?: number
     linkedin_limit?: number
     search_providers: string[]
     queries: string[]
@@ -334,6 +336,18 @@ export const api = {
     }>("/api/scans/all", {
       method: "POST",
       body: JSON.stringify(input),
+    })
+  },
+
+  async scanFresh() {
+    return request<{
+      operation_id: number
+      status: string
+      already_running?: boolean
+      progress_message?: string | null
+    }>("/api/scans/fresh", {
+      method: "POST",
+      body: JSON.stringify({}),
     })
   },
 

@@ -206,6 +206,10 @@ class UnifiedScanPayload(BaseModel):
     max_pages: int = Field(default=1, ge=1, le=10)
     ats_max_concurrency: int = Field(default=6, ge=1, le=20)
     search_max_concurrency: int = Field(default=4, ge=1, le=20)
+    auto_rank_new: bool = True
+    ranking_limit: int = Field(default=250, ge=1, le=2000)
+    ranking_version: str = NVIDIA_RANKING_VERSION
+    ranking_model: str = DEFAULT_NVIDIA_MODEL
 
 
 class RankingJobPayload(BaseModel):
@@ -987,6 +991,43 @@ def queue_scan_all(payload: UnifiedScanPayload) -> dict[str, Any]:
         "Queued unified job scan. Waiting for local worker.",
     )
     return {"operation_id": operation_id, "status": "queued", "already_running": False}
+
+
+@app.post("/api/scans/fresh")
+def queue_fresh_scan() -> dict[str, Any]:
+    profile = db.get_candidate_profile_payload() or {}
+    queries = _fresh_scan_queries(profile)
+    payload = UnifiedScanPayload(
+        include_ats=True,
+        include_search=bool(queries),
+        include_linkedin=True,
+        linkedin_limit=75,
+        search_providers=[],
+        queries=queries,
+        application_targets=profile.get("application_targets") or [],
+        location=(profile.get("preferred_locations") or ["Spain"])[0],
+        remote=True,
+        max_pages=1,
+        auto_rank_new=True,
+        ranking_limit=250,
+    )
+    return queue_scan_all(payload)
+
+
+def _fresh_scan_queries(profile: dict[str, Any]) -> list[str]:
+    roles = [
+        *list(profile.get("target_roles") or []),
+        *list(profile.get("secondary_roles") or []),
+    ]
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for role in roles:
+        text = str(role or "").strip()
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            cleaned.append(text)
+    return cleaned[:8]
 
 
 @app.post("/api/scans/all/run")

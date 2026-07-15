@@ -20,6 +20,12 @@ from joborchestrator.intelligence.llm_application_materials import (
     build_application_kit_with_nvidia,
 )
 from joborchestrator.automation.executor import run_application_execution
+from joborchestrator.ranking.nvidia_ranker import (
+    DEFAULT_NVIDIA_MAX_CONCURRENCY,
+    DEFAULT_NVIDIA_MODEL,
+    DEFAULT_NVIDIA_REQUEST_BATCH_SIZE,
+)
+from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.scanning.orchestrator import run_unified_job_scan
 from joborchestrator.storage import persistence as db
 
@@ -177,6 +183,7 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
 def _process_job_scan(operation: dict[str, Any]) -> None:
     operation_id = int(operation["id"])
     input_payload = operation.get("input_json") or {}
+    scan_started_at = str(operation.get("started_at") or operation.get("created_at") or "")
     logger.info("Processing job scan operation=%s", operation_id)
 
     def progress(message: str) -> None:
@@ -185,6 +192,7 @@ def _process_job_scan(operation: dict[str, Any]) -> None:
 
     output = asyncio.run(run_unified_job_scan(input_payload, progress=progress))
     summary = output.get("summary") or {}
+    output["ranking_job"] = _queue_post_scan_ranking(input_payload, scan_started_at, summary, progress)
     db.complete_operation(
         operation_id,
         output,
@@ -196,6 +204,46 @@ def _process_job_scan(operation: dict[str, Any]) -> None:
         ),
     )
     logger.info("Completed job scan operation=%s summary=%s", operation_id, summary)
+
+
+def _queue_post_scan_ranking(
+    input_payload: dict[str, Any],
+    scan_started_at: str,
+    summary: dict[str, Any],
+    progress: Any,
+) -> dict[str, Any]:
+    if not input_payload.get("auto_rank_new", True):
+        return {"queued": 0, "skipped": "disabled"}
+    if not db.get_candidate_profile_payload():
+        return {"queued": 0, "skipped": "missing_candidate_profile"}
+    if int(summary.get("new") or 0) + int(summary.get("updated") or 0) <= 0:
+        return {"queued": 0, "skipped": "no_new_or_updated_jobs"}
+
+    ranking_version = str(input_payload.get("ranking_version") or NVIDIA_RANKING_VERSION)
+    limit = max(1, min(int(input_payload.get("ranking_limit") or 250), 2000))
+    candidates = db.get_jobs_for_post_scan_ranking(
+        seen_since=scan_started_at,
+        ranking_version=ranking_version,
+        limit=limit,
+    )
+    job_ids = [int(value) for value in candidates["id"].tolist()]
+    if not job_ids:
+        return {"queued": 0, "skipped": "no_unranked_scan_jobs"}
+
+    progress(f"Queueing NVIDIA ranking for {len(job_ids)} new or updated job(s).")
+    ranking_job_id = db.create_ranking_job(
+        provider="nvidia",
+        model=str(input_payload.get("ranking_model") or DEFAULT_NVIDIA_MODEL),
+        ranking_version=ranking_version,
+        job_ids=job_ids,
+        request_batch_size=int(input_payload.get("ranking_request_batch_size") or DEFAULT_NVIDIA_REQUEST_BATCH_SIZE),
+        max_concurrency=int(input_payload.get("ranking_max_concurrency") or DEFAULT_NVIDIA_MAX_CONCURRENCY),
+    )
+    return {
+        "ranking_job_id": ranking_job_id,
+        "queued": len(job_ids),
+        "ranking_version": ranking_version,
+    }
 
 
 def _process_application_execution(operation: dict[str, Any]) -> None:
