@@ -249,6 +249,10 @@ export interface JobsMeta {
   total: number
   returned: number
   limited: boolean
+  limit?: number
+  offset?: number
+  has_next?: boolean
+  has_previous?: boolean
   db_mode: "sqlite" | "turso" | string
 }
 

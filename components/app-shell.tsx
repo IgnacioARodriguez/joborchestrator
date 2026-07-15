@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react"
 import {
+  ChevronLeft,
+  ChevronRight,
   Compass,
   LoaderCircle,
   RefreshCw,
@@ -63,10 +65,24 @@ function DataLoadingBanner() {
 export function AppShell() {
   const [section, setSection] = useState<Section>("today")
   const [openJobId, setOpenJobId] = useState<string | null>(null)
-  const { jobs, jobsMeta, backendOnline, loading, refresh } = useStore()
+  const {
+    jobs,
+    jobsMeta,
+    backendOnline,
+    loading,
+    applyQueuePage,
+    applyQueuePageSize,
+    setApplyQueuePage,
+    refresh,
+  } = useStore()
   const backendReady = backendOnline || jobsMeta !== null || jobs.length > 0
   const totalJobs = jobsMeta?.total ?? jobs.length
   const returnedJobs = jobsMeta?.returned ?? jobs.length
+  const offset = jobsMeta?.offset ?? (applyQueuePage - 1) * applyQueuePageSize
+  const rangeStart = totalJobs === 0 ? 0 : offset + 1
+  const rangeEnd = Math.min(offset + returnedJobs, totalJobs)
+  const canPagePrevious = Boolean(jobsMeta?.has_previous) || applyQueuePage > 1
+  const canPageNext = Boolean(jobsMeta?.has_next)
 
   function navigate(next: Section) {
     setSection(next)
@@ -135,11 +151,31 @@ export function AppShell() {
                 <Compass className="size-4" />
               </div>
               <span className="text-xs text-muted-foreground">
-                {returnedJobs === totalJobs ? `${totalJobs} jobs` : `${returnedJobs} / ${totalJobs} jobs`}
+                {returnedJobs === totalJobs ? `${totalJobs} jobs` : `${rangeStart}-${rangeEnd} / ${totalJobs} jobs`}
                 {jobsMeta?.db_mode ? ` - ${jobsMeta.db_mode}` : ""}
               </span>
             </div>
             <div className="flex items-center gap-2">
+              <div className="hidden items-center gap-1 sm:flex">
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Previous jobs page"
+                  disabled={loading || !canPagePrevious}
+                  onClick={() => setApplyQueuePage(applyQueuePage - 1)}
+                >
+                  <ChevronLeft className="size-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Next jobs page"
+                  disabled={loading || !canPageNext}
+                  onClick={() => setApplyQueuePage(applyQueuePage + 1)}
+                >
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
               <Button
                 variant="outline"
                 size="sm"

@@ -24,9 +24,12 @@ interface StoreValue {
   applications: ApplicationRecord[]
   loading: boolean
   backendOnline: boolean
+  applyQueuePage: number
+  applyQueuePageSize: number
   jobsMeta: JobsMeta | null
   rankingVersions: string[]
   selectedRankingVersion: string | null
+  setApplyQueuePage: (page: number) => void
   setSelectedRankingVersion: (version: string) => void
   refresh: (rankingVersion?: string | null) => Promise<void>
   getJob: (id: string) => JobPosting | undefined
@@ -40,24 +43,28 @@ interface StoreValue {
 }
 
 const StoreContext = createContext<StoreValue | null>(null)
+const APPLY_QUEUE_PAGE_SIZE = 50
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [jobs, setJobs] = useState<JobPosting[]>([])
   const [applications, setApplications] = useState<ApplicationRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [backendOnline, setBackendOnline] = useState(false)
+  const [applyQueuePage, setApplyQueuePageState] = useState(1)
   const [jobsMeta, setJobsMeta] = useState<JobsMeta | null>(null)
   const [rankingVersions, setRankingVersions] = useState<string[]>([])
   const [selectedRankingVersion, setSelectedRankingVersionState] =
     useState<string | null>(null)
   const selectedRankingVersionRef = useRef<string | null>(null)
+  const applyQueuePageRef = useRef(1)
 
   const refresh = useCallback(async (rankingVersion?: string | null) => {
     setLoading(true)
     try {
       const version = rankingVersion === undefined ? selectedRankingVersionRef.current : rankingVersion
+      const offset = (applyQueuePageRef.current - 1) * APPLY_QUEUE_PAGE_SIZE
       const [data, applicationData] = await Promise.all([
-        api.getApplyQueue(version),
+        api.getApplyQueue(version, APPLY_QUEUE_PAGE_SIZE, offset),
         api.getApplications(),
       ])
       setJobs(data.jobs)
@@ -77,8 +84,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const setSelectedRankingVersion = useCallback((version: string) => {
     selectedRankingVersionRef.current = version
+    applyQueuePageRef.current = 1
+    setApplyQueuePageState(1)
     setSelectedRankingVersionState(version)
-  }, [])
+    void refresh(version)
+  }, [refresh])
+
+  const setApplyQueuePage = useCallback((page: number) => {
+    const next = Math.max(1, page)
+    applyQueuePageRef.current = next
+    setApplyQueuePageState(next)
+    void refresh()
+  }, [refresh])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -154,9 +171,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       applications,
       loading,
       backendOnline,
+      applyQueuePage,
+      applyQueuePageSize: APPLY_QUEUE_PAGE_SIZE,
       jobsMeta,
       rankingVersions,
       selectedRankingVersion,
+      setApplyQueuePage,
       setSelectedRankingVersion,
       refresh,
       getJob,
@@ -170,9 +190,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       applications,
       loading,
       backendOnline,
+      applyQueuePage,
       jobsMeta,
       rankingVersions,
       selectedRankingVersion,
+      setApplyQueuePage,
       setSelectedRankingVersion,
       refresh,
       getJob,

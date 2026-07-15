@@ -134,6 +134,29 @@ def test_jobs_reject_heuristic_ranking_versions(tmp_path, monkeypatch):
     assert "Heuristic rankings" in response.json()["detail"]
 
 
+def test_apply_queue_paginates_after_priority_sort(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    for index, score in enumerate([20, 95, 60], start=1):
+        external_id = f"job-{index}"
+        db.upsert_job_posting(
+            make_job(external_id=external_id, title=f"Role {index}"),
+            seen_at=f"2026-01-0{index}T10:00:00",
+        )
+        row = db.get_job_postings(limit=None)
+        job_id = int(row[row["external_id"] == external_id].iloc[0]["id"])
+        db.save_job_ranking(job_id, make_ranking("ranking_v1.1.0-nvidia", score, "APPLY_NOW"))
+
+    first_page = client.get("/api/apply-queue", params={"limit": 1, "offset": 0}).json()
+    second_page = client.get("/api/apply-queue", params={"limit": 1, "offset": 1}).json()
+
+    assert first_page["jobs"][0]["title"] == "Role 2"
+    assert second_page["jobs"][0]["title"] == "Role 3"
+    assert first_page["meta"]["total"] == 3
+    assert first_page["meta"]["limit"] == 1
+    assert first_page["meta"]["has_next"] is True
+    assert second_page["meta"]["has_previous"] is True
+
+
 def test_create_job_endpoint_for_extension(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
 

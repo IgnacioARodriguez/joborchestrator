@@ -417,17 +417,67 @@ def list_jobs(limit: int | None = None, ranking_version: str | None = None) -> d
 
 
 @app.get("/api/apply-queue")
-def apply_queue(limit: int = 250, ranking_version: str | None = None) -> dict[str, Any]:
-    data = list_jobs(limit=limit, ranking_version=ranking_version)
+def apply_queue(limit: int = 50, offset: int = 0, ranking_version: str | None = None) -> dict[str, Any]:
+    if ranking_version and is_heuristic_ranking_version(ranking_version):
+        raise HTTPException(status_code=400, detail="Heuristic rankings are no longer supported in the dashboard.")
+    effective_limit = max(1, min(int(limit), 100))
+    effective_offset = max(0, int(offset))
+    ranking_versions = filter_llm_ranking_versions(db.get_ranking_versions())
+    selected_ranking_version = ranking_version or (ranking_versions[0] if ranking_versions else None)
+    rows = db.get_job_postings(limit=None).to_dict("records")
+    job_ids = [int(row["id"]) for row in rows]
+    ranking_rows = (
+        db.get_rankings_for_job_ids(selected_ranking_version, job_ids).to_dict("records")
+        if selected_ranking_version
+        else []
+    )
+    rankings = {int(row["job_id"]): row for row in ranking_rows}
     jobs = sorted(
-        data["jobs"],
-        key=lambda job: (
-            int(job.get("priority", {}).get("priority_score") or 0),
-            int(job.get("ranking", {}).get("final_score") or 0),
-        ),
+        [
+            job_dto(row, rankings.get(int(row["id"])), include_hiring_contacts=False, compact=True)
+            for row in rows
+        ],
+        key=_apply_queue_sort_key,
         reverse=True,
     )
-    return {"jobs": jobs, "meta": data.get("meta"), "selected_ranking_version": data.get("selected_ranking_version")}
+    page = jobs[effective_offset : effective_offset + effective_limit]
+    total = len(jobs)
+    return {
+        "jobs": page,
+        "ranking_versions": ranking_versions,
+        "selected_ranking_version": selected_ranking_version,
+        "meta": {
+            "total": total,
+            "returned": len(page),
+            "limited": effective_offset + len(page) < total,
+            "limit": effective_limit,
+            "offset": effective_offset,
+            "has_next": effective_offset + effective_limit < total,
+            "has_previous": effective_offset > 0,
+            "db_mode": db_connection.connection_mode(),
+        },
+    }
+
+
+def _apply_queue_sort_key(job: dict[str, Any]) -> tuple[int, int, int, int, int]:
+    action_rank = {
+        "Apply now": 7,
+        "Prepare": 6,
+        "Review": 5,
+        "In progress": 4,
+        "Needs input": 3,
+        "Follow up": 2,
+        "Skip": 1,
+    }
+    priority = job.get("priority", {})
+    ranking = job.get("ranking", {})
+    return (
+        action_rank.get(str(priority.get("next_action") or ""), 0),
+        int(priority.get("priority_score") or 0),
+        int(ranking.get("final_score") or 0),
+        int(priority.get("freshness_score") or 0),
+        int(priority.get("recruiter_advantage_score") or 0),
+    )
 
 
 @app.post("/api/jobs")
