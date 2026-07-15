@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import {
   Ban,
   BriefcaseBusiness,
+  ClipboardList,
   DatabaseZap,
   LinkIcon,
   LoaderCircle,
@@ -14,6 +15,7 @@ import {
   Search,
   ServerCog,
   Sparkles,
+  Timer,
   Upload,
   X,
 } from "lucide-react"
@@ -122,6 +124,251 @@ function statusVariant(status: string) {
   return "secondary" as const
 }
 
+type ScanOperationOutput = {
+  ats?: ScanResult[]
+  search?: ScanResult[]
+  linkedin?: {
+    import_stats?: {
+      total?: number
+      new?: number
+      updated?: number
+      seen?: number
+    }
+    inactive?: number
+  } | null
+  errors?: Record<string, string>
+  summary?: {
+    lanes?: number
+    sources_run?: number
+    ats_groups?: number
+    search_groups?: number
+    linkedin_run?: number
+    found?: number
+    new?: number
+    updated?: number
+    errors?: number
+  }
+  ranking_job?: {
+    ranking_job_id?: number
+    queued?: number
+    skipped?: string
+  }
+}
+
+function scanOutput(operation: OperationRun | null): ScanOperationOutput {
+  return (operation?.output_json || {}) as ScanOperationOutput
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "Not recorded"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString()
+}
+
+function rankingProgress(job: RankingJobRecord) {
+  const total = Math.max(0, Number(job.total_items || 0))
+  const processed = Math.max(0, Number(job.processed_items || 0))
+  const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0
+  const remaining = Math.max(0, total - processed)
+  return { total, processed, percent, remaining }
+}
+
+function ScanSummaryCard({
+  operation,
+  onRefresh,
+  busy,
+}: {
+  operation: OperationRun | null
+  onRefresh: () => void
+  busy: boolean
+}) {
+  const output = scanOutput(operation)
+  const summary = output.summary || {}
+  const ranking = output.ranking_job || {}
+  const isActive = operation ? ["queued", "running"].includes(operation.status) : false
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <ClipboardList className="size-4 text-primary" />
+          Last scan
+        </CardTitle>
+        <CardDescription className="text-xs">
+          {operation
+            ? `Operation #${operation.id} - ${operation.status}`
+            : "No job scan has been queued yet."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {operation ? (
+          <>
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/20 p-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-foreground">
+                  {operation.progress_message || (isActive ? "Waiting for local worker." : "Scan finished.")}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Updated {formatDateTime(operation.updated_at)}
+                </p>
+              </div>
+              <Badge variant={statusVariant(operation.status)}>
+                {operation.status}
+              </Badge>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+              <div className="rounded-lg border border-border bg-background p-3">
+                <span className="block text-muted-foreground">Found</span>
+                <span className="text-lg font-semibold text-foreground">{summary.found ?? 0}</span>
+              </div>
+              <div className="rounded-lg border border-border bg-background p-3">
+                <span className="block text-muted-foreground">New</span>
+                <span className="text-lg font-semibold text-foreground">{summary.new ?? 0}</span>
+              </div>
+              <div className="rounded-lg border border-border bg-background p-3">
+                <span className="block text-muted-foreground">Updated</span>
+                <span className="text-lg font-semibold text-foreground">{summary.updated ?? 0}</span>
+              </div>
+              <div className="rounded-lg border border-border bg-background p-3">
+                <span className="block text-muted-foreground">Errors</span>
+                <span className="text-lg font-semibold text-foreground">{summary.errors ?? 0}</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+              <div className="rounded-lg border border-border bg-muted/20 p-3">
+                <span className="block text-muted-foreground">ATS groups</span>
+                <span className="font-medium text-foreground">{summary.ats_groups ?? 0}</span>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/20 p-3">
+                <span className="block text-muted-foreground">Search groups</span>
+                <span className="font-medium text-foreground">{summary.search_groups ?? 0}</span>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/20 p-3">
+                <span className="block text-muted-foreground">LinkedIn</span>
+                <span className="font-medium text-foreground">
+                  {output.linkedin?.import_stats?.total ?? (summary.linkedin_run ? "ran" : 0)}
+                </span>
+              </div>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
+              <p className="font-medium text-foreground">
+                {ranking.ranking_job_id
+                  ? `Ranking job #${ranking.ranking_job_id} queued`
+                  : ranking.skipped
+                    ? `Ranking skipped: ${ranking.skipped.replaceAll("_", " ")}`
+                    : "Ranking not queued yet"}
+              </p>
+              <p className="mt-1 text-muted-foreground">
+                {ranking.queued ?? 0} jobs queued for NVIDIA ranking after this scan.
+              </p>
+            </div>
+            {operation.error ? (
+              <p className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">
+                {operation.error}
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Run a fresh scan to populate this summary.
+          </p>
+        )}
+        <Button variant="outline" size="sm" disabled={busy} onClick={onRefresh}>
+          <RefreshCw data-icon="inline-start" />
+          Refresh scan status
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
+function RankingJobPanel({
+  job,
+  busy,
+  onRequeueStale,
+  onRetryFailed,
+  onCancel,
+}: {
+  job: RankingJobRecord
+  busy: boolean
+  onRequeueStale: () => void
+  onRetryFailed: () => void
+  onCancel: () => void
+}) {
+  const progress = rankingProgress(job)
+  const failedCount = job.failed_item_count ?? job.failed_items
+  const isActive = ["queued", "running"].includes(job.status)
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-border p-3 text-xs">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-medium text-foreground">
+            #{job.id} - {job.status}
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            {progress.processed}/{progress.total} processed - {progress.remaining} remaining
+          </p>
+        </div>
+        <Badge variant={job.status === "failed" ? "destructive" : "secondary"}>
+          local worker
+        </Badge>
+      </div>
+      <div className="flex flex-col gap-1">
+        <div className="h-2 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full bg-primary"
+            style={{ width: `${progress.percent}%` }}
+          />
+        </div>
+        <div className="flex justify-between gap-2 text-muted-foreground">
+          <span>{progress.percent}% complete</span>
+          <span>{job.saved_items} saved - {failedCount} failed</span>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-muted-foreground sm:grid-cols-4">
+        <span>{job.queued_items ?? 0} queued</span>
+        <span>{job.running_items ?? 0} running</span>
+        <span>{job.completed_items ?? 0} done</span>
+        <span>{job.cancelled_items ?? 0} cancelled</span>
+      </div>
+      {(job.latest_item_error || job.error) && (
+        <p className="line-clamp-2 rounded-md bg-muted/30 p-2 text-muted-foreground">
+          {job.latest_item_error || job.error}
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy || !isActive}
+          onClick={onRequeueStale}
+        >
+          <RotateCcw data-icon="inline-start" />
+          Requeue stale
+        </Button>
+        <Button
+          variant={failedCount > 0 ? "default" : "outline"}
+          size="sm"
+          disabled={busy || failedCount === 0}
+          onClick={onRetryFailed}
+        >
+          <RefreshCw data-icon="inline-start" />
+          Retry failed
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy || !isActive}
+          onClick={onCancel}
+        >
+          <Ban data-icon="inline-start" />
+          Cancel
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 function ResultList({ results }: { results: ScanResult[] }) {
   if (results.length === 0) return null
   return (
@@ -161,6 +408,7 @@ export function OpsScreen() {
   const [searchProviders, setSearchProviders] = useState<string[]>([])
   const [rankingJobs, setRankingJobs] = useState<RankingJobRecord[]>([])
   const [operations, setOperations] = useState<OperationRun[]>([])
+  const [latestScanOperation, setLatestScanOperation] = useState<OperationRun | null>(null)
   const [workerStatus, setWorkerStatus] = useState<WorkerStatus | null>(null)
   const [automationAccounts, setAutomationAccounts] = useState<AutomationAccount[]>([])
   const [provider, setProvider] = useState("greenhouse")
@@ -186,12 +434,13 @@ export function OpsScreen() {
 
   async function loadOps() {
     try {
-      const [sourceData, rankingData, operationData, workerData, accountData] = await Promise.all([
+      const [sourceData, rankingData, operationData, workerData, accountData, latestScanData] = await Promise.all([
         api.getSources(),
         api.getRankingJobs(),
         api.getOperations(8),
         api.getWorkerStatus(),
         api.getAutomationAccounts(),
+        api.getLatestOperation("job_scan"),
       ])
       const [profileData, linkedinProfileData] = await Promise.all([
         api.getProfile(),
@@ -207,6 +456,7 @@ export function OpsScreen() {
       setProvider(sourceData.providers[0] ?? "greenhouse")
       setRankingJobs(rankingData.jobs)
       setOperations(operationData.operations)
+      setLatestScanOperation(latestScanData.operation)
       setWorkerStatus(workerData)
       setAutomationAccounts(accountData.accounts)
       setLinkedinProfiles(linkedinProfileData.linkedin_profile.profiles)
@@ -243,6 +493,7 @@ export function OpsScreen() {
       try {
         const response = await api.getOperation(scanOperationId)
         const operation = response.operation
+        setLatestScanOperation(operation)
         setBusy("all")
         setBusyDetail(operation.progress_message || "Unified job scan is running.")
         if (["queued", "running"].includes(operation.status)) {
@@ -343,7 +594,8 @@ export function OpsScreen() {
                 {busyDetail || busyCopy.detail}
               </p>
             </div>
-            <span className="hidden rounded-md border border-primary/20 bg-background px-2 py-1 text-xs tabular-nums text-muted-foreground sm:inline-flex">
+            <span className="hidden items-center gap-1 rounded-md border border-primary/20 bg-background px-2 py-1 text-xs tabular-nums text-muted-foreground sm:inline-flex">
+              <Timer className="size-3" />
               {elapsedSeconds}s
             </span>
           </CardContent>
@@ -452,6 +704,12 @@ export function OpsScreen() {
           </div>
         </CardContent>
       </Card>
+
+      <ScanSummaryCard
+        operation={latestScanOperation}
+        busy={busy !== null}
+        onRefresh={() => void runAction("refresh-ops", loadOps)}
+      />
 
       <Card>
         <CardHeader>
@@ -896,6 +1154,38 @@ export function OpsScreen() {
             Keep <span className="font-mono">run_ranking_worker.bat</span> running on your PC to process queued jobs and write logs locally.
           </p>
           <div className="flex flex-col gap-2">
+            {rankingJobs.slice(0, 5).map((job) => (
+              <RankingJobPanel
+                key={job.id}
+                job={job}
+                busy={busy !== null}
+                onRequeueStale={() =>
+                  void runAction("refresh-ops", async () => {
+                    const res = await api.requeueStaleRankingItems(job.id)
+                    toast.success(`Requeued ${res.requeued} stale items`)
+                  })
+                }
+                onRetryFailed={() =>
+                  void runAction("refresh-ops", async () => {
+                    const res = await api.requeueFailedRankingItems(job.id)
+                    toast.success(`Requeued ${res.requeued} failed items`)
+                  })
+                }
+                onCancel={() =>
+                  void runAction("refresh-ops", async () => {
+                    await api.cancelRankingJob(job.id)
+                    toast.success(`Cancelled ranking job #${job.id}`)
+                  })
+                }
+              />
+            ))}
+            {rankingJobs.length === 0 && (
+              <p className="text-xs text-muted-foreground">
+                No ranking jobs queued yet.
+              </p>
+            )}
+          </div>
+          <div className="hidden">
             {rankingJobs.slice(0, 5).map((job) => (
               <div
                 key={job.id}
