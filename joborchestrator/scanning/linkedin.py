@@ -242,11 +242,20 @@ def deduplicar_ofertas(ofertas: list[dict]) -> list[dict]:
     return list(por_id.values())
 
 
-def cargar_checkpoint(freshness_window_seconds: int = FRESHNESS_WINDOW_SECONDS) -> tuple[list[dict], set[str]]:
+def cargar_checkpoint(
+    freshness_window_seconds: int = FRESHNESS_WINDOW_SECONDS,
+    resume_from_checkpoint: bool = True,
+) -> tuple[list[dict], set[str]]:
     db_seen_ids = db.get_recent_external_ids_for_source(
         "linkedin_scraper",
         freshness_window_seconds=freshness_window_seconds,
     )
+    if not resume_from_checkpoint:
+        if db_seen_ids:
+            print(f"DB freshness cargada: {len(db_seen_ids)} IDs recientes de LinkedIn.")
+        print("Fresh mode activo: no se cargan ofertas previas del checkpoint.")
+        return [], db_seen_ids
+
     if not REANUDAR_DESDE_CHECKPOINT or not CHECKPOINT_JSONL.exists():
         if db_seen_ids:
             print(f"DB freshness cargada: {len(db_seen_ids)} IDs recientes de LinkedIn.")
@@ -1688,7 +1697,10 @@ def exportar_resultados(ofertas: list[dict], nombre_archivo: str):
 # MAIN
 # ============================================================
 
-async def run_linkedin_scrape(limit: int = LIMITE_RESULTADOS) -> pd.DataFrame:
+async def run_linkedin_scrape(
+    limit: int = LIMITE_RESULTADOS,
+    resume_from_checkpoint: bool = True,
+) -> pd.DataFrame:
     print("\n" + "=" * 60)
     print("LinkedIn Job Scraper â€” Backend Python RAW")
     print("=" * 60)
@@ -1711,7 +1723,7 @@ async def run_linkedin_scrape(limit: int = LIMITE_RESULTADOS) -> pd.DataFrame:
         try:
             await asegurar_sesion_manual(page)
 
-            todas, seen_ids = cargar_checkpoint()
+            todas, seen_ids = cargar_checkpoint(resume_from_checkpoint=resume_from_checkpoint)
 
             for busqueda in busquedas:
                 print("\n" + "=" * 70)

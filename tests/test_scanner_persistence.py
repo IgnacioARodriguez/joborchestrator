@@ -1,8 +1,10 @@
+import json
 import sqlite3
 from datetime import datetime, timedelta
 
 from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.normalization import compute_content_hash
+from joborchestrator.scanning import linkedin
 from joborchestrator.storage import persistence as db
 from joborchestrator.ranking.schemas import RankingEvidence, RankingResult, RankingScores
 
@@ -388,6 +390,29 @@ def test_recent_external_ids_for_source_respects_freshness_window(tmp_path, monk
 
     seen_ids = db.get_recent_external_ids_for_source("linkedin_scraper", freshness_window_seconds=30 * 24 * 60 * 60)
 
+    assert seen_ids == {"li-recent"}
+
+
+def test_linkedin_fresh_checkpoint_mode_uses_db_memory_without_old_results(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    now = datetime.now()
+    recent = (now - timedelta(days=2)).isoformat(timespec="seconds")
+    checkpoint_path = tmp_path / "checkpoint.jsonl"
+    checkpoint_path.write_text(
+        json.dumps({"id": "li-checkpoint-old", "titulo": "Old checkpoint job"}) + "\n",
+        encoding="utf-8",
+    )
+
+    db.upsert_job_posting(
+        make_job(external_id="li-recent", source="linkedin_scraper", company="Acme"),
+        seen_at=recent,
+    )
+    monkeypatch.setattr(linkedin, "CHECKPOINT_JSONL", checkpoint_path)
+
+    offers, seen_ids = linkedin.cargar_checkpoint(resume_from_checkpoint=False)
+
+    assert offers == []
     assert seen_ids == {"li-recent"}
 
 

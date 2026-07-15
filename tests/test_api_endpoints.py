@@ -194,6 +194,7 @@ def test_scan_fresh_queues_scan_with_auto_ranking(tmp_path, monkeypatch):
     assert operation["type"] == "job_scan"
     assert operation["input_json"]["auto_rank_new"] is True
     assert operation["input_json"]["include_linkedin"] is True
+    assert operation["input_json"]["linkedin_resume_from_checkpoint"] is False
     assert "Backend Engineer" in operation["input_json"]["queries"]
 
 

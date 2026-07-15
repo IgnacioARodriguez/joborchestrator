@@ -55,7 +55,10 @@ async def run_unified_job_scan(input_payload: dict[str, Any], progress: Progress
 
     if payload["include_linkedin"]:
         _progress(progress, f"Launching LinkedIn scraper with limit={payload['linkedin_limit']} using the selected browser profile.")
-        tasks["linkedin"] = _run_linkedin_scan(limit=payload["linkedin_limit"])
+        tasks["linkedin"] = _run_linkedin_scan(
+            limit=payload["linkedin_limit"],
+            resume_from_checkpoint=payload["linkedin_resume_from_checkpoint"],
+        )
 
     if not tasks:
         return {"ats": [], "search": [], "linkedin": None, "errors": {}, "summary": _summary([], [], None, {})}
@@ -93,6 +96,7 @@ def normalize_job_scan_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "include_ats": bool(payload.get("include_ats", True)),
         "include_search": bool(payload.get("include_search", True)),
         "include_linkedin": bool(payload.get("include_linkedin", False)),
+        "linkedin_resume_from_checkpoint": bool(payload.get("linkedin_resume_from_checkpoint", True)),
         "source_ids": payload.get("source_ids") or None,
         "search_providers": list(payload.get("search_providers") or []),
         "queries": list(payload.get("queries") or []),
@@ -110,8 +114,11 @@ def normalize_job_scan_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _run_linkedin_scan(limit: int = 50) -> dict[str, Any]:
-    scraped = await linkedin.run_linkedin_scrape(limit=limit)
+async def _run_linkedin_scan(limit: int = 50, resume_from_checkpoint: bool = True) -> dict[str, Any]:
+    scraped = await linkedin.run_linkedin_scrape(
+        limit=limit,
+        resume_from_checkpoint=resume_from_checkpoint,
+    )
     import_stats = import_linkedin_dataframe_to_job_postings(scraped) if not scraped.empty else {
         "new": 0,
         "updated": 0,

@@ -197,6 +197,7 @@ class UnifiedScanPayload(BaseModel):
     include_search: bool = True
     include_linkedin: bool = False
     linkedin_limit: int = Field(default=50, ge=1, le=500)
+    linkedin_resume_from_checkpoint: bool = True
     source_ids: list[int] | None = None
     search_providers: list[str] = Field(default_factory=list)
     queries: list[str] = Field(default_factory=list)
@@ -1056,6 +1057,7 @@ def queue_fresh_scan() -> dict[str, Any]:
         include_search=bool(queries),
         include_linkedin=True,
         linkedin_limit=75,
+        linkedin_resume_from_checkpoint=False,
         search_providers=[],
         queries=queries,
         application_targets=profile.get("application_targets") or [],

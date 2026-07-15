@@ -326,6 +326,7 @@ export const api = {
     auto_rank_new?: boolean
     ranking_limit?: number
     linkedin_limit?: number
+    linkedin_resume_from_checkpoint?: boolean
     search_providers: string[]
     queries: string[]
     application_targets?: Array<{ label: string; location: string; work_modes: string[] }>
