@@ -72,7 +72,9 @@ export function AppShell() {
     loading,
     applyQueuePage,
     applyQueuePageSize,
+    applyQueueFreshness,
     setApplyQueuePage,
+    setApplyQueueFreshness,
     refresh,
   } = useStore()
   const backendReady = backendOnline || jobsMeta !== null || jobs.length > 0
@@ -83,6 +85,8 @@ export function AppShell() {
   const rangeEnd = Math.min(offset + returnedJobs, totalJobs)
   const canPagePrevious = Boolean(jobsMeta?.has_previous) || applyQueuePage > 1
   const canPageNext = Boolean(jobsMeta?.has_next)
+  const freshnessCounts = jobsMeta?.freshness_counts ?? {}
+  const hiddenStale = (freshnessCounts.stale ?? 0) + (freshnessCounts.archival ?? 0)
 
   function navigate(next: Section) {
     setSection(next)
@@ -156,6 +160,29 @@ export function AppShell() {
               </span>
             </div>
             <div className="flex items-center gap-2">
+              <div className="hidden items-center rounded-lg border border-border bg-card p-0.5 lg:flex">
+                {[
+                  ["active", "Fresh"],
+                  ["all", "All"],
+                  ["stale", "Stale"],
+                ].map(([value, label]) => (
+                  <Button
+                    key={value}
+                    variant={applyQueueFreshness === value ? "default" : "ghost"}
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    disabled={loading}
+                    onClick={() => setApplyQueueFreshness(value as "active" | "all" | "stale")}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
+              {applyQueueFreshness === "active" && hiddenStale > 0 ? (
+                <span className="hidden text-xs text-muted-foreground xl:inline">
+                  {hiddenStale} stale hidden
+                </span>
+              ) : null}
               <div className="hidden items-center gap-1 sm:flex">
                 <Button
                   variant="outline"

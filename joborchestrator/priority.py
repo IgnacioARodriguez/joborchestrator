@@ -11,6 +11,8 @@ class PriorityBreakdown:
     fit_score: int
     eligibility_score: int
     freshness_score: int
+    freshness_bucket: str
+    freshness_age_days: int | None
     application_effort_score: int
     recruiter_advantage_score: int
     data_quality_score: int
@@ -31,11 +33,13 @@ def compute_priority(job: dict[str, Any], ranking: dict[str, Any] | None = None,
     fit_score = _clamp_int(ranking.get("final_score") or 0)
     eligibility_score = _eligibility_score(job, ranking)
     freshness_score = _freshness_score(job, now)
+    freshness_bucket, freshness_age_days = _freshness_bucket(job, now)
     effort = _effort_score(job)
     recruiter = _recruiter_advantage_score(job)
     quality = _data_quality_score(job)
     competition = _competition_signal(job)
     risk = _risk_penalty(job, ranking)
+    staleness = _staleness_penalty(freshness_bucket)
     estimated_minutes = _estimated_minutes(job, effort)
     priority = round(
         fit_score * 0.34
@@ -46,6 +50,7 @@ def compute_priority(job: dict[str, Any], ranking: dict[str, Any] | None = None,
         + quality * 0.10
         + competition * 0.06
         - risk * 0.20
+        - staleness
     )
     priority = _clamp_int(priority)
     blocker = _blocker(job, quality, risk)
@@ -59,6 +64,8 @@ def compute_priority(job: dict[str, Any], ranking: dict[str, Any] | None = None,
         fit_score=fit_score,
         eligibility_score=eligibility_score,
         freshness_score=freshness_score,
+        freshness_bucket=freshness_bucket,
+        freshness_age_days=freshness_age_days,
         application_effort_score=effort,
         recruiter_advantage_score=recruiter,
         data_quality_score=quality,
@@ -86,6 +93,29 @@ def _freshness_score(job: dict[str, Any], now: datetime) -> int:
     if age_hours <= 24 * 21:
         return 42
     return 18
+
+
+def _freshness_bucket(job: dict[str, Any], now: datetime) -> tuple[str, int | None]:
+    raw = job.get("posted_at") or job.get("first_seen_at") or job.get("last_seen_at")
+    seen = _parse_dt(raw)
+    if not seen:
+        return "archival", None
+    age_days = max(0, int((now - seen).total_seconds() // 86400))
+    if age_days <= 3:
+        return "fresh", age_days
+    if age_days <= 7:
+        return "recent", age_days
+    if age_days <= 21:
+        return "stale", age_days
+    return "archival", age_days
+
+
+def _staleness_penalty(bucket: str) -> int:
+    if bucket == "stale":
+        return 14
+    if bucket == "archival":
+        return 26
+    return 0
 
 
 def _recruiter_advantage_score(job: dict[str, Any]) -> int:

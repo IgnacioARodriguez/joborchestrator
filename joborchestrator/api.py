@@ -417,45 +417,72 @@ def list_jobs(limit: int | None = None, ranking_version: str | None = None) -> d
 
 
 @app.get("/api/apply-queue")
-def apply_queue(limit: int = 50, offset: int = 0, ranking_version: str | None = None) -> dict[str, Any]:
+def apply_queue(
+    limit: int = 50,
+    offset: int = 0,
+    ranking_version: str | None = None,
+    freshness: str = "active",
+) -> dict[str, Any]:
     if ranking_version and is_heuristic_ranking_version(ranking_version):
         raise HTTPException(status_code=400, detail="Heuristic rankings are no longer supported in the dashboard.")
+    freshness_filter = _normalize_freshness_filter(freshness)
     effective_limit = max(1, min(int(limit), 100))
     effective_offset = max(0, int(offset))
     ranking_versions = filter_llm_ranking_versions(db.get_ranking_versions())
     selected_ranking_version = ranking_version or (ranking_versions[0] if ranking_versions else None)
-    rows = db.get_job_postings(limit=None).to_dict("records")
-    job_ids = [int(row["id"]) for row in rows]
-    ranking_rows = (
-        db.get_rankings_for_job_ids(selected_ranking_version, job_ids).to_dict("records")
-        if selected_ranking_version
-        else []
-    )
-    rankings = {int(row["job_id"]): row for row in ranking_rows}
+    rows = db.get_apply_queue_job_postings(
+        selected_ranking_version,
+        freshness_filter,
+        effective_limit,
+        effective_offset,
+    ).to_dict("records")
     jobs = sorted(
         [
-            job_dto(row, rankings.get(int(row["id"])), include_hiring_contacts=False, compact=True)
+            job_dto(row, _ranking_from_apply_queue_row(row), include_hiring_contacts=False, compact=True)
             for row in rows
         ],
         key=_apply_queue_sort_key,
         reverse=True,
     )
-    page = jobs[effective_offset : effective_offset + effective_limit]
-    total = len(jobs)
+    freshness_counts = db.count_job_freshness_buckets()
+    total = _freshness_total(freshness_filter, freshness_counts)
     return {
-        "jobs": page,
+        "jobs": jobs,
         "ranking_versions": ranking_versions,
         "selected_ranking_version": selected_ranking_version,
         "meta": {
             "total": total,
-            "returned": len(page),
-            "limited": effective_offset + len(page) < total,
+            "returned": len(jobs),
+            "limited": effective_offset + len(jobs) < total,
             "limit": effective_limit,
             "offset": effective_offset,
             "has_next": effective_offset + effective_limit < total,
             "has_previous": effective_offset > 0,
+            "freshness": freshness_filter,
+            "freshness_counts": freshness_counts,
+            "unfiltered_total": sum(freshness_counts.values()),
             "db_mode": db_connection.connection_mode(),
         },
+    }
+
+
+def _ranking_from_apply_queue_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    ranking_id = row.get("ranking_id")
+    if ranking_id is None or (isinstance(ranking_id, float) and pd.isna(ranking_id)):
+        return None
+    return {
+        "id": ranking_id,
+        "job_id": row.get("ranking_job_id"),
+        "final_score": row.get("ranking_final_score"),
+        "decision": row.get("ranking_decision"),
+        "confidence": row.get("ranking_confidence"),
+        "scores_json": row.get("ranking_scores_json"),
+        "evidence_json": row.get("ranking_evidence_json"),
+        "reasoning_summary": row.get("ranking_reasoning_summary"),
+        "recommended_application_angle": row.get("ranking_recommended_application_angle"),
+        "cv_keywords_to_emphasize_json": row.get("ranking_cv_keywords_to_emphasize_json"),
+        "cv_keywords_to_avoid_overclaiming_json": row.get("ranking_cv_keywords_to_avoid_overclaiming_json"),
+        "ranking_version": row.get("ranking_ranking_version"),
     }
 
 
@@ -478,6 +505,24 @@ def _apply_queue_sort_key(job: dict[str, Any]) -> tuple[int, int, int, int, int]
         int(priority.get("freshness_score") or 0),
         int(priority.get("recruiter_advantage_score") or 0),
     )
+
+
+def _normalize_freshness_filter(value: str | None) -> str:
+    normalized = str(value or "active").lower()
+    allowed = {"active", "all", "fresh", "recent", "stale", "archival"}
+    if normalized not in allowed:
+        raise HTTPException(status_code=400, detail="Unsupported freshness filter.")
+    return normalized
+
+
+def _freshness_total(freshness_filter: str, counts: dict[str, int]) -> int:
+    if freshness_filter == "all":
+        return sum(counts.values())
+    if freshness_filter == "active":
+        return counts.get("fresh", 0) + counts.get("recent", 0)
+    if freshness_filter == "stale":
+        return counts.get("stale", 0) + counts.get("archival", 0)
+    return counts.get(freshness_filter, 0)
 
 
 @app.post("/api/jobs")

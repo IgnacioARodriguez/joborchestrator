@@ -7,6 +7,11 @@ import type { JobPosting } from "@/lib/types"
 import { rankingSummaryText, relativeTime } from "@/lib/job-ui"
 import { cn } from "@/lib/utils"
 
+function freshnessLabel(bucket: string, ageDays?: number | null) {
+  const label = bucket === "archival" ? "Old" : bucket.charAt(0).toUpperCase() + bucket.slice(1)
+  return ageDays == null ? label : `${label} ${ageDays}d`
+}
+
 export function JobCompactCard({
   job,
   onOpen,
@@ -35,6 +40,9 @@ export function JobCompactCard({
               decision={job.ranking.decision}
               score={job.ranking.final_score}
             />
+            <span className="rounded-md border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {freshnessLabel(job.priority.freshness_bucket, job.priority.freshness_age_days)}
+            </span>
           </div>
           <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
             {job.title}

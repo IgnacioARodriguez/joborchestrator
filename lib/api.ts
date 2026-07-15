@@ -73,10 +73,11 @@ export const api = {
     return request<JobsResponse>(`/api/jobs${query}`)
   },
 
-  async getApplyQueue(rankingVersion?: string | null, limit = 50, offset = 0) {
+  async getApplyQueue(rankingVersion?: string | null, limit = 50, offset = 0, freshness = "active") {
     const params = new URLSearchParams()
     params.set("limit", String(limit))
     params.set("offset", String(offset))
+    params.set("freshness", freshness)
     if (rankingVersion) {
       params.set("ranking_version", rankingVersion)
     }

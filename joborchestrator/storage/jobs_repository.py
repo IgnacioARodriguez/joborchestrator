@@ -403,6 +403,100 @@ def get_job_postings(
         conn.close()
 
 
+def get_apply_queue_job_postings(
+    connect: ConnectionFactory,
+    read_sql_query: ReadSqlQuery,
+    ranking_version: str | None,
+    freshness: str,
+    limit: int,
+    offset: int,
+    now: datetime | None = None,
+) -> pd.DataFrame:
+    conn = connect()
+    try:
+        where_sql, params = _freshness_where_clause(freshness, now or datetime.now())
+        join_sql = "LEFT JOIN job_rankings jr ON jr.job_id = jp.id AND jr.ranking_version = ?"
+        query = f"""
+            SELECT
+              jp.*,
+              jr.id AS ranking_id,
+              jr.job_id AS ranking_job_id,
+              jr.final_score AS ranking_final_score,
+              jr.decision AS ranking_decision,
+              jr.confidence AS ranking_confidence,
+              jr.scores_json AS ranking_scores_json,
+              jr.evidence_json AS ranking_evidence_json,
+              jr.reasoning_summary AS ranking_reasoning_summary,
+              jr.recommended_application_angle AS ranking_recommended_application_angle,
+              jr.cv_keywords_to_emphasize_json AS ranking_cv_keywords_to_emphasize_json,
+              jr.cv_keywords_to_avoid_overclaiming_json AS ranking_cv_keywords_to_avoid_overclaiming_json,
+              jr.ranking_version AS ranking_ranking_version
+            FROM job_postings jp
+            {join_sql}
+            {where_sql}
+            ORDER BY
+              CASE jr.decision
+                WHEN 'APPLY_NOW' THEN 7
+                WHEN 'APPLY_WITH_TAILORED_CV' THEN 6
+                WHEN 'MAYBE' THEN 5
+                WHEN 'SKIP' THEN 2
+                WHEN 'AVOID' THEN 1
+                ELSE 0
+              END DESC,
+              COALESCE(jr.final_score, 0) DESC,
+              CASE
+                WHEN COALESCE(jp.recruiter_profile_url, jp.recruiter_name, '') != '' THEN 1
+                ELSE 0
+              END DESC,
+              COALESCE(jp.posted_at, jp.first_seen_at, jp.last_seen_at) DESC,
+              jp.id DESC
+            LIMIT ? OFFSET ?
+        """
+        return read_sql_query(query, conn, [ranking_version or "", *params, limit, offset])
+    finally:
+        conn.close()
+
+
+def count_apply_queue_job_postings(
+    connect: ConnectionFactory,
+    freshness: str,
+    now: datetime | None = None,
+) -> int:
+    conn = connect()
+    try:
+        where_sql, params = _freshness_where_clause(freshness, now or datetime.now())
+        row = conn.execute(f"SELECT COUNT(*) AS count FROM job_postings jp {where_sql}", params).fetchone()
+        return int(row["count"] if row else 0)
+    finally:
+        conn.close()
+
+
+def count_job_freshness_buckets(connect: ConnectionFactory, now: datetime | None = None) -> dict[str, int]:
+    conn = connect()
+    try:
+        fresh_cutoff, recent_cutoff, stale_cutoff = _freshness_cutoffs(now or datetime.now())
+        date_expr = "COALESCE(posted_at, first_seen_at, last_seen_at)"
+        row = conn.execute(
+            f"""
+            SELECT
+              SUM(CASE WHEN {date_expr} >= ? THEN 1 ELSE 0 END) AS fresh,
+              SUM(CASE WHEN {date_expr} < ? AND {date_expr} >= ? THEN 1 ELSE 0 END) AS recent,
+              SUM(CASE WHEN {date_expr} < ? AND {date_expr} >= ? THEN 1 ELSE 0 END) AS stale,
+              SUM(CASE WHEN {date_expr} < ? OR {date_expr} IS NULL THEN 1 ELSE 0 END) AS archival
+            FROM job_postings
+            """,
+            (fresh_cutoff, fresh_cutoff, recent_cutoff, recent_cutoff, stale_cutoff, stale_cutoff),
+        ).fetchone()
+        return {
+            "fresh": int(row["fresh"] or 0) if row else 0,
+            "recent": int(row["recent"] or 0) if row else 0,
+            "stale": int(row["stale"] or 0) if row else 0,
+            "archival": int(row["archival"] or 0) if row else 0,
+        }
+    finally:
+        conn.close()
+
+
 def get_job_posting(connect: ConnectionFactory, job_id: int) -> dict | None:
     conn = connect()
     try:
@@ -410,6 +504,32 @@ def get_job_posting(connect: ConnectionFactory, job_id: int) -> dict | None:
         return dict(row) if row else None
     finally:
         conn.close()
+
+
+def _freshness_where_clause(freshness: str, now: datetime) -> tuple[str, list[object]]:
+    fresh_cutoff, recent_cutoff, stale_cutoff = _freshness_cutoffs(now)
+    date_expr = "COALESCE(jp.posted_at, jp.first_seen_at, jp.last_seen_at)"
+    if freshness == "all":
+        return "", []
+    if freshness == "active":
+        return f"WHERE {date_expr} >= ?", [recent_cutoff]
+    if freshness == "fresh":
+        return f"WHERE {date_expr} >= ?", [fresh_cutoff]
+    if freshness == "recent":
+        return f"WHERE {date_expr} < ? AND {date_expr} >= ?", [fresh_cutoff, recent_cutoff]
+    if freshness == "stale":
+        return f"WHERE ({date_expr} < ? OR {date_expr} IS NULL)", [recent_cutoff]
+    if freshness == "archival":
+        return f"WHERE ({date_expr} < ? OR {date_expr} IS NULL)", [stale_cutoff]
+    raise ValueError(f"Unsupported freshness filter: {freshness}")
+
+
+def _freshness_cutoffs(now: datetime) -> tuple[str, str, str]:
+    return (
+        (now - timedelta(days=3)).isoformat(timespec="seconds"),
+        (now - timedelta(days=7)).isoformat(timespec="seconds"),
+        (now - timedelta(days=21)).isoformat(timespec="seconds"),
+    )
 
 
 def sync_job_hiring_contacts_for_connection(

@@ -83,6 +83,8 @@ export interface PriorityBreakdown {
   fit_score: number
   eligibility_score: number
   freshness_score: number
+  freshness_bucket: "fresh" | "recent" | "stale" | "archival" | string
+  freshness_age_days?: number | null
   application_effort_score: number
   recruiter_advantage_score: number
   data_quality_score: number
@@ -253,6 +255,9 @@ export interface JobsMeta {
   offset?: number
   has_next?: boolean
   has_previous?: boolean
+  freshness?: "active" | "all" | "fresh" | "recent" | "stale" | "archival" | string
+  freshness_counts?: Record<string, number>
+  unfiltered_total?: number
   db_mode: "sqlite" | "turso" | string
 }
 

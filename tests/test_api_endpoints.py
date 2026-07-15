@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from fastapi.testclient import TestClient
 
 from joborchestrator import api
@@ -140,7 +142,7 @@ def test_apply_queue_paginates_after_priority_sort(tmp_path, monkeypatch):
         external_id = f"job-{index}"
         db.upsert_job_posting(
             make_job(external_id=external_id, title=f"Role {index}"),
-            seen_at=f"2026-01-0{index}T10:00:00",
+            seen_at=(datetime.now() - timedelta(hours=index)).isoformat(timespec="seconds"),
         )
         row = db.get_job_postings(limit=None)
         job_id = int(row[row["external_id"] == external_id].iloc[0]["id"])
@@ -155,6 +157,29 @@ def test_apply_queue_paginates_after_priority_sort(tmp_path, monkeypatch):
     assert first_page["meta"]["limit"] == 1
     assert first_page["meta"]["has_next"] is True
     assert second_page["meta"]["has_previous"] is True
+
+
+def test_apply_queue_filters_stale_test_data(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(
+        make_job(external_id="fresh-job", title="Fresh Role"),
+        seen_at=datetime.now().isoformat(timespec="seconds"),
+    )
+    db.upsert_job_posting(
+        make_job(external_id="old-job", title="Old Role"),
+        seen_at=(datetime.now() - timedelta(days=14)).isoformat(timespec="seconds"),
+    )
+    rows = db.get_job_postings(limit=None)
+    for _, row in rows.iterrows():
+        db.save_job_ranking(int(row["id"]), make_ranking("ranking_v1.1.0-nvidia", 80, "APPLY_NOW"))
+
+    active = client.get("/api/apply-queue").json()
+    stale = client.get("/api/apply-queue", params={"freshness": "stale"}).json()
+
+    assert [job["title"] for job in active["jobs"]] == ["Fresh Role"]
+    assert [job["title"] for job in stale["jobs"]] == ["Old Role"]
+    assert active["meta"]["freshness_counts"]["fresh"] == 1
+    assert active["meta"]["freshness_counts"]["stale"] == 1
 
 
 def test_create_job_endpoint_for_extension(tmp_path, monkeypatch):

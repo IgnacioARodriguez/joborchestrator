@@ -19,6 +19,8 @@ import type {
 } from "./types"
 import { api } from "./api"
 
+type ApplyQueueFreshness = "active" | "all" | "stale"
+
 interface StoreValue {
   jobs: JobPosting[]
   applications: ApplicationRecord[]
@@ -26,10 +28,12 @@ interface StoreValue {
   backendOnline: boolean
   applyQueuePage: number
   applyQueuePageSize: number
+  applyQueueFreshness: ApplyQueueFreshness
   jobsMeta: JobsMeta | null
   rankingVersions: string[]
   selectedRankingVersion: string | null
   setApplyQueuePage: (page: number) => void
+  setApplyQueueFreshness: (freshness: ApplyQueueFreshness) => void
   setSelectedRankingVersion: (version: string) => void
   refresh: (rankingVersion?: string | null) => Promise<void>
   getJob: (id: string) => JobPosting | undefined
@@ -51,12 +55,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [backendOnline, setBackendOnline] = useState(false)
   const [applyQueuePage, setApplyQueuePageState] = useState(1)
+  const [applyQueueFreshness, setApplyQueueFreshnessState] = useState<ApplyQueueFreshness>("active")
   const [jobsMeta, setJobsMeta] = useState<JobsMeta | null>(null)
   const [rankingVersions, setRankingVersions] = useState<string[]>([])
   const [selectedRankingVersion, setSelectedRankingVersionState] =
     useState<string | null>(null)
   const selectedRankingVersionRef = useRef<string | null>(null)
   const applyQueuePageRef = useRef(1)
+  const applyQueueFreshnessRef = useRef<ApplyQueueFreshness>("active")
 
   const refresh = useCallback(async (rankingVersion?: string | null) => {
     setLoading(true)
@@ -64,7 +70,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const version = rankingVersion === undefined ? selectedRankingVersionRef.current : rankingVersion
       const offset = (applyQueuePageRef.current - 1) * APPLY_QUEUE_PAGE_SIZE
       const [data, applicationData] = await Promise.all([
-        api.getApplyQueue(version, APPLY_QUEUE_PAGE_SIZE, offset),
+        api.getApplyQueue(version, APPLY_QUEUE_PAGE_SIZE, offset, applyQueueFreshnessRef.current),
         api.getApplications(),
       ])
       setJobs(data.jobs)
@@ -94,6 +100,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const next = Math.max(1, page)
     applyQueuePageRef.current = next
     setApplyQueuePageState(next)
+    void refresh()
+  }, [refresh])
+
+  const setApplyQueueFreshness = useCallback((freshness: ApplyQueueFreshness) => {
+    applyQueueFreshnessRef.current = freshness
+    applyQueuePageRef.current = 1
+    setApplyQueueFreshnessState(freshness)
+    setApplyQueuePageState(1)
     void refresh()
   }, [refresh])
 
@@ -173,10 +187,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       backendOnline,
       applyQueuePage,
       applyQueuePageSize: APPLY_QUEUE_PAGE_SIZE,
+      applyQueueFreshness,
       jobsMeta,
       rankingVersions,
       selectedRankingVersion,
       setApplyQueuePage,
+      setApplyQueueFreshness,
       setSelectedRankingVersion,
       refresh,
       getJob,
@@ -191,10 +207,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       loading,
       backendOnline,
       applyQueuePage,
+      applyQueueFreshness,
       jobsMeta,
       rankingVersions,
       selectedRankingVersion,
       setApplyQueuePage,
+      setApplyQueueFreshness,
       setSelectedRankingVersion,
       refresh,
       getJob,

@@ -919,6 +919,23 @@ def get_job_postings(statuses: list[str] | None = None, limit: int | None = 200)
     return jobs_repository.get_job_postings(_conn, _read_sql_query, statuses, limit)
 
 
+def get_apply_queue_job_postings(
+    ranking_version: str | None,
+    freshness: str,
+    limit: int,
+    offset: int,
+) -> pd.DataFrame:
+    return jobs_repository.get_apply_queue_job_postings(_conn, _read_sql_query, ranking_version, freshness, limit, offset)
+
+
+def count_apply_queue_job_postings(freshness: str) -> int:
+    return jobs_repository.count_apply_queue_job_postings(_conn, freshness)
+
+
+def count_job_freshness_buckets() -> dict[str, int]:
+    return jobs_repository.count_job_freshness_buckets(_conn)
+
+
 def get_job_posting(job_id: int) -> dict | None:
     return jobs_repository.get_job_posting(_conn, job_id)
 

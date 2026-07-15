@@ -28,8 +28,28 @@ def test_priority_uses_freshness_and_recruiter_advantage() -> None:
 
     assert priority.priority_score >= 70
     assert priority.freshness_score == 100
+    assert priority.freshness_bucket == "fresh"
     assert priority.recruiter_advantage_score == 90
     assert priority.next_action in {"Prepare", "Review", "Apply now"}
+
+
+def test_priority_penalizes_stale_jobs_without_changing_fit() -> None:
+    now = datetime(2026, 7, 15, 12, 0, 0)
+    base_job = {
+        "title": "Backend Engineer",
+        "company": "Acme",
+        "url": "https://boards.greenhouse.io/acme/jobs/1",
+        "apply_url": "https://boards.greenhouse.io/acme/jobs/1",
+        "source": "greenhouse",
+        "is_active": 1,
+    }
+
+    fresh = compute_priority({**base_job, "first_seen_at": "2026-07-15T10:00:00"}, {"final_score": 90}, now=now)
+    stale = compute_priority({**base_job, "first_seen_at": "2026-07-01T10:00:00"}, {"final_score": 90}, now=now)
+
+    assert stale.freshness_bucket == "stale"
+    assert stale.fit_score == fresh.fit_score
+    assert stale.priority_score < fresh.priority_score
 
 
 def test_application_session_transition_validation_and_idempotency() -> None:
