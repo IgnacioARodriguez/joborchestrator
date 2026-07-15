@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
+  Activity,
   ChevronLeft,
   ChevronRight,
   Compass,
@@ -23,6 +24,7 @@ import { OpsScreen } from "@/components/screens/ops-screen"
 import { InsightsScreen } from "@/components/screens/insights-screen"
 import { JobDetailDrawer } from "@/components/job-detail-drawer"
 import { toast } from "sonner"
+import type { OpsStatus } from "@/lib/types"
 
 function DataLoadingBanner() {
   const { loading } = useStore()
@@ -64,10 +66,47 @@ function DataLoadingBanner() {
   )
 }
 
+function OpsStatusBanner({
+  status,
+  onOpenOps,
+}: {
+  status: OpsStatus | null
+  onOpenOps: () => void
+}) {
+  if (!status) return null
+  const hasWork = status.local_worker_needed || status.ranking_worker_needed
+  const hasFailure = status.summary.includes("failed")
+  if (!hasWork && !hasFailure) return null
+  const command = hasWork
+    ? status.expected_commands.workers
+    : status.expected_commands.all
+  return (
+    <div className="mb-3 flex items-center gap-3 rounded-lg border border-border bg-card p-3">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <Activity className="size-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">
+          {status.summary}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {hasWork
+            ? `Local worker required: ${command}`
+            : "Open operations for details."}
+        </p>
+      </div>
+      <Button variant="outline" size="sm" onClick={onOpenOps}>
+        Operations
+      </Button>
+    </div>
+  )
+}
+
 export function AppShell() {
   const [section, setSection] = useState<Section>("today")
   const [openJobId, setOpenJobId] = useState<string | null>(null)
   const [scanBusy, setScanBusy] = useState(false)
+  const [opsStatus, setOpsStatus] = useState<OpsStatus | null>(null)
   const {
     jobs,
     jobsMeta,
@@ -95,6 +134,28 @@ export function AppShell() {
     setSection(next)
   }
 
+  const loadOpsStatus = useCallback(async () => {
+    try {
+      setOpsStatus(await api.getOpsStatus())
+    } catch {
+      setOpsStatus(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    const poll = () => {
+      void loadOpsStatus()
+    }
+    const initialTimer = window.setTimeout(poll, 0)
+    const timer = window.setInterval(() => {
+      poll()
+    }, 10000)
+    return () => {
+      window.clearTimeout(initialTimer)
+      window.clearInterval(timer)
+    }
+  }, [loadOpsStatus])
+
   async function scanFreshJobs() {
     setScanBusy(true)
     try {
@@ -102,6 +163,7 @@ export function AppShell() {
       toast.success(response.already_running ? "Fresh scan already running" : "Fresh scan queued", {
         description: `Operation #${response.operation_id}`,
       })
+      await loadOpsStatus()
       setSection("automations")
     } catch (error) {
       toast.error("Could not queue fresh scan", {
@@ -249,6 +311,7 @@ export function AppShell() {
 
           <main className="mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col overflow-y-auto px-4 pb-24 pt-3 sm:px-6 lg:px-6 lg:pb-6">
             <div className="shrink-0">
+              <OpsStatusBanner status={opsStatus} onOpenOps={() => navigate("automations")} />
               <DataLoadingBanner />
             </div>
             {section === "today" && (

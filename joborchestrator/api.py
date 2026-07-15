@@ -351,6 +351,60 @@ def worker_status() -> dict[str, Any]:
     }
 
 
+@app.get("/api/ops/status")
+def ops_status() -> dict[str, Any]:
+    operations = db.list_operations(limit=25)
+    ranking_jobs = db.list_ranking_jobs(limit=10).to_dict("records")
+    local_worker_types = {
+        "cv_profile_import",
+        "application_materials_generation",
+        "job_scan",
+        "application_execution",
+    }
+    local_ops = [op for op in operations if op["type"] in local_worker_types]
+    active_local_ops = [op for op in local_ops if op["status"] in {"queued", "running"}]
+    active_ranking_jobs = [job for job in ranking_jobs if job["status"] in {"queued", "running"}]
+    latest_scan = next((op for op in operations if op["type"] == "job_scan"), None)
+    latest_ranking = ranking_jobs[0] if ranking_jobs else None
+    return {
+        "mode": db_connection.connection_mode(),
+        "local_worker_needed": bool(active_local_ops),
+        "ranking_worker_needed": bool(active_ranking_jobs),
+        "active_local_operations": active_local_ops[:5],
+        "active_ranking_jobs": active_ranking_jobs[:5],
+        "latest_scan_operation": latest_scan,
+        "latest_ranking_job": latest_ranking,
+        "summary": _ops_status_summary(active_local_ops, active_ranking_jobs, latest_scan, latest_ranking),
+        "expected_commands": {
+            "all": "npm run dev:all",
+            "workers": "npm run workers",
+            "operation_worker": "python -m joborchestrator.worker",
+            "ranking_worker": "python -m joborchestrator.ranking.worker",
+        },
+    }
+
+
+def _ops_status_summary(
+    active_local_ops: list[dict[str, Any]],
+    active_ranking_jobs: list[dict[str, Any]],
+    latest_scan: dict[str, Any] | None,
+    latest_ranking: dict[str, Any] | None,
+) -> str:
+    if active_local_ops:
+        op = active_local_ops[0]
+        return f"{op['type']} {op['status']}: {op.get('progress_message') or 'waiting for local worker'}"
+    if active_ranking_jobs:
+        job = active_ranking_jobs[0]
+        total = int(job.get("total_items") or 0)
+        done = int(job.get("processed_items") or 0)
+        return f"ranking {job['status']}: {done}/{total} processed"
+    if latest_scan and latest_scan.get("status") == "failed":
+        return f"latest scan failed: {latest_scan.get('error') or 'check logs'}"
+    if latest_ranking and latest_ranking.get("status") == "failed":
+        return f"latest ranking failed: {latest_ranking.get('latest_item_error') or latest_ranking.get('error') or 'check logs'}"
+    return "workers idle"
+
+
 @app.get("/api/automation/accounts")
 def list_automation_accounts() -> dict[str, Any]:
     accounts = db.list_automation_site_accounts()

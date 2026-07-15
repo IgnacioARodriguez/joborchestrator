@@ -197,6 +197,34 @@ def test_scan_fresh_queues_scan_with_auto_ranking(tmp_path, monkeypatch):
     assert "Backend Engineer" in operation["input_json"]["queries"]
 
 
+def test_ops_status_reports_local_and_ranking_work(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.create_operation("job_scan", {"include_ats": True}, "Queued scan.")
+    db.upsert_job_posting(
+        make_job(external_id="rank-me", title="Rank Me"),
+        seen_at=datetime.now().isoformat(timespec="seconds"),
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    db.create_ranking_job(
+        provider="nvidia",
+        model="test-model",
+        ranking_version="ranking_v1.1.0-nvidia",
+        job_ids=[job_id],
+        request_batch_size=1,
+        max_concurrency=1,
+    )
+
+    response = client.get("/api/ops/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["local_worker_needed"] is True
+    assert body["ranking_worker_needed"] is True
+    assert body["latest_scan_operation"]["type"] == "job_scan"
+    assert body["latest_ranking_job"]["status"] == "queued"
+    assert body["expected_commands"]["workers"] == "npm run workers"
+
+
 def test_create_job_endpoint_for_extension(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
 

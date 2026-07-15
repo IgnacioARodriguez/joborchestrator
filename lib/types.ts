@@ -398,6 +398,23 @@ export interface WorkerStatus {
   expected_commands: string[]
 }
 
+export interface OpsStatus {
+  mode: string
+  local_worker_needed: boolean
+  ranking_worker_needed: boolean
+  active_local_operations: OperationRun[]
+  active_ranking_jobs: RankingJobRecord[]
+  latest_scan_operation?: OperationRun | null
+  latest_ranking_job?: RankingJobRecord | null
+  summary: string
+  expected_commands: {
+    all: string
+    workers: string
+    operation_worker: string
+    ranking_worker: string
+  }
+}
+
 export interface AutomationAccount {
   id: number
   provider: string
