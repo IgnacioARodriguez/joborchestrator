@@ -28,7 +28,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit, urlencode
 
 import pandas as pd
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import Error as PlaywrightError, async_playwright, TimeoutError as PlaywrightTimeoutError
 
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
 from joborchestrator.ranking.role_catalog import role_catalog_from_profile
@@ -628,8 +628,7 @@ async def asegurar_sesion_manual(page):
     Si no hay sesiÃ³n, pide login manual una sola vez.
     """
 
-    await page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded")
-    await page.wait_for_timeout(jitter_ms(2500))
+    await _goto_linkedin_session_check(page)
 
     if await linkedin_pide_verificacion(page):
         raise RuntimeError(
@@ -646,11 +645,16 @@ async def asegurar_sesion_manual(page):
 
         input("â†’ ENTER cuando hayas terminado el login manual: ")
 
-        await page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded")
-        await page.wait_for_timeout(jitter_ms(2500))
+        await _goto_linkedin_session_check(page)
 
         if "/login" in page.url:
             raise RuntimeError("No se detectÃ³ sesiÃ³n activa despuÃ©s del login manual.")
+
+        if "/passwordReset" in page.url:
+            raise RuntimeError(
+                "LinkedIn redirigiÃ³ a recuperaciÃ³n de contraseÃ±a durante el login manual. "
+                "Completa el login normal en el perfil de navegador y vuelve a intentar."
+            )
 
         if await linkedin_pide_verificacion(page):
             raise RuntimeError(
@@ -659,6 +663,18 @@ async def asegurar_sesion_manual(page):
             )
 
     print("âœ… SesiÃ³n de LinkedIn activa.")
+
+
+async def _goto_linkedin_session_check(page):
+    try:
+        await page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=30000)
+    except PlaywrightError as exc:
+        # LinkedIn sometimes interrupts /feed/ with login or password reset redirects.
+        current_url = page.url
+        if "/login" not in current_url and "/passwordReset" not in current_url:
+            raise
+        print(f"LinkedIn redirigiÃ³ durante el chequeo de sesiÃ³n: {current_url}")
+    await page.wait_for_timeout(jitter_ms(2500))
 
 
 # ============================================================
@@ -1968,7 +1984,16 @@ async def run_linkedin_scrape(
             finally:
                 await context.close()
     except Exception as exc:
-        run_stats["stop_reason"] = "error"
+        error_text = str(exc)
+        if run_stats["searches_run"] == 0 and (
+            "passwordReset" in error_text
+            or "login manual" in error_text
+            or "sesiÃ³n" in error_text
+            or "sesión" in error_text
+        ):
+            run_stats["stop_reason"] = "session_error"
+        else:
+            run_stats["stop_reason"] = "error"
         _finish_linkedin_run(run_id, run_started_at, run_timer, "failed", run_stats, len(deduplicar_ofertas(todas)), str(exc))
         raise
 
