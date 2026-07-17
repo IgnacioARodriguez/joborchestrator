@@ -11,6 +11,7 @@ from typing import Any, Callable, cast
 import httpx
 import pandas as pd
 
+from joborchestrator.llm.provider import NvidiaProvider, ProviderRegistry
 from joborchestrator.ranking.llm_ranker import _ranking_from_payload
 from joborchestrator.ranking.ranking_rules import NVIDIA_EXTRA_RULES, RANKING_GOAL, RANKING_RULES, SCORING_RUBRIC
 from joborchestrator.ranking.schemas import CandidateProfile, Decision, VALID_DECISIONS
@@ -145,17 +146,29 @@ def _call_nvidia_batch(
 ) -> dict[str, Any]:
     payload = build_nvidia_ranking_payload(jobs)
     validation_feedback: str | None = None
-    for attempt in range(DEFAULT_NVIDIA_VALIDATION_RETRIES + 1):
-        body = _nvidia_chat_body(payload, model, validation_feedback=validation_feedback)
-        response = httpx.post(
-            f"{base_url.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=body,
+    provider = cast(
+        NvidiaProvider,
+        ProviderRegistry().get(
+            "ranking",
+            provider_name="nvidia",
+            api_key=api_key,
+            base_url=base_url,
             timeout=timeout,
+            http_module=httpx,
+        ),
+    )
+    for attempt in range(DEFAULT_NVIDIA_VALIDATION_RETRIES + 1):
+        response = provider.complete(
+            _nvidia_messages(payload, validation_feedback=validation_feedback),
+            model=model,
+            temperature=0,
+            response_format="json",
+            max_tokens=DEFAULT_NVIDIA_MAX_TOKENS,
+            top_p=0.95,
+            frequency_penalty=0,
+            presence_penalty=0,
         )
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
-        parsed = _extract_json_object(content)
+        parsed = _extract_json_object(response.text)
         validation_feedback = _nvidia_batch_validation_error(parsed, jobs)
         if not validation_feedback:
             return parsed
@@ -224,17 +237,29 @@ async def _call_nvidia_batch_async(
 ) -> dict[str, Any]:
     payload = build_nvidia_ranking_payload(jobs)
     validation_feedback: str | None = None
-    for attempt in range(DEFAULT_NVIDIA_VALIDATION_RETRIES + 1):
-        body = _nvidia_chat_body(payload, model, validation_feedback=validation_feedback)
-        response = await client.post(
-            f"{base_url.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=body,
+    provider = cast(
+        NvidiaProvider,
+        ProviderRegistry().get(
+            "ranking",
+            provider_name="nvidia",
+            api_key=api_key,
+            base_url=base_url,
             timeout=timeout,
+        ),
+    )
+    for attempt in range(DEFAULT_NVIDIA_VALIDATION_RETRIES + 1):
+        response = await provider.acomplete(
+            _nvidia_messages(payload, validation_feedback=validation_feedback),
+            model=model,
+            client=client,
+            temperature=0,
+            response_format="json",
+            max_tokens=DEFAULT_NVIDIA_MAX_TOKENS,
+            top_p=0.95,
+            frequency_penalty=0,
+            presence_penalty=0,
         )
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
-        parsed = _extract_json_object(content)
+        parsed = _extract_json_object(response.text)
         validation_feedback = _nvidia_batch_validation_error(parsed, jobs)
         if not validation_feedback:
             return parsed
@@ -299,12 +324,6 @@ def _apply_nvidia_batch_result(
 
 
 def _nvidia_chat_body(payload: dict[str, Any], model: str, validation_feedback: str | None = None) -> dict[str, Any]:
-    user_content = _response_contract() + "\n\nContext:\n" + json.dumps(payload, ensure_ascii=False)
-    if validation_feedback:
-        user_content += (
-            "\n\nYour previous response was rejected because: "
-            f"{validation_feedback}\nReturn a corrected complete JSON object only."
-        )
     return {
         "model": model,
         "temperature": 0,
@@ -314,20 +333,30 @@ def _nvidia_chat_body(payload: dict[str, Any], model: str, validation_feedback: 
         "presence_penalty": 0,
         "stream": False,
         "response_format": {"type": "json_object"},
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a strict job-ranking evaluator. Return only JSON that matches the requested shape. "
-                    "The objective is fast hiring probability for this candidate, not generic job quality."
-                ),
-            },
-            {
-                "role": "user",
-                "content": user_content,
-            },
-        ],
+        "messages": _nvidia_messages(payload, validation_feedback=validation_feedback),
     }
+
+
+def _nvidia_messages(payload: dict[str, Any], validation_feedback: str | None = None) -> list[dict[str, Any]]:
+    user_content = _response_contract() + "\n\nContext:\n" + json.dumps(payload, ensure_ascii=False)
+    if validation_feedback:
+        user_content += (
+            "\n\nYour previous response was rejected because: "
+            f"{validation_feedback}\nReturn a corrected complete JSON object only."
+        )
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a strict job-ranking evaluator. Return only JSON that matches the requested shape. "
+                "The objective is fast hiring probability for this candidate, not generic job quality."
+            ),
+        },
+        {
+            "role": "user",
+            "content": user_content,
+        },
+    ]
 
 
 def _response_contract() -> str:

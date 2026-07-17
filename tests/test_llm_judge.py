@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 
 from joborchestrator.evals import llm_judge
-from joborchestrator.evals.llm_judge import LLMJudgeError, judge_with_nvidia, judge_with_openai
+from joborchestrator.evals.llm_judge import (
+    LLMJudgeError,
+    judge_with_configured_providers,
+    judge_with_nvidia,
+    judge_with_openai,
+)
 
 
 def test_openai_judge_requires_api_key(monkeypatch):
@@ -95,3 +100,27 @@ def test_nvidia_judge_parses_json_object_content(monkeypatch):
     assert result["issues"] == ["invented certification"]
     assert calls[0][0].endswith("/chat/completions")
     assert calls[0][1]["json"]["model"] == "judge-nv"
+
+
+def test_configured_judge_marks_provider_disagreement_as_disputed(monkeypatch):
+    def fake_judge(payload, *, provider=None, model=None, timeout=None):
+        return {
+            "passed": provider == "openai",
+            "score": 90 if provider == "openai" else 40,
+            "issues": [] if provider == "openai" else ["missing_evidence"],
+            "rationale": f"{provider} rationale",
+        }
+
+    monkeypatch.setattr(llm_judge, "judge_with_provider", fake_judge)
+
+    result = judge_with_configured_providers(
+        {"case_id": "case-1"},
+        provider="openai",
+        secondary_provider="nvidia",
+    )
+
+    assert result["passed"] is False
+    assert result["disputed"] is True
+    assert result["judge_provider"] == "openai"
+    assert result["secondary_judge_provider"] == "nvidia"
+    assert "judge_disputed" in result["issues"]

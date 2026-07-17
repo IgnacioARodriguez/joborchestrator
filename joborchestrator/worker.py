@@ -19,6 +19,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     build_application_kit_with_llm,
     build_application_kit_with_nvidia,
 )
+from joborchestrator.llm.provider import ProviderRegistry
 from joborchestrator.automation.executor import run_application_execution
 from joborchestrator.ranking.nvidia_ranker import (
     DEFAULT_NVIDIA_MAX_CONCURRENCY,
@@ -135,7 +136,7 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
     operation_id = int(operation["id"])
     input_payload = operation.get("input_json") or {}
     job_id = int(input_payload.get("job_id") or 0)
-    provider = str(input_payload.get("provider") or "openai")
+    provider = str(input_payload.get("provider") or ProviderRegistry().provider_name_for_role("materials"))
     model = str(input_payload.get("model") or "")
     shortlist = bool(input_payload.get("shortlist", True))
     if not job_id:

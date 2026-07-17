@@ -4,7 +4,13 @@ from joborchestrator.evals.semantic import (
     evaluate_application_materials,
     evaluate_ranking_result,
 )
-from joborchestrator.evals.llm_judge import LLMJudgeError, judge_with_nvidia, judge_with_openai
+from joborchestrator.evals.llm_judge import (
+    LLMJudgeError,
+    judge_with_configured_providers,
+    judge_with_nvidia,
+    judge_with_openai,
+    judge_with_provider,
+)
 
 __all__ = [
     "LLMJudgeError",
@@ -12,6 +18,8 @@ __all__ = [
     "build_llm_judge_payload",
     "evaluate_application_materials",
     "evaluate_ranking_result",
+    "judge_with_configured_providers",
     "judge_with_nvidia",
     "judge_with_openai",
+    "judge_with_provider",
 ]

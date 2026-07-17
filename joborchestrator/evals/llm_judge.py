@@ -6,6 +6,8 @@ from typing import Any
 
 import httpx
 
+from joborchestrator.llm.provider import LLMProviderError, ProviderRegistry
+
 
 DEFAULT_OPENAI_JUDGE_MODEL = os.getenv("OPENAI_EVAL_JUDGE_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4-mini"
 DEFAULT_NVIDIA_JUDGE_MODEL = (
@@ -32,39 +34,24 @@ def judge_with_openai(
         raise LLMJudgeError("OPENAI_API_KEY is required to run the OpenAI eval judge.")
     selected_model = model or DEFAULT_OPENAI_JUDGE_MODEL
     try:
-        response = httpx.post(
-            "https://api.openai.com/v1/responses",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={
-                "model": selected_model,
-                "store": False,
-                "reasoning": {"effort": "low"},
-                "input": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a strict evaluator for job-search LLM outputs. "
-                            "Use only the source_case and rubric. Return JSON only."
-                        ),
-                    },
-                    {"role": "user", "content": json.dumps(judge_payload, ensure_ascii=False)},
-                ],
-                "text": {
-                    "format": {
-                        "type": "json_schema",
-                        "name": "llm_eval_judge_result",
-                        "strict": True,
-                        "schema": _judge_result_schema(),
-                    }
-                },
-            },
+        provider = ProviderRegistry().get(
+            "judge",
+            provider_name="openai",
+            api_key=key,
             timeout=timeout,
+            http_module=httpx,
         )
-        response.raise_for_status()
-        return _normalize_judge_result(json.loads(_extract_openai_text(response.json())))
-    except httpx.HTTPError as exc:
+        response = provider.complete(
+            _judge_messages(judge_payload),
+            model=selected_model,
+            response_format="json",
+            response_schema=_judge_result_schema(),
+            schema_name="llm_eval_judge_result",
+        )
+        return _normalize_judge_result(json.loads(response.text))
+    except LLMProviderError as exc:
         raise LLMJudgeError(f"OpenAI eval judge request failed: {exc}") from exc
-    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+    except json.JSONDecodeError as exc:
         raise LLMJudgeError(f"OpenAI eval judge returned invalid JSON: {exc}") from exc
 
 
@@ -80,36 +67,102 @@ def judge_with_nvidia(
         raise LLMJudgeError("NVIDIA_API_KEY or NIM_API_KEY is required to run the NVIDIA eval judge.")
     selected_model = model or DEFAULT_NVIDIA_JUDGE_MODEL
     try:
-        response = httpx.post(
-            f"{NVIDIA_BASE_URL.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={
-                "model": selected_model,
-                "temperature": 0,
-                "top_p": 0.95,
-                "max_tokens": int(os.getenv("NVIDIA_EVAL_JUDGE_MAX_TOKENS", "2000")),
-                "stream": False,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a strict evaluator for job-search LLM outputs. "
-                            "Use only the source_case and rubric. Return JSON only."
-                        ),
-                    },
-                    {"role": "user", "content": json.dumps(judge_payload, ensure_ascii=False)},
-                ],
-            },
+        provider = ProviderRegistry().get(
+            "judge",
+            provider_name="nvidia",
+            api_key=key,
+            base_url=NVIDIA_BASE_URL,
             timeout=timeout,
+            http_module=httpx,
         )
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
-        return _normalize_judge_result(json.loads(_extract_json_object_text(str(content))))
-    except httpx.HTTPError as exc:
+        response = provider.complete(
+            _judge_messages(judge_payload),
+            model=selected_model,
+            temperature=0,
+            response_format="json",
+            max_tokens=int(os.getenv("NVIDIA_EVAL_JUDGE_MAX_TOKENS", "2000")),
+            top_p=0.95,
+        )
+        return _normalize_judge_result(json.loads(_extract_json_object_text(response.text)))
+    except LLMProviderError as exc:
         raise LLMJudgeError(f"NVIDIA eval judge request failed: {exc}") from exc
-    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+    except json.JSONDecodeError as exc:
         raise LLMJudgeError(f"NVIDIA eval judge returned invalid JSON: {exc}") from exc
+
+
+def judge_with_provider(
+    judge_payload: dict[str, Any],
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+) -> dict[str, Any]:
+    selected_provider = (provider or ProviderRegistry().provider_name_for_role("judge")).strip().lower()
+    if selected_provider == "openai":
+        return judge_with_openai(judge_payload, model=model, timeout=timeout or 60.0)
+    if selected_provider == "nvidia":
+        return judge_with_nvidia(judge_payload, model=model, timeout=timeout or 120.0)
+    raise LLMJudgeError(f"Unsupported eval judge provider: {selected_provider}")
+
+
+def judge_with_configured_providers(
+    judge_payload: dict[str, Any],
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    secondary_provider: str | None = None,
+    secondary_model: str | None = None,
+) -> dict[str, Any]:
+    registry = ProviderRegistry()
+    primary_provider = (provider or registry.provider_name_for_role("judge")).strip().lower()
+    primary = judge_with_provider(judge_payload, provider=primary_provider, model=model)
+
+    configured_secondary = secondary_provider
+    if configured_secondary is None:
+        configured_secondary = registry.provider_name_for_role("judge_secondary")
+    secondary_name = (configured_secondary or "").strip().lower()
+    if not secondary_name:
+        return {**primary, "disputed": False, "judge_provider": primary_provider}
+
+    secondary = judge_with_provider(judge_payload, provider=secondary_name, model=secondary_model)
+    disputed = bool(primary["passed"]) != bool(secondary["passed"])
+    if not disputed:
+        return {
+            **primary,
+            "disputed": False,
+            "judge_provider": primary_provider,
+            "secondary_judge_provider": secondary_name,
+            "secondary_judge_result": secondary,
+        }
+
+    issues = sorted({*primary.get("issues", []), *secondary.get("issues", []), "judge_disputed"})
+    return {
+        **primary,
+        "passed": False,
+        "disputed": True,
+        "issues": issues,
+        "judge_provider": primary_provider,
+        "secondary_judge_provider": secondary_name,
+        "primary_judge_result": primary,
+        "secondary_judge_result": secondary,
+        "rationale": (
+            "Primary and secondary judges disagreed on pass/fail. "
+            f"Primary={primary_provider}:{primary['passed']} secondary={secondary_name}:{secondary['passed']}."
+        ),
+    }
+
+
+def _judge_messages(judge_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a strict evaluator for job-search LLM outputs. "
+                "Use only the source_case and rubric. Return JSON only."
+            ),
+        },
+        {"role": "user", "content": json.dumps(judge_payload, ensure_ascii=False)},
+    ]
 
 
 def _normalize_judge_result(payload: dict[str, Any]) -> dict[str, Any]:
@@ -136,16 +189,6 @@ def _judge_result_schema() -> dict[str, Any]:
             "rationale": {"type": "string"},
         },
     }
-
-
-def _extract_openai_text(response: dict[str, Any]) -> str:
-    if response.get("output_text"):
-        return response["output_text"]
-    for item in response.get("output", []):
-        for content in item.get("content", []):
-            if content.get("type") in {"output_text", "text"} and content.get("text"):
-                return content["text"]
-    raise LLMJudgeError("Eval judge response did not include text output.")
 
 
 def _extract_json_object_text(text: str) -> str:

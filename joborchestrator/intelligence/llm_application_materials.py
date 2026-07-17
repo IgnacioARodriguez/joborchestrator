@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from joborchestrator.llm.provider import LLMProviderError, ProviderRegistry
 from joborchestrator.intelligence.llm_costs import estimate_application_kit_tokens, estimate_cost
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
 from joborchestrator.ranking.schemas import CandidateProfile
@@ -398,49 +399,31 @@ def _call_nvidia_contract_once(
     timeout: float,
     validation_feedback: str | None = None,
 ) -> dict[str, Any]:
-    user_content = contract + "\n\nContext:\n" + json.dumps(payload, ensure_ascii=False)
-    if validation_feedback:
-        user_content += (
-            "\n\nYour previous response was rejected because: "
-            f"{validation_feedback}\nReturn a corrected complete JSON object only."
-        )
     try:
-        response = httpx.post(
-            f"{NVIDIA_BASE_URL.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={
-                "model": model,
-                "temperature": 0,
-                "top_p": 0.95,
-                "max_tokens": int(os.getenv("NVIDIA_MATERIALS_MAX_TOKENS", "8000")),
-                "frequency_penalty": 0,
-                "presence_penalty": 0,
-                "stream": False,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a strict career application assistant. Return only JSON that matches "
-                            "the requested shape. Do not include markdown fences or commentary."
-                        ),
-                    },
-                    {"role": "user", "content": user_content},
-                ],
-            },
+        provider = ProviderRegistry().get(
+            "materials",
+            provider_name="nvidia",
+            api_key=api_key,
+            base_url=NVIDIA_BASE_URL,
             timeout=timeout,
+            http_module=httpx,
         )
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        detail = exc.response.text[:1000] if exc.response is not None else ""
-        raise LLMMaterialsError(f"NVIDIA materials request failed: status={exc.response.status_code} body={detail!r}") from exc
-    except httpx.HTTPError as exc:
-        raise LLMMaterialsError(f"NVIDIA materials request failed: {type(exc).__name__}: {exc!r}") from exc
+        response = provider.complete(
+            _nvidia_contract_messages(contract, payload, validation_feedback),
+            model=model,
+            temperature=0,
+            response_format="json",
+            max_tokens=int(os.getenv("NVIDIA_MATERIALS_MAX_TOKENS", "8000")),
+            top_p=0.95,
+            frequency_penalty=0,
+            presence_penalty=0,
+        )
+    except LLMProviderError as exc:
+        raise LLMMaterialsError(f"NVIDIA materials request failed: {exc}") from exc
 
     try:
-        content = response.json()["choices"][0]["message"]["content"]
-        return json.loads(_extract_json_object_text(str(content)))
-    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        return json.loads(_extract_json_object_text(response.text))
+    except json.JSONDecodeError as exc:
         raise LLMMaterialsError(f"NVIDIA materials response was not valid JSON: {exc}") from exc
 
 
@@ -456,39 +439,28 @@ def _call_nvidia_once(
         user_payload["previous_response_error"] = validation_feedback
         user_payload["instruction"] = "Return a corrected complete JSON object only."
     try:
-        response = httpx.post(
-            f"{NVIDIA_BASE_URL.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={
-                "model": model,
-                "temperature": 0.1,
-                "top_p": 0.95,
-                "max_tokens": int(os.getenv("NVIDIA_MATERIALS_MAX_TOKENS", "12000")),
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a strict career application assistant. Return only valid JSON. "
-                            "The ats_cv_text value must be a final complete CV, not notes, comments, or instructions."
-                        ),
-                    },
-                    {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-                ],
-            },
+        provider = ProviderRegistry().get(
+            "materials",
+            provider_name="nvidia",
+            api_key=api_key,
+            base_url=NVIDIA_BASE_URL,
             timeout=timeout,
+            http_module=httpx,
         )
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        detail = exc.response.text[:1000] if exc.response is not None else ""
-        raise LLMMaterialsError(f"NVIDIA materials request failed: status={exc.response.status_code} body={detail!r}") from exc
-    except httpx.HTTPError as exc:
-        raise LLMMaterialsError(f"NVIDIA materials request failed: {type(exc).__name__}: {exc!r}") from exc
+        response = provider.complete(
+            _nvidia_materials_messages(user_payload),
+            model=model,
+            temperature=0.1,
+            response_format="json",
+            max_tokens=int(os.getenv("NVIDIA_MATERIALS_MAX_TOKENS", "12000")),
+            top_p=0.95,
+        )
+    except LLMProviderError as exc:
+        raise LLMMaterialsError(f"NVIDIA materials request failed: {exc}") from exc
 
     try:
-        content = response.json()["choices"][0]["message"]["content"]
-        return json.loads(_extract_json_object_text(str(content)))
-    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        return json.loads(_extract_json_object_text(response.text))
+    except json.JSONDecodeError as exc:
         raise LLMMaterialsError(f"NVIDIA materials response was not valid JSON: {exc}") from exc
 
 
@@ -503,47 +475,77 @@ def _call_openai_once(
     if validation_feedback:
         user_payload["previous_response_error"] = validation_feedback
         user_payload["instruction"] = "Return a corrected complete JSON object only."
-    body = {
-        "model": model,
-        "store": False,
-        "reasoning": {"effort": "low"},
-        "input": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a strict career application assistant. Create high-quality, truthful, ATS-aware "
-                    "materials. Return only structured JSON. Do not leave required sections blank."
-                ),
-            },
-            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-        ],
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "application_kit",
-                "strict": True,
-                "schema": _materials_schema(),
-            }
-        },
-    }
     try:
-        response = httpx.post(
-            "https://api.openai.com/v1/responses",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=body,
+        provider = ProviderRegistry().get(
+            "materials",
+            provider_name="openai",
+            api_key=api_key,
             timeout=timeout,
+            http_module=httpx,
         )
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        detail = exc.response.text[:1000] if exc.response is not None else ""
-        raise LLMMaterialsError(f"OpenAI materials request failed: status={exc.response.status_code} body={detail!r}") from exc
-    except httpx.HTTPError as exc:
-        raise LLMMaterialsError(f"OpenAI materials request failed: {type(exc).__name__}: {exc!r}") from exc
+        response = provider.complete(
+            _openai_materials_messages(user_payload),
+            model=model,
+            response_format="json",
+            response_schema=_materials_schema(),
+            schema_name="application_kit",
+        )
+    except LLMProviderError as exc:
+        raise LLMMaterialsError(f"OpenAI materials request failed: {exc}") from exc
 
     try:
-        return json.loads(_extract_response_text(response.json()))
+        return json.loads(response.text)
     except json.JSONDecodeError as exc:
         raise LLMMaterialsError("OpenAI materials response was not valid JSON.") from exc
+
+
+def _nvidia_contract_messages(
+    contract: str,
+    payload: dict[str, Any],
+    validation_feedback: str | None = None,
+) -> list[dict[str, Any]]:
+    user_content = contract + "\n\nContext:\n" + json.dumps(payload, ensure_ascii=False)
+    if validation_feedback:
+        user_content += (
+            "\n\nYour previous response was rejected because: "
+            f"{validation_feedback}\nReturn a corrected complete JSON object only."
+        )
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a strict career application assistant. Return only JSON that matches "
+                "the requested shape. Do not include markdown fences or commentary."
+            ),
+        },
+        {"role": "user", "content": user_content},
+    ]
+
+
+def _nvidia_materials_messages(user_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a strict career application assistant. Return only valid JSON. "
+                "The ats_cv_text value must be a final complete CV, not notes, comments, or instructions."
+            ),
+        },
+        {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+    ]
+
+
+def _openai_materials_messages(user_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a strict career application assistant. Create high-quality, truthful, ATS-aware "
+                "materials. Return only structured JSON. Do not leave required sections blank."
+            ),
+        },
+        {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+    ]
 
 
 def _extract_json_object_text(text: str) -> str:
@@ -627,16 +629,6 @@ Rules:
 - Keep language aligned with the job posting language.
 - Do not invent facts.
 """.strip()
-
-
-def _extract_response_text(response: dict[str, Any]) -> str:
-    if response.get("output_text"):
-        return response["output_text"]
-    for item in response.get("output", []):
-        for content in item.get("content", []):
-            if content.get("type") in {"output_text", "text"} and content.get("text"):
-                return content["text"]
-    raise LLMMaterialsError("OpenAI materials response did not include text output.")
 
 
 def _materials_validation_error(payload: dict[str, Any], base_cv_text: str | None = None) -> str | None:

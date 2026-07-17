@@ -17,7 +17,7 @@ from joborchestrator.evals.semantic import (
     evaluate_application_materials,
     evaluate_ranking_result,
 )
-from joborchestrator.evals.llm_judge import judge_with_nvidia, judge_with_openai
+from joborchestrator.evals.llm_judge import judge_with_configured_providers
 from joborchestrator.storage import persistence as db
 
 
@@ -38,6 +38,11 @@ def main() -> int:
     parser.add_argument("--provider", help="Provider/model owner label for saved eval metadata.")
     parser.add_argument("--model", help="Model label for saved eval metadata.")
     parser.add_argument("--judge-provider", choices=["openai", "nvidia"], help="Optionally run an LLM judge.")
+    parser.add_argument(
+        "--judge-provider-secondary",
+        choices=["openai", "nvidia"],
+        help="Optional secondary LLM judge; disagreements are returned as disputed.",
+    )
     parser.add_argument("--judge-model", help="Model name for the optional LLM judge.")
     parser.add_argument("--notes", help="Free-form note for saved eval metadata.")
     parser.add_argument("--list-runs", action="store_true", help="List recent persisted eval runs and exit.")
@@ -176,10 +181,13 @@ def _result_to_dict(result: Any) -> dict[str, Any]:
 
 
 def _run_optional_judge(args: argparse.Namespace, judge_payload: dict[str, Any]) -> dict[str, Any] | None:
-    if args.judge_provider == "openai":
-        return judge_with_openai(judge_payload, model=args.judge_model)
-    if args.judge_provider == "nvidia":
-        return judge_with_nvidia(judge_payload, model=args.judge_model)
+    if args.judge_provider:
+        return judge_with_configured_providers(
+            judge_payload,
+            provider=args.judge_provider,
+            model=args.judge_model,
+            secondary_provider=args.judge_provider_secondary,
+        )
     return None
 
 
