@@ -231,6 +231,35 @@ CREATE TABLE IF NOT EXISTS linkedin_scan_pages (
 
 CREATE INDEX IF NOT EXISTS idx_linkedin_scan_pages_run ON linkedin_scan_pages(run_id, page_index);
 
+CREATE TABLE IF NOT EXISTS linkedin_job_enrichments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation_id INTEGER,
+    job_posting_id INTEGER NOT NULL,
+    linkedin_external_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    apply_type TEXT,
+    external_apply_url TEXT,
+    easy_apply_available INTEGER DEFAULT 0,
+    applicant_count INTEGER,
+    applicant_count_raw TEXT,
+    recruiter_name TEXT,
+    recruiter_profile_url TEXT,
+    hiring_contacts_json TEXT,
+    error TEXT,
+    duration_seconds REAL DEFAULT 0,
+    raw_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(job_posting_id),
+    FOREIGN KEY(operation_id) REFERENCES operation_runs(id),
+    FOREIGN KEY(job_posting_id) REFERENCES job_postings(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_linkedin_job_enrichments_operation ON linkedin_job_enrichments(operation_id);
+CREATE INDEX IF NOT EXISTS idx_linkedin_job_enrichments_status ON linkedin_job_enrichments(status, updated_at);
+
 CREATE TABLE IF NOT EXISTS job_rankings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL,
@@ -510,6 +539,7 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
         "application_session_events",
         "linkedin_scan_runs",
         "linkedin_scan_pages",
+        "linkedin_job_enrichments",
     }
     placeholders = ",".join("?" for _ in required_tables)
     rows = conn.execute(
@@ -1037,6 +1067,33 @@ def count_job_freshness_buckets() -> dict[str, int]:
 
 def get_job_posting(job_id: int) -> dict | None:
     return jobs_repository.get_job_posting(_conn, job_id)
+
+
+def get_linkedin_enrichment_candidates(
+    *,
+    ranking_version: str = NVIDIA_RANKING_VERSION,
+    decisions: list[str] | None = None,
+    limit: int = 25,
+    job_ids: list[int] | None = None,
+    force: bool = False,
+) -> pd.DataFrame:
+    return jobs_repository.get_linkedin_enrichment_candidates(
+        _conn,
+        _read_sql_query,
+        ranking_version=ranking_version,
+        decisions=decisions or ["APPLY_NOW", "APPLY_WITH_TAILORED_CV"],
+        limit=limit,
+        job_ids=job_ids,
+        force=force,
+    )
+
+
+def upsert_linkedin_job_enrichment(**kwargs) -> None:
+    jobs_repository.upsert_linkedin_job_enrichment(_conn, **kwargs)
+
+
+def get_recent_linkedin_job_enrichments(limit: int = 50) -> pd.DataFrame:
+    return jobs_repository.get_recent_linkedin_job_enrichments(_conn, _read_sql_query, limit)
 
 
 def list_job_hiring_contacts(job_id: int | None = None) -> list[dict]:

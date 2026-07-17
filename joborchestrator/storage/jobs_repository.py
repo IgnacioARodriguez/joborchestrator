@@ -686,6 +686,190 @@ def get_job_posting(connect: ConnectionFactory, job_id: int) -> dict | None:
         conn.close()
 
 
+def get_linkedin_enrichment_candidates(
+    connect: ConnectionFactory,
+    read_sql_query: ReadSqlQuery,
+    *,
+    ranking_version: str,
+    decisions: list[str],
+    limit: int,
+    job_ids: list[int] | None = None,
+    force: bool = False,
+) -> pd.DataFrame:
+    conn = connect()
+    try:
+        params: list[object] = [ranking_version]
+        query = """
+            SELECT
+                jp.*,
+                jr.final_score,
+                jr.decision,
+                jr.ranking_version,
+                lje.status AS enrichment_status,
+                lje.updated_at AS enrichment_updated_at,
+                lje.error AS enrichment_error
+            FROM job_postings jp
+            LEFT JOIN job_rankings jr
+              ON jr.job_id = jp.id AND jr.ranking_version = ?
+            LEFT JOIN linkedin_job_enrichments lje
+              ON lje.job_posting_id = jp.id
+            WHERE jp.source = 'linkedin_scraper'
+        """
+        if job_ids:
+            placeholders = ",".join("?" for _ in job_ids)
+            query += f" AND jp.id IN ({placeholders})"
+            params.extend(int(value) for value in job_ids)
+        elif decisions:
+            placeholders = ",".join("?" for _ in decisions)
+            query += f" AND jr.decision IN ({placeholders})"
+            params.extend(decisions)
+        if not force:
+            query += """
+                AND (
+                    lje.id IS NULL
+                    OR lje.status != 'completed'
+                    OR COALESCE(jp.external_apply_url, '') = ''
+                    OR COALESCE(jp.recruiter_profile_url, '') = ''
+                    OR jp.applicant_count IS NULL
+                )
+            """
+        query += """
+            ORDER BY
+              CASE jr.decision
+                WHEN 'APPLY_NOW' THEN 1
+                WHEN 'APPLY_WITH_TAILORED_CV' THEN 2
+                WHEN 'MAYBE' THEN 3
+                WHEN 'SKIP' THEN 4
+                WHEN 'AVOID' THEN 5
+                ELSE 6
+              END,
+              jr.final_score DESC,
+              jp.last_seen_at DESC
+            LIMIT ?
+        """
+        params.append(max(1, int(limit)))
+        return read_sql_query(query, conn, params=params)
+    finally:
+        conn.close()
+
+
+def upsert_linkedin_job_enrichment(
+    connect: ConnectionFactory,
+    *,
+    operation_id: int | None,
+    job_posting_id: int,
+    linkedin_external_id: str,
+    started_at: str,
+    finished_at: str,
+    status: str,
+    apply_type: str | None,
+    external_apply_url: str | None,
+    easy_apply_available: bool,
+    applicant_count: int | None,
+    applicant_count_raw: str | None,
+    recruiter_name: str | None,
+    recruiter_profile_url: str | None,
+    hiring_contacts_json: str | None,
+    error: str | None,
+    duration_seconds: float,
+    raw: dict,
+) -> None:
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = connect()
+    try:
+        conn.execute(
+            """INSERT INTO linkedin_job_enrichments (
+                   operation_id, job_posting_id, linkedin_external_id,
+                   started_at, finished_at, status, apply_type, external_apply_url,
+                   easy_apply_available, applicant_count, applicant_count_raw,
+                   recruiter_name, recruiter_profile_url, hiring_contacts_json,
+                   error, duration_seconds, raw_json, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(job_posting_id) DO UPDATE SET
+                   operation_id = excluded.operation_id,
+                   linkedin_external_id = excluded.linkedin_external_id,
+                   started_at = excluded.started_at,
+                   finished_at = excluded.finished_at,
+                   status = excluded.status,
+                   apply_type = excluded.apply_type,
+                   external_apply_url = excluded.external_apply_url,
+                   easy_apply_available = excluded.easy_apply_available,
+                   applicant_count = excluded.applicant_count,
+                   applicant_count_raw = excluded.applicant_count_raw,
+                   recruiter_name = excluded.recruiter_name,
+                   recruiter_profile_url = excluded.recruiter_profile_url,
+                   hiring_contacts_json = excluded.hiring_contacts_json,
+                   error = excluded.error,
+                   duration_seconds = excluded.duration_seconds,
+                   raw_json = excluded.raw_json,
+                   updated_at = excluded.updated_at""",
+            (
+                operation_id,
+                int(job_posting_id),
+                linkedin_external_id,
+                started_at,
+                finished_at,
+                status,
+                apply_type,
+                external_apply_url,
+                1 if easy_apply_available else 0,
+                applicant_count,
+                applicant_count_raw,
+                recruiter_name,
+                recruiter_profile_url,
+                hiring_contacts_json,
+                error,
+                float(duration_seconds),
+                json.dumps(raw, ensure_ascii=False),
+                now,
+                now,
+            ),
+        )
+        if status == "completed":
+            conn.execute(
+                """UPDATE job_postings
+                   SET apply_type = COALESCE(?, apply_type),
+                       external_apply_url = COALESCE(?, external_apply_url),
+                       applicant_count = COALESCE(?, applicant_count),
+                       applicant_count_raw = COALESCE(?, applicant_count_raw),
+                       recruiter_name = COALESCE(?, recruiter_name),
+                       recruiter_profile_url = COALESCE(?, recruiter_profile_url)
+                   WHERE id = ?""",
+                (
+                    apply_type,
+                    external_apply_url,
+                    applicant_count,
+                    applicant_count_raw,
+                    recruiter_name,
+                    recruiter_profile_url,
+                    int(job_posting_id),
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_recent_linkedin_job_enrichments(
+    connect: ConnectionFactory,
+    read_sql_query: ReadSqlQuery,
+    limit: int = 50,
+) -> pd.DataFrame:
+    conn = connect()
+    try:
+        return read_sql_query(
+            """SELECT lje.*, jp.title, jp.company, jp.url AS job_url
+               FROM linkedin_job_enrichments lje
+               JOIN job_postings jp ON jp.id = lje.job_posting_id
+               ORDER BY lje.updated_at DESC, lje.id DESC
+               LIMIT ?""",
+            conn,
+            (int(limit),),
+        )
+    finally:
+        conn.close()
+
+
 def _freshness_where_clause(freshness: str, now: datetime) -> tuple[str, list[object]]:
     fresh_cutoff, recent_cutoff, stale_cutoff = _freshness_cutoffs(now)
     date_expr = "COALESCE(jp.posted_at, jp.first_seen_at, jp.last_seen_at)"

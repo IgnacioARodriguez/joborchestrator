@@ -489,6 +489,73 @@ def test_linkedin_scan_logging_persists_run_and_page_details(tmp_path, monkeypat
     assert "Acme" in pages.iloc[0]["added_jobs_json"]
 
 
+def test_linkedin_enrichment_persists_and_updates_job(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(
+        make_job(
+            external_id="4437153549",
+            source="linkedin_scraper",
+            company="Roomdoo",
+        )
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    now = datetime.now().isoformat(timespec="seconds")
+
+    db.upsert_linkedin_job_enrichment(
+        operation_id=22,
+        job_posting_id=job_id,
+        linkedin_external_id="4437153549",
+        started_at=now,
+        finished_at=now,
+        status="completed",
+        apply_type="external",
+        external_apply_url="https://roomdoo.example/apply",
+        easy_apply_available=False,
+        applicant_count=42,
+        applicant_count_raw="42 solicitantes",
+        recruiter_name="Ada Recruiter",
+        recruiter_profile_url="https://www.linkedin.com/in/ada-recruiter/",
+        hiring_contacts_json="[]",
+        error=None,
+        duration_seconds=3.2,
+        raw={"ok": True},
+    )
+
+    job = db.get_job_posting(job_id)
+    enrichments = db.get_recent_linkedin_job_enrichments(limit=5)
+
+    assert job["external_apply_url"] == "https://roomdoo.example/apply"
+    assert job["apply_type"] == "external"
+    assert int(job["applicant_count"]) == 42
+    assert job["recruiter_name"] == "Ada Recruiter"
+    assert int(enrichments.iloc[0]["job_posting_id"]) == job_id
+    assert enrichments.iloc[0]["status"] == "completed"
+
+
+def test_linkedin_enrichment_candidates_use_top_ranked_linkedin_jobs(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(external_id="li-top", source="linkedin_scraper", company="A"))
+    db.upsert_job_posting(make_job(external_id="li-other", source="linkedin_scraper", company="B"))
+    db.upsert_job_posting(make_job(external_id="gh-top", source="greenhouse", company="C"))
+    jobs = db.get_job_postings(limit=10)
+    ids = {row["external_id"]: int(row["id"]) for _, row in jobs.iterrows()}
+    db.save_job_ranking(ids["li-top"], make_ranking())
+    maybe = make_ranking()
+    maybe.decision = "MAYBE"
+    db.save_job_ranking(ids["li-other"], maybe)
+    db.save_job_ranking(ids["gh-top"], make_ranking())
+
+    candidates = db.get_linkedin_enrichment_candidates(
+        decisions=["APPLY_NOW"],
+        limit=10,
+        ranking_version="ranking_v1.1.0-nvidia",
+    )
+
+    assert candidates["external_id"].tolist() == ["li-top"]
+
+
 def test_mark_jobs_inactive_by_last_seen_only_affects_old_matching_source(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()

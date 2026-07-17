@@ -22,6 +22,7 @@ import json
 import os
 import random
 import re
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +48,19 @@ from joborchestrator.scanning.hiring_contacts import (
 from joborchestrator.scanning.models import HiringContact
 from joborchestrator.scanning.search_targets import build_search_intents
 from joborchestrator.storage import persistence as db
+
+
+def _configure_console_output() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+_configure_console_output()
 
 
 FRESHNESS_WINDOW_SECONDS = 30 * 24 * 60 * 60
@@ -662,7 +676,7 @@ async def asegurar_sesion_manual(page):
                 "No continÃºo automÃ¡ticamente."
             )
 
-    print("âœ… SesiÃ³n de LinkedIn activa.")
+    print("Sesion de LinkedIn activa.")
 
 
 async def _goto_linkedin_session_check(page):
@@ -673,7 +687,7 @@ async def _goto_linkedin_session_check(page):
         current_url = page.url
         if "/login" not in current_url and "/passwordReset" not in current_url:
             raise
-        print(f"LinkedIn redirigiÃ³ durante el chequeo de sesiÃ³n: {current_url}")
+        print(f"LinkedIn redirigio durante el chequeo de sesion: {current_url}")
     await page.wait_for_timeout(jitter_ms(2500))
 
 
@@ -1538,7 +1552,7 @@ async def procesar_pagina_actual(
     duplicados_visibles = [x for x in visibles if x["id"] in seen_ids]
 
     print(
-        f"\n[PÃGINA start={start_value}] "
+        f"\n[PAGINA start={start_value}] "
         f"visibles={len(visibles)} "
         f"nuevos={len(nuevos_visibles)} "
         f"duplicados={len(duplicados_visibles)} "
@@ -1817,9 +1831,9 @@ async def run_linkedin_scrape(
                         added_summaries: list[dict] = []
 
                         print(
-                            f"\nðŸ” Buscando: "
-                            f"{busqueda['keywords']} â€” "
-                            f"{busqueda['ubicacion']} â€” "
+                            f"\nBuscando: "
+                            f"{busqueda['keywords']} - "
+                            f"{busqueda['ubicacion']} - "
                             f"start={start}"
                         )
 
@@ -1872,7 +1886,7 @@ async def run_linkedin_scrape(
                                 [],
                                 [],
                             )
-                            print("â›” LinkedIn indica que no hay mÃ¡s resultados para esta bÃºsqueda.")
+                            print("LinkedIn indica que no hay mas resultados para esta busqueda.")
                             break
 
                         visibles = await extraer_resultados_visibles(page)
@@ -1907,7 +1921,7 @@ async def run_linkedin_scrape(
                                 visible_summaries,
                                 added_summaries,
                             )
-                            print("â›” No hay jobs visibles en esta pÃ¡gina. Cambio de bÃºsqueda.")
+                            print("No hay jobs visibles en esta pagina. Cambio de busqueda.")
                             break
 
                         nuevos = await procesar_pagina_actual(
@@ -1930,7 +1944,7 @@ async def run_linkedin_scrape(
                         if nuevos == 0:
                             paginas_sin_nuevos += 1
                             print(
-                                f"âš  PÃ¡gina sin resultados nuevos. "
+                                f"Pagina sin resultados nuevos. "
                                 f"consecutivas={paginas_sin_nuevos}"
                             )
                         else:
@@ -1957,7 +1971,7 @@ async def run_linkedin_scrape(
                         )
 
                         if paginas_sin_nuevos >= PAGINAS_CONSECUTIVAS_SIN_NUEVOS:
-                            print("â›” BÃºsqueda agotada: pÃ¡ginas consecutivas sin ofertas nuevas.")
+                            print("Busqueda agotada: paginas consecutivas sin ofertas nuevas.")
                             break
 
                         if len(todas) >= limit:
@@ -2095,7 +2109,7 @@ if __name__ == "__main__":
         print(f"âœ… Ãšltimo estado guardado en: {CHECKPOINT_STATE}")
 
     except Exception as e:
-        print("\nâŒ Error inesperado.")
+        print("\nError inesperado.")
         print(repr(e))
         print(f"âœ… Lo procesado hasta ahora quedÃ³ en: {CHECKPOINT_JSONL}")
         print(f"âœ… Ãšltimo estado guardado en: {CHECKPOINT_STATE}")

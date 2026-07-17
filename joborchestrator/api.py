@@ -223,6 +223,15 @@ class RankingJobPayload(BaseModel):
     run_once: bool = False
 
 
+class LinkedInEnrichmentPayload(BaseModel):
+    limit: int = Field(default=25, ge=1, le=250)
+    ranking_version: str = NVIDIA_RANKING_VERSION
+    decisions: list[str] = Field(default_factory=lambda: ["APPLY_NOW", "APPLY_WITH_TAILORED_CV"])
+    job_ids: list[int] | None = None
+    force: bool = False
+    resolve_external_apply: bool = True
+
+
 class MaterialsPayload(BaseModel):
     use_llm: bool = False
     provider: Literal["heuristic", "openai", "nvidia"] | None = None
@@ -335,6 +344,7 @@ def worker_status() -> dict[str, Any]:
         "cv_profile_import",
         "application_materials_generation",
         "job_scan",
+        "linkedin_enrichment",
         "application_execution",
     }
     recent_worker_ops = [op for op in operations if op["type"] in recent_local_types]
@@ -360,6 +370,7 @@ def ops_status() -> dict[str, Any]:
         "cv_profile_import",
         "application_materials_generation",
         "job_scan",
+        "linkedin_enrichment",
         "application_execution",
     }
     local_ops = [op for op in operations if op["type"] in local_worker_types]
@@ -1111,6 +1122,29 @@ def list_linkedin_scan_runs(limit: int = 20) -> dict[str, Any]:
 @app.get("/api/scans/linkedin/runs/{run_id}/pages")
 def list_linkedin_scan_pages(run_id: int, limit: int = 500) -> dict[str, Any]:
     return {"pages": db.get_linkedin_scan_pages(run_id, limit=max(1, min(int(limit), 2000))).to_dict("records")}
+
+
+@app.post("/api/linkedin/enrichments")
+def queue_linkedin_enrichment(payload: LinkedInEnrichmentPayload) -> dict[str, Any]:
+    active = db.get_active_operation("linkedin_enrichment")
+    if active:
+        return {
+            "operation_id": active["id"],
+            "status": active["status"],
+            "already_running": True,
+            "progress_message": active.get("progress_message"),
+        }
+    operation_id = db.create_operation(
+        "linkedin_enrichment",
+        payload.model_dump(),
+        "Queued LinkedIn enrichment. Waiting for local worker.",
+    )
+    return {"operation_id": operation_id, "status": "queued", "already_running": False}
+
+
+@app.get("/api/linkedin/enrichments")
+def list_linkedin_enrichments(limit: int = 50) -> dict[str, Any]:
+    return {"enrichments": db.get_recent_linkedin_job_enrichments(limit=max(1, min(int(limit), 200))).to_dict("records")}
 
 
 @app.post("/api/linkedin/import-latest")

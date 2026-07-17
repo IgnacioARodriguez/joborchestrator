@@ -20,6 +20,7 @@ env/
 !.env.example
 candidate_profile.yml
 linkedin_user_profile/
+linkedin_user_profile_*/
 *.pem
 *.key
 *.crt
@@ -30,6 +31,7 @@ linkedin_user_profile/
 *.sqlite3
 data/*
 !data/.gitkeep
+salidas_todas_posiciones_raw/
 
 # Build and packaging
 build/

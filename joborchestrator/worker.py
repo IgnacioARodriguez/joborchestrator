@@ -27,12 +27,19 @@ from joborchestrator.ranking.nvidia_ranker import (
 )
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.scanning.orchestrator import run_unified_job_scan
+from joborchestrator.scanning.linkedin_enrichment import run_linkedin_enrichment_sync
 from joborchestrator.storage import persistence as db
 
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 DEFAULT_POLL_SECONDS = float(os.getenv("JOB_WORKER_POLL_SECONDS", "5"))
 DEFAULT_STALE_SECONDS = int(os.getenv("JOB_WORKER_STALE_SECONDS", "3600"))
-OPERATION_TYPES = ["cv_profile_import", "application_materials_generation", "job_scan", "application_execution"]
+OPERATION_TYPES = [
+    "cv_profile_import",
+    "application_materials_generation",
+    "job_scan",
+    "linkedin_enrichment",
+    "application_execution",
+]
 
 
 def configure_logging() -> logging.Logger:
@@ -71,6 +78,8 @@ def process_once(worker_id: str = WORKER_ID) -> bool:
             _process_application_materials_generation(operation)
         elif operation_type == "job_scan":
             _process_job_scan(operation)
+        elif operation_type == "linkedin_enrichment":
+            _process_linkedin_enrichment(operation)
         elif operation_type == "application_execution":
             _process_application_execution(operation)
         else:
@@ -244,6 +253,38 @@ def _queue_post_scan_ranking(
         "queued": len(job_ids),
         "ranking_version": ranking_version,
     }
+
+
+def _process_linkedin_enrichment(operation: dict[str, Any]) -> None:
+    operation_id = int(operation["id"])
+    input_payload = operation.get("input_json") or {}
+    logger.info("Processing LinkedIn enrichment operation=%s", operation_id)
+
+    def progress(message: str) -> None:
+        logger.info("LinkedIn enrichment operation=%s progress=%s", operation_id, message)
+        db.update_operation_progress(operation_id, message)
+
+    output = run_linkedin_enrichment_sync(
+        operation_id=operation_id,
+        limit=max(1, min(int(input_payload.get("limit") or 25), 250)),
+        ranking_version=str(input_payload.get("ranking_version") or NVIDIA_RANKING_VERSION),
+        decisions=list(input_payload.get("decisions") or ["APPLY_NOW", "APPLY_WITH_TAILORED_CV"]),
+        job_ids=[int(value) for value in input_payload.get("job_ids") or []] or None,
+        force=bool(input_payload.get("force", False)),
+        resolve_external_apply=bool(input_payload.get("resolve_external_apply", True)),
+        progress=progress,
+    )
+    summary = output.get("summary") or {}
+    db.complete_operation(
+        operation_id,
+        output,
+        (
+            "LinkedIn enrichment completed: "
+            f"{summary.get('saved', 0)} saved, "
+            f"{summary.get('failed', 0)} failed."
+        ),
+    )
+    logger.info("Completed LinkedIn enrichment operation=%s summary=%s", operation_id, summary)
 
 
 def _process_application_execution(operation: dict[str, Any]) -> None:
