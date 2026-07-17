@@ -21,7 +21,7 @@ from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION  # noqa: E40
 from joborchestrator.storage import persistence as db  # noqa: E402
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run offline semantic eval baseline against real DB outputs.")
     parser.add_argument("--ranking-version", default=NVIDIA_RANKING_VERSION)
     parser.add_argument("--limit", type=int, default=25)
@@ -36,13 +36,18 @@ def main() -> int:
     parser.add_argument("--provider", default="baseline")
     parser.add_argument("--model", default="deterministic")
     parser.add_argument("--notes")
-    args = parser.parse_args()
+    parser.add_argument("--include-records", action="store_true", help="Include every case record in JSON output.")
+    return parser.parse_args(argv)
 
+
+def run_baseline(args: argparse.Namespace) -> dict[str, Any]:
     profile = db.get_candidate_profile_payload() or {}
     ranked = db.get_ranked_jobs(ranking_version=args.ranking_version, min_score=args.min_score)
     if ranked.empty:
-        print(json.dumps({"evaluated": 0, "message": "No ranked jobs found."}, ensure_ascii=False, indent=2))
-        return 0
+        summary = {"evaluated": 0, "message": "No ranked jobs found."}
+        if getattr(args, "include_records", False):
+            summary["records"] = []
+        return summary
 
     records = []
     for row in ranked.head(args.limit).to_dict(orient="records"):
@@ -55,6 +60,14 @@ def main() -> int:
             records.append(_evaluate_ats_cv_row(row, case, args))
 
     summary = _summary(records)
+    if getattr(args, "include_records", False):
+        summary["records"] = records
+    return summary
+
+
+def main() -> int:
+    args = parse_args()
+    summary = run_baseline(args)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 1 if args.fail_on_issues and summary["failed"] > 0 else 0
 
