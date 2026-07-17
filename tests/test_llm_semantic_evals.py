@@ -8,6 +8,7 @@ from joborchestrator.evals.semantic import (
     evaluate_application_materials,
     evaluate_ranking_result,
 )
+from joborchestrator.storage import persistence as db
 
 
 def _cases() -> dict[str, dict]:
@@ -130,3 +131,48 @@ def test_llm_judge_payload_is_structured_and_offline():
     assert payload["rubric_version"] == "semantic-eval-v1"
     assert payload["source_case"]["job"]["company"] == "Acme Labs"
     assert payload["candidate_output"] == output
+
+
+def test_eval_runs_are_persisted(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "evals.db")
+    db.init_db()
+    case = _cases()["backend-fastapi-strong-fit"]
+    output = {"decision": "APPLY_NOW", "final_score": 88}
+    result = evaluate_ranking_result(
+        case,
+        {
+            **output,
+            "evidence": {"strong_matches": ["Python", "FastAPI"], "missing_requirements": []},
+            "reasoning_summary": "Python and FastAPI match the target backend work.",
+            "recommended_application_angle": "Lead with Python API work.",
+            "cv_keywords_to_emphasize": ["Python", "FastAPI"],
+            "cv_keywords_to_avoid_overclaiming": [],
+        },
+    )
+    judge_payload = build_llm_judge_payload(case, output, "ranking")
+
+    saved = db.save_llm_eval_run(
+        {
+            "case_id": case["id"],
+            "artifact_type": "ranking",
+            "ranking_version": "test-ranking-v1",
+            "provider": "offline",
+            "model": "deterministic",
+            "passed": result.passed,
+            "score": result.score,
+            "issues": result.issues,
+            "metrics": result.metrics,
+            "output": output,
+            "judge_payload": judge_payload,
+            "notes": "fixture run",
+        }
+    )
+    runs = db.list_llm_eval_runs(limit=5)
+
+    assert saved["id"] == 1
+    assert len(runs) == 1
+    row = runs.iloc[0]
+    assert row["case_id"] == "backend-fastapi-strong-fit"
+    assert row["artifact_type"] == "ranking"
+    assert row["passed"] == 1
+    assert row["score"] == 100

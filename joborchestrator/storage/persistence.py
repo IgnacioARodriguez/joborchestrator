@@ -18,6 +18,7 @@ from joborchestrator.storage import (
     jobs_repository,
     applications_repository,
     operations_repository,
+    evals_repository,
     ranking_jobs_repository,
     rankings_repository,
     settings_repository,
@@ -494,6 +495,28 @@ CREATE TABLE IF NOT EXISTS follow_ups (
 );
 
 CREATE INDEX IF NOT EXISTS idx_follow_ups_due ON follow_ups(done_at, due_at);
+
+CREATE TABLE IF NOT EXISTS llm_eval_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id TEXT NOT NULL,
+    artifact_type TEXT NOT NULL,
+    job_id INTEGER,
+    ranking_version TEXT,
+    provider TEXT,
+    model TEXT,
+    passed INTEGER NOT NULL,
+    score INTEGER NOT NULL,
+    issues_json TEXT NOT NULL,
+    metrics_json TEXT NOT NULL,
+    output_json TEXT NOT NULL,
+    judge_payload_json TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(job_id) REFERENCES job_postings(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_eval_runs_case ON llm_eval_runs(case_id, artifact_type);
+CREATE INDEX IF NOT EXISTS idx_llm_eval_runs_created ON llm_eval_runs(created_at);
 """
 
 
@@ -540,6 +563,7 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
         "linkedin_scan_runs",
         "linkedin_scan_pages",
         "linkedin_job_enrichments",
+        "llm_eval_runs",
     }
     placeholders = ",".join("?" for _ in required_tables)
     rows = conn.execute(
@@ -1364,4 +1388,23 @@ def sync_ranking_items_from_rankings(
         ranking_version,
         job_ids,
         missing_error,
+    )
+
+
+def save_llm_eval_run(payload: dict) -> dict:
+    return evals_repository.save_llm_eval_run(_conn, payload)
+
+
+def list_llm_eval_runs(
+    *,
+    limit: int = 50,
+    case_id: str | None = None,
+    artifact_type: str | None = None,
+) -> pd.DataFrame:
+    return evals_repository.list_llm_eval_runs(
+        _conn,
+        _read_sql_query,
+        limit=limit,
+        case_id=case_id,
+        artifact_type=artifact_type,
     )
