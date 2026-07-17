@@ -1,0 +1,10 @@
+{
+  "active_environment": "default",
+  "environments": {
+    "default": {
+      "ranking/nvidia_response_contract": "v1",
+      "materials/nvidia_cv_contract": "v1",
+      "materials/nvidia_kit_contract": "v1"
+    }
+  }
+}

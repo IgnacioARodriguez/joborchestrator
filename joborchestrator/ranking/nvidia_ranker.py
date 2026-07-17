@@ -12,6 +12,7 @@ import httpx
 import pandas as pd
 
 from joborchestrator.llm.provider import NvidiaProvider, ProviderRegistry
+from joborchestrator.prompts import load_prompt
 from joborchestrator.ranking.llm_ranker import _ranking_from_payload
 from joborchestrator.ranking.ranking_rules import NVIDIA_EXTRA_RULES, RANKING_GOAL, RANKING_RULES, SCORING_RUBRIC
 from joborchestrator.ranking.schemas import CandidateProfile, Decision, VALID_DECISIONS
@@ -360,62 +361,7 @@ def _nvidia_messages(payload: dict[str, Any], validation_feedback: str | None = 
 
 
 def _response_contract() -> str:
-    return """
-Return exactly one ranking for every job in Context.jobs.
-Use only these decision values: APPLY_NOW, APPLY_WITH_TAILORED_CV, MAYBE, SKIP, AVOID.
-Never return the pipe-separated placeholder text as a value.
-Decision/score consistency rules:
-- APPLY_NOW requires final_score >= 65.
-- APPLY_WITH_TAILORED_CV requires final_score >= 50.
-- Scores below those thresholds must use MAYBE, SKIP, or AVOID.
-
-Shape:
-{
-  "rankings": [
-    {
-      "job_id": 123,
-      "final_score": 82,
-      "decision": "APPLY_NOW",
-      "confidence": 0.88,
-      "scores": {
-        "technical_fit": 80,
-        "seniority_fit": 75,
-        "role_fit": 85,
-        "opportunity_quality": 75,
-        "application_roi": 85,
-        "market_alignment": 80,
-        "risk_penalty": 5,
-        "technical_readiness": 80,
-        "central_requirement_coverage": 82,
-        "role_confidence": 85,
-        "application_effort_signal": 80,
-        "data_quality_signal": 80,
-        "source_reliability_signal": 80
-      },
-      "evidence": {
-        "strong_matches": [],
-        "partial_matches": [],
-        "missing_requirements": [],
-        "nice_to_have_matches": [],
-        "dealbreakers": [],
-        "red_flags": [],
-        "central_requirement_coverage": 0.0,
-        "central_requirement_raw_coverage": 0.0,
-        "central_requirement_evidence_quality": 0.0,
-        "requirement_backed_signal_count": 0,
-        "central_requirement_thresholds": {},
-        "central_requirements": [],
-        "requires_llm_review": false,
-        "llm_escalation_reasons": []
-      },
-      "reasoning_summary": "short explanation",
-      "recommended_application_angle": "short positioning",
-      "cv_keywords_to_emphasize": [],
-      "cv_keywords_to_avoid_overclaiming": []
-    }
-  ]
-}
-""".strip()
+    return load_prompt("ranking", "nvidia_response_contract")
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:

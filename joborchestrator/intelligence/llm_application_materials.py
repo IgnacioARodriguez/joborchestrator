@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from joborchestrator.llm.provider import LLMProviderError, ProviderRegistry
+from joborchestrator.prompts import load_prompt
 from joborchestrator.intelligence.llm_costs import estimate_application_kit_tokens, estimate_cost
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
 from joborchestrator.ranking.schemas import CandidateProfile
@@ -584,51 +585,11 @@ def _materials_schema() -> dict[str, Any]:
 
 
 def _nvidia_cv_contract() -> str:
-    return """
-Return a complete ATS-optimized CV for the target job.
-Use only truthful facts from Context.candidate_profile and Context.base_cv.
-Do not invent employers, degrees, certifications, dates, tools, or achievements.
-
-Shape:
-{
-  "ats_cv_text": "Candidate Name\\nContact line\\n\\nProfessional Summary\\n...\\n\\nTechnical Skills\\n...\\n\\nProfessional Experience\\n...\\n\\nEducation\\n...",
-  "risk_flags": [],
-  "keywords_used": []
-}
-
-Rules for ats_cv_text:
-- It must be the final CV only, with no internal notes, instructions, target-role notes, or optimization commentary.
-- It must include these parseable headings: Professional Summary, Technical Skills, Professional Experience, Education.
-- It must preserve every role from Context.base_cv EXPERIENCE section.
-- Do not omit, merge, or collapse employers, titles, locations, or date ranges from the base CV.
-- You may tailor bullets per role for the target job, but older or less relevant roles must still appear with at least one truthful bullet.
-- Use simple text, standard bullets, and no tables.
-- Keep real dates, employers, titles, education, and contact details from the base CV when available.
-""".strip()
+    return load_prompt("materials", "nvidia_cv_contract")
 
 
 def _nvidia_kit_contract() -> str:
-    return """
-Return lightweight application materials for the target job.
-Use only truthful facts from Context.candidate_profile and Context.base_cv.
-
-Shape:
-{
-  "recruiter_message": "short LinkedIn connection note",
-  "cover_letter": "concise tailored cover letter or empty string",
-  "autofill_notes": "structured copy-paste answers and application caveats"
-}
-
-Rules:
-- Do not include the ATS CV in this response.
-- recruiter_message and autofill_notes are required.
-- Every value must be a plain string. Do not return nested objects or arrays for any field.
-- recruiter_message must be one short LinkedIn invite note, not multiple variants, not a cover letter, and not a formal letter beginning with "Dear Hiring Manager".
-- recruiter_message should be under 300 characters when possible.
-- recruiter_message should say why the role matches the CV and that the candidate would like to send/share the CV.
-- Keep language aligned with the job posting language.
-- Do not invent facts.
-""".strip()
+    return load_prompt("materials", "nvidia_kit_contract")
 
 
 def _materials_validation_error(payload: dict[str, Any], base_cv_text: str | None = None) -> str | None:
