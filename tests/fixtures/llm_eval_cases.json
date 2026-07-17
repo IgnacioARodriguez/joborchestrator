@@ -39,5 +39,47 @@
       "required_evidence_terms": ["Rust", "kernel"],
       "dealbreaker_terms": ["relocation", "Rust kernel"]
     }
+  },
+  {
+    "id": "technical-product-owner-borderline",
+    "job": {
+      "title": "Technical Product Owner",
+      "company": "WorkflowAI",
+      "description_text": "Own API roadmap, translate customer automation needs into product requirements, partner with engineering, and improve delivery metrics. Product owner experience preferred."
+    },
+    "candidate": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend and full-stack engineer with Python, APIs, stakeholder collaboration, dashboards, and automation delivery.\nFiction Express\nTalan Consulting\nGlobant\nBalloon Group",
+      "required_experience_terms": ["Fiction Express", "Talan Consulting", "Globant", "Balloon Group"],
+      "forbidden_claims": ["Certified Scrum Product Owner", "Head of Product", "managed product P&L"]
+    },
+    "materials_expectations": {
+      "required_terms": ["API", "automation", "stakeholder"],
+      "specificity_terms": ["WorkflowAI", "Technical Product Owner"],
+      "max_recruiter_message_chars": 320
+    },
+    "ranking_expectations": {
+      "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE"],
+      "min_score": 55,
+      "max_score": 82,
+      "required_evidence_terms": ["API", "product"]
+    }
+  },
+  {
+    "id": "commission-only-manual-qa-avoid",
+    "job": {
+      "title": "Manual QA Lead",
+      "company": "SalesSprint",
+      "description_text": "Commission-only contract. Manual QA for ad campaigns, mandatory relocation outside Spain, weekend availability, and no base salary."
+    },
+    "candidate": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend engineer focused on Python, APIs, automation, FastAPI, PostgreSQL, AWS, and product integrations.",
+      "forbidden_claims": ["manual QA lead", "ad campaign QA", "commission sales"]
+    },
+    "ranking_expectations": {
+      "allowed_decisions": ["AVOID", "SKIP"],
+      "max_score": 35,
+      "required_evidence_terms": ["manual QA", "commission"],
+      "dealbreaker_terms": ["commission", "relocation"]
+    }
   }
 ]

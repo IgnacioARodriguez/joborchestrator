@@ -55,6 +55,11 @@ LINKEDIN_ENRICHMENT_COLUMNS = {
     "apply_type": "TEXT",
     "external_apply_url": "TEXT",
 }
+LLM_EVAL_RUN_COLUMNS = {
+    "judge_provider": "TEXT",
+    "judge_model": "TEXT",
+    "judge_result_json": "TEXT",
+}
 _SCHEMA_READY = False
 _SCHEMA_READY_PATH: str | None = None
 
@@ -510,6 +515,9 @@ CREATE TABLE IF NOT EXISTS llm_eval_runs (
     metrics_json TEXT NOT NULL,
     output_json TEXT NOT NULL,
     judge_payload_json TEXT,
+    judge_provider TEXT,
+    judge_model TEXT,
+    judge_result_json TEXT,
     notes TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY(job_id) REFERENCES job_postings(id)
@@ -541,6 +549,7 @@ def _conn():
             backup_database("before_speed_ranking_migration")
         _ensure_scanner_columns(conn)
         _ensure_hiring_contacts_schema(conn)
+        _ensure_llm_eval_schema(conn)
         skill_catalog_repository.seed_skill_catalog(conn)
         _backfill_speed_ranking_columns(conn)
         _backfill_legacy_hiring_contacts(conn)
@@ -571,7 +580,10 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
         tuple(sorted(required_tables)),
     ).fetchall()
     existing = {row["name"] for row in rows}
-    return required_tables.issubset(existing)
+    if not required_tables.issubset(existing):
+        return False
+    eval_columns = _table_columns(conn, "llm_eval_runs")
+    return set(LLM_EVAL_RUN_COLUMNS).issubset(eval_columns)
 
 
 def backup_database(reason: str = "manual") -> Path | None:
@@ -652,6 +664,16 @@ def _ensure_hiring_contacts_schema(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE job_hiring_contacts ADD COLUMN {column} {column_type}")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_hiring_contacts_job ON job_hiring_contacts(job_posting_id, position)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_hiring_contacts_profile_url ON job_hiring_contacts(profile_url)")
+
+
+def _ensure_llm_eval_schema(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "llm_eval_runs")
+    for column, column_type in LLM_EVAL_RUN_COLUMNS.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE llm_eval_runs ADD COLUMN {column} {column_type}")
+            columns.add(column)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_eval_runs_case ON llm_eval_runs(case_id, artifact_type)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_eval_runs_created ON llm_eval_runs(created_at)")
 
 
 def _scanner_migration_needed(conn: sqlite3.Connection) -> bool:

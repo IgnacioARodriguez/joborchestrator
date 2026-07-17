@@ -16,6 +16,7 @@ from joborchestrator.evals.semantic import (
     evaluate_application_materials,
     evaluate_ranking_result,
 )
+from joborchestrator.evals.llm_judge import judge_with_nvidia, judge_with_openai
 from joborchestrator.storage import persistence as db
 
 
@@ -34,6 +35,8 @@ def main() -> int:
     parser.add_argument("--save-db", action="store_true", help="Persist the eval result in llm_eval_runs.")
     parser.add_argument("--provider", help="Provider/model owner label for saved eval metadata.")
     parser.add_argument("--model", help="Model label for saved eval metadata.")
+    parser.add_argument("--judge-provider", choices=["openai", "nvidia"], help="Optionally run an LLM judge.")
+    parser.add_argument("--judge-model", help="Model name for the optional LLM judge.")
     parser.add_argument("--notes", help="Free-form note for saved eval metadata.")
     parser.add_argument("--list-runs", action="store_true", help="List recent persisted eval runs and exit.")
     parser.add_argument("--limit", type=int, default=20)
@@ -69,6 +72,8 @@ def main() -> int:
     if args.judge_payload:
         args.judge_payload.write_text(json.dumps(judge_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    judge_result = _run_optional_judge(args, judge_payload)
+
     saved_id = None
     if args.save_db:
         saved = db.save_llm_eval_run(
@@ -85,12 +90,17 @@ def main() -> int:
                 "metrics": result.metrics,
                 "output": candidate_output,
                 "judge_payload": judge_payload,
+                "judge_provider": args.judge_provider,
+                "judge_model": args.judge_model,
+                "judge_result": judge_result,
                 "notes": args.notes,
             }
         )
         saved_id = saved["id"]
 
     response = _result_to_dict(result)
+    if judge_result is not None:
+        response["judge_result"] = judge_result
     if saved_id is not None:
         response["saved_eval_run_id"] = saved_id
     print(json.dumps(response, ensure_ascii=False, indent=2))
@@ -153,6 +163,14 @@ def _result_to_dict(result: Any) -> dict[str, Any]:
     }
 
 
+def _run_optional_judge(args: argparse.Namespace, judge_payload: dict[str, Any]) -> dict[str, Any] | None:
+    if args.judge_provider == "openai":
+        return judge_with_openai(judge_payload, model=args.judge_model)
+    if args.judge_provider == "nvidia":
+        return judge_with_nvidia(judge_payload, model=args.judge_model)
+    return None
+
+
 def _print_runs(limit: int, case_id: str | None, artifact_type: str | None) -> None:
     rows = db.list_llm_eval_runs(limit=limit, case_id=case_id, artifact_type=artifact_type)
     records = []
@@ -166,6 +184,9 @@ def _print_runs(limit: int, case_id: str | None, artifact_type: str | None) -> N
                 "ranking_version": row.get("ranking_version"),
                 "provider": row.get("provider"),
                 "model": row.get("model"),
+                "judge_provider": row.get("judge_provider"),
+                "judge_model": row.get("judge_model"),
+                "judge_result": _loads_json(row.get("judge_result_json"), {}),
                 "passed": bool(row["passed"]),
                 "score": int(row["score"]),
                 "issues": _loads_json(row.get("issues_json"), []),

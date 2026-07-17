@@ -133,6 +133,16 @@ def test_llm_judge_payload_is_structured_and_offline():
     assert payload["candidate_output"] == output
 
 
+def test_all_fixture_cases_have_eval_expectations():
+    for case in _cases().values():
+        assert case["job"]["title"]
+        assert case["candidate"]["base_cv_text"]
+        assert case.get("materials_expectations") or case.get("ranking_expectations")
+        if case.get("ranking_expectations"):
+            payload = build_llm_judge_payload(case, {"decision": "MAYBE", "final_score": 50}, "ranking")
+            assert payload["case_id"] == case["id"]
+
+
 def test_eval_runs_are_persisted(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "evals.db")
     db.init_db()
@@ -164,6 +174,9 @@ def test_eval_runs_are_persisted(tmp_path, monkeypatch):
             "metrics": result.metrics,
             "output": output,
             "judge_payload": judge_payload,
+            "judge_provider": "openai",
+            "judge_model": "judge-test",
+            "judge_result": {"passed": True, "score": 95, "issues": [], "rationale": "Looks good."},
             "notes": "fixture run",
         }
     )
@@ -176,3 +189,6 @@ def test_eval_runs_are_persisted(tmp_path, monkeypatch):
     assert row["artifact_type"] == "ranking"
     assert row["passed"] == 1
     assert row["score"] == 100
+    assert row["judge_provider"] == "openai"
+    assert row["judge_model"] == "judge-test"
+    assert "Looks good" in row["judge_result_json"]

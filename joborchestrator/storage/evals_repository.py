@@ -20,8 +20,9 @@ def save_llm_eval_run(connect: ConnectionFactory, payload: dict[str, Any]) -> di
             """INSERT INTO llm_eval_runs (
                    case_id, artifact_type, job_id, ranking_version, provider, model,
                    passed, score, issues_json, metrics_json, output_json,
-                   judge_payload_json, notes, created_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   judge_payload_json, judge_provider, judge_model, judge_result_json,
+                   notes, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 payload["case_id"],
                 payload["artifact_type"],
@@ -35,6 +36,9 @@ def save_llm_eval_run(connect: ConnectionFactory, payload: dict[str, Any]) -> di
                 json.dumps(payload.get("metrics") or {}, ensure_ascii=False),
                 json.dumps(payload.get("output") or {}, ensure_ascii=False),
                 json.dumps(payload.get("judge_payload") or {}, ensure_ascii=False),
+                payload.get("judge_provider"),
+                payload.get("judge_model"),
+                json.dumps(payload.get("judge_result") or {}, ensure_ascii=False),
                 payload.get("notes"),
                 now,
             ),
