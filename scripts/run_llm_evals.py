@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.evals.semantic import (
+    build_auto_eval_case,
     build_llm_judge_payload,
     evaluate_application_materials,
     evaluate_ranking_result,
@@ -27,6 +28,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run offline semantic evals for LLM ranking/material outputs.")
     parser.add_argument("--cases", type=Path, default=DEFAULT_CASES_PATH)
     parser.add_argument("--case-id")
+    parser.add_argument("--auto-case-from-job", action="store_true")
     parser.add_argument("--artifact", choices=["application_materials", "ranking"])
     source_group = parser.add_mutually_exclusive_group()
     source_group.add_argument("--output", type=Path, help="JSON file with the model output to evaluate.")
@@ -51,18 +53,13 @@ def main() -> int:
         _print_runs(args.limit, args.case_id, args.artifact)
         return 0
 
-    if not args.case_id or not args.artifact:
-        parser.error("--case-id and --artifact are required unless --list-runs is used")
+    if (not args.case_id and not args.auto_case_from_job) or not args.artifact:
+        parser.error("--case-id or --auto-case-from-job, plus --artifact, are required unless --list-runs is used")
     if not args.output and not args.job_id:
         parser.error("one of --output or --job-id is required")
 
-    cases = _load_cases(args.cases)
-    if args.case_id not in cases:
-        available = ", ".join(sorted(cases))
-        raise SystemExit(f"Unknown case_id {args.case_id!r}. Available: {available}")
-
     candidate_output = _load_candidate_output(args)
-    case = cases[args.case_id]
+    case = _load_case(args)
     if args.artifact == "application_materials":
         result = evaluate_application_materials(case, candidate_output)
     else:
@@ -78,7 +75,7 @@ def main() -> int:
     if args.save_db:
         saved = db.save_llm_eval_run(
             {
-                "case_id": args.case_id,
+                "case_id": case["id"],
                 "artifact_type": args.artifact,
                 "job_id": args.job_id,
                 "ranking_version": args.ranking_version if args.artifact == "ranking" else None,
@@ -110,6 +107,21 @@ def main() -> int:
 def _load_cases(path: Path) -> dict[str, dict[str, Any]]:
     loaded = json.loads(path.read_text(encoding="utf-8-sig"))
     return {case["id"]: case for case in loaded}
+
+
+def _load_case(args: argparse.Namespace) -> dict[str, Any]:
+    if args.auto_case_from_job:
+        if not args.job_id:
+            raise SystemExit("--auto-case-from-job requires --job-id.")
+        job = db.get_job_posting(int(args.job_id))
+        if not job:
+            raise SystemExit(f"Job id {args.job_id} was not found.")
+        return build_auto_eval_case(job, db.get_candidate_profile_payload() or {})
+    cases = _load_cases(args.cases)
+    if args.case_id not in cases:
+        available = ", ".join(sorted(cases))
+        raise SystemExit(f"Unknown case_id {args.case_id!r}. Available: {available}")
+    return cases[args.case_id]
 
 
 def _load_candidate_output(args: argparse.Namespace) -> dict[str, Any]:
@@ -180,12 +192,12 @@ def _print_runs(limit: int, case_id: str | None, artifact_type: str | None) -> N
                 "id": int(row["id"]),
                 "case_id": row["case_id"],
                 "artifact_type": row["artifact_type"],
-                "job_id": row.get("job_id"),
-                "ranking_version": row.get("ranking_version"),
-                "provider": row.get("provider"),
-                "model": row.get("model"),
-                "judge_provider": row.get("judge_provider"),
-                "judge_model": row.get("judge_model"),
+                "job_id": _clean_optional(row.get("job_id")),
+                "ranking_version": _clean_optional(row.get("ranking_version")),
+                "provider": _clean_optional(row.get("provider")),
+                "model": _clean_optional(row.get("model")),
+                "judge_provider": _clean_optional(row.get("judge_provider")),
+                "judge_model": _clean_optional(row.get("judge_model")),
                 "judge_result": _loads_json(row.get("judge_result_json"), {}),
                 "passed": bool(row["passed"]),
                 "score": int(row["score"]),
@@ -194,6 +206,14 @@ def _print_runs(limit: int, case_id: str | None, artifact_type: str | None) -> N
             }
         )
     print(json.dumps(records, ensure_ascii=False, indent=2))
+
+
+def _clean_optional(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, float) and value != value:
+        return None
+    return value
 
 
 if __name__ == "__main__":

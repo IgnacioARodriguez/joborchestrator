@@ -16,6 +16,55 @@ class SemanticEvalResult:
     metrics: dict[str, Any]
 
 
+GENERIC_UNSUPPORTED_CLAIMS = [
+    "Kubernetes Certified",
+    "Certified Scrum Product Owner",
+    "PhD",
+    "MBA",
+    "10+ years",
+    "Rust kernel",
+    "device drivers",
+    "managed product P&L",
+]
+
+
+def build_auto_eval_case(job: Any, profile_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    job_payload = _to_dict(job)
+    profile_payload = profile_payload or {}
+    base_cv_text = str(profile_payload.get("base_cv_text") or "").strip()
+    supported_terms = _supported_profile_terms(profile_payload)
+    job_text = _normalize(
+        " ".join(
+            str(job_payload.get(key) or "")
+            for key in ["title", "company", "description_text", "description", "location"]
+        )
+    )
+    required_terms = [term for term in supported_terms if _contains_phrase(job_text, term)][:6]
+    return {
+        "id": f"auto-job-{job_payload.get('id') or job_payload.get('job_id') or 'unknown'}",
+        "job": {
+            "title": job_payload.get("title") or "",
+            "company": job_payload.get("company") or "",
+            "description_text": job_payload.get("description_text") or job_payload.get("description") or "",
+        },
+        "candidate": {
+            "base_cv_text": base_cv_text,
+            "required_experience_terms": _extract_likely_employers(base_cv_text),
+            "forbidden_claims": GENERIC_UNSUPPORTED_CLAIMS,
+        },
+        "materials_expectations": {
+            "required_terms": required_terms,
+            "specificity_terms": [
+                term
+                for term in [job_payload.get("company"), job_payload.get("title")]
+                if str(term or "").strip()
+            ],
+            "max_recruiter_message_chars": 320,
+        },
+        "ranking_expectations": {"required_evidence_terms": required_terms[:3]},
+    }
+
+
 def evaluate_application_materials(case: dict[str, Any], materials: Any) -> SemanticEvalResult:
     payload = _to_dict(materials)
     expectations = case.get("materials_expectations") or {}
@@ -51,6 +100,11 @@ def evaluate_application_materials(case: dict[str, Any], materials: Any) -> Sema
     if omitted_experiences:
         issues.append(f"omitted_base_experience:{','.join(omitted_experiences)}")
     metrics["omitted_base_experience"] = omitted_experiences
+
+    internal_cv_markers = _internal_cv_markers(ats_cv_text)
+    if internal_cv_markers:
+        issues.append(f"ats_cv_contains_internal_notes:{','.join(internal_cv_markers)}")
+    metrics["ats_cv_internal_markers"] = internal_cv_markers
 
     recruiter_message = str(payload.get("recruiter_message") or "").strip()
     max_recruiter_chars = int(expectations.get("max_recruiter_message_chars") or 320)
@@ -167,6 +221,84 @@ def build_llm_judge_payload(case: dict[str, Any], candidate_output: Any, artifac
             "rationale": "short evidence-backed explanation",
         },
     }
+
+
+def _supported_profile_terms(profile_payload: dict[str, Any]) -> list[str]:
+    terms: list[str] = []
+    for skill in profile_payload.get("skills") or []:
+        if isinstance(skill, dict) and str(skill.get("name") or "").strip():
+            terms.append(str(skill["name"]).strip())
+    base_cv = str(profile_payload.get("base_cv_text") or "")
+    fallback_terms = [
+        "Python",
+        "FastAPI",
+        "Django",
+        "Flask",
+        "PostgreSQL",
+        "SQL",
+        "MongoDB",
+        "Redis",
+        "Docker",
+        "AWS",
+        "React",
+        "TypeScript",
+        "JavaScript",
+        "API",
+        "automation",
+        "stakeholder",
+    ]
+    for term in fallback_terms:
+        if _contains_phrase(_normalize(base_cv), term):
+            terms.append(term)
+    return _unique_terms(terms)
+
+
+def _extract_likely_employers(base_cv_text: str) -> list[str]:
+    known = ["Fiction Express", "Talan Consulting", "Globant", "Balloon Group"]
+    found = [term for term in known if _contains_phrase(_normalize(base_cv_text), term)]
+    if found:
+        return found
+    section = re.search(
+        r"(?ims)^\s*(experience|professional experience|experiencia)\s*$([\s\S]*?)(?=^\s*(projects|skills|education|formaci[oó]n)\s*$|\Z)",
+        base_cv_text,
+    )
+    if not section:
+        return []
+    employers: list[str] = []
+    for line in section.group(2).splitlines():
+        stripped = line.strip(" -\t")
+        if not stripped or len(stripped) > 80:
+            continue
+        if re.search(r"(?i)\b(developer|engineer|consultant|manager|specialist)\b", stripped):
+            continue
+        if re.search(r"[A-Z][a-z]+", stripped):
+            employers.append(stripped)
+    return _unique_terms(employers)[:6]
+
+
+def _unique_terms(terms: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for term in terms:
+        normalized = _normalize(term)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            unique.append(term)
+    return unique
+
+
+def _internal_cv_markers(text: str) -> list[str]:
+    normalized = _normalize(text)
+    markers = [
+        "target role:",
+        "ats keywords",
+        "positioning angle:",
+        "optimized cv",
+        "optimization notes",
+        "keywords to emphasize",
+        "internal note",
+    ]
+    return [marker for marker in markers if marker in normalized]
 
 
 def _result(issues: list[str], metrics: dict[str, Any]) -> SemanticEvalResult:

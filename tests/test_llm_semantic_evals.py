@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from joborchestrator.evals.semantic import (
+    build_auto_eval_case,
     build_llm_judge_payload,
     evaluate_application_materials,
     evaluate_ranking_result,
@@ -71,6 +72,26 @@ def test_material_eval_rejects_hallucinated_claims_and_omissions():
     assert any(issue.startswith("unsupported_claims:") for issue in result.issues)
     assert any(issue.startswith("omitted_base_experience:") for issue in result.issues)
     assert any(issue.startswith("recruiter_message_cover_letter_style:") for issue in result.issues)
+
+
+def test_material_eval_rejects_internal_cv_notes():
+    case = _cases()["backend-fastapi-strong-fit"]
+    materials = {
+        "recruiter_message": "Hi Acme Labs, Python/FastAPI backend fit for the Backend Engineer role.",
+        "cover_letter": "Acme Labs backend role.",
+        "ats_cv_text": (
+            "Ignacio Rodriguez\nProfessional Summary\nPython FastAPI PostgreSQL\n"
+            "Target role: Backend Engineer\nATS keywords to emphasize truthfully: Python\n"
+            "Optimized CV\nProfessional Experience\nFiction Express\nTalan Consulting\nGlobant\nBalloon Group\n"
+            "Education\nCoursework"
+        ),
+        "autofill_notes": "Use Acme Labs backend angle.",
+    }
+
+    result = evaluate_application_materials(case, materials)
+
+    assert result.passed is False
+    assert any(issue.startswith("ats_cv_contains_internal_notes:") for issue in result.issues)
 
 
 def test_ranking_eval_accepts_expected_decision_band():
@@ -141,6 +162,30 @@ def test_all_fixture_cases_have_eval_expectations():
         if case.get("ranking_expectations"):
             payload = build_llm_judge_payload(case, {"decision": "MAYBE", "final_score": 50}, "ranking")
             assert payload["case_id"] == case["id"]
+
+
+def test_auto_eval_case_uses_job_and_profile_terms():
+    case = build_auto_eval_case(
+        {
+            "id": 77,
+            "title": "AWS Backend Developer",
+            "company": "CloudWorks",
+            "description_text": "Build Python APIs on AWS with PostgreSQL.",
+        },
+        {
+            "base_cv_text": "Experience\nFiction Express\nTalan Consulting\nPython AWS PostgreSQL APIs",
+            "skills": [
+                {"name": "Python", "level": "strong"},
+                {"name": "AWS", "level": "strong"},
+                {"name": "React", "level": "medium"},
+            ],
+        },
+    )
+
+    assert case["id"] == "auto-job-77"
+    assert case["materials_expectations"]["specificity_terms"] == ["CloudWorks", "AWS Backend Developer"]
+    assert {"Python", "AWS", "PostgreSQL"}.issubset(set(case["materials_expectations"]["required_terms"]))
+    assert "Fiction Express" in case["candidate"]["required_experience_terms"]
 
 
 def test_eval_runs_are_persisted(tmp_path, monkeypatch):
