@@ -14,6 +14,7 @@ from joborchestrator.evals.semantic import (  # noqa: E402
     build_auto_eval_case,
     build_llm_judge_payload,
     evaluate_application_materials,
+    evaluate_ats_cv_result,
     evaluate_ranking_result,
 )
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION  # noqa: E402
@@ -25,7 +26,11 @@ def main() -> int:
     parser.add_argument("--ranking-version", default=NVIDIA_RANKING_VERSION)
     parser.add_argument("--limit", type=int, default=25)
     parser.add_argument("--min-score", type=int)
-    parser.add_argument("--artifact", choices=["ranking", "application_materials", "both"], default="both")
+    parser.add_argument(
+        "--artifact",
+        choices=["ranking", "application_materials", "ats_cv", "both", "all"],
+        default="both",
+    )
     parser.add_argument("--save-db", action="store_true")
     parser.add_argument("--fail-on-issues", action="store_true")
     parser.add_argument("--provider", default="baseline")
@@ -42,10 +47,12 @@ def main() -> int:
     records = []
     for row in ranked.head(args.limit).to_dict(orient="records"):
         case = build_auto_eval_case(_job_from_ranked_row(row), profile)
-        if args.artifact in {"ranking", "both"}:
+        if args.artifact in {"ranking", "both", "all"}:
             records.append(_evaluate_ranking_row(row, case, args))
-        if args.artifact in {"application_materials", "both"} and _has_materials(row):
+        if args.artifact in {"application_materials", "both", "all"} and _has_materials(row):
             records.append(_evaluate_materials_row(row, case, args))
+        if args.artifact in {"ats_cv", "all"} and _has_ats_cv(row):
+            records.append(_evaluate_ats_cv_row(row, case, args))
 
     summary = _summary(records)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -77,6 +84,12 @@ def _evaluate_materials_row(row: dict[str, Any], case: dict[str, Any], args: arg
     }
     result = evaluate_application_materials(case, output)
     return _record(row, case, "application_materials", output, result, args)
+
+
+def _evaluate_ats_cv_row(row: dict[str, Any], case: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    output = {"ats_cv_text": _clean_cell(row.get("ats_cv_text"))}
+    result = evaluate_ats_cv_result(case, output)
+    return _record(row, case, "ats_cv", output, result, args)
 
 
 def _record(
@@ -149,6 +162,10 @@ def _job_from_ranked_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def _has_materials(row: dict[str, Any]) -> bool:
     return any(_clean_cell(row.get(field)).strip() for field in ["recruiter_message", "ats_cv_text", "autofill_notes"])
+
+
+def _has_ats_cv(row: dict[str, Any]) -> bool:
+    return bool(_clean_cell(row.get("ats_cv_text")).strip())
 
 
 def _clean_cell(value: Any) -> str:

@@ -7,6 +7,7 @@ from joborchestrator.evals.semantic import (
     build_auto_eval_case,
     build_llm_judge_payload,
     evaluate_application_materials,
+    evaluate_ats_cv_result,
     evaluate_ranking_result,
 )
 from joborchestrator.storage import persistence as db
@@ -94,6 +95,66 @@ def test_material_eval_rejects_internal_cv_notes():
     assert any(issue.startswith("ats_cv_contains_internal_notes:") for issue in result.issues)
 
 
+def test_ats_cv_eval_accepts_complete_truthful_parseable_cv():
+    case = _cases()["backend-fastapi-strong-fit"]
+    ats_cv = """
+Ignacio Rodriguez
+Madrid, Spain | ignacio@example.com
+
+Professional Summary
+Backend engineer focused on Python APIs, FastAPI services, PostgreSQL data models, observability, and product delivery.
+Experienced turning product requirements into reliable backend systems and collaborating with cross-functional teams.
+
+Technical Skills
+Python, FastAPI, PostgreSQL, SQL, REST APIs, AWS, observability, dashboards, automation, stakeholder collaboration.
+
+Professional Experience
+Backend Engineer | Fiction Express
+- Built and maintained Python API workflows and backend features for digital learning products.
+- Improved service reliability, observability, and data workflows in collaboration with product stakeholders.
+
+Full Stack Developer | Talan Consulting
+- Delivered dashboards, integrations, and SQL-backed product features for business users.
+- Partnered with frontend and product teams to scope backend deliverables and implementation plans.
+
+Backend Developer | Globant
+- Supported AWS-based backend services, integrations, and production troubleshooting.
+
+Full Stack Developer | Balloon Group
+- Built web applications and backend functionality across product delivery cycles.
+
+Education
+Software engineering coursework and ongoing professional development in backend systems.
+""".strip()
+
+    result = evaluate_ats_cv_result(case, {"ats_cv_text": ats_cv})
+
+    assert result.passed is True
+    assert result.issues == []
+
+
+def test_ats_cv_eval_rejects_internal_notes_and_hallucinated_claims():
+    case = _cases()["backend-fastapi-strong-fit"]
+    result = evaluate_ats_cv_result(
+        case,
+        {
+            "ats_cv_text": (
+                "Professional Summary\nKubernetes Certified backend engineer\n"
+                "Target role: Backend Engineer\n"
+                "Technical Skills\nPython\n"
+                "Professional Experience\nFiction Express\n"
+                "Education\nCoursework"
+            )
+        },
+    )
+
+    assert result.passed is False
+    assert any(issue.startswith("unsupported_claims:") for issue in result.issues)
+    assert any(issue.startswith("missing_required_keywords:") for issue in result.issues)
+    assert any(issue.startswith("omitted_base_experience:") for issue in result.issues)
+    assert any(issue.startswith("ats_cv_contains_internal_notes:") for issue in result.issues)
+
+
 def test_ranking_eval_accepts_expected_decision_band():
     case = _cases()["backend-fastapi-strong-fit"]
     ranking = {
@@ -154,6 +215,21 @@ def test_llm_judge_payload_is_structured_and_offline():
     assert payload["candidate_output"] == output
 
 
+def test_llm_judge_payload_supports_ats_cv_rubric():
+    case = _cases()["backend-fastapi-strong-fit"]
+    output = {"ats_cv_text": "Professional Summary\nPython FastAPI PostgreSQL"}
+
+    payload = build_llm_judge_payload(case, output, "ats_cv")
+
+    assert payload["artifact_type"] == "ats_cv"
+    assert payload["source_case"]["expectations"]["ats_cv"]["required_keywords"] == [
+        "Python",
+        "FastAPI",
+        "PostgreSQL",
+    ]
+    assert any("parseable" in rule for rule in payload["rubric"]["pass_fail_rules"])
+
+
 def test_all_fixture_cases_have_eval_expectations():
     for case in _cases().values():
         assert case["job"]["title"]
@@ -185,6 +261,7 @@ def test_auto_eval_case_uses_job_and_profile_terms():
     assert case["id"] == "auto-job-77"
     assert case["materials_expectations"]["specificity_terms"] == ["CloudWorks", "AWS Backend Developer"]
     assert {"Python", "AWS", "PostgreSQL"}.issubset(set(case["materials_expectations"]["required_terms"]))
+    assert {"Python", "AWS", "PostgreSQL"}.issubset(set(case["ats_cv_expectations"]["required_keywords"]))
     assert "Fiction Express" in case["candidate"]["required_experience_terms"]
 
 

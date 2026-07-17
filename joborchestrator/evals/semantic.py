@@ -61,6 +61,10 @@ def build_auto_eval_case(job: Any, profile_payload: dict[str, Any] | None = None
             ],
             "max_recruiter_message_chars": 320,
         },
+        "ats_cv_expectations": {
+            "required_keywords": required_terms,
+            "required_sections": ["summary", "skills", "experience", "education"],
+        },
         "ranking_expectations": {"required_evidence_terms": required_terms[:3]},
     }
 
@@ -184,20 +188,83 @@ def evaluate_ranking_result(case: dict[str, Any], ranking: Any) -> SemanticEvalR
     return _result(issues, metrics)
 
 
+def evaluate_ats_cv_result(case: dict[str, Any], ats_cv_output: Any) -> SemanticEvalResult:
+    payload = {"ats_cv_text": ats_cv_output} if isinstance(ats_cv_output, str) else _to_dict(ats_cv_output)
+    expectations = case.get("ats_cv_expectations") or case.get("materials_expectations") or {}
+    candidate = case.get("candidate") or {}
+    issues: list[str] = []
+    metrics: dict[str, Any] = {}
+
+    ats_cv_text = str(payload.get("ats_cv_text") or "")
+    normalized_ats_cv = _normalize(ats_cv_text)
+    if not ats_cv_text.strip():
+        issues.append("missing_required_fields:ats_cv_text")
+
+    forbidden_claims = candidate.get("forbidden_claims") or expectations.get("forbidden_claims") or []
+    unsupported_claims = [term for term in forbidden_claims if _contains_phrase(normalized_ats_cv, term)]
+    if unsupported_claims:
+        issues.append(f"unsupported_claims:{','.join(unsupported_claims)}")
+    metrics["unsupported_claims"] = unsupported_claims
+
+    required_keywords = expectations.get("required_keywords") or expectations.get("required_terms") or []
+    keyword_synonyms = expectations.get("keyword_synonyms") or {}
+    missing_keywords = [
+        term for term in required_keywords if not _contains_keyword_or_synonym(normalized_ats_cv, term, keyword_synonyms)
+    ]
+    if missing_keywords:
+        issues.append(f"missing_required_keywords:{','.join(missing_keywords)}")
+    metrics["missing_required_keywords"] = missing_keywords
+
+    required_sections = expectations.get("required_sections") or ["summary", "skills", "experience", "education"]
+    missing_sections = [section for section in required_sections if not _has_ats_section(ats_cv_text, section)]
+    if missing_sections:
+        issues.append(f"ats_cv_missing_parseable_sections:{','.join(missing_sections)}")
+    metrics["missing_parseable_sections"] = missing_sections
+
+    min_chars = int(expectations.get("min_chars") or 500)
+    parseable_lines = [line for line in ats_cv_text.splitlines() if line.strip()]
+    metrics["ats_cv_chars"] = len(ats_cv_text)
+    metrics["ats_cv_parseable_lines"] = len(parseable_lines)
+    if ats_cv_text.strip() and len(ats_cv_text) < min_chars:
+        issues.append(f"ats_cv_too_short:{len(ats_cv_text)}<{min_chars}")
+
+    base_experience_terms = candidate.get("required_experience_terms") or []
+    omitted_experiences = [term for term in base_experience_terms if not _contains_phrase(normalized_ats_cv, term)]
+    if omitted_experiences:
+        issues.append(f"omitted_base_experience:{','.join(omitted_experiences)}")
+    metrics["omitted_base_experience"] = omitted_experiences
+
+    internal_cv_markers = _internal_cv_markers(ats_cv_text)
+    if internal_cv_markers:
+        issues.append(f"ats_cv_contains_internal_notes:{','.join(internal_cv_markers)}")
+    metrics["ats_cv_internal_markers"] = internal_cv_markers
+
+    return _result(issues, metrics)
+
+
 def build_llm_judge_payload(case: dict[str, Any], candidate_output: Any, artifact_type: str) -> dict[str, Any]:
-    if artifact_type not in {"application_materials", "ranking"}:
-        raise ValueError("artifact_type must be one of: application_materials, ranking")
+    if artifact_type not in {"application_materials", "ranking", "ats_cv"}:
+        raise ValueError("artifact_type must be one of: application_materials, ranking, ats_cv")
+    pass_fail_rules = [
+        "Fail if the output invents employers, degrees, certifications, tools, years, or projects not supported by the candidate source.",
+        "Fail if a ranking recommends APPLY_NOW despite an explicit central requirement mismatch or dealbreaker.",
+        "Fail if evidence does not cite the strongest match and the most important gap for the candidate.",
+        "Fail if application materials are generic and do not reference the target company, role, or truthful candidate strengths.",
+    ]
+    if artifact_type == "ats_cv":
+        pass_fail_rules = [
+            "Fail if the ATS CV invents experience, employers, degrees, certifications, tools, years, or projects not supported by the candidate source.",
+            "Fail if the ATS CV omits required job keywords the candidate can truthfully support.",
+            "Fail if the ATS CV contains internal notes, targeting commentary, or prompt artifacts instead of final CV text.",
+            "Fail if the ATS CV is not parseable with standard sections such as summary, skills, experience, and education.",
+            "Fail if the ATS CV drops real candidate experience entries from the source CV.",
+        ]
     return {
         "artifact_type": artifact_type,
         "case_id": case.get("id"),
         "rubric_version": "semantic-eval-v1",
         "rubric": {
-            "pass_fail_rules": [
-                "Fail if the output invents employers, degrees, certifications, tools, years, or projects not supported by the candidate source.",
-                "Fail if a ranking recommends APPLY_NOW despite an explicit central requirement mismatch or dealbreaker.",
-                "Fail if evidence does not cite the strongest match and the most important gap for the candidate.",
-                "Fail if application materials are generic and do not reference the target company, role, or truthful candidate strengths.",
-            ],
+            "pass_fail_rules": pass_fail_rules,
             "scores": {
                 "faithfulness": "0-100 based on whether claims are supported by candidate data.",
                 "job_specificity": "0-100 based on target role/company/requirement specificity.",
@@ -211,6 +278,7 @@ def build_llm_judge_payload(case: dict[str, Any], candidate_output: Any, artifac
             "expectations": {
                 "materials": case.get("materials_expectations"),
                 "ranking": case.get("ranking_expectations"),
+                "ats_cv": case.get("ats_cv_expectations"),
             },
         },
         "candidate_output": _to_dict(candidate_output),
@@ -299,6 +367,32 @@ def _internal_cv_markers(text: str) -> list[str]:
         "internal note",
     ]
     return [marker for marker in markers if marker in normalized]
+
+
+def _contains_keyword_or_synonym(
+    normalized_text: str,
+    keyword: str,
+    keyword_synonyms: dict[str, Any],
+) -> bool:
+    if _contains_phrase(normalized_text, keyword):
+        return True
+    synonyms = keyword_synonyms.get(keyword) or keyword_synonyms.get(_normalize(keyword)) or []
+    return any(_contains_phrase(normalized_text, synonym) for synonym in synonyms)
+
+
+def _has_ats_section(text: str, section: str) -> bool:
+    aliases = {
+        "summary": ["summary", "professional summary", "profile", "perfil", "resumen"],
+        "skills": ["skills", "technical skills", "core skills", "competencias", "habilidades"],
+        "experience": ["experience", "professional experience", "work experience", "experiencia"],
+        "education": ["education", "academic", "formacion", "formación", "educacion", "educación"],
+    }
+    expected = aliases.get(str(section).lower(), [str(section).lower()])
+    for line in str(text or "").splitlines():
+        stripped = _normalize(line).strip(" :-\t")
+        if any(stripped == alias or stripped.startswith(f"{alias}:") for alias in expected):
+            return True
+    return False
 
 
 def _result(issues: list[str], metrics: dict[str, Any]) -> SemanticEvalResult:

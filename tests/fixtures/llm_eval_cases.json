@@ -16,6 +16,14 @@
       "specificity_terms": ["Acme Labs", "Backend Engineer"],
       "max_recruiter_message_chars": 320
     },
+    "ats_cv_expectations": {
+      "required_keywords": ["Python", "FastAPI", "PostgreSQL"],
+      "required_sections": ["summary", "skills", "experience", "education"],
+      "min_chars": 500,
+      "keyword_synonyms": {
+        "PostgreSQL": ["SQL", "relational database"]
+      }
+    },
     "ranking_expectations": {
       "allowed_decisions": ["APPLY_NOW", "APPLY_WITH_TAILORED_CV"],
       "min_score": 70,
@@ -56,6 +64,15 @@
       "required_terms": ["API", "automation", "stakeholder"],
       "specificity_terms": ["WorkflowAI", "Technical Product Owner"],
       "max_recruiter_message_chars": 320
+    },
+    "ats_cv_expectations": {
+      "required_keywords": ["API", "automation", "stakeholder"],
+      "required_sections": ["summary", "skills", "experience", "education"],
+      "min_chars": 500,
+      "keyword_synonyms": {
+        "API": ["APIs", "REST"],
+        "stakeholder": ["stakeholders", "cross-functional"]
+      }
     },
     "ranking_expectations": {
       "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE"],

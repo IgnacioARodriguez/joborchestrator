@@ -2,6 +2,7 @@ from joborchestrator.evals.semantic import (
     SemanticEvalResult,
     build_llm_judge_payload,
     evaluate_application_materials,
+    evaluate_ats_cv_result,
     evaluate_ranking_result,
 )
 from joborchestrator.evals.llm_judge import (
@@ -17,6 +18,7 @@ __all__ = [
     "SemanticEvalResult",
     "build_llm_judge_payload",
     "evaluate_application_materials",
+    "evaluate_ats_cv_result",
     "evaluate_ranking_result",
     "judge_with_configured_providers",
     "judge_with_nvidia",

@@ -15,6 +15,7 @@ from joborchestrator.evals.semantic import (
     build_auto_eval_case,
     build_llm_judge_payload,
     evaluate_application_materials,
+    evaluate_ats_cv_result,
     evaluate_ranking_result,
 )
 from joborchestrator.evals.llm_judge import judge_with_configured_providers
@@ -29,10 +30,10 @@ def main() -> int:
     parser.add_argument("--cases", type=Path, default=DEFAULT_CASES_PATH)
     parser.add_argument("--case-id")
     parser.add_argument("--auto-case-from-job", action="store_true")
-    parser.add_argument("--artifact", choices=["application_materials", "ranking"])
+    parser.add_argument("--artifact", choices=["application_materials", "ranking", "ats_cv"])
     source_group = parser.add_mutually_exclusive_group()
     source_group.add_argument("--output", type=Path, help="JSON file with the model output to evaluate.")
-    source_group.add_argument("--job-id", type=int, help="Load ranking/materials output for this DB job id.")
+    source_group.add_argument("--job-id", type=int, help="Load ranking/materials/ATS CV output for this DB job id.")
     parser.add_argument("--ranking-version", default=NVIDIA_RANKING_VERSION)
     parser.add_argument("--save-db", action="store_true", help="Persist the eval result in llm_eval_runs.")
     parser.add_argument("--provider", help="Provider/model owner label for saved eval metadata.")
@@ -67,6 +68,8 @@ def main() -> int:
     case = _load_case(args)
     if args.artifact == "application_materials":
         result = evaluate_application_materials(case, candidate_output)
+    elif args.artifact == "ats_cv":
+        result = evaluate_ats_cv_result(case, candidate_output)
     else:
         result = evaluate_ranking_result(case, candidate_output)
 
@@ -142,6 +145,11 @@ def _load_candidate_output(args: argparse.Namespace) -> dict[str, Any]:
             "ats_cv_text": job.get("ats_cv_text") or "",
             "autofill_notes": job.get("autofill_notes") or "",
         }
+    if args.artifact == "ats_cv":
+        job = db.get_job_posting(int(args.job_id))
+        if not job:
+            raise SystemExit(f"Job id {args.job_id} was not found.")
+        return {"ats_cv_text": job.get("ats_cv_text") or ""}
     rows = db.get_rankings_for_job_ids(args.ranking_version, [int(args.job_id)])
     if rows.empty:
         raise SystemExit(f"No ranking found for job id {args.job_id} and version {args.ranking_version!r}.")
