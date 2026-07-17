@@ -1,0 +1,43 @@
+[
+  {
+    "id": "backend-fastapi-strong-fit",
+    "job": {
+      "title": "Backend Engineer",
+      "company": "Acme Labs",
+      "description_text": "Build Python and FastAPI APIs, own PostgreSQL data models, improve observability, and collaborate with product teams."
+    },
+    "candidate": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend Engineer\nExperience with Python APIs, FastAPI, PostgreSQL, AWS, dashboards, and product delivery.\nFiction Express\nTalan Consulting\nGlobant\nBalloon Group",
+      "required_experience_terms": ["Fiction Express", "Talan Consulting", "Globant", "Balloon Group"],
+      "forbidden_claims": ["Kubernetes Certified", "PhD", "Rust kernel"]
+    },
+    "materials_expectations": {
+      "required_terms": ["Python", "FastAPI", "PostgreSQL"],
+      "specificity_terms": ["Acme Labs", "Backend Engineer"],
+      "max_recruiter_message_chars": 320
+    },
+    "ranking_expectations": {
+      "allowed_decisions": ["APPLY_NOW", "APPLY_WITH_TAILORED_CV"],
+      "min_score": 70,
+      "required_evidence_terms": ["Python", "FastAPI"]
+    }
+  },
+  {
+    "id": "rust-kernel-mismatch",
+    "job": {
+      "title": "Senior Rust Kernel Engineer",
+      "company": "LowLevel Systems",
+      "description_text": "Requires 8+ years of Rust, C++, Linux kernel internals, device drivers, and on-site relocation to Berlin."
+    },
+    "candidate": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend Engineer focused on Python, Django, FastAPI, PostgreSQL, AWS, and product integrations.",
+      "forbidden_claims": ["Rust kernel", "device drivers", "8+ years of Rust"]
+    },
+    "ranking_expectations": {
+      "allowed_decisions": ["MAYBE", "SKIP", "AVOID"],
+      "max_score": 55,
+      "required_evidence_terms": ["Rust", "kernel"],
+      "dealbreaker_terms": ["relocation", "Rust kernel"]
+    }
+  }
+]
