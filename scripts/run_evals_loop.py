@@ -509,6 +509,8 @@ def commit_accepted_patch(prompt_path: Path, issue: str, iteration: int) -> None
 def is_promotion_allowed(before: dict[str, Any], after: dict[str, Any]) -> bool:
     if hard_stop_reason(after):
         return False
+    if compare_summaries(before, after).get("regressions"):
+        return False
     return float(after.get("pass_rate") or 0) >= float(before.get("pass_rate") or 0) and int(
         after.get("failed") or 0
     ) <= int(before.get("failed") or 0)

@@ -50,6 +50,33 @@ def test_loop_promotion_rule_rejects_regressions():
     assert loop.is_promotion_allowed(before, after) is False
 
 
+def test_loop_promotion_rule_rejects_case_regression_despite_better_aggregate():
+    before = {
+        "pass_rate": 0.5,
+        "failed": 2,
+        "issue_counts": {},
+        "records": [
+            {"artifact_type": "ranking", "case_id": "stable-pass", "passed": True},
+            {"artifact_type": "ranking", "case_id": "regressed", "passed": True},
+            {"artifact_type": "ranking", "case_id": "fixed-a", "passed": False},
+            {"artifact_type": "ranking", "case_id": "fixed-b", "passed": False},
+        ],
+    }
+    after = {
+        "pass_rate": 0.75,
+        "failed": 1,
+        "issue_counts": {},
+        "records": [
+            {"artifact_type": "ranking", "case_id": "stable-pass", "passed": True},
+            {"artifact_type": "ranking", "case_id": "regressed", "passed": False},
+            {"artifact_type": "ranking", "case_id": "fixed-a", "passed": True},
+            {"artifact_type": "ranking", "case_id": "fixed-b", "passed": True},
+        ],
+    }
+
+    assert loop.is_promotion_allowed(before, after) is False
+
+
 def test_loop_parses_surface_aliases():
     assert loop.parse_surfaces("ranking,materials,ats_cv") == [
         "ranking",
