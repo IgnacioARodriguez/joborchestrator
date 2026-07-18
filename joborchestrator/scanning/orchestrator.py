@@ -135,6 +135,7 @@ async def _run_linkedin_scan(
         "seen": 0,
         "total": 0,
     }
+    serializable_import_stats = _serializable_import_stats(import_stats)
     inactive = db.mark_jobs_inactive_by_last_seen(
         "linkedin_scraper",
         linkedin.FRESHNESS_WINDOW_SECONDS,
@@ -158,9 +159,9 @@ async def _run_linkedin_scan(
             stop_reason=str(scrape_summary.get("stop_reason") or "completed"),
             error=None,
             duration_seconds=float(scrape_summary.get("duration_seconds") or 0),
-            summary={**scrape_summary, "import_stats": import_stats, "inactive": inactive},
+            summary={**scrape_summary, "import_stats": serializable_import_stats, "inactive": inactive},
         )
-    return {"import_stats": import_stats, "inactive": inactive, "run_id": run_id, "summary": scrape_summary}
+    return {"import_stats": serializable_import_stats, "inactive": inactive, "run_id": run_id, "summary": scrape_summary}
 
 
 def _summary(ats: list[dict], search: list[dict], linkedin: dict[str, Any] | None, errors: dict[str, str]) -> dict[str, int]:
@@ -177,6 +178,15 @@ def _summary(ats: list[dict], search: list[dict], linkedin: dict[str, Any] | Non
         "new": sum(int(result.get("new_count") or 0) for result in scan_results) + int(linkedin_stats.get("new") or 0),
         "updated": sum(int(result.get("updated_count") or 0) for result in scan_results) + int(linkedin_stats.get("updated") or 0),
         "errors": len(errors),
+    }
+
+
+def _serializable_import_stats(import_stats: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "new": int(import_stats.get("new") or 0),
+        "updated": int(import_stats.get("updated") or 0),
+        "seen": int(import_stats.get("seen") or 0),
+        "total": int(import_stats.get("total") or 0),
     }
 
 
