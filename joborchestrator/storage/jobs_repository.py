@@ -1014,14 +1014,24 @@ def get_scanner_overview(connect: ConnectionFactory) -> dict:
         new_jobs = conn.execute("SELECT COUNT(*) FROM job_postings WHERE status = 'new'").fetchone()[0]
         updated_jobs = conn.execute("SELECT COUNT(*) FROM job_postings WHERE status = 'updated'").fetchone()[0]
         source_count = conn.execute("SELECT COUNT(*) FROM company_sources WHERE enabled = 1").fetchone()[0]
-        recent_errors = conn.execute(
+        recent_event_errors = conn.execute(
             "SELECT COUNT(*) FROM scan_events WHERE status = 'error' AND started_at >= datetime('now', '-7 day')"
         ).fetchone()[0]
-        last_scan = conn.execute("SELECT MAX(finished_at) FROM scan_events").fetchone()[0]
+        recent_linkedin_errors = conn.execute(
+            """SELECT COUNT(*)
+               FROM linkedin_scan_runs
+               WHERE status IN ('error', 'failed')
+                 AND COALESCE(finished_at, started_at) >= datetime('now', '-7 day')"""
+        ).fetchone()[0]
         last_event = conn.execute(
-            """SELECT new_count, updated_count, status
+            """SELECT finished_at AS scan_at, new_count, updated_count, status
                FROM scan_events
-               ORDER BY finished_at DESC
+               UNION ALL
+               SELECT COALESCE(finished_at, started_at) AS scan_at, imported_new AS new_count,
+                      imported_updated AS updated_count, status
+               FROM linkedin_scan_runs
+               WHERE status != 'running'
+               ORDER BY scan_at DESC
                LIMIT 1"""
         ).fetchone()
     finally:
@@ -1031,8 +1041,8 @@ def get_scanner_overview(connect: ConnectionFactory) -> dict:
         "new_jobs": new_jobs,
         "updated_jobs": updated_jobs,
         "source_count": source_count,
-        "recent_errors": recent_errors,
-        "last_scan": last_scan,
+        "recent_errors": int(recent_event_errors or 0) + int(recent_linkedin_errors or 0),
+        "last_scan": last_event["scan_at"] if last_event else None,
         "last_scan_new": int(last_event["new_count"]) if last_event else 0,
         "last_scan_updated": int(last_event["updated_count"]) if last_event else 0,
         "last_scan_status": last_event["status"] if last_event else None,

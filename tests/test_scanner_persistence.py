@@ -489,6 +489,67 @@ def test_linkedin_scan_logging_persists_run_and_page_details(tmp_path, monkeypat
     assert "Acme" in pages.iloc[0]["added_jobs_json"]
 
 
+def test_scanner_overview_uses_latest_linkedin_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    older = (datetime.now() - timedelta(hours=2)).isoformat(timespec="seconds")
+    latest = datetime.now().isoformat(timespec="seconds")
+
+    db.record_scan_event(
+        source_id=None,
+        provider="remotive",
+        company_name="backend engineer",
+        company_ref="backend engineer / Spain / remote",
+        started_at=older,
+        finished_at=older,
+        status="error",
+        found_count=0,
+        new_count=0,
+        updated_count=0,
+        unchanged_count=0,
+        error="temporary upstream error",
+        duration_seconds=0.2,
+    )
+    run_id = db.create_linkedin_scan_run(
+        operation_id=12,
+        started_at=latest,
+        limit_count=1,
+        resume_from_checkpoint=False,
+        profile_name="test",
+        checkpoint_loaded_count=0,
+        db_seen_ids_count=0,
+        total_searches=1,
+        summary={},
+    )
+    db.update_linkedin_scan_run(
+        run_id,
+        finished_at=latest,
+        status="completed",
+        searches_run=1,
+        pages_checked=1,
+        visible_jobs=1,
+        duplicate_visible_jobs=0,
+        added_jobs=1,
+        exported_jobs=1,
+        imported_total=1,
+        imported_new=1,
+        imported_updated=0,
+        imported_seen=0,
+        inactive_count=0,
+        stop_reason="completed",
+        error=None,
+        duration_seconds=1.0,
+        summary={},
+    )
+
+    overview = db.get_scanner_overview()
+
+    assert overview["last_scan"] == latest
+    assert overview["last_scan_status"] == "completed"
+    assert overview["last_scan_new"] == 1
+    assert overview["recent_errors"] == 1
+
+
 def test_linkedin_enrichment_persists_and_updates_job(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()
