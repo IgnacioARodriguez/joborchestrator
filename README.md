@@ -178,6 +178,7 @@ Read-only smoke against the deployed Vercel/v0 backend:
 ```bash
 python scripts/smoke_vercel_backend.py
 python scripts/smoke_vercel_backend.py --base-url https://joborchestrator.vercel.app
+python scripts/smoke_vercel_ui.py
 ```
 
 Live NVIDIA smoke for ranking/materials, optionally with two-model judge
