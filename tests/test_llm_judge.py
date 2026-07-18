@@ -6,7 +6,6 @@ from joborchestrator.evals import llm_judge
 from joborchestrator.evals.llm_judge import (
     LLMJudgeError,
     judge_with_configured_providers,
-    judge_with_anthropic,
     judge_with_nvidia,
     judge_with_openai,
 )
@@ -105,40 +104,6 @@ def test_nvidia_judge_parses_json_object_content(monkeypatch):
     assert calls[0][1]["json"]["model"] == "judge-nv"
 
 
-def test_anthropic_judge_parses_json_object_content(monkeypatch):
-    calls = []
-
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": '"passed": false, "score": 55, "issue_codes": ["unsupported_claims"], "issues": ["Invented certification"], "rationale": "Unsupported."}',
-                    }
-                ],
-                "usage": {"input_tokens": 10, "output_tokens": 12},
-            }
-
-    def fake_post(url, **kwargs):
-        calls.append((url, kwargs))
-        return FakeResponse()
-
-    monkeypatch.setattr(llm_judge.httpx, "post", fake_post)
-
-    result = judge_with_anthropic({"case_id": "case-1"}, api_key="anthropic-test", model="claude-test")
-
-    assert result["passed"] is False
-    assert result["score"] == 55
-    assert result["issue_codes"] == ["unsupported_claims"]
-    assert "unsupported_claims" in result["issues"]
-    assert calls[0][0] == "https://api.anthropic.com/v1/messages"
-    assert calls[0][1]["json"]["model"] == "claude-test"
-
-
 def test_configured_judge_marks_provider_disagreement_as_disputed(monkeypatch):
     def fake_judge(payload, *, provider=None, model=None, timeout=None):
         return {
@@ -162,33 +127,6 @@ def test_configured_judge_marks_provider_disagreement_as_disputed(monkeypatch):
     assert result["secondary_judge_provider"] == "nvidia"
     assert result["issue_codes"] == ["judge_disputed"]
     assert "judge_disputed" in result["issues"]
-
-
-def test_configured_judge_uses_tertiary_provider_to_break_dispute(monkeypatch):
-    def fake_judge(payload, *, provider=None, model=None, timeout=None):
-        return {
-            "passed": provider != "nvidia",
-            "score": 90 if provider != "nvidia" else 40,
-            "issue_codes": [] if provider != "nvidia" else ["unsupported_claims"],
-            "issues": [] if provider != "nvidia" else ["unsupported claim"],
-            "rationale": f"{provider} rationale",
-        }
-
-    monkeypatch.setattr(llm_judge, "judge_with_provider", fake_judge)
-
-    result = judge_with_configured_providers(
-        {"case_id": "case-1"},
-        provider="openai",
-        secondary_provider="nvidia",
-        tertiary_provider="anthropic",
-    )
-
-    assert result["passed"] is True
-    assert result["disputed"] is False
-    assert result["tie_breaker_judge_provider"] == "anthropic"
-    assert result["tertiary_judge_provider"] == "anthropic"
-    assert result["issue_codes"] == []
-    assert "tertiary judge resolved the tie" in result["rationale"]
 
 
 def test_judge_normalization_merges_issue_codes_into_issues():

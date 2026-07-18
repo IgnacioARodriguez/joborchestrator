@@ -7,7 +7,6 @@ from joborchestrator.evals.semantic import (
 )
 from joborchestrator.evals.llm_judge import (
     LLMJudgeError,
-    judge_with_anthropic,
     judge_with_configured_providers,
     judge_with_nvidia,
     judge_with_openai,
@@ -21,7 +20,6 @@ __all__ = [
     "evaluate_application_materials",
     "evaluate_ats_cv_result",
     "evaluate_ranking_result",
-    "judge_with_anthropic",
     "judge_with_configured_providers",
     "judge_with_nvidia",
     "judge_with_openai",

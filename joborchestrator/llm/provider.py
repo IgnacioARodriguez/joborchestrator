@@ -8,7 +8,7 @@ import httpx
 
 
 ResponseFormat = Literal["text", "json"]
-ProviderRole = Literal["ranking", "materials", "ats_cv", "judge", "judge_secondary", "judge_tertiary"]
+ProviderRole = Literal["ranking", "materials", "ats_cv", "judge", "judge_secondary"]
 
 
 @dataclass(frozen=True)
@@ -260,19 +260,6 @@ class NvidiaProvider:
 class AnthropicProvider:
     provider_name = "anthropic"
 
-    def __init__(
-        self,
-        *,
-        api_key: str | None = None,
-        base_url: str | None = None,
-        timeout: float = 120.0,
-        http_module: Any = httpx,
-    ) -> None:
-        self.api_key = api_key if api_key is not None else os.getenv("ANTHROPIC_API_KEY")
-        self.base_url = (base_url or os.getenv("ANTHROPIC_BASE_URL") or "https://api.anthropic.com").rstrip("/")
-        self.timeout = timeout
-        self._http = http_module
-
     def complete(
         self,
         messages: list[dict[str, Any]],
@@ -282,72 +269,7 @@ class AnthropicProvider:
         response_format: ResponseFormat = "text",
         max_tokens: int | None = None,
     ) -> LLMResponse:
-        if not self.api_key:
-            raise LLMProviderError("ANTHROPIC_API_KEY is required.")
-        body = self._messages_body(
-            messages,
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            response_format=response_format,
-        )
-        try:
-            response = self._http.post(
-                f"{self.base_url}/v1/messages",
-                headers={
-                    "x-api-key": self.api_key,
-                    "anthropic-version": os.getenv("ANTHROPIC_VERSION") or "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json=body,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            detail = exc.response.text[:1000] if exc.response is not None else ""
-            raise LLMProviderError(f"Anthropic request failed: status={exc.response.status_code} body={detail!r}") from exc
-        except httpx.HTTPError as exc:
-            raise LLMProviderError(f"Anthropic request failed: {type(exc).__name__}: {exc!r}") from exc
-
-        raw = response.json()
-        text = _extract_anthropic_text(raw)
-        if response_format == "json" and not text.lstrip().startswith("{"):
-            text = "{" + text
-        return LLMResponse(
-            text=text,
-            raw=raw,
-            provider=self.provider_name,
-            model=model,
-            usage=_usage_from_raw(raw),
-        )
-
-    def _messages_body(
-        self,
-        messages: list[dict[str, Any]],
-        *,
-        model: str,
-        max_tokens: int | None,
-        temperature: float,
-        response_format: ResponseFormat,
-    ) -> dict[str, Any]:
-        system_parts = [str(message.get("content") or "") for message in messages if message.get("role") == "system"]
-        conversation = [
-            {"role": str(message.get("role") or "user"), "content": str(message.get("content") or "")}
-            for message in messages
-            if message.get("role") != "system"
-        ]
-        if response_format == "json":
-            conversation.append({"role": "assistant", "content": "{"})
-        body: dict[str, Any] = {
-            "model": model,
-            "max_tokens": max_tokens or 2000,
-            "messages": conversation,
-        }
-        if system_parts:
-            body["system"] = "\n\n".join(system_parts)
-        if temperature != 0.0:
-            body["temperature"] = temperature
-        return body
+        raise LLMProviderError("AnthropicProvider is not implemented yet.")
 
 
 class ProviderRegistry:
@@ -357,7 +279,6 @@ class ProviderRegistry:
         "ats_cv": "ATS_CV_PROVIDER",
         "judge": "JUDGE_PROVIDER",
         "judge_secondary": "JUDGE_PROVIDER_SECONDARY",
-        "judge_tertiary": "JUDGE_PROVIDER_TERTIARY",
     }
     _DEFAULTS = {
         "ranking": "nvidia",
@@ -365,7 +286,6 @@ class ProviderRegistry:
         "ats_cv": "openai",
         "judge": "openai",
         "judge_secondary": "",
-        "judge_tertiary": "",
     }
 
     def provider_name_for_role(self, role: ProviderRole) -> str:
@@ -408,7 +328,7 @@ def provider_for_name(
     if normalized == "nvidia":
         return NvidiaProvider(api_key=api_key, base_url=base_url, timeout=timeout or 120.0, http_module=http_module)
     if normalized == "anthropic":
-        return AnthropicProvider(api_key=api_key, base_url=base_url, timeout=timeout or 120.0, http_module=http_module)
+        return AnthropicProvider()
     raise LLMProviderError(f"Unsupported LLM provider: {provider_name}")
 
 
@@ -427,16 +347,6 @@ def _extract_chat_text(response: dict[str, Any]) -> str:
         return str(response["choices"][0]["message"]["content"])
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMProviderError("Chat completion response did not include message content.") from exc
-
-
-def _extract_anthropic_text(response: dict[str, Any]) -> str:
-    try:
-        content = response["content"]
-    except KeyError as exc:
-        raise LLMProviderError("Anthropic response did not include content.") from exc
-    if not isinstance(content, list):
-        raise LLMProviderError("Anthropic response content must be a list.")
-    return "".join(str(block.get("text") or "") for block in content if isinstance(block, dict) and block.get("type") == "text")
 
 
 def _usage_from_raw(raw: dict[str, Any]) -> dict[str, int]:
