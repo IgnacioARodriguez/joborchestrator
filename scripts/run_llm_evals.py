@@ -45,6 +45,7 @@ def main() -> int:
         help="Optional secondary LLM judge; disagreements are returned as disputed.",
     )
     parser.add_argument("--judge-model", help="Model name for the optional LLM judge.")
+    parser.add_argument("--judge-model-secondary", help="Model name for the optional secondary LLM judge.")
     parser.add_argument("--notes", help="Free-form note for saved eval metadata.")
     parser.add_argument("--list-runs", action="store_true", help="List recent persisted eval runs and exit.")
     parser.add_argument("--limit", type=int, default=20)
@@ -195,6 +196,7 @@ def _run_optional_judge(args: argparse.Namespace, judge_payload: dict[str, Any])
             provider=args.judge_provider,
             model=args.judge_model,
             secondary_provider=args.judge_provider_secondary,
+            secondary_model=args.judge_model_secondary,
         )
     return None
 

@@ -16,6 +16,11 @@ DEFAULT_NVIDIA_JUDGE_MODEL = (
     or os.getenv("NVIDIA_MODEL")
     or "nvidia/llama-3.3-nemotron-super-49b-v1"
 )
+DEFAULT_NVIDIA_SECONDARY_JUDGE_MODEL = (
+    os.getenv("NVIDIA_EVAL_JUDGE_SECONDARY_MODEL")
+    or os.getenv("NVIDIA_EVAL_JUDGE_MODEL_SECONDARY")
+    or DEFAULT_NVIDIA_JUDGE_MODEL
+)
 NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1"
 JUDGE_ISSUE_CODES = [
     "unsupported_claims",
@@ -130,23 +135,37 @@ def judge_with_configured_providers(
 ) -> dict[str, Any]:
     registry = ProviderRegistry()
     primary_provider = (provider or registry.provider_name_for_role("judge")).strip().lower()
-    primary = judge_with_provider(judge_payload, provider=primary_provider, model=model)
+    primary_model = model or default_judge_model(primary_provider, secondary=False)
+    primary = judge_with_provider(judge_payload, provider=primary_provider, model=primary_model)
 
     configured_secondary = secondary_provider
     if configured_secondary is None:
         configured_secondary = registry.provider_name_for_role("judge_secondary")
     secondary_name = (configured_secondary or "").strip().lower()
     if not secondary_name:
-        return {**primary, "disputed": False, "judge_provider": primary_provider}
+        return {**primary, "disputed": False, "judge_provider": primary_provider, "judge_model": primary_model}
 
-    secondary = judge_with_provider(judge_payload, provider=secondary_name, model=secondary_model)
+    secondary_effective_model = secondary_model or default_judge_model(secondary_name, secondary=True)
+    if secondary_name == primary_provider and secondary_effective_model == primary_model:
+        return {
+            **primary,
+            "disputed": False,
+            "judge_provider": primary_provider,
+            "judge_model": primary_model,
+            "secondary_judge_skipped": "same_provider_and_model",
+        }
+
+    secondary = judge_with_provider(judge_payload, provider=secondary_name, model=secondary_effective_model)
     disputed = bool(primary["passed"]) != bool(secondary["passed"])
     if not disputed:
         return {
             **primary,
             "disputed": False,
             "judge_provider": primary_provider,
+            "judge_model": primary_model,
             "secondary_judge_provider": secondary_name,
+            "secondary_judge_model": secondary_effective_model,
+            "secondary_crosscheck_kind": "model_crosscheck" if secondary_name == primary_provider else "provider_crosscheck",
             "secondary_judge_result": secondary,
         }
 
@@ -159,14 +178,26 @@ def judge_with_configured_providers(
         "issue_codes": issue_codes,
         "issues": issues,
         "judge_provider": primary_provider,
+        "judge_model": primary_model,
         "secondary_judge_provider": secondary_name,
+        "secondary_judge_model": secondary_effective_model,
+        "secondary_crosscheck_kind": "model_crosscheck" if secondary_name == primary_provider else "provider_crosscheck",
         "primary_judge_result": primary,
         "secondary_judge_result": secondary,
         "rationale": (
             "Primary and secondary judges disagreed on pass/fail. "
-            f"Primary={primary_provider}:{primary['passed']} secondary={secondary_name}:{secondary['passed']}."
+            f"Primary={primary_provider}/{primary_model}:{primary['passed']} "
+            f"secondary={secondary_name}/{secondary_effective_model}:{secondary['passed']}."
         ),
     }
+
+
+def default_judge_model(provider: str, *, secondary: bool) -> str:
+    if provider == "nvidia":
+        return DEFAULT_NVIDIA_SECONDARY_JUDGE_MODEL if secondary else DEFAULT_NVIDIA_JUDGE_MODEL
+    if provider == "openai":
+        return DEFAULT_OPENAI_JUDGE_MODEL
+    return ""
 
 
 def _judge_messages(judge_payload: dict[str, Any]) -> list[dict[str, Any]]:

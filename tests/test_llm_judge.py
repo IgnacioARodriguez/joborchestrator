@@ -129,6 +129,56 @@ def test_configured_judge_marks_provider_disagreement_as_disputed(monkeypatch):
     assert "judge_disputed" in result["issues"]
 
 
+def test_configured_judge_allows_same_provider_with_distinct_models(monkeypatch):
+    calls = []
+
+    def fake_judge(payload, *, provider=None, model=None, timeout=None):
+        calls.append((provider, model))
+        return {
+            "passed": model == "nvidia-primary",
+            "score": 90 if model == "nvidia-primary" else 40,
+            "issues": [] if model == "nvidia-primary" else ["missing_evidence"],
+            "rationale": f"{provider}/{model} rationale",
+        }
+
+    monkeypatch.setattr(llm_judge, "judge_with_provider", fake_judge)
+
+    result = judge_with_configured_providers(
+        {"case_id": "case-1"},
+        provider="nvidia",
+        model="nvidia-primary",
+        secondary_provider="nvidia",
+        secondary_model="nvidia-secondary",
+    )
+
+    assert calls == [("nvidia", "nvidia-primary"), ("nvidia", "nvidia-secondary")]
+    assert result["disputed"] is True
+    assert result["secondary_crosscheck_kind"] == "model_crosscheck"
+    assert result["secondary_judge_model"] == "nvidia-secondary"
+
+
+def test_configured_judge_skips_same_provider_and_model(monkeypatch):
+    calls = []
+
+    def fake_judge(payload, *, provider=None, model=None, timeout=None):
+        calls.append((provider, model))
+        return {"passed": True, "score": 95, "issues": [], "rationale": "ok"}
+
+    monkeypatch.setattr(llm_judge, "judge_with_provider", fake_judge)
+
+    result = judge_with_configured_providers(
+        {"case_id": "case-1"},
+        provider="nvidia",
+        model="same-model",
+        secondary_provider="nvidia",
+        secondary_model="same-model",
+    )
+
+    assert calls == [("nvidia", "same-model")]
+    assert result["disputed"] is False
+    assert result["secondary_judge_skipped"] == "same_provider_and_model"
+
+
 def test_judge_normalization_merges_issue_codes_into_issues():
     result = llm_judge._normalize_judge_result(
         {
