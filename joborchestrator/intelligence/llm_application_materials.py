@@ -537,6 +537,7 @@ def _nvidia_materials_messages(user_payload: dict[str, Any]) -> list[dict[str, A
 
 
 def _openai_materials_messages(user_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    user_content = _openai_materials_contract() + "\n\nContext:\n" + json.dumps(user_payload, ensure_ascii=False)
     return [
         {
             "role": "system",
@@ -545,7 +546,7 @@ def _openai_materials_messages(user_payload: dict[str, Any]) -> list[dict[str, A
                 "materials. Return only structured JSON. Do not leave required sections blank."
             ),
         },
-        {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+        {"role": "user", "content": user_content},
     ]
 
 
@@ -590,6 +591,16 @@ def _nvidia_cv_contract() -> str:
 
 def _nvidia_kit_contract() -> str:
     return load_prompt("materials", "nvidia_kit_contract")
+
+
+def _openai_materials_contract() -> str:
+    return (
+        "ATS CV contract:\n"
+        + _nvidia_cv_contract()
+        + "\n\nApplication kit contract:\n"
+        + _nvidia_kit_contract()
+        + "\n\nReturn one JSON object containing the ATS CV fields and application kit fields."
+    )
 
 
 def _materials_validation_error(payload: dict[str, Any], base_cv_text: str | None = None) -> str | None:

@@ -9,6 +9,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     _kit_from_response,
     _materials_validation_error,
     _materials_payload,
+    _openai_materials_messages,
     build_application_kit_with_llm,
     estimate_materials_cost,
     export_ats_cv_docx_bytes,
@@ -180,6 +181,16 @@ def test_llm_application_kit_uses_structured_payload(monkeypatch):
     assert kit["recruiter_message"] == "Hi team"
     assert "FastAPI" in kit["ats_cv_text"]
     assert "LinkedIn" in kit["autofill_notes"]
+
+
+def test_openai_materials_messages_include_versioned_cv_and_kit_contracts():
+    messages = _openai_materials_messages({"job": {"title": "Backend Engineer"}})
+    user_content = messages[1]["content"]
+
+    assert "Return a complete ATS-optimized CV" in user_content
+    assert "Return lightweight application materials" in user_content
+    assert "Context:" in user_content
+    assert '"Backend Engineer"' in user_content
 
 
 def test_llm_materials_payload_accepts_ranking_dict(monkeypatch):
