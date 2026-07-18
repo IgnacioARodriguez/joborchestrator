@@ -104,6 +104,7 @@ def run_ui_smoke(
                 "api_url": api_url,
                 "job_count": seed["job_count"],
                 "checked_sections": ["Today", "Review", "Applications", "Profile", "Automations", "Insights"],
+                "checked_actions": ["applications.add_job"],
                 "console_errors": serious_console_errors,
                 "screenshot": str(screenshot_path),
             }
@@ -180,10 +181,34 @@ def _verify_dashboard(page: Page, seed: dict[str, Any]) -> None:
     _click_nav(page, "Insights")
     expect(page.get_by_role("heading", name="Performance signals")).to_be_visible(timeout=15_000)
 
+    _verify_add_job_flow(page)
+
 
 def _click_nav(page: Page, name: str) -> None:
     page.get_by_role("button", name=name).first.click(timeout=15_000)
     page.wait_for_timeout(250)
+
+
+def _verify_add_job_flow(page: Page) -> None:
+    title = "Manual QA Smoke Role"
+    company = "Manual Smoke Co"
+    _click_nav(page, "Applications")
+    expect(page.get_by_role("heading", name="Application kanban")).to_be_visible(timeout=15_000)
+    page.get_by_text("Add an opportunity you already have").scroll_into_view_if_needed(timeout=15_000)
+    page.get_by_placeholder("Title").fill(title)
+    page.get_by_placeholder("Company").first.fill(company)
+    page.get_by_placeholder("Posting URL").fill("https://example.com/jobs/manual-ui-smoke")
+    page.get_by_placeholder("Apply URL (optional)").fill("https://example.com/apply/manual-ui-smoke")
+    page.get_by_placeholder("Description or notes").fill(
+        "Manual UI smoke job created through the browser. Python FastAPI PostgreSQL backend role.",
+    )
+    page.get_by_role("button", name="Add job").last.click(timeout=15_000)
+    expect(page.get_by_role("dialog").get_by_text(title)).to_be_visible(timeout=30_000)
+    expect(page.get_by_role("dialog").get_by_text(company, exact=True).first).to_be_visible(timeout=15_000)
+    page.keyboard.press("Escape")
+    _click_nav(page, "Review")
+    page.get_by_placeholder("Search title, company, location").fill(title)
+    expect(page.get_by_text(title).first).to_be_visible(timeout=15_000)
 
 
 def _ui_job(*, index: int, title: str, company: str) -> JobPosting:
