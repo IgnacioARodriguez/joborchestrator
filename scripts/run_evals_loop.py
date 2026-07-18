@@ -168,7 +168,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--regeneration-provider", choices=["openai", "nvidia"], default="nvidia")
     parser.add_argument("--regeneration-model")
-    parser.add_argument("--hypothesis-provider", choices=["openai", "nvidia"], default="openai")
+    parser.add_argument("--hypothesis-provider", choices=["openai", "nvidia"], default="nvidia")
     parser.add_argument("--hypothesis-model")
     parser.add_argument("--no-compare-last-run", action="store_true")
     parser.add_argument(

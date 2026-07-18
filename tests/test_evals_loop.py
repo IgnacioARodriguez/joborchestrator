@@ -164,6 +164,12 @@ def test_loop_parses_surface_aliases():
     ]
 
 
+def test_loop_defaults_prompt_hypothesis_provider_to_nvidia():
+    args = loop.parse_args(["--allow-main", "--max-iterations", "1"])
+
+    assert args.hypothesis_provider == "nvidia"
+
+
 def test_loop_selects_affected_records_for_prompt_owner():
     summary = {
         "records": [
