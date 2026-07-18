@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
 
     accepted_patches = 0
     no_improvement_count = 0
-    previous_summary: dict[str, Any] | None = None
+    previous_summary: dict[str, Any] | None = None if args.no_compare_last_run else load_previous_audit_summary(args.output_dir)
     iterations: list[dict[str, Any]] = []
     llm_calls_used = 0
 
@@ -110,6 +110,7 @@ def main(argv: list[str] | None = None) -> int:
         record = {
             "iteration": iteration,
             "summary": summary_without_records(summary),
+            "case_statuses": case_statuses(summary),
             "diff": diff,
             "worst_issue": worst_issue,
             "prompt_target": prompt_target,
@@ -159,6 +160,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--regeneration-provider", choices=["openai", "nvidia"], default="nvidia")
     parser.add_argument("--regeneration-model")
+    parser.add_argument("--no-compare-last-run", action="store_true")
     parser.add_argument(
         "--commit-accepted-patches",
         action="store_true",
@@ -528,10 +530,31 @@ def compare_summaries(previous: dict[str, Any] | None, current: dict[str, Any]) 
 
 
 def case_statuses(summary: dict[str, Any]) -> dict[str, bool]:
+    if summary.get("case_statuses"):
+        return {str(key): bool(value) for key, value in summary["case_statuses"].items()}
     return {
         f"{record.get('artifact_type')}:{record.get('case_id')}": bool(record.get("passed"))
         for record in summary.get("records") or []
     }
+
+
+def load_previous_audit_summary(output_dir: Path) -> dict[str, Any] | None:
+    if not output_dir.exists():
+        return None
+    audits = sorted(output_dir.glob("eval_loop_*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    for path in audits:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        iterations = payload.get("iterations") or []
+        if not iterations:
+            continue
+        latest = iterations[-1]
+        summary = dict(latest.get("summary") or {})
+        summary["case_statuses"] = latest.get("case_statuses") or {}
+        return summary
+    return None
 
 
 def hard_stop_reason(summary: dict[str, Any]) -> str:
@@ -618,6 +641,7 @@ def write_audit(
             "regenerate_affected": args.regenerate_affected,
             "regeneration_provider": args.regeneration_provider,
             "commit_accepted_patches": args.commit_accepted_patches,
+            "compare_last_run": not args.no_compare_last_run,
         },
         "accepted_patches": accepted_patches,
         "iterations": iterations,

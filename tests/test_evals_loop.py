@@ -1,5 +1,6 @@
 from scripts import run_evals_loop as loop
 from argparse import Namespace
+import json
 
 
 def test_loop_summarizes_by_surface_and_issue_counts():
@@ -133,3 +134,35 @@ def test_loop_commit_accepted_patch_stages_registry_and_prompt(monkeypatch, tmp_
     assert "prompts\\registry.json" in calls[0][0] or "prompts/registry.json" in calls[0][0]
     assert calls[1][0][:3] == ["git", "commit", "-m"]
     assert "iteration 2" in calls[1][0][3]
+
+
+def test_loop_compare_uses_case_statuses_without_records():
+    previous = {"case_statuses": {"ranking:a": True, "ats_cv:b": True}, "pass_rate": 1.0, "average_score": 95}
+    current = {"case_statuses": {"ranking:a": True, "ats_cv:b": False}, "pass_rate": 0.5, "average_score": 80}
+
+    diff = loop.compare_summaries(previous, current)
+
+    assert diff["pass_rate_delta"] == -0.5
+    assert diff["score_delta"] == -15
+    assert diff["regressions"] == ["ats_cv:b"]
+
+
+def test_loop_loads_previous_audit_summary(tmp_path):
+    audit = tmp_path / "eval_loop_20260101_120000.json"
+    audit.write_text(
+        json.dumps(
+            {
+                "iterations": [
+                    {
+                        "summary": {"pass_rate": 0.75, "average_score": 88},
+                        "case_statuses": {"ranking:a": True},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = loop.load_previous_audit_summary(tmp_path)
+
+    assert summary == {"pass_rate": 0.75, "average_score": 88, "case_statuses": {"ranking:a": True}}
