@@ -144,3 +144,10 @@ def test_judge_normalization_merges_issue_codes_into_issues():
     assert "Invented an AWS certification." in result["issues"]
     assert "unsupported_claims" in result["issues"]
     assert "judge_other" in result["issues"]
+
+
+def test_judge_messages_use_versioned_prompt():
+    messages = llm_judge._judge_messages({"case_id": "case-1"})
+
+    assert "calibrated evaluator" in messages[0]["content"]
+    assert '"case_id": "case-1"' in messages[1]["content"]

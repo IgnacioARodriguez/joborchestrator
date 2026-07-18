@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from joborchestrator.llm.provider import LLMProviderError, ProviderRegistry
+from joborchestrator.prompts import load_prompt
 
 
 DEFAULT_OPENAI_JUDGE_MODEL = os.getenv("OPENAI_EVAL_JUDGE_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4-mini"
@@ -172,11 +173,7 @@ def _judge_messages(judge_payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
             "role": "system",
-            "content": (
-                "You are a strict evaluator for job-search LLM outputs. "
-                "Use only the source_case and rubric. Return JSON only. "
-                "Map every failure to issue_codes from the provided enum; use judge_other only when no code fits."
-            ),
+            "content": load_prompt("judge", "semantic_rubric"),
         },
         {"role": "user", "content": json.dumps(judge_payload, ensure_ascii=False)},
     ]

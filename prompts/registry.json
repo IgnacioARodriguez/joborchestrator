@@ -4,7 +4,8 @@
     "default": {
       "ranking/nvidia_response_contract": "v2",
       "materials/nvidia_cv_contract": "v2",
-      "materials/nvidia_kit_contract": "v2"
+      "materials/nvidia_kit_contract": "v2",
+      "judge/semantic_rubric": "v1"
     }
   }
 }

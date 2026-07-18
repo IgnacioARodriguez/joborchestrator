@@ -7,6 +7,8 @@ from joborchestrator.prompts import PromptRegistryError, active_prompt_version, 
 def test_load_prompt_uses_registry_active_version():
     assert active_prompt_version("ranking", "nvidia_response_contract") == "v2"
     assert "Critical rules" in load_prompt("ranking", "nvidia_response_contract")
+    assert active_prompt_version("judge", "semantic_rubric") == "v1"
+    assert "calibrated evaluator" in load_prompt("judge", "semantic_rubric")
 
 
 def test_prompt_registry_reports_missing_key(tmp_path, monkeypatch):
