@@ -60,7 +60,8 @@ def run_smoke_e2e(
         job = job_response.json()["job"]
         job_id = int(job["id"])
 
-        ranking_job_id = _queue_ranking(client, job_id, ranking_model)
+        queued_ranking_model = ranking_model if live_llm else ranking_model or "smoke/offline-ranking"
+        ranking_job_id = _queue_ranking(client, job_id, queued_ranking_model)
         with _external_call_patches(live_llm):
             ranking_processed = ranking_worker.run_worker_once(ranking_job_id=ranking_job_id, chunk_size=5)
             materials_operation_id = _queue_materials(client, job_id, materials_model)
@@ -192,17 +193,19 @@ def synthetic_job_payload() -> dict[str, Any]:
 
 
 def _queue_ranking(client: TestClient, job_id: int, model: str | None) -> int:
+    payload = {
+        "job_ids": [job_id],
+        "limit": 1,
+        "run_once": False,
+        "ranking_version": NVIDIA_RANKING_VERSION,
+        "request_batch_size": 1,
+        "max_concurrency": 1,
+    }
+    if model:
+        payload["model"] = model
     response = client.post(
         "/api/ranking/jobs",
-        json={
-            "job_ids": [job_id],
-            "limit": 1,
-            "run_once": False,
-            "model": model or "smoke/offline-ranking",
-            "ranking_version": NVIDIA_RANKING_VERSION,
-            "request_batch_size": 1,
-            "max_concurrency": 1,
-        },
+        json=payload,
     )
     _require_status(response.status_code, 200, "ranking.queue", response.text)
     ranking_job_id = response.json().get("ranking_job_id")
