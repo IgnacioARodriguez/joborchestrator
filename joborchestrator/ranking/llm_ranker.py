@@ -6,6 +6,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from joborchestrator.llm.provider import LLMProviderError, ProviderRegistry
+from joborchestrator.prompts import load_prompt
 from joborchestrator.ranking.profile import load_candidate_profile
 from joborchestrator.ranking.ranking_rules import OPENAI_INSTRUCTIONS
 from joborchestrator.ranking.requirements_extractor import extract_requirements
@@ -68,6 +69,7 @@ def _call_openai_responses(payload: dict[str, Any], api_key: str, model: str, ti
 
 
 def build_ranking_response_body(payload: dict[str, Any], model: str) -> dict[str, Any]:
+    user_content = _response_contract() + "\n\nContext:\n" + json.dumps(payload, ensure_ascii=False)
     return {
         "model": model,
         "store": False,
@@ -81,7 +83,7 @@ def build_ranking_response_body(payload: dict[str, Any], model: str) -> dict[str
                     "Use the candidate profile, extracted requirements, and job text as the source of truth."
                 ),
             },
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            {"role": "user", "content": user_content},
         ],
         "text": {
             "format": {
@@ -95,6 +97,7 @@ def build_ranking_response_body(payload: dict[str, Any], model: str) -> dict[str
 
 
 def _ranking_messages(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    user_content = _response_contract() + "\n\nContext:\n" + json.dumps(payload, ensure_ascii=False)
     return [
         {
             "role": "system",
@@ -104,8 +107,12 @@ def _ranking_messages(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 "Use the candidate profile, extracted requirements, and job text as the source of truth."
             ),
         },
-        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        {"role": "user", "content": user_content},
     ]
+
+
+def _response_contract() -> str:
+    return load_prompt("ranking", "nvidia_response_contract")
 
 
 def _extract_response_text(response: dict[str, Any]) -> str:
