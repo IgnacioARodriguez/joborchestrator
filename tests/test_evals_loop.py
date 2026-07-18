@@ -392,3 +392,55 @@ def test_loop_loads_previous_audit_summary(tmp_path):
     summary = loop.load_previous_audit_summary(tmp_path)
 
     assert summary == {"pass_rate": 0.75, "average_score": 88, "case_statuses": {"ranking:a": True}}
+
+
+def test_loop_renders_human_readable_summary_report():
+    report = loop.render_summary_report(
+        {
+            "branch": "agent/test",
+            "accepted_patches": 1,
+            "iterations": [
+                {
+                    "iteration": 1,
+                    "summary": {"pass_rate": 0.75, "passed": 3, "evaluated": 4, "failed": 1},
+                    "worst_issue": {"issue": "missing_required_keywords"},
+                    "prompt_target": "materials/nvidia_cv_contract",
+                    "patch": {
+                        "mode": "applied",
+                        "accepted": True,
+                        "before": {"pass_rate": 0.5, "failed": 2},
+                        "after": {"pass_rate": 0.75, "failed": 1},
+                        "golden": {"reason": "no_golden_cases", "skipped": []},
+                    },
+                }
+            ],
+        }
+    )
+
+    assert "# Eval Loop Summary" in report
+    assert "Branch: agent/test" in report
+    assert "Worst issue: missing_required_keywords" in report
+    assert "Patch gate: before pass_rate=0.5 failed=2; after pass_rate=0.75 failed=1" in report
+
+
+def test_loop_write_audit_also_writes_markdown_report(tmp_path):
+    audit_path = tmp_path / "eval_loop_test.json"
+    args = Namespace(
+        surfaces="ranking",
+        max_iterations=1,
+        stop_if_no_improvement=2,
+        llm_call_cap=0,
+        apply_prompt_patch=False,
+        regenerate_affected=False,
+        regeneration_provider="openai",
+        hypothesis_provider="openai",
+        commit_accepted_patches=False,
+        no_compare_last_run=True,
+        golden_cases=tmp_path / "golden",
+    )
+
+    loop.write_audit(audit_path, args, "agent/test", [{"iteration": 1, "summary": {}}], 0)
+
+    assert audit_path.exists()
+    assert audit_path.with_suffix(".md").exists()
+    assert "Eval Loop Summary" in audit_path.with_suffix(".md").read_text(encoding="utf-8")

@@ -975,6 +975,62 @@ def write_audit(
         "iterations": iterations,
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_summary_report(path.with_suffix(".md"), payload)
+
+
+def write_summary_report(path: Path, audit_payload: dict[str, Any]) -> None:
+    path.write_text(render_summary_report(audit_payload), encoding="utf-8")
+
+
+def render_summary_report(audit_payload: dict[str, Any]) -> str:
+    lines = [
+        "# Eval Loop Summary",
+        "",
+        f"- Branch: {audit_payload.get('branch') or ''}",
+        f"- Accepted patches: {audit_payload.get('accepted_patches') or 0}",
+        "",
+    ]
+    for iteration in audit_payload.get("iterations") or []:
+        summary = iteration.get("summary") or {}
+        patch = iteration.get("patch") or {}
+        worst_issue = iteration.get("worst_issue") or {}
+        lines.extend(
+            [
+                f"## Iteration {iteration.get('iteration')}",
+                "",
+                f"- Pass rate: {summary.get('pass_rate', 0)} ({summary.get('passed', 0)}/{summary.get('evaluated', 0)})",
+                f"- Failed: {summary.get('failed', 0)}",
+                f"- Worst issue: {worst_issue.get('issue') or 'none'}",
+                f"- Prompt target: {iteration.get('prompt_target') or 'none'}",
+                f"- Patch: {patch.get('mode') or 'none'}; accepted={bool(patch.get('accepted'))}",
+            ]
+        )
+        before = patch.get("before") or {}
+        after = patch.get("after") or {}
+        if before or after:
+            lines.append(
+                f"- Patch gate: before pass_rate={before.get('pass_rate', 0)} failed={before.get('failed', 0)}; "
+                f"after pass_rate={after.get('pass_rate', 0)} failed={after.get('failed', 0)}"
+            )
+        golden = patch.get("golden") or {}
+        if golden:
+            lines.append(f"- Golden set: {golden.get('reason')}; skipped={len(golden.get('skipped') or [])}")
+        disputed = disputed_cases(iteration)
+        if disputed:
+            lines.append(f"- Disputed cases: {', '.join(disputed[:10])}")
+        if iteration.get("stop_reason"):
+            lines.append(f"- Stop reason: {iteration.get('stop_reason')}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def disputed_cases(iteration: dict[str, Any]) -> list[str]:
+    cases = []
+    for record in ((iteration.get("patch") or {}).get("regeneration") or {}).get("records") or []:
+        judge_result = record.get("judge_result") or {}
+        if isinstance(judge_result, dict) and judge_result.get("disputed"):
+            cases.append(str(record.get("case_id") or "unknown"))
+    return cases
 
 
 if __name__ == "__main__":
