@@ -16,6 +16,9 @@ DEFAULT_NVIDIA_JUDGE_MODEL = (
     or os.getenv("NVIDIA_MODEL")
     or "nvidia/llama-3.3-nemotron-super-49b-v1"
 )
+DEFAULT_ANTHROPIC_JUDGE_MODEL = (
+    os.getenv("ANTHROPIC_EVAL_JUDGE_MODEL") or os.getenv("ANTHROPIC_MODEL") or "claude-opus-4-8"
+)
 NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1"
 JUDGE_ISSUE_CODES = [
     "unsupported_claims",
@@ -105,6 +108,39 @@ def judge_with_nvidia(
         raise LLMJudgeError(f"NVIDIA eval judge returned invalid JSON: {exc}") from exc
 
 
+def judge_with_anthropic(
+    judge_payload: dict[str, Any],
+    *,
+    api_key: str | None = None,
+    model: str | None = None,
+    timeout: float = 120.0,
+) -> dict[str, Any]:
+    key = api_key or os.getenv("ANTHROPIC_API_KEY")
+    if not key:
+        raise LLMJudgeError("ANTHROPIC_API_KEY is required to run the Anthropic eval judge.")
+    selected_model = model or DEFAULT_ANTHROPIC_JUDGE_MODEL
+    try:
+        provider = ProviderRegistry().get(
+            "judge",
+            provider_name="anthropic",
+            api_key=key,
+            timeout=timeout,
+            http_module=httpx,
+        )
+        response = provider.complete(
+            _judge_messages(judge_payload),
+            model=selected_model,
+            temperature=0,
+            response_format="json",
+            max_tokens=int(os.getenv("ANTHROPIC_EVAL_JUDGE_MAX_TOKENS", "2000")),
+        )
+        return _normalize_judge_result(json.loads(_extract_json_object_text(response.text)))
+    except LLMProviderError as exc:
+        raise LLMJudgeError(f"Anthropic eval judge request failed: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise LLMJudgeError(f"Anthropic eval judge returned invalid JSON: {exc}") from exc
+
+
 def judge_with_provider(
     judge_payload: dict[str, Any],
     *,
@@ -117,6 +153,8 @@ def judge_with_provider(
         return judge_with_openai(judge_payload, model=model, timeout=timeout or 60.0)
     if selected_provider == "nvidia":
         return judge_with_nvidia(judge_payload, model=model, timeout=timeout or 120.0)
+    if selected_provider == "anthropic":
+        return judge_with_anthropic(judge_payload, model=model, timeout=timeout or 120.0)
     raise LLMJudgeError(f"Unsupported eval judge provider: {selected_provider}")
 
 
@@ -127,6 +165,8 @@ def judge_with_configured_providers(
     model: str | None = None,
     secondary_provider: str | None = None,
     secondary_model: str | None = None,
+    tertiary_provider: str | None = None,
+    tertiary_model: str | None = None,
 ) -> dict[str, Any]:
     registry = ProviderRegistry()
     primary_provider = (provider or registry.provider_name_for_role("judge")).strip().lower()
@@ -148,6 +188,38 @@ def judge_with_configured_providers(
             "judge_provider": primary_provider,
             "secondary_judge_provider": secondary_name,
             "secondary_judge_result": secondary,
+        }
+
+    configured_tertiary = tertiary_provider
+    if configured_tertiary is None:
+        configured_tertiary = registry.provider_name_for_role("judge_tertiary")
+    tertiary_name = (configured_tertiary or "").strip().lower()
+    if tertiary_name:
+        tertiary = judge_with_provider(judge_payload, provider=tertiary_name, model=tertiary_model)
+        majority_passed = [bool(primary["passed"]), bool(secondary["passed"]), bool(tertiary["passed"])].count(True) >= 2
+        majority_results = [
+            result for result in [primary, secondary, tertiary] if bool(result["passed"]) == majority_passed
+        ]
+        issue_codes = sorted({code for result in majority_results for code in result.get("issue_codes", [])})
+        issues = sorted({issue for result in majority_results for issue in result.get("issues", [])} | set(issue_codes))
+        return {
+            **(primary if bool(primary["passed"]) == majority_passed else secondary),
+            "passed": majority_passed,
+            "disputed": False,
+            "tie_breaker_judge_provider": tertiary_name,
+            "judge_provider": primary_provider,
+            "secondary_judge_provider": secondary_name,
+            "tertiary_judge_provider": tertiary_name,
+            "primary_judge_result": primary,
+            "secondary_judge_result": secondary,
+            "tertiary_judge_result": tertiary,
+            "issue_codes": issue_codes,
+            "issues": issues,
+            "rationale": (
+                "Primary and secondary judges disagreed; tertiary judge resolved the tie by majority. "
+                f"Primary={primary_provider}:{primary['passed']} secondary={secondary_name}:{secondary['passed']} "
+                f"tertiary={tertiary_name}:{tertiary['passed']}."
+            ),
         }
 
     issue_codes = sorted({*primary.get("issue_codes", []), *secondary.get("issue_codes", []), "judge_disputed"})

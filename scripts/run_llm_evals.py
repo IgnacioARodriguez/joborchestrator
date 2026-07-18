@@ -38,13 +38,19 @@ def main() -> int:
     parser.add_argument("--save-db", action="store_true", help="Persist the eval result in llm_eval_runs.")
     parser.add_argument("--provider", help="Provider/model owner label for saved eval metadata.")
     parser.add_argument("--model", help="Model label for saved eval metadata.")
-    parser.add_argument("--judge-provider", choices=["openai", "nvidia"], help="Optionally run an LLM judge.")
+    parser.add_argument("--judge-provider", choices=["openai", "nvidia", "anthropic"], help="Optionally run an LLM judge.")
     parser.add_argument(
         "--judge-provider-secondary",
-        choices=["openai", "nvidia"],
+        choices=["openai", "nvidia", "anthropic"],
         help="Optional secondary LLM judge; disagreements are returned as disputed.",
     )
+    parser.add_argument(
+        "--judge-provider-tertiary",
+        choices=["openai", "nvidia", "anthropic"],
+        help="Optional tertiary LLM judge used to break primary/secondary disagreements.",
+    )
     parser.add_argument("--judge-model", help="Model name for the optional LLM judge.")
+    parser.add_argument("--judge-model-tertiary", help="Model name for the optional tertiary LLM judge.")
     parser.add_argument("--notes", help="Free-form note for saved eval metadata.")
     parser.add_argument("--list-runs", action="store_true", help="List recent persisted eval runs and exit.")
     parser.add_argument("--limit", type=int, default=20)
@@ -195,6 +201,8 @@ def _run_optional_judge(args: argparse.Namespace, judge_payload: dict[str, Any])
             provider=args.judge_provider,
             model=args.judge_model,
             secondary_provider=args.judge_provider_secondary,
+            tertiary_provider=args.judge_provider_tertiary,
+            tertiary_model=args.judge_model_tertiary,
         )
     return None
 
