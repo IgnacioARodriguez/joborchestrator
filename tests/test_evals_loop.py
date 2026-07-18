@@ -211,6 +211,56 @@ def test_loop_regeneration_respects_llm_call_cap(monkeypatch):
     assert result["skipped"] == [{"case_id": "b", "reason": "llm_call_cap"}]
 
 
+def test_loop_loads_only_reviewed_golden_fixtures(tmp_path):
+    reviewed = tmp_path / "reviewed.json"
+    draft = tmp_path / "draft.json"
+    reviewed.write_text(json.dumps({"case_id": "reviewed", "review_status": "reviewed"}), encoding="utf-8")
+    draft.write_text(json.dumps({"case_id": "draft", "review_status": "needs_human_review"}), encoding="utf-8")
+
+    fixtures = loop.load_golden_fixtures(tmp_path)
+
+    assert [fixture["case_id"] for fixture in fixtures] == ["reviewed"]
+
+
+def test_loop_golden_fixture_case_maps_expected_by_surface():
+    fixture = {
+        "case_id": "golden-ats",
+        "surface": "ats_cv",
+        "review_status": "reviewed",
+        "raw_input": {
+            "title": "Backend Engineer",
+            "company": "Acme",
+            "job_html_or_text": "Python APIs",
+        },
+        "candidate_profile_snapshot": {
+            "profile": {
+                "base_cv_text": "Experience\nPython APIs",
+                "skills": [{"name": "Python", "level": "strong"}],
+            }
+        },
+        "expected": {"required_keywords": ["Python"]},
+    }
+
+    case = loop.golden_fixture_case(fixture)
+
+    assert case["id"] == "golden-ats"
+    assert case["review_status"] == "reviewed"
+    assert case["ats_cv_expectations"] == {"required_keywords": ["Python"]}
+
+
+def test_loop_golden_gate_requires_all_cases_to_pass():
+    assert loop.is_golden_promotion_allowed({"reason": "no_golden_cases", "records": [], "skipped": []}) is True
+    assert loop.is_golden_promotion_allowed(
+        {"reason": "evaluated", "records": [{"artifact_type": "ats_cv", "case_id": "a", "passed": True, "score": 100, "issues": []}], "skipped": []}
+    ) is True
+    assert loop.is_golden_promotion_allowed(
+        {"reason": "evaluated", "records": [{"artifact_type": "ats_cv", "case_id": "a", "passed": False, "score": 70, "issues": ["missing_required_keywords:Python"]}], "skipped": []}
+    ) is False
+    assert loop.is_golden_promotion_allowed(
+        {"reason": "evaluated", "records": [], "skipped": [{"case_id": "a", "reason": "llm_call_cap"}]}
+    ) is False
+
+
 def test_loop_prompt_diff_is_unified():
     diff = loop.unified_prompt_diff(
         "Line one\nLine two\n",

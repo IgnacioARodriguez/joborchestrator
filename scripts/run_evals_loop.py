@@ -38,6 +38,7 @@ from scripts.run_llm_eval_baseline import parse_args as parse_baseline_args  # n
 from scripts.run_llm_eval_baseline import run_baseline  # noqa: E402
 
 DEFAULT_OUTPUT_DIR = Path("data/eval_loops")
+DEFAULT_GOLDEN_CASES_DIR = Path("evals/fixtures/golden")
 SURFACE_ALIASES = {
     "materials": "application_materials",
     "application_materials": "application_materials",
@@ -156,6 +157,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--min-score", type=int)
     parser.add_argument("--ranking-version", default=NVIDIA_RANKING_VERSION)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--golden-cases", type=Path, default=DEFAULT_GOLDEN_CASES_DIR)
     parser.add_argument("--llm-call-cap", type=int, default=0)
     parser.add_argument("--allow-main", action="store_true")
     parser.add_argument(
@@ -342,6 +344,7 @@ def try_prompt_patch(
     update_prompt_registry(prompt_target, next_version)
     affected_before = summarize_records(affected_records(before_summary, worst_issue["issue"], prompt_target))
     regeneration = {"records": [], "llm_calls_used": 0, "skipped": []}
+    golden = {"records": [], "llm_calls_used": 0, "skipped": [], "reason": "not_run"}
     if args.regenerate_affected:
         regeneration = regenerate_affected_records(
             args,
@@ -356,6 +359,12 @@ def try_prompt_patch(
     accepted = is_promotion_allowed(before_summary, after_summary)
     if args.regenerate_affected:
         accepted = bool(regeneration["records"]) and is_promotion_allowed(affected_before, after_summary)
+    if accepted:
+        golden = run_golden_set(
+            args,
+            remaining_llm_calls=remaining_llm_calls - int(regeneration.get("llm_calls_used") or 0),
+        )
+        accepted = is_golden_promotion_allowed(golden)
     if not accepted:
         REGISTRY_PATH.write_text(backup_registry, encoding="utf-8")
         next_path.unlink(missing_ok=True)
@@ -370,7 +379,8 @@ def try_prompt_patch(
         "before": summary_without_records(affected_before if args.regenerate_affected else before_summary),
         "after": summary_without_records(after_summary),
         "regeneration": regeneration,
-        "llm_calls_used": int(regeneration.get("llm_calls_used") or 0),
+        "golden": golden,
+        "llm_calls_used": int(regeneration.get("llm_calls_used") or 0) + int(golden.get("llm_calls_used") or 0),
         "prompt_diff": unified_prompt_diff(
             original_prompt,
             proposed_prompt,
@@ -380,6 +390,129 @@ def try_prompt_patch(
         "committed": bool(accepted and args.commit_accepted_patches),
         "reason": "promotion_rule_passed" if accepted else "promotion_rule_failed",
     }
+
+
+def run_golden_set(args: argparse.Namespace, *, remaining_llm_calls: int) -> dict[str, Any]:
+    fixtures = load_golden_fixtures(args.golden_cases)
+    if not fixtures:
+        return {"records": [], "llm_calls_used": 0, "skipped": [], "reason": "no_golden_cases"}
+    records: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    calls_used = 0
+    for fixture in fixtures:
+        artifact_type = fixture_surface(fixture)
+        estimated_calls = estimated_regeneration_calls(artifact_type, args.regeneration_provider)
+        if calls_used + estimated_calls > remaining_llm_calls:
+            skipped.append({"case_id": fixture.get("case_id"), "reason": "llm_call_cap"})
+            continue
+        try:
+            records.append(regenerate_golden_fixture(args, fixture))
+            calls_used += estimated_calls
+        except Exception as exc:  # noqa: BLE001 - per-golden-case failures belong in audit.
+            skipped.append({"case_id": fixture.get("case_id"), "reason": f"{type(exc).__name__}: {exc}"})
+    return {
+        "records": records,
+        "summary": summary_without_records(summarize_records(records)),
+        "llm_calls_used": calls_used,
+        "skipped": skipped,
+        "reason": "evaluated",
+    }
+
+
+def load_golden_fixtures(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    files = sorted(path.rglob("*.json")) if path.is_dir() else [path]
+    fixtures = []
+    for file_path in files:
+        try:
+            fixture = json.loads(file_path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if is_reviewed_golden_fixture(fixture):
+            fixtures.append(fixture)
+    return fixtures
+
+
+def is_reviewed_golden_fixture(fixture: dict[str, Any]) -> bool:
+    return str(fixture.get("review_status") or "").strip() == "reviewed" or bool(fixture.get("human_reviewed"))
+
+
+def regenerate_golden_fixture(args: argparse.Namespace, fixture: dict[str, Any]) -> dict[str, Any]:
+    artifact_type = fixture_surface(fixture)
+    job = golden_fixture_job(fixture)
+    case = golden_fixture_case(fixture)
+    source = fixture.get("source") or {}
+    job_id = int(source.get("job_id") or 0)
+    ranking = ranking_payload_for_job(job_id, args.ranking_version) if job_id else None
+    if artifact_type == "application_materials":
+        output = regenerate_materials(args, job, ranking)
+        result = evaluate_application_materials(case, output)
+    elif artifact_type == "ats_cv":
+        output = regenerate_ats_cv(args, job, ranking)
+        result = evaluate_ats_cv_result(case, output)
+    elif artifact_type == "ranking":
+        output = regenerate_ranking(args, job)
+        result = evaluate_ranking_result(case, output)
+    else:
+        raise RuntimeError(f"Unsupported golden fixture surface: {artifact_type}")
+    return {
+        "case_id": fixture.get("case_id"),
+        "artifact_type": artifact_type,
+        "review_status": fixture.get("review_status"),
+        "passed": result.passed,
+        "score": result.score,
+        "issues": result.issues,
+        "metrics": result.metrics,
+        "candidate_output": output,
+    }
+
+
+def golden_fixture_case(fixture: dict[str, Any]) -> dict[str, Any]:
+    job = golden_fixture_job(fixture)
+    profile = ((fixture.get("candidate_profile_snapshot") or {}).get("profile") or {})
+    case = build_auto_eval_case(job, profile)
+    case["id"] = fixture.get("case_id") or case["id"]
+    case["review_status"] = fixture.get("review_status")
+    expected = fixture.get("expected") or {}
+    surface = fixture_surface(fixture)
+    if surface == "ranking":
+        case["ranking_expectations"] = expected
+    elif surface == "ats_cv":
+        case["ats_cv_expectations"] = expected
+    else:
+        case["materials_expectations"] = expected
+    return case
+
+
+def golden_fixture_job(fixture: dict[str, Any]) -> dict[str, Any]:
+    raw_input = fixture.get("raw_input") or {}
+    source = fixture.get("source") or {}
+    return {
+        "id": source.get("job_id"),
+        "job_id": source.get("job_id"),
+        "title": raw_input.get("title") or "",
+        "company": raw_input.get("company") or "",
+        "location": raw_input.get("location") or "",
+        "description_text": raw_input.get("job_html_or_text") or "",
+        "source": raw_input.get("source"),
+        "url": raw_input.get("url"),
+        "apply_url": raw_input.get("apply_url"),
+    }
+
+
+def fixture_surface(fixture: dict[str, Any]) -> str:
+    surface = str(fixture.get("surface") or "").strip()
+    return SURFACE_ALIASES.get(surface) or surface
+
+
+def is_golden_promotion_allowed(golden: dict[str, Any]) -> bool:
+    if golden.get("reason") == "no_golden_cases":
+        return True
+    if golden.get("skipped"):
+        return False
+    summary = summarize_records(golden.get("records") or [])
+    return int(summary.get("evaluated") or 0) > 0 and not hard_stop_reason(summary) and int(summary.get("failed") or 0) == 0
 
 
 def affected_records(summary: dict[str, Any], issue: str, prompt_target: str) -> list[dict[str, Any]]:
@@ -713,6 +846,7 @@ def write_audit(
             "regeneration_provider": args.regeneration_provider,
             "commit_accepted_patches": args.commit_accepted_patches,
             "compare_last_run": not args.no_compare_last_run,
+            "golden_cases": str(args.golden_cases),
         },
         "accepted_patches": accepted_patches,
         "iterations": iterations,
