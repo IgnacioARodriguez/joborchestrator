@@ -173,6 +173,13 @@ Read-only inspection against the configured Turso database:
 python scripts/smoke_turso_db.py
 ```
 
+Read-only smoke against the deployed Vercel/v0 backend:
+
+```bash
+python scripts/smoke_vercel_backend.py
+python scripts/smoke_vercel_backend.py --base-url https://joborchestrator.vercel.app
+```
+
 Live NVIDIA smoke for ranking/materials, optionally with two-model judge
 cross-check:
 
