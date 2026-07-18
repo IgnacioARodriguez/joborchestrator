@@ -261,6 +261,76 @@ def test_loop_golden_gate_requires_all_cases_to_pass():
     ) is False
 
 
+def test_loop_prompt_patch_failed_cases_are_limited():
+    summary = {
+        "records": [
+            {
+                "case_id": f"case-{index}",
+                "artifact_type": "ats_cv",
+                "job_id": index,
+                "issues": ["missing_required_keywords:Python"],
+                "candidate_output": {"ats_cv_text": "Draft"},
+            }
+            for index in range(7)
+        ]
+    }
+
+    cases = loop.prompt_patch_failed_cases(summary, "missing_required_keywords")
+
+    assert len(cases) == 5
+    assert cases[0]["case_id"] == "case-0"
+    assert cases[-1]["case_id"] == "case-4"
+
+
+def test_loop_generates_llm_prompt_patch_proposal(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        text = json.dumps({"proposed_prompt": "New prompt text", "rationale": "Tighten the rule."})
+
+    class FakeProvider:
+        def complete(self, messages, **kwargs):
+            calls.append((messages, kwargs))
+            return FakeResponse()
+
+    class FakeRegistry:
+        def get(self, role, **kwargs):
+            assert role == "judge"
+            return FakeProvider()
+
+    monkeypatch.setattr(loop, "ProviderRegistry", FakeRegistry)
+
+    proposal = loop.generate_prompt_patch_proposal(
+        Namespace(hypothesis_provider="openai", hypothesis_model="patch-model"),
+        prompt_target="materials/nvidia_cv_contract",
+        current_prompt="Current prompt",
+        worst_issue={"issue": "missing_required_keywords", "count": 2},
+        before_summary={"records": []},
+        remaining_llm_calls=1,
+    )
+
+    assert proposal["proposed_prompt"] == "New prompt text"
+    assert proposal["rationale"] == "Tighten the rule."
+    assert proposal["llm_calls_used"] == 1
+    assert calls[0][1]["model"] == "patch-model"
+
+
+def test_loop_prompt_patch_proposal_requires_call_budget():
+    try:
+        loop.generate_prompt_patch_proposal(
+            Namespace(hypothesis_provider="openai", hypothesis_model=None),
+            prompt_target="materials/nvidia_cv_contract",
+            current_prompt="Current prompt",
+            worst_issue={"issue": "missing_required_keywords"},
+            before_summary={"records": []},
+            remaining_llm_calls=0,
+        )
+    except RuntimeError as exc:
+        assert "No LLM calls remaining" in str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError")
+
+
 def test_loop_prompt_diff_is_unified():
     diff = loop.unified_prompt_diff(
         "Line one\nLine two\n",

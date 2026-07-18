@@ -29,6 +29,7 @@ from joborchestrator.intelligence.llm_application_materials import (  # noqa: E4
     build_application_kit_with_nvidia,
     build_ats_cv_with_nvidia,
 )
+from joborchestrator.llm.provider import LLMProviderError, ProviderRegistry  # noqa: E402
 from joborchestrator.prompts import PROMPTS_ROOT, REGISTRY_PATH, active_prompt_version, load_prompt  # noqa: E402
 from joborchestrator.ranking.llm_ranker import DEFAULT_LLM_MODEL, rank_job_with_llm  # noqa: E402
 from joborchestrator.ranking.serialization import result_to_dict  # noqa: E402
@@ -167,6 +168,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--regeneration-provider", choices=["openai", "nvidia"], default="nvidia")
     parser.add_argument("--regeneration-model")
+    parser.add_argument("--hypothesis-provider", choices=["openai", "nvidia"], default="openai")
+    parser.add_argument("--hypothesis-model")
     parser.add_argument("--no-compare-last-run", action="store_true")
     parser.add_argument(
         "--commit-accepted-patches",
@@ -313,9 +316,8 @@ def build_prompt_patch_plan(prompt_target: str | None, worst_issue: dict[str, An
         "accepted": False,
         "reason": (
             "Stored-output evals cannot improve until affected artifacts are regenerated. "
-            "Run with --apply-prompt-patch only when regeneration is wired into the loop."
+            "Run with --apply-prompt-patch and enough --llm-call-cap to generate and evaluate an LLM-authored prompt patch."
         ),
-        "proposed_note": prompt_hypothesis_note(worst_issue["issue"]),
     }
 
 
@@ -335,11 +337,18 @@ def try_prompt_patch(
     prompt_dir = PROMPTS_ROOT / surface / sub_case
     next_path = prompt_dir / f"{next_version}.md"
     original_prompt = load_prompt(surface, sub_case)
-    proposed_prompt = (
-        original_prompt
-        + "\n\n"
-        + f"Loop hypothesis {iteration}: {prompt_hypothesis_note(worst_issue['issue'])}\n"
+    patch_proposal = generate_prompt_patch_proposal(
+        args,
+        prompt_target=prompt_target,
+        current_prompt=original_prompt,
+        worst_issue=worst_issue,
+        before_summary=before_summary,
+        remaining_llm_calls=remaining_llm_calls,
     )
+    proposed_prompt = str(patch_proposal["proposed_prompt"]).strip() + "\n"
+    if not proposed_prompt.strip():
+        raise RuntimeError("LLM prompt patch proposal was empty.")
+    remaining_after_hypothesis = remaining_llm_calls - int(patch_proposal.get("llm_calls_used") or 0)
     next_path.write_text(proposed_prompt, encoding="utf-8")
     update_prompt_registry(prompt_target, next_version)
     affected_before = summarize_records(affected_records(before_summary, worst_issue["issue"], prompt_target))
@@ -351,7 +360,7 @@ def try_prompt_patch(
             before_summary,
             worst_issue["issue"],
             prompt_target,
-            remaining_llm_calls=remaining_llm_calls,
+            remaining_llm_calls=remaining_after_hypothesis,
         )
         after_summary = summarize_records(regeneration["records"])
     else:
@@ -362,7 +371,7 @@ def try_prompt_patch(
     if accepted:
         golden = run_golden_set(
             args,
-            remaining_llm_calls=remaining_llm_calls - int(regeneration.get("llm_calls_used") or 0),
+            remaining_llm_calls=remaining_after_hypothesis - int(regeneration.get("llm_calls_used") or 0),
         )
         accepted = is_golden_promotion_allowed(golden)
     if not accepted:
@@ -380,7 +389,14 @@ def try_prompt_patch(
         "after": summary_without_records(after_summary),
         "regeneration": regeneration,
         "golden": golden,
-        "llm_calls_used": int(regeneration.get("llm_calls_used") or 0) + int(golden.get("llm_calls_used") or 0),
+        "hypothesis": {
+            "provider": patch_proposal.get("provider"),
+            "model": patch_proposal.get("model"),
+            "rationale": patch_proposal.get("rationale"),
+        },
+        "llm_calls_used": int(patch_proposal.get("llm_calls_used") or 0)
+        + int(regeneration.get("llm_calls_used") or 0)
+        + int(golden.get("llm_calls_used") or 0),
         "prompt_diff": unified_prompt_diff(
             original_prompt,
             proposed_prompt,
@@ -390,6 +406,125 @@ def try_prompt_patch(
         "committed": bool(accepted and args.commit_accepted_patches),
         "reason": "promotion_rule_passed" if accepted else "promotion_rule_failed",
     }
+
+
+def generate_prompt_patch_proposal(
+    args: argparse.Namespace,
+    *,
+    prompt_target: str,
+    current_prompt: str,
+    worst_issue: dict[str, Any],
+    before_summary: dict[str, Any],
+    remaining_llm_calls: int,
+) -> dict[str, Any]:
+    if remaining_llm_calls <= 0:
+        raise RuntimeError("No LLM calls remaining to generate a prompt patch proposal.")
+    provider_name = str(args.hypothesis_provider or "openai")
+    model = hypothesis_model(args)
+    messages = prompt_patch_messages(
+        prompt_target=prompt_target,
+        current_prompt=current_prompt,
+        worst_issue=worst_issue,
+        before_summary=before_summary,
+    )
+    try:
+        provider = ProviderRegistry().get(
+            "judge",
+            provider_name=provider_name,
+            timeout=60.0 if provider_name == "openai" else 120.0,
+        )
+        response = provider.complete(
+            messages,
+            model=model,
+            temperature=0,
+            response_format="json",
+            max_tokens=5000,
+        )
+        parsed = json.loads(extract_json_object_text(response.text))
+    except (LLMProviderError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Could not generate LLM prompt patch proposal: {exc}") from exc
+    proposed_prompt = str(parsed.get("proposed_prompt") or "").strip()
+    if not proposed_prompt:
+        raise RuntimeError("LLM prompt patch proposal did not include proposed_prompt.")
+    return {
+        "provider": provider_name,
+        "model": model,
+        "proposed_prompt": proposed_prompt,
+        "rationale": str(parsed.get("rationale") or ""),
+        "llm_calls_used": 1,
+    }
+
+
+def hypothesis_model(args: argparse.Namespace) -> str:
+    if args.hypothesis_model:
+        return str(args.hypothesis_model)
+    if str(args.hypothesis_provider or "").strip().lower() == "nvidia":
+        return DEFAULT_NVIDIA_MATERIALS_MODEL
+    return DEFAULT_LLM_MODEL
+
+
+def prompt_patch_messages(
+    *,
+    prompt_target: str,
+    current_prompt: str,
+    worst_issue: dict[str, Any],
+    before_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    payload = {
+        "prompt_target": prompt_target,
+        "current_prompt": current_prompt,
+        "worst_issue": worst_issue,
+        "failed_cases": prompt_patch_failed_cases(before_summary, str(worst_issue.get("issue") or "")),
+        "output_contract": {
+            "proposed_prompt": "complete replacement prompt text, preserving required JSON output shape",
+            "rationale": "brief explanation of the minimal change",
+        },
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You write minimal, production-safe prompt patches for an eval loop. "
+                "Return JSON only. Preserve the current prompt's required output shape and only change text needed "
+                "to address the recurring issue shown in the failed cases."
+            ),
+        },
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+
+
+def prompt_patch_failed_cases(summary: dict[str, Any], issue: str, limit: int = 5) -> list[dict[str, Any]]:
+    cases = []
+    for record in summary.get("records") or []:
+        if issue and not any(issue_key(item) == issue for item in record.get("issues") or []):
+            continue
+        cases.append(
+            {
+                "case_id": record.get("case_id"),
+                "artifact_type": record.get("artifact_type"),
+                "job_id": record.get("job_id"),
+                "title": record.get("title"),
+                "company": record.get("company"),
+                "issues": record.get("issues") or [],
+                "score": record.get("score"),
+                "candidate_output": record.get("candidate_output"),
+            }
+        )
+        if len(cases) >= limit:
+            break
+    return cases
+
+
+def extract_json_object_text(text: str) -> str:
+    cleaned = str(text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.removeprefix("```json").removeprefix("```").strip()
+        cleaned = cleaned.removesuffix("```").strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start < 0 or end <= start:
+        raise json.JSONDecodeError("No JSON object found", cleaned, 0)
+    return cleaned[start : end + 1]
 
 
 def run_golden_set(args: argparse.Namespace, *, remaining_llm_calls: int) -> dict[str, Any]:
@@ -758,19 +893,6 @@ def hard_stop_reason(summary: dict[str, Any]) -> str:
     return ""
 
 
-def prompt_hypothesis_note(issue: str) -> str:
-    suggestions = {
-        "recruiter_message_too_long": "Make recruiter_message a single short recruiter note under the configured character limit.",
-        "recruiter_message_cover_letter_style": "Reject cover-letter salutations and formal letter closings in recruiter_message.",
-        "ats_cv_contains_internal_notes": "Return final CV text only; never include target role, keyword, or optimization notes.",
-        "omitted_base_experience": "Preserve every real source CV experience entry, even older or less relevant roles.",
-        "unsupported_claims": "Use only candidate-supported facts; put adjacent or uncertain claims in risk flags instead.",
-        "missing_required_keywords": "Include truthful job keywords or accepted synonyms in parseable ATS sections.",
-        "missing_evidence_terms": "Cite concrete source-job evidence for the strongest match and central gap.",
-    }
-    return suggestions.get(issue, f"Address recurring eval issue `{issue}` with a stricter output rule.")
-
-
 def issue_key(issue: Any) -> str:
     return str(issue).split(":", 1)[0]
 
@@ -844,6 +966,7 @@ def write_audit(
             "apply_prompt_patch": args.apply_prompt_patch,
             "regenerate_affected": args.regenerate_affected,
             "regeneration_provider": args.regeneration_provider,
+            "hypothesis_provider": args.hypothesis_provider,
             "commit_accepted_patches": args.commit_accepted_patches,
             "compare_last_run": not args.no_compare_last_run,
             "golden_cases": str(args.golden_cases),
