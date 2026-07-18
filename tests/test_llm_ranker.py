@@ -67,3 +67,29 @@ def test_llm_ranking_uses_structured_payload(monkeypatch):
     assert result.final_score == 78
     assert result.decision == "APPLY_WITH_TAILORED_CV"
     assert "APIs" in result.evidence.strong_matches
+
+
+def test_ranking_schema_includes_versioned_contract_signals():
+    schema = llm_ranker._ranking_json_schema()
+
+    score_required = set(schema["properties"]["scores"]["required"])
+    assert {
+        "technical_readiness",
+        "central_requirement_coverage",
+        "role_confidence",
+        "application_effort_signal",
+        "data_quality_signal",
+        "source_reliability_signal",
+    }.issubset(score_required)
+
+    evidence_required = set(schema["properties"]["evidence"]["required"])
+    assert {
+        "central_requirement_coverage",
+        "central_requirement_raw_coverage",
+        "central_requirement_evidence_quality",
+        "requirement_backed_signal_count",
+        "central_requirement_thresholds",
+        "central_requirements",
+        "requires_llm_review",
+        "llm_escalation_reasons",
+    }.issubset(evidence_required)
