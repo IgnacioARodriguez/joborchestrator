@@ -139,6 +139,55 @@ def run_smoke_e2e(
         }
 
 
+def run_guardrail_smoke(
+    *,
+    live_judge: bool = False,
+    judge_artifacts: list[str] | None = None,
+    judge_model: str = DEFAULT_PRIMARY_JUDGE_MODEL,
+    secondary_judge_model: str = DEFAULT_SECONDARY_JUDGE_MODEL,
+) -> dict[str, Any]:
+    """Check that known-bad outputs are rejected by deterministic and optional LLM judges."""
+    case = synthetic_guardrail_case()
+    outputs = {
+        "ranking": bad_guardrail_ranking_output(),
+        "application_materials": bad_guardrail_materials_output(),
+        "ats_cv": {"ats_cv_text": bad_guardrail_materials_output()["ats_cv_text"]},
+    }
+    eval_results = {
+        "ranking": evaluate_ranking_result(case, outputs["ranking"]),
+        "application_materials": evaluate_application_materials(case, outputs["application_materials"]),
+        "ats_cv": evaluate_ats_cv_result(case, outputs["ats_cv"]),
+    }
+    evals = {name: _eval_to_dict(result) for name, result in eval_results.items()}
+    expected_rejections = {
+        name: {
+            **result,
+            "rejected_as_expected": result["passed"] is False,
+        }
+        for name, result in evals.items()
+    }
+    judge_results = _run_live_judges(
+        live_judge=live_judge,
+        judge_artifacts=judge_artifacts or ["ranking", "application_materials", "ats_cv"],
+        case=case,
+        outputs=outputs,
+        judge_model=judge_model,
+        secondary_judge_model=secondary_judge_model,
+    )
+    judge_rejections = {
+        artifact: result.get("passed") is False
+        for artifact, result in judge_results.items()
+    }
+    return {
+        "passed": all(item["rejected_as_expected"] for item in expected_rejections.values())
+        and all(judge_rejections.values()),
+        "mode": "guardrail_live_judge" if live_judge else "guardrail_offline",
+        "evals": expected_rejections,
+        "judge_results": judge_results,
+        "judge_rejections": judge_rejections,
+    }
+
+
 def synthetic_profile() -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -176,6 +225,48 @@ def synthetic_profile() -> dict[str, Any]:
     }
 
 
+def synthetic_guardrail_case() -> dict[str, Any]:
+    base_cv = synthetic_profile()["base_cv_text"]
+    return {
+        "id": "smoke-guardrail-rust-relocation-mismatch",
+        "job": {
+            "title": "Rust Kernel Engineer",
+            "company": "Berlin Robotics",
+            "description_text": (
+                "Requires Rust kernel development, Linux device drivers, German C2, and relocation "
+                "to Berlin for a fully onsite robotics role."
+            ),
+        },
+        "candidate": {
+            "base_cv_text": base_cv,
+            "required_experience_terms": ["Acme SaaS"],
+            "forbidden_claims": [
+                "Rust kernel",
+                "Linux device drivers",
+                "German C2",
+                "Kubernetes Certified",
+                "AWS Certified Solutions Architect",
+            ],
+            "supported_claim_source_text": _profile_source_text(synthetic_profile()),
+            "real_experience_years": 7,
+        },
+        "ranking_expectations": {
+            "allowed_decisions": ["SKIP", "AVOID"],
+            "max_score": 45,
+            "dealbreaker_terms": ["Rust kernel", "relocation", "German C2"],
+        },
+        "materials_expectations": {
+            "required_terms": ["Berlin Robotics", "Rust kernel"],
+            "specificity_terms": ["Berlin Robotics", "Rust Kernel Engineer"],
+            "max_recruiter_message_chars": 320,
+        },
+        "ats_cv_expectations": {
+            "required_keywords": ["Rust kernel", "German C2"],
+            "required_sections": ["summary", "skills", "experience", "education"],
+        },
+    }
+
+
 def synthetic_job_payload() -> dict[str, Any]:
     return {
         "external_id": "smoke-e2e-senior-backend",
@@ -189,6 +280,55 @@ def synthetic_job_payload() -> dict[str, Any]:
             "Requirements: 5+ years backend experience, Python, FastAPI, PostgreSQL, AWS, API design. "
             "The role builds production services and data models for a SaaS platform."
         ),
+    }
+
+
+def bad_guardrail_ranking_output() -> dict[str, Any]:
+    return {
+        "final_score": 94,
+        "decision": "APPLY_NOW",
+        "confidence": 0.96,
+        "scores": {
+            "technical_fit": 96,
+            "seniority_fit": 95,
+            "role_fit": 94,
+            "opportunity_quality": 90,
+            "application_roi": 95,
+            "market_alignment": 92,
+            "risk_penalty": 0,
+        },
+        "evidence": {
+            "strong_matches": ["backend engineering"],
+            "missing_requirements": [],
+            "dealbreakers": [],
+        },
+        "reasoning_summary": "Excellent fit. Apply immediately.",
+        "recommended_application_angle": "Position as a Rust kernel and Linux device drivers specialist.",
+        "cv_keywords_to_emphasize": ["Rust kernel", "Linux device drivers", "German C2"],
+        "cv_keywords_to_avoid_overclaiming": [],
+    }
+
+
+def bad_guardrail_materials_output() -> dict[str, str]:
+    return {
+        "recruiter_message": "Dear Hiring Manager, I am writing to express my interest in the Rust Kernel Engineer role.",
+        "cover_letter": (
+            "I am Kubernetes Certified, an AWS Certified Solutions Architect, and fluent at German C2. "
+            "I have deep Rust kernel and Linux device drivers experience."
+        ),
+        "ats_cv_text": (
+            "Ignacio Rodriguez\n"
+            "Professional Summary\n"
+            "Kubernetes Certified Rust kernel engineer with German C2 and Linux device drivers experience.\n"
+            "Target role: Rust Kernel Engineer\n"
+            "Technical Skills\n"
+            "Rust kernel, Linux device drivers, German C2\n"
+            "Professional Experience\n"
+            "Robotics kernel work\n"
+            "Education\n"
+            "Coursework"
+        ),
+        "autofill_notes": "Claim AWS Certified Solutions Architect and Rust kernel experience.",
     }
 
 
@@ -326,6 +466,15 @@ def _fake_build_application_kit_with_nvidia(job: Any, ranking: Any | None = None
     }
 
 
+def _profile_source_text(profile: dict[str, Any]) -> str:
+    parts = [
+        profile.get("headline"),
+        profile.get("base_cv_text"),
+        " ".join(str(skill.get("name") or "") for skill in profile.get("skills") or [] if isinstance(skill, dict)),
+    ]
+    return "\n".join(str(part) for part in parts if str(part or "").strip())
+
+
 def _ranking_row_to_output(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "final_score": int(row["final_score"]),
@@ -395,6 +544,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db-path", type=Path, help="Optional SQLite path. Defaults to a temporary DB.")
     parser.add_argument("--live-llm", action="store_true", help="Use real NVIDIA ranking/materials calls.")
     parser.add_argument("--live-judge", action="store_true", help="Run real NVIDIA judge cross-checks.")
+    parser.add_argument("--guardrail-checks", action="store_true", help="Run known-bad output rejection checks.")
     parser.add_argument("--ranking-model", help="NVIDIA ranking model for --live-llm.")
     parser.add_argument("--materials-model", help="NVIDIA materials model for --live-llm.")
     parser.add_argument("--judge-model", default=DEFAULT_PRIMARY_JUDGE_MODEL)
@@ -407,16 +557,25 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        result = run_smoke_e2e(
-            db_path=args.db_path,
-            live_llm=args.live_llm,
-            live_judge=args.live_judge,
-            judge_artifacts=[item.strip() for item in args.judge_artifacts.split(",") if item.strip()],
-            ranking_model=args.ranking_model,
-            materials_model=args.materials_model,
-            judge_model=args.judge_model,
-            secondary_judge_model=args.judge_model_secondary,
-        )
+        judge_artifacts = [item.strip() for item in args.judge_artifacts.split(",") if item.strip()]
+        if args.guardrail_checks:
+            result = run_guardrail_smoke(
+                live_judge=args.live_judge,
+                judge_artifacts=judge_artifacts,
+                judge_model=args.judge_model,
+                secondary_judge_model=args.judge_model_secondary,
+            )
+        else:
+            result = run_smoke_e2e(
+                db_path=args.db_path,
+                live_llm=args.live_llm,
+                live_judge=args.live_judge,
+                judge_artifacts=judge_artifacts,
+                ranking_model=args.ranking_model,
+                materials_model=args.materials_model,
+                judge_model=args.judge_model,
+                secondary_judge_model=args.judge_model_secondary,
+            )
     except Exception as exc:  # noqa: BLE001 - CLI should return a readable smoke failure.
         print(json.dumps({"passed": False, "error": type(exc).__name__, "message": str(exc)}, ensure_ascii=False, indent=2))
         return 1
