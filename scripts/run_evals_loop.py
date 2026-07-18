@@ -51,6 +51,11 @@ CRITICAL_ISSUES = {
     "unsafe_cv_keyword_emphasis",
     "judge_disputed",
 }
+PROMPT_TARGET_CONSUMERS = {
+    "ranking/nvidia_response_contract": ["joborchestrator/ranking/llm_ranker.py", "joborchestrator/ranking/nvidia_ranker.py"],
+    "materials/nvidia_cv_contract": ["joborchestrator/intelligence/llm_application_materials.py"],
+    "materials/nvidia_kit_contract": ["joborchestrator/intelligence/llm_application_materials.py"],
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -241,11 +246,14 @@ def select_worst_issue(summary: dict[str, Any]) -> dict[str, Any] | None:
     issue_counts = summary.get("issue_counts") or {}
     if not issue_counts:
         return None
-    issue, count = sorted(
+    for issue, count in sorted(
         issue_counts.items(),
         key=lambda item: (-(int(item[1]) * issue_severity(str(item[0]))), -int(item[1]), str(item[0])),
-    )[0]
-    return {"issue": issue, "count": int(count), "severity": issue_severity(issue)}
+    ):
+        prompt_target = prompt_owner_for_issue(str(issue))
+        if prompt_target and is_prompt_target_wired(prompt_target):
+            return {"issue": issue, "count": int(count), "severity": issue_severity(str(issue))}
+    return None
 
 
 def prompt_owner_for_issue(issue: str | None) -> str | None:
@@ -258,6 +266,28 @@ def prompt_owner_for_issue(issue: str | None) -> str | None:
     if issue.startswith(("ats_cv", "omitted_base_experience", "unsupported_claims", "missing_required_keywords")):
         return "materials/nvidia_cv_contract"
     return None
+
+
+def is_prompt_target_wired(prompt_target: str) -> bool:
+    try:
+        surface, sub_case = prompt_target.split("/", 1)
+    except ValueError:
+        return False
+    consumers = PROMPT_TARGET_CONSUMERS.get(prompt_target) or []
+    if not consumers:
+        return False
+    pattern = re.compile(
+        rf"load_prompt\(\s*['\"]{re.escape(surface)}['\"]\s*,\s*['\"]{re.escape(sub_case)}['\"]"
+    )
+    for relative_path in consumers:
+        path = PROJECT_ROOT / relative_path
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if pattern.search(source):
+            return True
+    return False
 
 
 def build_prompt_patch_plan(prompt_target: str | None, worst_issue: dict[str, Any] | None) -> dict[str, Any] | None:

@@ -37,6 +37,21 @@ def test_loop_selects_worst_issue_by_frequency_times_severity():
     assert selected == {"issue": "unsupported_claims", "count": 2, "severity": 3}
 
 
+def test_loop_selects_worst_issue_skips_unowned_issues():
+    selected = loop.select_worst_issue(
+        {"issue_counts": {"judge_other": 99, "recruiter_message_too_long": 1}}
+    )
+
+    assert selected == {"issue": "recruiter_message_too_long", "count": 1, "severity": 1}
+
+
+def test_loop_detects_wired_prompt_targets():
+    assert loop.is_prompt_target_wired("ranking/nvidia_response_contract") is True
+    assert loop.is_prompt_target_wired("materials/nvidia_cv_contract") is True
+    assert loop.is_prompt_target_wired("materials/nvidia_kit_contract") is True
+    assert loop.is_prompt_target_wired("materials/missing_contract") is False
+
+
 def test_loop_detects_critical_hard_stop():
     summary = {"issue_counts": {"unsupported_claims": 1}}
 
