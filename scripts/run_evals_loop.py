@@ -14,8 +14,25 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from joborchestrator.evals.semantic import (  # noqa: E402
+    build_auto_eval_case,
+    build_llm_judge_payload,
+    evaluate_application_materials,
+    evaluate_ats_cv_result,
+    evaluate_ranking_result,
+)
+from joborchestrator.intelligence.llm_application_materials import (  # noqa: E402
+    DEFAULT_MATERIALS_MODEL,
+    DEFAULT_NVIDIA_MATERIALS_MODEL,
+    build_application_kit_with_llm,
+    build_application_kit_with_nvidia,
+    build_ats_cv_with_nvidia,
+)
 from joborchestrator.prompts import PROMPTS_ROOT, REGISTRY_PATH, active_prompt_version, load_prompt  # noqa: E402
+from joborchestrator.ranking.llm_ranker import DEFAULT_LLM_MODEL, rank_job_with_llm  # noqa: E402
+from joborchestrator.ranking.serialization import result_to_dict  # noqa: E402
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION  # noqa: E402
+from joborchestrator.storage import persistence as db  # noqa: E402
 from scripts.run_llm_eval_baseline import parse_args as parse_baseline_args  # noqa: E402
 from scripts.run_llm_eval_baseline import run_baseline  # noqa: E402
 
@@ -52,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     no_improvement_count = 0
     previous_summary: dict[str, Any] | None = None
     iterations: list[dict[str, Any]] = []
+    llm_calls_used = 0
 
     for iteration in range(1, args.max_iterations + 1):
         summary = run_iteration_baseline(args, surfaces, iteration)
@@ -61,14 +79,23 @@ def main(argv: list[str] | None = None) -> int:
         stop_reason = ""
 
         hard_stop = hard_stop_reason(summary)
-        if hard_stop:
+        if hard_stop and not args.regenerate_affected:
             stop_reason = hard_stop
         elif not worst_issue:
             stop_reason = "no_issues"
-        elif args.llm_call_cap <= 0:
+        elif args.llm_call_cap - llm_calls_used <= 0:
             stop_reason = "llm_call_cap_reached"
         elif args.apply_prompt_patch and prompt_target:
-            patch = try_prompt_patch(args, summary, prompt_target, worst_issue, surfaces, iteration)
+            patch = try_prompt_patch(
+                args,
+                summary,
+                prompt_target,
+                worst_issue,
+                surfaces,
+                iteration,
+                remaining_llm_calls=args.llm_call_cap - llm_calls_used,
+            )
+            llm_calls_used += int(patch.get("llm_calls_used") or 0)
             if patch["accepted"]:
                 accepted_patches += 1
                 no_improvement_count = 0
@@ -87,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             "prompt_target": prompt_target,
             "patch": patch,
             "stop_reason": stop_reason,
+            "llm_calls_used": llm_calls_used,
         }
         iterations.append(record)
         write_audit(audit_path, args, branch, iterations, accepted_patches)
@@ -104,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         "branch": branch,
         "iterations": len(iterations),
         "accepted_patches": accepted_patches,
+        "llm_calls_used": llm_calls_used,
         "last_stop_reason": iterations[-1].get("stop_reason") if iterations else "not_run",
         "last_summary": iterations[-1]["summary"] if iterations else {},
     }
@@ -122,6 +151,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--llm-call-cap", type=int, default=0)
     parser.add_argument("--allow-main", action="store_true")
+    parser.add_argument(
+        "--regenerate-affected",
+        action="store_true",
+        help="Regenerate only affected records in memory before accepting a prompt hypothesis.",
+    )
+    parser.add_argument("--regeneration-provider", choices=["openai", "nvidia"], default="nvidia")
+    parser.add_argument("--regeneration-model")
     parser.add_argument(
         "--apply-prompt-patch",
         action="store_true",
@@ -238,6 +274,7 @@ def try_prompt_patch(
     worst_issue: dict[str, Any],
     surfaces: list[str],
     iteration: int,
+    remaining_llm_calls: int,
 ) -> dict[str, Any]:
     backup_registry = REGISTRY_PATH.read_text(encoding="utf-8")
     surface, sub_case = prompt_target.split("/", 1)
@@ -253,8 +290,22 @@ def try_prompt_patch(
         encoding="utf-8",
     )
     update_prompt_registry(prompt_target, next_version)
-    after_summary = run_iteration_baseline(args, surfaces, iteration)
+    affected_before = summarize_records(affected_records(before_summary, worst_issue["issue"], prompt_target))
+    regeneration = {"records": [], "llm_calls_used": 0, "skipped": []}
+    if args.regenerate_affected:
+        regeneration = regenerate_affected_records(
+            args,
+            before_summary,
+            worst_issue["issue"],
+            prompt_target,
+            remaining_llm_calls=remaining_llm_calls,
+        )
+        after_summary = summarize_records(regeneration["records"])
+    else:
+        after_summary = run_iteration_baseline(args, surfaces, iteration)
     accepted = is_promotion_allowed(before_summary, after_summary)
+    if args.regenerate_affected:
+        accepted = bool(regeneration["records"]) and is_promotion_allowed(affected_before, after_summary)
     if not accepted:
         REGISTRY_PATH.write_text(backup_registry, encoding="utf-8")
         next_path.unlink(missing_ok=True)
@@ -264,10 +315,147 @@ def try_prompt_patch(
         "from_version": current_version,
         "to_version": next_version,
         "accepted": accepted,
-        "before": summary_without_records(before_summary),
+        "before": summary_without_records(affected_before if args.regenerate_affected else before_summary),
         "after": summary_without_records(after_summary),
-        "reason": "promotion_rule_passed" if accepted else "promotion_rule_failed_or_no_regeneration",
+        "regeneration": regeneration,
+        "llm_calls_used": int(regeneration.get("llm_calls_used") or 0),
+        "reason": "promotion_rule_passed" if accepted else "promotion_rule_failed",
     }
+
+
+def affected_records(summary: dict[str, Any], issue: str, prompt_target: str) -> list[dict[str, Any]]:
+    target_surface = surface_for_prompt_target(prompt_target)
+    selected = []
+    for record in summary.get("records") or []:
+        if target_surface and record.get("artifact_type") != target_surface:
+            continue
+        if any(issue_key(item) == issue for item in record.get("issues") or []):
+            selected.append(record)
+    return selected
+
+
+def regenerate_affected_records(
+    args: argparse.Namespace,
+    before_summary: dict[str, Any],
+    issue: str,
+    prompt_target: str,
+    *,
+    remaining_llm_calls: int,
+) -> dict[str, Any]:
+    regenerated: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    calls_used = 0
+    for record in affected_records(before_summary, issue, prompt_target):
+        estimated_calls = estimated_regeneration_calls(record["artifact_type"], args.regeneration_provider)
+        if calls_used + estimated_calls > remaining_llm_calls:
+            skipped.append({"case_id": record.get("case_id"), "reason": "llm_call_cap"})
+            continue
+        try:
+            regenerated.append(regenerate_record(args, record))
+            calls_used += estimated_calls
+        except Exception as exc:  # noqa: BLE001 - per-record failures belong in audit, not process crash.
+            skipped.append({"case_id": record.get("case_id"), "reason": f"{type(exc).__name__}: {exc}"})
+    return {"records": regenerated, "llm_calls_used": calls_used, "skipped": skipped}
+
+
+def regenerate_record(args: argparse.Namespace, record: dict[str, Any]) -> dict[str, Any]:
+    job_id = int(record["job_id"])
+    job = db.get_job_posting(job_id)
+    if not job:
+        raise RuntimeError(f"Job not found: {job_id}")
+    profile = db.get_candidate_profile_payload() or {}
+    case = build_auto_eval_case(job, profile)
+    ranking = ranking_payload_for_job(job_id, args.ranking_version)
+    artifact_type = str(record["artifact_type"])
+
+    if artifact_type == "application_materials":
+        output = regenerate_materials(args, job, ranking)
+        result = evaluate_application_materials(case, output)
+    elif artifact_type == "ats_cv":
+        output = regenerate_ats_cv(args, job, ranking)
+        result = evaluate_ats_cv_result(case, output)
+    elif artifact_type == "ranking":
+        output = regenerate_ranking(args, job)
+        result = evaluate_ranking_result(case, output)
+    else:
+        raise RuntimeError(f"Unsupported artifact_type for regeneration: {artifact_type}")
+
+    return {
+        **record,
+        "passed": result.passed,
+        "score": result.score,
+        "issues": result.issues,
+        "metrics": result.metrics,
+        "candidate_output": output,
+        "judge_payload": build_llm_judge_payload(case, output, artifact_type),
+    }
+
+
+def regenerate_materials(args: argparse.Namespace, job: dict[str, Any], ranking: dict[str, Any] | None) -> dict[str, Any]:
+    model = args.regeneration_model
+    if args.regeneration_provider == "openai":
+        return build_application_kit_with_llm(job, ranking=ranking, model=model or DEFAULT_MATERIALS_MODEL)
+    return build_application_kit_with_nvidia(job, ranking=ranking, model=model or DEFAULT_NVIDIA_MATERIALS_MODEL)
+
+
+def regenerate_ats_cv(args: argparse.Namespace, job: dict[str, Any], ranking: dict[str, Any] | None) -> dict[str, Any]:
+    model = args.regeneration_model
+    if args.regeneration_provider == "openai":
+        kit = build_application_kit_with_llm(job, ranking=ranking, model=model or DEFAULT_MATERIALS_MODEL)
+        return {"ats_cv_text": kit.get("ats_cv_text") or ""}
+    generated = build_ats_cv_with_nvidia(job, ranking=ranking, model=model or DEFAULT_NVIDIA_MATERIALS_MODEL)
+    return {"ats_cv_text": generated.get("ats_cv_text") or ""}
+
+
+def regenerate_ranking(args: argparse.Namespace, job: dict[str, Any]) -> dict[str, Any]:
+    if args.regeneration_provider != "openai":
+        raise RuntimeError("In-memory ranking regeneration currently supports --regeneration-provider openai only.")
+    result = rank_job_with_llm(job, model=args.regeneration_model or DEFAULT_LLM_MODEL)
+    return result_to_dict(result)
+
+
+def ranking_payload_for_job(job_id: int, ranking_version: str) -> dict[str, Any] | None:
+    rows = db.get_rankings_for_job_ids(ranking_version, [job_id])
+    if rows.empty:
+        return None
+    row = rows.iloc[0].to_dict()
+    return {
+        "final_score": int(row["final_score"]),
+        "decision": row["decision"],
+        "confidence": float(row.get("confidence") or 0),
+        "scores": loads_json(row.get("scores_json"), {}),
+        "evidence": loads_json(row.get("evidence_json"), {}),
+        "reasoning_summary": row.get("reasoning_summary") or "",
+        "recommended_application_angle": row.get("recommended_application_angle") or "",
+        "cv_keywords_to_emphasize": loads_json(row.get("cv_keywords_to_emphasize_json"), []),
+        "cv_keywords_to_avoid_overclaiming": loads_json(row.get("cv_keywords_to_avoid_overclaiming_json"), []),
+    }
+
+
+def loads_json(value: Any, fallback: Any) -> Any:
+    if value is None:
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(str(value))
+    except json.JSONDecodeError:
+        return fallback
+
+
+def estimated_regeneration_calls(artifact_type: str, provider: str) -> int:
+    if artifact_type == "application_materials" and provider == "nvidia":
+        return 2
+    return 1
+
+
+def surface_for_prompt_target(prompt_target: str) -> str | None:
+    mapping = {
+        "ranking/nvidia_response_contract": "ranking",
+        "materials/nvidia_cv_contract": "ats_cv",
+        "materials/nvidia_kit_contract": "application_materials",
+    }
+    return mapping.get(prompt_target)
 
 
 def update_prompt_registry(prompt_target: str, version: str) -> None:
@@ -388,6 +576,8 @@ def write_audit(
             "stop_if_no_improvement": args.stop_if_no_improvement,
             "llm_call_cap": args.llm_call_cap,
             "apply_prompt_patch": args.apply_prompt_patch,
+            "regenerate_affected": args.regenerate_affected,
+            "regeneration_provider": args.regeneration_provider,
         },
         "accepted_patches": accepted_patches,
         "iterations": iterations,
