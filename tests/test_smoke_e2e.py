@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scripts.smoke_e2e import run_guardrail_smoke, run_smoke_e2e
+from scripts.smoke_e2e import run_guardrail_smoke, run_scan_smoke, run_smoke_e2e
 
 
 def test_smoke_e2e_offline_covers_core_application_flow(tmp_path):
@@ -34,3 +34,18 @@ def test_guardrail_smoke_rejects_known_bad_outputs():
     )
     assert result["evals"]["ats_cv"]["rejected_as_expected"] is True
     assert any(issue.startswith("ats_cv_contains_internal_notes:") for issue in result["evals"]["ats_cv"]["issues"])
+
+
+def test_scan_smoke_covers_scan_operation_and_post_scan_ranking_queue(tmp_path):
+    result = run_scan_smoke(db_path=tmp_path / "scan-smoke.db")
+
+    assert result["passed"] is True
+    assert result["mode"] == "scan_offline"
+    assert result["operation_status"] == "completed"
+    assert result["processed"] is True
+    assert result["summary"]["new"] == 2
+    assert result["ranking_job"]["queued"] == 2
+    assert result["job_count"] == 2
+    assert result["job_sources"] == ["greenhouse", "remotive"]
+    assert result["ranking_jobs"][0]["status"] == "queued"
+    assert {event["provider"] for event in result["scan_events"]} == {"greenhouse", "remotive"}

@@ -29,6 +29,8 @@ from joborchestrator.evals.semantic import (
 from joborchestrator.ranking import worker as ranking_worker
 from joborchestrator.ranking.schemas import RankingEvidence, RankingResult, RankingScores
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
+from joborchestrator.scanning.models import JobPosting
+from joborchestrator.scanning.normalization import compute_content_hash
 from joborchestrator.storage import persistence as db
 
 DEFAULT_PRIMARY_JUDGE_MODEL = "nvidia/llama-3.3-nemotron-super-49b-v1"
@@ -188,6 +190,87 @@ def run_guardrail_smoke(
     }
 
 
+def run_scan_smoke(*, db_path: Path | None = None) -> dict[str, Any]:
+    """Run a controlled scan operation through ATS and search lanes without external network."""
+    with _isolated_sqlite_db(db_path) as active_db, _scan_provider_patches():
+        db.init_db()
+        client = TestClient(api.app)
+        profile_response = client.put("/api/profile", json={"profile": synthetic_profile()})
+        _require_status(profile_response.status_code, 200, "profile.put", profile_response.text)
+
+        source_response = client.post(
+            "/api/sources",
+            json={"provider": "greenhouse", "company_name": "Acme Cloud", "company_ref": "acmecloud", "enabled": True},
+        )
+        _require_status(source_response.status_code, 200, "sources.create", source_response.text)
+        scan_response = client.post(
+            "/api/scans/all",
+            json={
+                "include_ats": True,
+                "include_search": True,
+                "include_linkedin": False,
+                "search_providers": ["remotive"],
+                "queries": ["Senior Backend Engineer"],
+                "application_targets": [{"label": "Spain remote", "location": "Spain", "work_modes": ["remote"]}],
+                "location": "Spain",
+                "remote": True,
+                "max_pages": 1,
+                "auto_rank_new": True,
+                "ranking_limit": 10,
+            },
+        )
+        _require_status(scan_response.status_code, 200, "scans.queue", scan_response.text)
+        operation_id = int(scan_response.json()["operation_id"])
+
+        processed = operation_worker.process_once(worker_id="smoke-scan")
+        operation = db.get_operation(operation_id)
+        if not operation:
+            raise RuntimeError("Smoke scan operation disappeared.")
+        output = operation.get("output_json") or {}
+        ranking_job = output.get("ranking_job") or {}
+        jobs = db.get_job_postings(limit=None).to_dict("records")
+        ranking_jobs = db.list_ranking_jobs(limit=5).to_dict("records")
+        events = db.get_recent_scan_events(limit=10).to_dict("records")
+
+        provider_sources = sorted({str(job.get("source")) for job in jobs})
+        return {
+            "passed": (
+                processed
+                and operation["status"] == "completed"
+                and int((output.get("summary") or {}).get("new") or 0) == 2
+                and int(ranking_job.get("queued") or 0) == 2
+                and provider_sources == ["greenhouse", "remotive"]
+            ),
+            "mode": "scan_offline",
+            "database": str(active_db),
+            "operation_id": operation_id,
+            "operation_status": operation["status"],
+            "processed": processed,
+            "summary": output.get("summary"),
+            "ranking_job": ranking_job,
+            "job_count": len(jobs),
+            "job_sources": provider_sources,
+            "ranking_jobs": [
+                {
+                    "id": int(item["id"]),
+                    "status": item["status"],
+                    "total_items": int(item["total_items"]),
+                    "queued_items": int(item.get("queued_items") or 0),
+                }
+                for item in ranking_jobs
+            ],
+            "scan_events": [
+                {
+                    "provider": event.get("provider"),
+                    "status": event.get("status"),
+                    "found_count": int(event.get("found_count") or 0),
+                    "new_count": int(event.get("new_count") or 0),
+                }
+                for event in events
+            ],
+        }
+
+
 def synthetic_profile() -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -330,6 +413,94 @@ def bad_guardrail_materials_output() -> dict[str, str]:
         ),
         "autofill_notes": "Claim AWS Certified Solutions Architect and Rust kernel experience.",
     }
+
+
+class _FakeAtsProvider:
+    source = "greenhouse"
+
+    async def list_jobs(self, company_ref: str, company_name: str | None = None) -> list[JobPosting]:
+        return [
+            _synthetic_scan_job(
+                external_id=f"{company_ref}-backend",
+                source=self.source,
+                company=company_name or "Acme Cloud",
+                title="Senior Backend Engineer",
+                apply_url="https://boards.greenhouse.io/acmecloud/jobs/backend",
+            )
+        ]
+
+    async def get_job_detail(
+        self,
+        company_ref: str,
+        external_id: str,
+        company_name: str | None = None,
+    ) -> JobPosting | None:
+        jobs = await self.list_jobs(company_ref, company_name)
+        return next((job for job in jobs if job.external_id == external_id), None)
+
+
+class _FakeSearchProvider:
+    source = "remotive"
+
+    async def search_jobs(
+        self,
+        query: str,
+        location: str | None = None,
+        *,
+        remote: bool = True,
+        page: int = 1,
+    ) -> list[JobPosting]:
+        if page > 1:
+            return []
+        return [
+            _synthetic_scan_job(
+                external_id="remotive-platform",
+                source=self.source,
+                company="Remote SaaS",
+                title=f"{query} - Platform",
+                location=location or "Remote Spain",
+                apply_url="https://remotive.com/remote-jobs/software-dev/platform",
+            )
+        ]
+
+
+def _synthetic_scan_job(
+    *,
+    external_id: str,
+    source: str,
+    company: str,
+    title: str,
+    apply_url: str,
+    location: str = "Remote Spain",
+) -> JobPosting:
+    description = (
+        f"{company} is hiring a {title}. Requirements include Python, FastAPI, PostgreSQL, AWS, "
+        "API design, and 5+ years backend experience."
+    )
+    return JobPosting(
+        external_id=external_id,
+        source=source,
+        company=company,
+        title=title,
+        location=location,
+        workplace_type="Remote",
+        url=apply_url,
+        apply_url=apply_url,
+        description_text=description,
+        content_hash=compute_content_hash(title, company, location, description, apply_url),
+        raw_payload={"source": source, "external_id": external_id},
+    )
+
+
+@contextmanager
+def _scan_provider_patches() -> Iterator[None]:
+    from joborchestrator.scanning import providers, search_providers
+
+    with patch.dict(providers.PROVIDERS, {"greenhouse": _FakeAtsProvider()}), patch.dict(
+        search_providers.SEARCH_PROVIDERS,
+        {"remotive": _FakeSearchProvider()},
+    ):
+        yield
 
 
 def _queue_ranking(client: TestClient, job_id: int, model: str | None) -> int:
@@ -545,6 +716,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live-llm", action="store_true", help="Use real NVIDIA ranking/materials calls.")
     parser.add_argument("--live-judge", action="store_true", help="Run real NVIDIA judge cross-checks.")
     parser.add_argument("--guardrail-checks", action="store_true", help="Run known-bad output rejection checks.")
+    parser.add_argument("--scan-checks", action="store_true", help="Run controlled ATS/search scan checks.")
     parser.add_argument("--ranking-model", help="NVIDIA ranking model for --live-llm.")
     parser.add_argument("--materials-model", help="NVIDIA materials model for --live-llm.")
     parser.add_argument("--judge-model", default=DEFAULT_PRIMARY_JUDGE_MODEL)
@@ -558,7 +730,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         judge_artifacts = [item.strip() for item in args.judge_artifacts.split(",") if item.strip()]
-        if args.guardrail_checks:
+        if args.scan_checks:
+            result = run_scan_smoke(db_path=args.db_path)
+        elif args.guardrail_checks:
             result = run_guardrail_smoke(
                 live_judge=args.live_judge,
                 judge_artifacts=judge_artifacts,
