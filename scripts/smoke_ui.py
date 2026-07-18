@@ -104,7 +104,7 @@ def run_ui_smoke(
                 "api_url": api_url,
                 "job_count": seed["job_count"],
                 "checked_sections": ["Today", "Review", "Applications", "Profile", "Automations", "Insights"],
-                "checked_actions": ["applications.add_job"],
+                "checked_actions": ["applications.add_job", "drawer.ready_to_apply"],
                 "console_errors": serious_console_errors,
                 "screenshot": str(screenshot_path),
             }
@@ -205,6 +205,14 @@ def _verify_add_job_flow(page: Page) -> None:
     page.get_by_role("button", name="Add job").last.click(timeout=15_000)
     expect(page.get_by_role("dialog").get_by_text(title)).to_be_visible(timeout=30_000)
     expect(page.get_by_role("dialog").get_by_text(company, exact=True).first).to_be_visible(timeout=15_000)
+    with page.expect_response(
+        lambda response: "/api/jobs/" in response.url
+        and response.url.endswith("/pipeline")
+        and response.status == 200,
+        timeout=15_000,
+    ):
+        page.get_by_role("dialog").get_by_role("button", name="Ready to apply").click(timeout=15_000)
+    expect(page.get_by_role("dialog").get_by_text("Pipeline Ready to apply")).to_be_visible(timeout=15_000)
     page.keyboard.press("Escape")
     _click_nav(page, "Review")
     page.get_by_placeholder("Search title, company, location").fill(title)
