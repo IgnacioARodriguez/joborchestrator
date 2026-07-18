@@ -163,6 +163,7 @@ Offline end-to-end smoke against a temporary SQLite database:
 python scripts/smoke_e2e.py
 python scripts/smoke_e2e.py --scan-checks
 python scripts/smoke_e2e.py --guardrail-checks
+python scripts/smoke_ui.py
 ```
 
 Live NVIDIA smoke for ranking/materials, optionally with two-model judge
