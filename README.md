@@ -157,6 +157,20 @@ Backend tests:
 python -m pytest
 ```
 
+Offline end-to-end smoke against a temporary SQLite database:
+
+```bash
+python scripts/smoke_e2e.py
+```
+
+Live NVIDIA smoke for ranking/materials, optionally with two-model judge
+cross-check:
+
+```bash
+python scripts/smoke_e2e.py --live-llm
+python scripts/smoke_e2e.py --live-llm --live-judge --judge-model-secondary mistralai/mistral-nemotron
+```
+
 Dashboard checks:
 
 ```bash
