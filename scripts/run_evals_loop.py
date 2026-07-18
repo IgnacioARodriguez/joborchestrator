@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import re
 import subprocess
@@ -159,6 +160,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--regeneration-provider", choices=["openai", "nvidia"], default="nvidia")
     parser.add_argument("--regeneration-model")
     parser.add_argument(
+        "--commit-accepted-patches",
+        action="store_true",
+        help="Commit accepted prompt registry/version changes, one commit per accepted iteration.",
+    )
+    parser.add_argument(
         "--apply-prompt-patch",
         action="store_true",
         help="Create a prompt version hypothesis and keep it only if stored-output evals improve.",
@@ -283,12 +289,12 @@ def try_prompt_patch(
     prompt_dir = PROMPTS_ROOT / surface / sub_case
     next_path = prompt_dir / f"{next_version}.md"
     original_prompt = load_prompt(surface, sub_case)
-    next_path.write_text(
+    proposed_prompt = (
         original_prompt
         + "\n\n"
-        + f"Loop hypothesis {iteration}: {prompt_hypothesis_note(worst_issue['issue'])}\n",
-        encoding="utf-8",
+        + f"Loop hypothesis {iteration}: {prompt_hypothesis_note(worst_issue['issue'])}\n"
     )
+    next_path.write_text(proposed_prompt, encoding="utf-8")
     update_prompt_registry(prompt_target, next_version)
     affected_before = summarize_records(affected_records(before_summary, worst_issue["issue"], prompt_target))
     regeneration = {"records": [], "llm_calls_used": 0, "skipped": []}
@@ -309,6 +315,8 @@ def try_prompt_patch(
     if not accepted:
         REGISTRY_PATH.write_text(backup_registry, encoding="utf-8")
         next_path.unlink(missing_ok=True)
+    elif args.commit_accepted_patches:
+        commit_accepted_patch(next_path, worst_issue["issue"], iteration)
     return {
         "mode": "applied" if accepted else "reverted",
         "target": prompt_target,
@@ -319,6 +327,13 @@ def try_prompt_patch(
         "after": summary_without_records(after_summary),
         "regeneration": regeneration,
         "llm_calls_used": int(regeneration.get("llm_calls_used") or 0),
+        "prompt_diff": unified_prompt_diff(
+            original_prompt,
+            proposed_prompt,
+            from_label=f"{prompt_target}:{current_version}",
+            to_label=f"{prompt_target}:{next_version}",
+        ),
+        "committed": bool(accepted and args.commit_accepted_patches),
         "reason": "promotion_rule_passed" if accepted else "promotion_rule_failed",
     }
 
@@ -465,6 +480,30 @@ def update_prompt_registry(prompt_target: str, version: str) -> None:
     REGISTRY_PATH.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def unified_prompt_diff(before: str, after: str, *, from_label: str, to_label: str) -> str:
+    return "".join(
+        difflib.unified_diff(
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
+            fromfile=from_label,
+            tofile=to_label,
+        )
+    )
+
+
+def commit_accepted_patch(prompt_path: Path, issue: str, iteration: int) -> None:
+    subprocess.run(
+        ["git", "add", "--", str(REGISTRY_PATH.relative_to(PROJECT_ROOT)), str(prompt_path.relative_to(PROJECT_ROOT))],
+        cwd=PROJECT_ROOT,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", f"Accept eval loop prompt iteration {iteration}: {issue}"],
+        cwd=PROJECT_ROOT,
+        check=True,
+    )
+
+
 def is_promotion_allowed(before: dict[str, Any], after: dict[str, Any]) -> bool:
     if hard_stop_reason(after):
         return False
@@ -578,6 +617,7 @@ def write_audit(
             "apply_prompt_patch": args.apply_prompt_patch,
             "regenerate_affected": args.regenerate_affected,
             "regeneration_provider": args.regeneration_provider,
+            "commit_accepted_patches": args.commit_accepted_patches,
         },
         "accepted_patches": accepted_patches,
         "iterations": iterations,

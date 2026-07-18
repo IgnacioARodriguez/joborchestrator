@@ -102,3 +102,34 @@ def test_loop_regeneration_respects_llm_call_cap(monkeypatch):
     assert [record["case_id"] for record in result["records"]] == ["a"]
     assert result["llm_calls_used"] == 2
     assert result["skipped"] == [{"case_id": "b", "reason": "llm_call_cap"}]
+
+
+def test_loop_prompt_diff_is_unified():
+    diff = loop.unified_prompt_diff(
+        "Line one\nLine two\n",
+        "Line one\nLine three\n",
+        from_label="prompt:v1",
+        to_label="prompt:v2",
+    )
+
+    assert "--- prompt:v1" in diff
+    assert "+++ prompt:v2" in diff
+    assert "-Line two" in diff
+    assert "+Line three" in diff
+
+
+def test_loop_commit_accepted_patch_stages_registry_and_prompt(monkeypatch, tmp_path):
+    calls = []
+    prompt_path = loop.PROJECT_ROOT / "prompts" / "materials" / "nvidia_cv_contract" / "v2.md"
+
+    def fake_run(command, cwd=None, check=None, **kwargs):
+        calls.append((command, cwd, check))
+
+    monkeypatch.setattr(loop.subprocess, "run", fake_run)
+
+    loop.commit_accepted_patch(prompt_path, "ats_cv_contains_internal_notes", 2)
+
+    assert calls[0][0][:3] == ["git", "add", "--"]
+    assert "prompts\\registry.json" in calls[0][0] or "prompts/registry.json" in calls[0][0]
+    assert calls[1][0][:3] == ["git", "commit", "-m"]
+    assert "iteration 2" in calls[1][0][3]
