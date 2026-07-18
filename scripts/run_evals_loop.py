@@ -207,6 +207,7 @@ def run_iteration_baseline(args: argparse.Namespace, surfaces: list[str], iterat
 
 def summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     issue_counts: Counter[str] = Counter()
+    judge_issue_counts: Counter[str] = Counter()
     by_surface: dict[str, dict[str, Any]] = {}
     failures = []
     for record in records:
@@ -221,12 +222,15 @@ def summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         surface_bucket["average_score"] += int(record.get("score") or 0)
         for issue in record.get("issues") or []:
             issue_counts[issue_key(issue)] += 1
+        for issue in judge_issue_keys(record):
+            judge_issue_counts[issue] += 1
     for surface_bucket in by_surface.values():
         evaluated = int(surface_bucket["evaluated"])
         surface_bucket["pass_rate"] = round(surface_bucket["passed"] / evaluated, 4) if evaluated else 0
         surface_bucket["average_score"] = round(surface_bucket["average_score"] / evaluated, 2) if evaluated else 0
     evaluated = len(records)
     passed = sum(1 for record in records if record.get("passed"))
+    combined_issue_counts = issue_counts + judge_issue_counts
     return {
         "evaluated": evaluated,
         "passed": passed,
@@ -237,22 +241,30 @@ def summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         else 0,
         "by_surface": by_surface,
         "issue_counts": dict(sorted(issue_counts.items(), key=lambda item: (-item[1], item[0]))),
+        "judge_issue_counts": dict(sorted(judge_issue_counts.items(), key=lambda item: (-item[1], item[0]))),
+        "all_issue_counts": dict(sorted(combined_issue_counts.items(), key=lambda item: (-item[1], item[0]))),
         "failures": failures[:50],
         "records": records,
     }
 
 
 def select_worst_issue(summary: dict[str, Any]) -> dict[str, Any] | None:
-    issue_counts = summary.get("issue_counts") or {}
-    if not issue_counts:
+    candidates = []
+    for source, issue_counts in [
+        ("deterministic", summary.get("issue_counts") or {}),
+        ("judge", summary.get("judge_issue_counts") or {}),
+    ]:
+        for issue, count in issue_counts.items():
+            candidates.append((source, str(issue), int(count)))
+    if not candidates:
         return None
-    for issue, count in sorted(
-        issue_counts.items(),
-        key=lambda item: (-(int(item[1]) * issue_severity(str(item[0]))), -int(item[1]), str(item[0])),
+    for source, issue, count in sorted(
+        candidates,
+        key=lambda item: (-(item[2] * issue_severity(item[1])), -item[2], item[0], item[1]),
     ):
-        prompt_target = prompt_owner_for_issue(str(issue))
+        prompt_target = prompt_owner_for_issue(issue)
         if prompt_target and is_prompt_target_wired(prompt_target):
-            return {"issue": issue, "count": int(count), "severity": issue_severity(str(issue))}
+            return {"issue": issue, "count": count, "severity": issue_severity(issue), "source": source}
     return None
 
 
@@ -611,6 +623,16 @@ def prompt_hypothesis_note(issue: str) -> str:
 
 def issue_key(issue: Any) -> str:
     return str(issue).split(":", 1)[0]
+
+
+def judge_issue_keys(record: dict[str, Any]) -> list[str]:
+    judge_result = record.get("judge_result")
+    if not isinstance(judge_result, dict):
+        return []
+    issue_codes = judge_result.get("issue_codes") or []
+    if not isinstance(issue_codes, list):
+        issue_codes = [issue_codes]
+    return [issue_key(issue) for issue in issue_codes if str(issue or "").strip()]
 
 
 def issue_severity(issue: str) -> int:
