@@ -265,6 +265,65 @@ def test_auto_eval_case_uses_job_and_profile_terms():
     assert "Fiction Express" in case["candidate"]["required_experience_terms"]
 
 
+def test_auto_eval_case_rejects_profile_derived_unsupported_claims():
+    case = build_auto_eval_case(
+        {
+            "id": 78,
+            "title": "AWS Backend Developer",
+            "company": "CloudWorks",
+            "description_text": "Build Python APIs on AWS with PostgreSQL.",
+        },
+        {
+            "base_cv_text": "Experience\nPython AWS PostgreSQL APIs",
+            "real_experience_years": 4,
+            "skills": [
+                {"name": "Python", "level": "strong"},
+                {"name": "AWS", "level": "strong"},
+                {"name": "PostgreSQL", "level": "strong"},
+            ],
+        },
+    )
+    materials = {
+        "recruiter_message": "Hi CloudWorks, Ignacio's AWS backend work fits the AWS Backend Developer role.",
+        "cover_letter": "Ignacio is an AWS Certified Solutions Architect with 10+ years of backend experience.",
+        "ats_cv_text": "Professional Summary\nPython AWS PostgreSQL backend engineer.",
+        "autofill_notes": "Mention AWS Certified Solutions Architect.",
+    }
+
+    result = evaluate_application_materials(case, materials)
+
+    assert "PhD" not in case["candidate"]["forbidden_claims"]
+    assert any(issue.startswith("unsupported_claims:") for issue in result.issues)
+    assert "AWS Certified Solutions Architect" in result.metrics["unsupported_claims"]
+    assert "10+ years" in result.metrics["unsupported_claims"]
+
+
+def test_auto_eval_case_allows_declared_experience_years():
+    case = build_auto_eval_case(
+        {
+            "id": 79,
+            "title": "Python Backend Developer",
+            "company": "CloudWorks",
+            "description_text": "Build Python APIs.",
+        },
+        {
+            "base_cv_text": "Experience\nPython APIs",
+            "real_experience_years": 4,
+            "skills": [{"name": "Python", "level": "strong"}],
+        },
+    )
+    materials = {
+        "recruiter_message": "Hi CloudWorks, Ignacio's Python backend work fits the Python Backend Developer role.",
+        "cover_letter": "Ignacio brings 4+ years of backend experience with Python APIs.",
+        "ats_cv_text": "Professional Summary\nPython backend engineer.",
+        "autofill_notes": "Mention Python APIs.",
+    }
+
+    result = evaluate_application_materials(case, materials)
+
+    assert result.metrics["unsupported_claims"] == []
+
+
 def test_eval_runs_are_persisted(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "evals.db")
     db.init_db()

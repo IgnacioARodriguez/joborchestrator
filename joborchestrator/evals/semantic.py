@@ -16,18 +16,6 @@ class SemanticEvalResult:
     metrics: dict[str, Any]
 
 
-GENERIC_UNSUPPORTED_CLAIMS = [
-    "Kubernetes Certified",
-    "Certified Scrum Product Owner",
-    "PhD",
-    "MBA",
-    "10+ years",
-    "Rust kernel",
-    "device drivers",
-    "managed product P&L",
-]
-
-
 def build_auto_eval_case(job: Any, profile_payload: dict[str, Any] | None = None) -> dict[str, Any]:
     job_payload = _to_dict(job)
     profile_payload = profile_payload or {}
@@ -50,7 +38,9 @@ def build_auto_eval_case(job: Any, profile_payload: dict[str, Any] | None = None
         "candidate": {
             "base_cv_text": base_cv_text,
             "required_experience_terms": _extract_likely_employers(base_cv_text),
-            "forbidden_claims": GENERIC_UNSUPPORTED_CLAIMS,
+            "forbidden_claims": _derive_profile_forbidden_claims(profile_payload, job_payload),
+            "supported_claim_source_text": _profile_claim_source_text(profile_payload),
+            "real_experience_years": profile_payload.get("real_experience_years"),
         },
         "materials_expectations": {
             "required_terms": required_terms,
@@ -85,8 +75,7 @@ def evaluate_application_materials(case: dict[str, Any], materials: Any) -> Sema
     full_text = _joined_text(payload)
     normalized_full_text = _normalize(full_text)
 
-    forbidden_claims = candidate.get("forbidden_claims") or expectations.get("forbidden_claims") or []
-    unsupported_claims = [term for term in forbidden_claims if _contains_phrase(normalized_full_text, term)]
+    unsupported_claims = _unsupported_claims_in_text(full_text, candidate, expectations)
     if unsupported_claims:
         issues.append(f"unsupported_claims:{','.join(unsupported_claims)}")
     metrics["unsupported_claims"] = unsupported_claims
@@ -174,7 +163,12 @@ def evaluate_ranking_result(case: dict[str, Any], ranking: Any) -> SemanticEvalR
     metrics["mentioned_dealbreakers"] = mentioned_dealbreakers
 
     avoid_overclaiming = payload.get("cv_keywords_to_avoid_overclaiming") or []
-    forbidden_claims = (case.get("candidate") or {}).get("forbidden_claims") or []
+    candidate = case.get("candidate") or {}
+    forbidden_claims = _unsupported_claims_in_text(
+        " ".join(map(str, payload.get("cv_keywords_to_emphasize") or [])),
+        candidate,
+        expectations,
+    )
     unsafe_emphasis = [
         term
         for term in forbidden_claims
@@ -200,8 +194,7 @@ def evaluate_ats_cv_result(case: dict[str, Any], ats_cv_output: Any) -> Semantic
     if not ats_cv_text.strip():
         issues.append("missing_required_fields:ats_cv_text")
 
-    forbidden_claims = candidate.get("forbidden_claims") or expectations.get("forbidden_claims") or []
-    unsupported_claims = [term for term in forbidden_claims if _contains_phrase(normalized_ats_cv, term)]
+    unsupported_claims = _unsupported_claims_in_text(ats_cv_text, candidate, expectations)
     if unsupported_claims:
         issues.append(f"unsupported_claims:{','.join(unsupported_claims)}")
     metrics["unsupported_claims"] = unsupported_claims
@@ -321,6 +314,110 @@ def _supported_profile_terms(profile_payload: dict[str, Any]) -> list[str]:
     return _unique_terms(terms)
 
 
+def _derive_profile_forbidden_claims(profile_payload: dict[str, Any], job_payload: dict[str, Any]) -> list[str]:
+    supported_text = _normalize(_profile_claim_source_text(profile_payload))
+    source_terms = _unique_terms(
+        [
+            *_supported_profile_terms(profile_payload),
+            *re.findall(
+                r"(?i)\b[A-Z][A-Za-z0-9+#.-]{2,}(?:\s+[A-Z][A-Za-z0-9+#.-]{2,}){0,3}\b",
+                " ".join(str(job_payload.get(key) or "") for key in ["title", "description_text", "description"]),
+            ),
+        ]
+    )
+    claims: list[str] = []
+    for term in source_terms:
+        if len(term) < 3:
+            continue
+        claims.extend([f"{term} Certified", f"Certified {term}", f"{term} certification"])
+    if any(_contains_phrase(supported_text, term) for term in ["aws", "amazon web services"]):
+        claims.append("AWS Certified Solutions Architect")
+    if _contains_phrase(supported_text, "kubernetes"):
+        claims.append("Kubernetes Certified")
+    return [claim for claim in _unique_terms(claims) if not _contains_phrase(supported_text, claim)]
+
+
+def _profile_claim_source_text(profile_payload: dict[str, Any]) -> str:
+    parts = [
+        profile_payload.get("headline"),
+        profile_payload.get("summary"),
+        profile_payload.get("base_cv_text"),
+        profile_payload.get("certifications"),
+        profile_payload.get("education"),
+        profile_payload.get("experience"),
+    ]
+    for skill in profile_payload.get("skills") or []:
+        if isinstance(skill, dict):
+            parts.extend([skill.get("name"), skill.get("evidence")])
+        else:
+            parts.append(skill)
+    return "\n".join(_string_values(parts))
+
+
+def _unsupported_claims_in_text(
+    text: str,
+    candidate: dict[str, Any],
+    expectations: dict[str, Any],
+) -> list[str]:
+    explicit_forbidden = candidate.get("forbidden_claims") or expectations.get("forbidden_claims") or []
+    normalized_text = _normalize(text)
+    unsupported = [term for term in explicit_forbidden if _contains_phrase(normalized_text, term)]
+
+    supported_text = _normalize(_candidate_claim_source_text(candidate))
+    real_experience_years = _float_or_none(candidate.get("real_experience_years"))
+    for claim in _extract_sensitive_claims(text):
+        if _sensitive_claim_supported(claim, supported_text, real_experience_years):
+            continue
+        unsupported.append(claim)
+    return _unique_terms(unsupported)
+
+
+def _candidate_claim_source_text(candidate: dict[str, Any]) -> str:
+    return "\n".join(
+        _string_values(
+            [
+                candidate.get("supported_claim_source_text"),
+                candidate.get("base_cv_text"),
+                candidate.get("candidate_profile"),
+                candidate.get("profile"),
+            ]
+        )
+    )
+
+
+def _extract_sensitive_claims(text: str) -> list[str]:
+    claims: list[str] = []
+    known_claims = [
+        "AWS Certified Solutions Architect",
+        "Certified Scrum Product Owner",
+        "Certified Scrum Master",
+        "Professional Scrum Master",
+        "Kubernetes Certified",
+        "Google Cloud Professional Cloud Architect",
+        "managed product P&L",
+    ]
+    normalized_text = _normalize(text)
+    claims.extend([claim for claim in known_claims if _contains_phrase(normalized_text, claim)])
+    patterns = [
+        r"\b(?:[A-Za-z0-9+#.-]+\s+){0,4}Certified(?:\s+[A-Za-z0-9+#.-]+){0,4}\b",
+        r"\b(?:PhD|Ph\.D\.|MBA|Master'?s degree|Bachelor'?s degree)\b",
+        r"\b\d{1,2}\+?\s*(?:years|years'|anos|años)\b",
+        r"\b(?:managed|led|leading)\s+(?:a\s+)?team\s+of\s+\d+\b",
+    ]
+    for pattern in patterns:
+        claims.extend(match.group(0).strip(" .,;:") for match in re.finditer(pattern, str(text or ""), flags=re.IGNORECASE))
+    return _unique_terms(claims)
+
+
+def _sensitive_claim_supported(claim: str, supported_text: str, real_experience_years: float | None) -> bool:
+    if _contains_phrase(supported_text, claim):
+        return True
+    years = re.search(r"\b(\d{1,2})\+?\s*(?:years|years'|anos|años)\b", claim, flags=re.IGNORECASE)
+    if years and real_experience_years is not None:
+        return int(years.group(1)) <= real_experience_years
+    return False
+
+
 def _extract_likely_employers(base_cv_text: str) -> list[str]:
     known = ["Fiction Express", "Talan Consulting", "Globant", "Balloon Group"]
     found = [term for term in known if _contains_phrase(_normalize(base_cv_text), term)]
@@ -412,6 +509,18 @@ def _to_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _string_values(values: list[Any]) -> list[str]:
+    strings: list[str] = []
+    for value in values:
+        if isinstance(value, dict):
+            strings.append(" ".join(_string_values(list(value.values()))))
+        elif isinstance(value, list):
+            strings.append(" ".join(_string_values(value)))
+        elif str(value or "").strip():
+            strings.append(str(value).strip())
+    return strings
+
+
 def _joined_text(payload: dict[str, Any]) -> str:
     return "\n".join(str(value) for value in payload.values() if value is not None)
 
@@ -459,5 +568,12 @@ def _contains_phrase(normalized_text: str, phrase: str) -> bool:
 def _int_or_none(value: Any) -> int | None:
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return None
