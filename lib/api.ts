@@ -219,6 +219,7 @@ export const api = {
       sources: CompanySource[]
       providers: string[]
       search_providers: string[]
+      all_search_providers?: string[]
     }>("/api/sources")
   },
 

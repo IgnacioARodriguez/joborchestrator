@@ -10,7 +10,7 @@ from joborchestrator.scanning import linkedin
 from joborchestrator.scanning import scanner as source_scanner
 from joborchestrator.scanning import search_scanner
 from joborchestrator.scanning.linkedin_importer import import_linkedin_dataframe_to_job_postings
-from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS
+from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS, configured_search_provider_names
 from joborchestrator.scanning.search_targets import build_search_intents, targets_from_profile
 from joborchestrator.storage import persistence as db
 
@@ -34,7 +34,7 @@ async def run_unified_job_scan(input_payload: dict[str, Any], progress: Progress
             )
 
     if payload["include_search"]:
-        providers = payload["search_providers"] or sorted(SEARCH_PROVIDERS.keys())
+        providers = payload["search_providers"] or configured_search_provider_names()
         bad = [provider for provider in providers if provider not in SEARCH_PROVIDERS]
         if bad:
             raise ValueError(f"Unsupported search providers: {bad}")

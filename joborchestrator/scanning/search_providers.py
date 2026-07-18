@@ -420,6 +420,10 @@ def get_search_provider(source_type: str) -> SearchProvider | None:
     return SEARCH_PROVIDERS.get((source_type or "").lower())
 
 
+def configured_search_provider_names() -> list[str]:
+    return [name for name in sorted(SEARCH_PROVIDERS.keys()) if not provider_requires_configuration(name)]
+
+
 def provider_requires_configuration(source_type: str) -> bool:
     if source_type == "adzuna":
         return not (os.getenv("ADZUNA_APP_ID") and os.getenv("ADZUNA_APP_KEY"))

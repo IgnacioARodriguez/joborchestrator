@@ -47,7 +47,7 @@ from joborchestrator.scanning import linkedin
 from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.orchestrator import run_unified_job_scan
 from joborchestrator.scanning.providers import PROVIDERS
-from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS
+from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS, configured_search_provider_names
 from joborchestrator.scanning.search_targets import build_search_intents
 from joborchestrator.storage import db_connection
 from joborchestrator.storage import persistence as db
@@ -967,7 +967,8 @@ def list_sources() -> dict[str, Any]:
     return {
         "sources": db.list_company_sources().to_dict("records"),
         "providers": sorted(PROVIDERS.keys()),
-        "search_providers": sorted(SEARCH_PROVIDERS.keys()),
+        "search_providers": configured_search_provider_names(),
+        "all_search_providers": sorted(SEARCH_PROVIDERS.keys()),
     }
 
 

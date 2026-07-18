@@ -6,6 +6,8 @@ from joborchestrator.scanning.search_providers import (
     RemotiveSearchProvider,
     RemoteOkSearchProvider,
     TheMuseSearchProvider,
+    configured_search_provider_names,
+    provider_requires_configuration,
 )
 from joborchestrator.scanning.search_scanner import summarize_duplicate_rates
 from joborchestrator.scanning.models import JobPosting, ScanResult
@@ -177,6 +179,20 @@ def test_infojobs_normalization():
     assert job.location == "Malaga"
     assert job.salary_min == 40000.0
     assert job.salary_currency == "EUR"
+
+
+def test_configured_search_provider_names_excludes_missing_credentials(monkeypatch):
+    monkeypatch.delenv("ADZUNA_APP_ID", raising=False)
+    monkeypatch.delenv("ADZUNA_APP_KEY", raising=False)
+    monkeypatch.delenv("INFOJOBS_CLIENT_ID", raising=False)
+    monkeypatch.delenv("INFOJOBS_CLIENT_SECRET", raising=False)
+
+    names = configured_search_provider_names()
+
+    assert "remotive" in names
+    assert "adzuna" not in names
+    assert "infojobs" not in names
+    assert provider_requires_configuration("infojobs") is True
 
 
 def test_duplicate_rate_summary_for_source_evaluation():

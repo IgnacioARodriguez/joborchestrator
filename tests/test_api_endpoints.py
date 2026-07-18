@@ -308,6 +308,23 @@ def test_scan_all_queues_job_scan_operation(tmp_path, monkeypatch):
     assert operation["progress_message"] == "Queued unified job scan. Waiting for local worker."
 
 
+def test_sources_only_returns_configured_search_providers(tmp_path, monkeypatch):
+    monkeypatch.delenv("ADZUNA_APP_ID", raising=False)
+    monkeypatch.delenv("ADZUNA_APP_KEY", raising=False)
+    monkeypatch.delenv("INFOJOBS_CLIENT_ID", raising=False)
+    monkeypatch.delenv("INFOJOBS_CLIENT_SECRET", raising=False)
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+
+    response = client.get("/api/sources")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "remotive" in body["search_providers"]
+    assert "infojobs" not in body["search_providers"]
+    assert "adzuna" not in body["search_providers"]
+    assert "infojobs" in body["all_search_providers"]
+
+
 def test_scan_all_reuses_active_job_scan_operation(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
     operation_id = db.create_operation("job_scan", {"include_ats": True}, "Still scanning.")
