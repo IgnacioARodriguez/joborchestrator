@@ -167,6 +167,12 @@ python scripts/smoke_ui.py
 python scripts/smoke_real_db.py
 ```
 
+Read-only inspection against the configured Turso database:
+
+```bash
+python scripts/smoke_turso_db.py
+```
+
 Live NVIDIA smoke for ranking/materials, optionally with two-model judge
 cross-check:
 
