@@ -16,6 +16,20 @@ DEFAULT_NVIDIA_JUDGE_MODEL = (
     or "nvidia/llama-3.3-nemotron-super-49b-v1"
 )
 NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1"
+JUDGE_ISSUE_CODES = [
+    "unsupported_claims",
+    "missing_job_specificity",
+    "ats_cv_contains_internal_notes",
+    "omitted_base_experience",
+    "recruiter_message_cover_letter_style",
+    "missing_evidence_terms",
+    "apply_now_with_expected_dealbreaker",
+    "missing_required_keywords",
+    "unsafe_cv_keyword_emphasis",
+    "invalid_decision",
+    "judge_disputed",
+    "judge_other",
+]
 
 
 class LLMJudgeError(RuntimeError):
@@ -135,11 +149,13 @@ def judge_with_configured_providers(
             "secondary_judge_result": secondary,
         }
 
-    issues = sorted({*primary.get("issues", []), *secondary.get("issues", []), "judge_disputed"})
+    issue_codes = sorted({*primary.get("issue_codes", []), *secondary.get("issue_codes", []), "judge_disputed"})
+    issues = sorted({*primary.get("issues", []), *secondary.get("issues", []), *issue_codes})
     return {
         **primary,
         "passed": False,
         "disputed": True,
+        "issue_codes": issue_codes,
         "issues": issues,
         "judge_provider": primary_provider,
         "secondary_judge_provider": secondary_name,
@@ -158,7 +174,8 @@ def _judge_messages(judge_payload: dict[str, Any]) -> list[dict[str, Any]]:
             "role": "system",
             "content": (
                 "You are a strict evaluator for job-search LLM outputs. "
-                "Use only the source_case and rubric. Return JSON only."
+                "Use only the source_case and rubric. Return JSON only. "
+                "Map every failure to issue_codes from the provided enum; use judge_other only when no code fits."
             ),
         },
         {"role": "user", "content": json.dumps(judge_payload, ensure_ascii=False)},
@@ -169,10 +186,19 @@ def _normalize_judge_result(payload: dict[str, Any]) -> dict[str, Any]:
     issues = payload.get("issues") or []
     if not isinstance(issues, list):
         issues = [str(issues)]
+    issue_codes = payload.get("issue_codes") or []
+    if not isinstance(issue_codes, list):
+        issue_codes = [str(issue_codes)]
+    normalized_codes = _normalize_issue_codes(issue_codes)
+    merged_issues = [str(issue) for issue in issues]
+    for code in normalized_codes:
+        if code not in merged_issues:
+            merged_issues.append(code)
     return {
         "passed": bool(payload.get("passed")),
         "score": max(0, min(100, int(payload.get("score") or 0))),
-        "issues": [str(issue) for issue in issues],
+        "issue_codes": normalized_codes,
+        "issues": merged_issues,
         "rationale": str(payload.get("rationale") or ""),
     }
 
@@ -181,10 +207,11 @@ def _judge_result_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
-        "required": ["passed", "score", "issues", "rationale"],
+        "required": ["passed", "score", "issue_codes", "issues", "rationale"],
         "properties": {
             "passed": {"type": "boolean"},
             "score": {"type": "integer", "minimum": 0, "maximum": 100},
+            "issue_codes": {"type": "array", "items": {"type": "string", "enum": JUDGE_ISSUE_CODES}},
             "issues": {"type": "array", "items": {"type": "string"}},
             "rationale": {"type": "string"},
         },
@@ -201,3 +228,19 @@ def _extract_json_object_text(text: str) -> str:
     if start < 0 or end <= start:
         raise json.JSONDecodeError("No JSON object found", cleaned, 0)
     return cleaned[start : end + 1]
+
+
+def _normalize_issue_codes(issue_codes: list[Any]) -> list[str]:
+    valid = set(JUDGE_ISSUE_CODES)
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for issue_code in issue_codes:
+        code = str(issue_code).split(":", 1)[0].strip()
+        if not code:
+            continue
+        if code not in valid:
+            code = "judge_other"
+        if code not in seen:
+            seen.add(code)
+            normalized.append(code)
+    return normalized

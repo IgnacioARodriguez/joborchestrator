@@ -57,9 +57,11 @@ def test_openai_judge_parses_structured_result(monkeypatch):
     assert calls[0][1]["json"]["text"]["format"]["schema"]["required"] == [
         "passed",
         "score",
+        "issue_codes",
         "issues",
         "rationale",
     ]
+    assert "unsupported_claims" in calls[0][1]["json"]["text"]["format"]["schema"]["properties"]["issue_codes"]["items"]["enum"]
 
 
 def test_nvidia_judge_parses_json_object_content(monkeypatch):
@@ -123,4 +125,22 @@ def test_configured_judge_marks_provider_disagreement_as_disputed(monkeypatch):
     assert result["disputed"] is True
     assert result["judge_provider"] == "openai"
     assert result["secondary_judge_provider"] == "nvidia"
+    assert result["issue_codes"] == ["judge_disputed"]
     assert "judge_disputed" in result["issues"]
+
+
+def test_judge_normalization_merges_issue_codes_into_issues():
+    result = llm_judge._normalize_judge_result(
+        {
+            "passed": False,
+            "score": 45,
+            "issue_codes": ["unsupported_claims", "unknown-new-thing"],
+            "issues": ["Invented an AWS certification."],
+            "rationale": "Unsupported claim.",
+        }
+    )
+
+    assert result["issue_codes"] == ["unsupported_claims", "judge_other"]
+    assert "Invented an AWS certification." in result["issues"]
+    assert "unsupported_claims" in result["issues"]
+    assert "judge_other" in result["issues"]

@@ -5,6 +5,7 @@ import unicodedata
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 
+from joborchestrator.evals.llm_judge import JUDGE_ISSUE_CODES
 from joborchestrator.ranking.schemas import VALID_DECISIONS
 
 
@@ -258,6 +259,7 @@ def build_llm_judge_payload(case: dict[str, Any], candidate_output: Any, artifac
         "rubric_version": "semantic-eval-v1",
         "rubric": {
             "pass_fail_rules": pass_fail_rules,
+            "issue_codes": JUDGE_ISSUE_CODES,
             "scores": {
                 "faithfulness": "0-100 based on whether claims are supported by candidate data.",
                 "job_specificity": "0-100 based on target role/company/requirement specificity.",
@@ -278,6 +280,7 @@ def build_llm_judge_payload(case: dict[str, Any], candidate_output: Any, artifac
         "expected_response_schema": {
             "passed": "boolean",
             "score": "integer 0-100",
+            "issue_codes": ["enum string from rubric.issue_codes"],
             "issues": ["string"],
             "rationale": "short evidence-backed explanation",
         },

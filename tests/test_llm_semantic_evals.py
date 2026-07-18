@@ -213,6 +213,8 @@ def test_llm_judge_payload_is_structured_and_offline():
     assert payload["rubric_version"] == "semantic-eval-v1"
     assert payload["source_case"]["job"]["company"] == "Acme Labs"
     assert payload["candidate_output"] == output
+    assert "unsupported_claims" in payload["rubric"]["issue_codes"]
+    assert payload["expected_response_schema"]["issue_codes"] == ["enum string from rubric.issue_codes"]
 
 
 def test_llm_judge_payload_supports_ats_cv_rubric():
