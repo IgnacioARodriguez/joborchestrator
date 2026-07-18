@@ -118,6 +118,7 @@ def _record(
         "case_id": case["id"],
         "artifact_type": artifact_type,
         "job_id": int(row["job_id"]),
+        "review_status": case.get("review_status"),
         "title": row.get("title"),
         "company": row.get("company"),
         "passed": result.passed,

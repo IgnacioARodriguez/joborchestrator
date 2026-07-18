@@ -549,6 +549,11 @@ def commit_accepted_patch(prompt_path: Path, issue: str, iteration: int) -> None
 
 
 def is_promotion_allowed(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    before = promotion_gate_summary(before)
+    after = promotion_gate_summary(after)
+    excluded_records = int(before.get("promotion_gate_excluded") or 0) + int(after.get("promotion_gate_excluded") or 0)
+    if int(after.get("evaluated") or 0) == 0 and excluded_records:
+        return False
     if hard_stop_reason(after):
         return False
     if compare_summaries(before, after).get("regressions"):
@@ -556,6 +561,18 @@ def is_promotion_allowed(before: dict[str, Any], after: dict[str, Any]) -> bool:
     return float(after.get("pass_rate") or 0) >= float(before.get("pass_rate") or 0) and int(
         after.get("failed") or 0
     ) <= int(before.get("failed") or 0)
+
+
+def promotion_gate_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    records = summary.get("records")
+    if not isinstance(records, list):
+        return summary
+    gate_records = [
+        record for record in records if str(record.get("review_status") or "").strip() != "needs_human_review"
+    ]
+    gate_summary = summarize_records(gate_records)
+    gate_summary["promotion_gate_excluded"] = len(records) - len(gate_records)
+    return gate_summary
 
 
 def compare_summaries(previous: dict[str, Any] | None, current: dict[str, Any]) -> dict[str, Any]:

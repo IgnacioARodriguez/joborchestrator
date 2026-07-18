@@ -121,6 +121,41 @@ def test_loop_promotion_rule_rejects_case_regression_despite_better_aggregate():
     assert loop.is_promotion_allowed(before, after) is False
 
 
+def test_loop_promotion_rule_excludes_needs_human_review_records():
+    before = {
+        "records": [
+            {"artifact_type": "ats_cv", "case_id": "draft-a", "passed": False, "review_status": "needs_human_review"},
+        ]
+    }
+    after = {
+        "records": [
+            {"artifact_type": "ats_cv", "case_id": "draft-a", "passed": True, "review_status": "needs_human_review"},
+        ]
+    }
+
+    assert loop.promotion_gate_summary(before)["promotion_gate_excluded"] == 1
+    assert loop.is_promotion_allowed(before, after) is False
+
+
+def test_loop_promotion_rule_rejects_reviewed_regression_when_unreviewed_improves():
+    before = {
+        "records": [
+            {"artifact_type": "ranking", "case_id": "reviewed", "passed": True, "review_status": "reviewed"},
+            {"artifact_type": "ats_cv", "case_id": "draft-a", "passed": False, "review_status": "needs_human_review"},
+            {"artifact_type": "ats_cv", "case_id": "draft-b", "passed": False, "review_status": "needs_human_review"},
+        ]
+    }
+    after = {
+        "records": [
+            {"artifact_type": "ranking", "case_id": "reviewed", "passed": False, "review_status": "reviewed"},
+            {"artifact_type": "ats_cv", "case_id": "draft-a", "passed": True, "review_status": "needs_human_review"},
+            {"artifact_type": "ats_cv", "case_id": "draft-b", "passed": True, "review_status": "needs_human_review"},
+        ]
+    }
+
+    assert loop.is_promotion_allowed(before, after) is False
+
+
 def test_loop_parses_surface_aliases():
     assert loop.parse_surfaces("ranking,materials,ats_cv") == [
         "ranking",
