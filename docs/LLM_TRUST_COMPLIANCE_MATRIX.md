@@ -26,6 +26,7 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 - Production rankings in Turso: 293 before re-ranking job `#8`.
 - Latest completed recovery ranking job: `#6`, 30/30 saved, 0 failed.
 - Current re-ranking job: `#8`, 419 queued, launched after ranking safety gates were added.
+- Local offline trust gate: `npm run trust:gate` passed on 2026-07-19.
 - Stored eval evidence:
   - Ranking: 10 cases, 4 passed, 40.0% pass rate, average score 91.0.
   - Application materials: 3 cases, 0 passed, 0.0% pass rate, average score 65.0.
@@ -49,14 +50,14 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 | Materials quality | >= 90% pass rate, 0 critical failures | Red | Stored evals show 0/3 passing | Need fresh v2 baseline and prompt fixes for length/specificity |
 | ATS CV quality | >= 95% pass rate, 0 critical failures | Red-Yellow | Internal-note validation exists, complete-CV validation preserves base experience, and ranking avoid-overclaiming terms are blocked when unsupported by source CV/profile | Need current ATS CV baseline and more reviewed ATS CV cases |
 | Golden set | 30-50 reviewed cases | Green-Yellow | 30 reviewed fixtures exist across ranking/materials/ATS CV, including 22 human-reviewed real ranking cases | Need more materials/ATS CV real cases to balance the set |
-| Critical failure gate | Critical failures block promotion | Yellow | Eval loop has hard-stop and regression checks | Need larger coverage and explicit critical taxonomy in reports |
+| Critical failure gate | Critical failures block promotion | Green-Yellow | Eval loop has hard-stop and regression checks; local trust gate verifies deterministic guardrails reject known-bad ranking/materials/ATS CV outputs | Need larger coverage and explicit critical taxonomy in reports |
 | Case regressions | 0 regressions on promotion | Green-Yellow | `compare_summaries` regressions are wired into promotion gate | Needs fresh runs to prove effectiveness at scale |
 | Judge rubric | Versioned judge prompt and issue codes | Green-Yellow | Judge rubric v1, issue code normalization, multi-model support | Need stronger calibration against human review |
 | Multi-model judge | Disputed/high-risk evals can use two models | Yellow | NVIDIA secondary model support exists | Not yet used as routine gate |
 | Production ranking | Rankings persist model, version, score, evidence | Green-Yellow | `job_rankings` stores version, decision, confidence, scores/evidence JSON, and new NVIDIA rows persist provider, model, prompt version, validation attempts/errors, and candidate profile snapshot hash; API/UI expose ranking review status | Existing ranking rows need reranking to populate trace metadata; review thresholds need calibration |
 | Production confidence gates | Uncertain outputs become review-required drafts | Green-Yellow | Ranking safety gates set `requires_llm_review`; ranking API/UI marks low confidence, validation retry, thin positive evidence, and missing central requirements for review; materials expose derived review status and reasons in API/UI | Need fresh production review of false positives/negatives |
 | Observability | Outputs trace prompt/model/evidence/status | Green-Yellow | Ranking rows now support provider, model, prompt version, validation attempts/errors, and candidate profile snapshot hash for new NVIDIA rankings; ranking review status is exposed in API/UI; materials persist provider, model, prompt versions, generated timestamp, validation attempts/errors, and candidate profile snapshot hash; eval rows preserve payloads/results; LLM output feedback is stored and summarized by job/artifact/action | Need fresh reranking to backfill production ranking metadata |
-| Production health | App/API/DB smokes are green | Green | Vercel backend/UI smokes passed; workers idle before ranking #7 | Ranking #7 is paused and should be cancelled or resumed intentionally |
+| Production health | App/API/DB smokes are green | Green | Vercel backend/UI smokes passed previously; local trust gate now runs offline e2e, scan, guardrail, and golden-fixture coverage checks | Fresh Vercel smoke should be rerun after deploy |
 
 ## Current Trust Score By Surface
 
@@ -65,8 +66,8 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 | Ranking | 7.7 | Productive flow works, evidence is structured, new NVIDIA rankings are traceable to provider/model/prompt/profile/retry metadata, API/UI expose review status, and post-LLM safety gates now block known high-risk APPLY_NOW failures; needs fresh baseline after re-ranking. |
 | Application materials | 6.1 | Prompt v2 exists, recruiter specificity/length gates improved, materials review status is exposed, and generation/retry/profile trace metadata is persisted; stored eval evidence still needs a fresh pass. |
 | ATS CV | 6.0 | Internal notes, incomplete CVs, omitted base experiences, and unsupported ranking avoid-overclaiming terms now have deterministic gates; needs fresh v2 proof. |
-| Judge/evals | 7.2 | Strong framework, feedback records and summary analytics are now available for calibration, but dataset is still small and judge calibration remains limited. |
-| Production operations | 7.8 | Vercel/Turso/smokes are healthy; materials/ranking outputs are traceable for new writes, retry/profile metadata is stored, ranking/material review status is visible, and user feedback can be captured/summarized; remaining risk is quality gating rather than uptime. |
+| Judge/evals | 7.3 | Strong framework, offline trust gate, feedback records, and summary analytics are now available for calibration, but dataset is still small and judge calibration remains limited. |
+| Production operations | 7.8 | Vercel/Turso/smokes are healthy; local trust gate is repeatable, materials/ranking outputs are traceable for new writes, retry/profile metadata is stored, ranking/material review status is visible, and user feedback can be captured/summarized; remaining risk is quality gating rather than uptime. |
 
 Overall: 7.7/10.
 
@@ -125,6 +126,7 @@ Done when:
 - ATS CV v2 baseline is run.
 - Results are compared to prior summaries.
 - Critical failures are listed separately from ordinary misses.
+- `npm run trust:gate` passes before and after prompt changes.
 
 ### Gate 4: Fix Highest-Severity Prompt Failures
 
