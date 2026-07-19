@@ -50,6 +50,7 @@ import {
   salaryLabel,
 } from "@/lib/job-ui"
 import type { ApplicationSession, JobContact, JobPosting } from "@/lib/types"
+import type { LLMFeedbackAction, LLMFeedbackArtifact } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 function EvidenceList({
@@ -178,6 +179,29 @@ function MaterialsGenerationMeta({ job }: { job: JobPosting }) {
           {target.split("/").slice(-1)[0]} {version}
         </span>
       ))}
+    </div>
+  )
+}
+
+function FeedbackButtons({
+  onFeedback,
+}: {
+  onFeedback: (action: LLMFeedbackAction) => void
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      <Button size="sm" variant="ghost" onClick={() => onFeedback("accepted")}>
+        <CheckCircle2 data-icon="inline-start" />
+        Good
+      </Button>
+      <Button size="sm" variant="ghost" onClick={() => onFeedback("edited")}>
+        <FileSearch data-icon="inline-start" />
+        Edited
+      </Button>
+      <Button size="sm" variant="ghost" onClick={() => onFeedback("rejected")}>
+        <X data-icon="inline-start" />
+        Wrong
+      </Button>
     </div>
   )
 }
@@ -423,6 +447,23 @@ function DetailBody({
   ]
   const latestSession = sessions[0] ?? null
   const provider = detectProvider(job)
+
+  async function recordFeedback(artifact: LLMFeedbackArtifact, action: LLMFeedbackAction) {
+    try {
+      await api.recordLlmFeedback(job.id, {
+        artifact_type: artifact,
+        action,
+        metadata: { ui_surface: "job_detail_drawer" },
+      })
+      toast.success("Feedback recorded", {
+        description: `${artifact.replaceAll("_", " ")} marked ${action}.`,
+      })
+    } catch (e) {
+      toast.error("Could not record feedback", {
+        description: e instanceof Error ? e.message : "Backend request failed.",
+      })
+    }
+  }
 
   useEffect(() => {
     if (!materialsOperationId) return
@@ -818,9 +859,12 @@ function DetailBody({
 
         {/* Recommendation */}
         <section className="flex flex-col gap-3">
-          <h3 className="text-sm font-semibold text-foreground">
-            Recommendation
-          </h3>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-foreground">
+              Recommendation
+            </h3>
+            <FeedbackButtons onFeedback={(action) => void recordFeedback("ranking", action)} />
+          </div>
           <div className="flex flex-col gap-1 rounded-lg border border-border bg-muted/30 p-3">
             <p className="text-xs leading-relaxed text-foreground">
               {rankingSummaryText(
@@ -1050,9 +1094,12 @@ function DetailBody({
           <>
             <Separator />
             <section className="flex flex-col gap-2">
-              <h3 className="text-sm font-semibold text-foreground">
-                Application materials
-              </h3>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-foreground">
+                  Application materials
+                </h3>
+                <FeedbackButtons onFeedback={(action) => void recordFeedback("application_materials", action)} />
+              </div>
               <MaterialsGenerationMeta job={job} />
               <MaterialsReviewPanel job={job} />
               <div className="flex flex-col gap-2">

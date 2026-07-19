@@ -91,6 +91,23 @@ export interface ApplicationMaterials {
   }
 }
 
+export type LLMFeedbackArtifact = "ranking" | "application_materials" | "ats_cv"
+export type LLMFeedbackAction = "accepted" | "edited" | "rejected" | "applied" | "ignored"
+
+export interface LLMOutputFeedback {
+  id: number
+  job_id: number
+  artifact_type: LLMFeedbackArtifact
+  action: LLMFeedbackAction
+  ranking_version?: string | null
+  provider?: string | null
+  model?: string | null
+  prompt_versions?: Record<string, string>
+  metadata?: Record<string, unknown>
+  notes?: string | null
+  created_at: string
+}
+
 export interface PriorityBreakdown {
   priority_score: number
   fit_score: number

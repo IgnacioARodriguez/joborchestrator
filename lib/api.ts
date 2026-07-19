@@ -21,6 +21,9 @@ import type {
   SkillCatalogItem,
   ApplicationSession,
   ApplicationSessionResponse,
+  LLMFeedbackAction,
+  LLMFeedbackArtifact,
+  LLMOutputFeedback,
 } from "./types"
 
 const API_BASE =
@@ -152,6 +155,21 @@ export const api = {
     return request<{ ok: boolean }>(`/api/jobs/${id}/opened`, {
       method: "POST",
       body: JSON.stringify({}),
+    })
+  },
+
+  async recordLlmFeedback(
+    id: string,
+    input: {
+      artifact_type: LLMFeedbackArtifact
+      action: LLMFeedbackAction
+      notes?: string
+      metadata?: Record<string, unknown>
+    },
+  ) {
+    return request<{ feedback: LLMOutputFeedback }>(`/api/jobs/${id}/llm-feedback`, {
+      method: "POST",
+      body: JSON.stringify(input),
     })
   },
 
