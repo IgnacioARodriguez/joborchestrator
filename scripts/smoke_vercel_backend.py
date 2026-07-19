@@ -61,7 +61,9 @@ def summarize_backend_responses(responses: dict[str, Any]) -> dict[str, Any]:
     applications = (responses.get("applications") or {}).get("applications") or []
     ops_status = responses.get("ops_status") or {}
     worker_status = responses.get("worker_status") or {}
-    scan_overview = (responses.get("scan_overview") or {}).get("overview") or {}
+    scan_overview_payload = responses.get("scan_overview") or {}
+    scan_overview = scan_overview_payload.get("overview") or {}
+    scan_errors = scan_overview_payload.get("errors") or []
     ranking_jobs = (responses.get("ranking_jobs") or {}).get("jobs") or []
     sources = responses.get("sources") or {}
 
@@ -97,6 +99,7 @@ def summarize_backend_responses(responses: dict[str, Any]) -> dict[str, Any]:
             "last_scan_status": scan_overview.get("last_scan_status"),
             "last_scan": scan_overview.get("last_scan"),
         },
+        "recent_scan_errors": [_summarize_scan_error(error) for error in scan_errors[:5]],
         "latest_scan_operation": _summarize_operation(latest_scan),
     }
 
@@ -133,6 +136,15 @@ def evaluate_backend_summary(
         warnings.append("Latest scan status is error.")
     if int(scan_overview.get("recent_errors") or 0) > 0:
         warnings.append(f"Scan overview reports {scan_overview['recent_errors']} recent errors.")
+    recent_scan_errors = summary.get("recent_scan_errors") or []
+    if recent_scan_errors:
+        warnings.append(
+            "Recent scan error sample: "
+            + "; ".join(
+                f"{item.get('provider') or 'unknown'}:{item.get('company_name') or 'unknown'}"
+                for item in recent_scan_errors[:3]
+            )
+        )
 
     latest_scan = summary.get("latest_scan_operation") or {}
     if latest_scan.get("error"):
@@ -207,6 +219,22 @@ def _summarize_operation(operation: dict[str, Any] | None) -> dict[str, Any] | N
         "error": operation.get("error"),
         "output_errors": output.get("errors") or {},
     }
+
+
+def _summarize_scan_error(error: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "provider": error.get("provider"),
+        "company_name": error.get("company_name"),
+        "error": _truncate(error.get("error"), 240),
+        "finished_at": error.get("finished_at"),
+    }
+
+
+def _truncate(value: Any, max_chars: int) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if len(text) <= max_chars else text[: max_chars - 3] + "..."
 
 
 def main(argv: list[str] | None = None) -> int:

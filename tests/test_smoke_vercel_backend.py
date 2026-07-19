@@ -20,7 +20,10 @@ def test_vercel_backend_smoke_summarizes_healthy_turso_backend():
         },
         "worker_status": {"mode": "turso", "pending_count": 0, "running_count": 0, "needs_local_worker": False},
         "sources": {"sources": [{"id": 1}]},
-        "scan_overview": {"overview": {"total_jobs": 383, "recent_errors": 0, "last_scan_status": "success"}},
+        "scan_overview": {
+            "overview": {"total_jobs": 383, "recent_errors": 0, "last_scan_status": "success"},
+            "errors": [],
+        },
         "ranking_jobs": {"jobs": [{"id": 2, "provider": "nvidia", "status": "completed", "failed_items": 0}]},
     }
 
@@ -34,6 +37,7 @@ def test_vercel_backend_smoke_summarizes_healthy_turso_backend():
     assert summary["profile_present"] is True
     assert summary["jobs_total"] == 383
     assert summary["ranking_jobs_returned"] == 1
+    assert summary["recent_scan_errors"] == []
 
 
 def test_vercel_backend_smoke_warns_on_operational_errors_without_failing_availability():
@@ -45,6 +49,7 @@ def test_vercel_backend_smoke_warns_on_operational_errors_without_failing_availa
         "ranking_jobs_returned": 1,
         "latest_ranking_job": {"failed_items": 3},
         "scan_overview": {"last_scan_status": "error", "recent_errors": 2},
+        "recent_scan_errors": [{"provider": "greenhouse", "company_name": "Acme"}],
         "latest_scan_operation": {
             "error": None,
             "output_errors": {"linkedin": "Object of type JobPosting is not JSON serializable"},
@@ -58,6 +63,7 @@ def test_vercel_backend_smoke_warns_on_operational_errors_without_failing_availa
     assert "Latest ranking job has 3 failed items." in checks["warnings"]
     assert "Latest scan status is error." in checks["warnings"]
     assert "Scan overview reports 2 recent errors." in checks["warnings"]
+    assert "Recent scan error sample: greenhouse:Acme" in checks["warnings"]
     assert (
         "Latest scan output error for linkedin: Object of type JobPosting is not JSON serializable"
         in checks["warnings"]
