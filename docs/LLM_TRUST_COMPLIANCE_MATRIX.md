@@ -12,9 +12,9 @@ Status values:
 
 ## Executive Summary
 
-Current trust posture: Yellow, approximately 7.0/10.
+Current trust posture: Yellow, approximately 7.1/10.
 
-HuntPilot is currently suitable as a strong copilot for job discovery, ranking, and draft generation. It is not yet suitable for near-blind trust because v2 prompt quality has not been proven with a fresh full baseline, materials/ATS CV still need quality work, and production review-state UX is not explicit enough.
+HuntPilot is currently suitable as a strong copilot for job discovery, ranking, and draft generation. It is not yet suitable for near-blind trust because v2 prompt quality has not been proven with a fresh full baseline, materials/ATS CV still need measured quality work, and production review-state UX is not explicit enough.
 
 ## Current Evidence Snapshot
 
@@ -37,6 +37,7 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
   - `recruiter_message_too_long`
   - `recruiter_message_cover_letter_style`
   - `ats_cv_contains_internal_notes`
+  - unsupported ATS CV overclaims from ranking avoid-overclaiming terms
 
 ## DoD Compliance Table
 
@@ -46,7 +47,7 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 | Ranking schema | Output validates against structured contract | Yellow-Green | Ranking worker saves valid records; schema was aligned with prompt contract | NVIDIA often needs retry after malformed first response |
 | Ranking quality | >= 90% pass rate, 0 critical failures | Yellow | Ranking safety gates cover reviewed dealbreaker/location/specialization failures; 30-case golden set exists | Need fresh v2 baseline after re-ranking completes |
 | Materials quality | >= 90% pass rate, 0 critical failures | Red | Stored evals show 0/3 passing | Need fresh v2 baseline and prompt fixes for length/specificity |
-| ATS CV quality | >= 95% pass rate, 0 critical failures | Red | Historical eval loop showed internal-note and missing-keyword failures | Need current ATS CV baseline and hard gate |
+| ATS CV quality | >= 95% pass rate, 0 critical failures | Red-Yellow | Internal-note validation exists, complete-CV validation preserves base experience, and ranking avoid-overclaiming terms are blocked when unsupported by source CV/profile | Need current ATS CV baseline and more reviewed ATS CV cases |
 | Golden set | 30-50 reviewed cases | Green-Yellow | 30 reviewed fixtures exist across ranking/materials/ATS CV, including 22 human-reviewed real ranking cases | Need more materials/ATS CV real cases to balance the set |
 | Critical failure gate | Critical failures block promotion | Yellow | Eval loop has hard-stop and regression checks | Need larger coverage and explicit critical taxonomy in reports |
 | Case regressions | 0 regressions on promotion | Green-Yellow | `compare_summaries` regressions are wired into promotion gate | Needs fresh runs to prove effectiveness at scale |
@@ -62,17 +63,17 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 | Surface | Score | Rationale |
 | --- | ---: | --- |
 | Ranking | 7.5 | Productive flow works, evidence is structured, and post-LLM safety gates now block known high-risk APPLY_NOW failures; needs fresh baseline after re-ranking. |
-| Application materials | 5.5 | Prompt v2 exists, but stored eval evidence still fails on length, specificity, and required terms. |
-| ATS CV | 5.5 | Known historical internal-note failures are high severity; needs fresh v2 proof. |
+| Application materials | 5.5 | Prompt v2 exists, and recruiter specificity/length gates improved, but stored eval evidence still needs a fresh pass. |
+| ATS CV | 6.0 | Internal notes, incomplete CVs, omitted base experiences, and unsupported ranking avoid-overclaiming terms now have deterministic gates; needs fresh v2 proof. |
 | Judge/evals | 7.0 | Strong framework, but small dataset and limited judge calibration. |
 | Production operations | 7.0 | Vercel/Turso/smokes are healthy; remaining risk is quality gating rather than uptime. |
 
-Overall: 7.0/10.
+Overall: 7.1/10.
 
 ## Immediate Blockers To High Trust
 
 1. v2 prompts have not been proven with a full fresh baseline.
-2. Materials and ATS CV still have known historical quality failures.
+2. Materials and ATS CV still need fresh proof against known historical quality failures.
 3. Golden coverage is now at the minimum count, but real materials/ATS CV coverage is still thin.
 4. Production review-state UX/API is not explicit enough to support near-blind trust.
 5. Re-ranking job `#8` is running and should be reviewed when complete.
