@@ -30,7 +30,7 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 - Stored eval evidence:
   - Ranking: 10 cases, 4 passed, 40.0% pass rate, average score 91.0.
   - Application materials: 3 cases, 0 passed, 0.0% pass rate, average score 65.0.
-- Reviewed golden fixtures: 30 cases under `evals/fixtures/golden` (8 synthetic seed cases plus 22 human-reviewed real ranking cases).
+- Reviewed golden fixtures: 34 cases under `evals/fixtures/golden` (12 synthetic seed cases plus 22 human-reviewed real ranking cases).
 - Known recurring eval issues:
   - `missing_evidence_terms`
   - `missing_required_terms`
@@ -49,7 +49,7 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 | Ranking quality | >= 90% pass rate, 0 critical failures | Yellow | Ranking safety gates cover reviewed dealbreaker/location/specialization failures; 30-case golden set exists | Need fresh v2 baseline after re-ranking completes |
 | Materials quality | >= 90% pass rate, 0 critical failures | Red | Stored evals show 0/3 passing | Need fresh v2 baseline and prompt fixes for length/specificity |
 | ATS CV quality | >= 95% pass rate, 0 critical failures | Red-Yellow | Internal-note validation exists, complete-CV validation preserves base experience, and ranking avoid-overclaiming terms are blocked when unsupported by source CV/profile | Need current ATS CV baseline and more reviewed ATS CV cases |
-| Golden set | 30-50 reviewed cases | Green-Yellow | 30 reviewed fixtures exist across ranking/materials/ATS CV, including 22 human-reviewed real ranking cases | Need more materials/ATS CV real cases to balance the set |
+| Golden set | 30-50 reviewed cases | Green-Yellow | 34 reviewed fixtures exist across ranking/materials/ATS CV, including 22 human-reviewed real ranking cases; local trust gate requires at least 3 cases per surface | Need more real materials/ATS CV cases to balance beyond synthetic coverage |
 | Critical failure gate | Critical failures block promotion | Green-Yellow | Eval loop has hard-stop and regression checks; local trust gate verifies deterministic guardrails reject known-bad ranking/materials/ATS CV outputs | Need larger coverage and explicit critical taxonomy in reports |
 | Case regressions | 0 regressions on promotion | Green-Yellow | `compare_summaries` regressions are wired into promotion gate | Needs fresh runs to prove effectiveness at scale |
 | Judge rubric | Versioned judge prompt and issue codes | Green-Yellow | Judge rubric v1, issue code normalization, multi-model support | Need stronger calibration against human review |
@@ -75,7 +75,7 @@ Overall: 7.7/10.
 
 1. v2 prompts have not been proven with a full fresh baseline.
 2. Materials and ATS CV still need fresh proof against known historical quality failures.
-3. Golden coverage is now at the minimum count, but real materials/ATS CV coverage is still thin.
+3. Golden coverage is above the minimum count, but real materials/ATS CV coverage is still thin.
 4. Existing production rankings need a fresh rerun to populate the new ranking trace metadata.
 5. Re-ranking job `#8` is running and should be reviewed when complete.
 
@@ -110,7 +110,7 @@ Done when:
 
 Current progress:
 
-- 8 reviewed synthetic seed cases exist in `evals/fixtures/golden/seed`.
+- 12 reviewed synthetic seed cases exist in `evals/fixtures/golden/seed`.
 - 22 human-reviewed real ranking cases exist in `evals/fixtures/golden/real_reviewed`.
 - A 40-case real-job review packet can still be generated under `logs/` for more human review.
 - Additional real materials/ATS CV cases should be reviewed before promotion into `evals/fixtures/golden`.
