@@ -213,6 +213,13 @@ def test_jobs_accept_llm_output_feedback(tmp_path, monkeypatch):
     listed = client.get("/api/llm-feedback", params={"job_id": job_id, "artifact_type": "ranking"}).json()
     assert listed["feedback"][0]["action"] == "accepted"
 
+    summary = client.get("/api/llm-feedback/summary").json()["summary"]
+    assert summary["total"] == 1
+    assert summary["positive"] == 1
+    assert summary["negative"] == 0
+    assert summary["acceptance_rate"] == 1
+    assert summary["by_artifact"]["ranking"]["accepted"] == 1
+
 
 def test_jobs_reject_heuristic_ranking_versions(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)

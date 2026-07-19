@@ -718,6 +718,34 @@ def list_llm_output_feedback(
     return {"feedback": frame.to_dict("records")}
 
 
+@app.get("/api/llm-feedback/summary")
+def llm_output_feedback_summary() -> dict[str, Any]:
+    frame = db.list_llm_output_feedback(limit=10000)
+    records = frame.to_dict("records")
+    by_artifact: dict[str, dict[str, int]] = {}
+    by_action: dict[str, int] = {}
+    for record in records:
+        artifact = str(record.get("artifact_type") or "unknown")
+        action = str(record.get("action") or "unknown")
+        by_artifact.setdefault(artifact, {"total": 0})
+        by_artifact[artifact]["total"] += 1
+        by_artifact[artifact][action] = by_artifact[artifact].get(action, 0) + 1
+        by_action[action] = by_action.get(action, 0) + 1
+    positive = by_action.get("accepted", 0) + by_action.get("applied", 0)
+    negative = by_action.get("rejected", 0)
+    total = len(records)
+    return {
+        "summary": {
+            "total": total,
+            "positive": positive,
+            "negative": negative,
+            "acceptance_rate": round(positive / total, 4) if total else 0,
+            "by_action": by_action,
+            "by_artifact": by_artifact,
+        }
+    }
+
+
 @app.post("/api/jobs/{job_id}/applications")
 def create_job_application(job_id: int, payload: ApplicationPayload) -> dict[str, Any]:
     if not db.get_job_posting(job_id):
