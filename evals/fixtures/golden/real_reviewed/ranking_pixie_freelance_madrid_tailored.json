@@ -1,0 +1,38 @@
+{
+  "case_id": "ranking-pixie-freelance-madrid-tailored",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": false,
+  "source": {"job_id": 41, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "linkedin_scraper",
+    "title": "Desarrollador Python + AWS / Madrid (FREELANCE)",
+    "company": "PIXIE",
+    "location": "Hibrido",
+    "job_html_or_text": "Python developer with AWS, backend services, scalable REST APIs, cloud solutions, CI/CD. Freelance full-time long-term contract. Hybrid in Madrid, Aravaca area.",
+    "url": "https://www.linkedin.com/jobs/view/4428936060/",
+    "apply_url": "https://www.linkedin.com/jobs/view/4428936060/"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer in Malaga, open to remote/hybrid Spain/EU. Prefers employment; Madrid hybrid commute and freelance lower priority.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "AWS", "level": "working"},
+        {"name": "FastAPI", "level": "strong"}
+      ],
+      "preferred_locations": ["Spain", "EU", "Remote"],
+      "preferred_work_modes": ["remote", "hybrid"],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE"],
+    "min_score": 55,
+    "max_score": 82,
+    "required_evidence_terms": ["Freelance", "Madrid"],
+    "dealbreaker_terms": ["freelance", "hybrid Madrid"]
+  },
+  "human_review_notes": "Reviewed real case: stack fit is good, but freelance and hybrid Madrid mean it should not be automatic APPLY_NOW."
+}

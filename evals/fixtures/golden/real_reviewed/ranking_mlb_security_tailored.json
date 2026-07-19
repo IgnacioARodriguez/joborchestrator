@@ -1,0 +1,35 @@
+{
+  "case_id": "ranking-mlb-security-tailored",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 222, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "themuse",
+    "title": "Senior Security Engineer",
+    "company": "MLB",
+    "location": "Flexible / Remote",
+    "job_html_or_text": "Senior Security Engineer, Development Security and Operations. Build security engineering layer behind application delivery and cloud infrastructure. Application security, anti-bot, anti-fraud, account abuse, security controls, tools, remediation, auditability, DevSecOps.",
+    "url": "https://www.themuse.com/jobs/mlb/senior-security-engineer-e5ad5b",
+    "apply_url": "https://www.themuse.com/jobs/mlb/senior-security-engineer-e5ad5b"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer with cloud/API experience. No core security, cybersecurity, AppSec, or DevSecOps trajectory.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"},
+        {"name": "AWS", "level": "working"}
+      ],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE"],
+    "max_score": 68,
+    "required_evidence_terms": ["security"],
+    "dealbreaker_terms": ["security specialization"]
+  },
+  "human_review_notes": "Reviewed real case: security/DevSecOps is adjacent but not plug-and-play. APPLY_NOW is too aggressive."
+}

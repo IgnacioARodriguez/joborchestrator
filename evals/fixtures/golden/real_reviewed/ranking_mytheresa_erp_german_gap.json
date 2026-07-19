@@ -1,0 +1,35 @@
+{
+  "case_id": "ranking-mytheresa-erp-german-gap",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 254, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "arbeitnow",
+    "title": "Senior ERP Consultant @MYTHERESA (f/m/d)",
+    "company": "Mytheresa",
+    "location": "Munich",
+    "job_html_or_text": "Senior ERP Consultant in Munich. In-house MS Dynamics Business Central consulting, finance module expertise, workshops, stakeholder requirements, ERP team collaboration, German language required.",
+    "url": "https://www.arbeitnow.com/jobs/companies/mytheresa/senior-erp-consultant-at-mytheresa-munich-304978",
+    "apply_url": "https://www.arbeitnow.com/jobs/companies/mytheresa/senior-erp-consultant-at-mytheresa-munich-304978"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer in Malaga. No German language, Munich relocation, ERP consulting, finance module, or MS Dynamics Business Central background.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "PostgreSQL", "level": "strong"}
+      ],
+      "preferred_locations": ["Spain", "EU", "Remote"],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["MAYBE", "SKIP", "AVOID"],
+    "max_score": 55,
+    "required_evidence_terms": ["ERP", "German"],
+    "dealbreaker_terms": ["German", "Munich"]
+  },
+  "human_review_notes": "Reviewed real case: ERP consulting plus German/Munich gap should not be treated as a strong software fit."
+}

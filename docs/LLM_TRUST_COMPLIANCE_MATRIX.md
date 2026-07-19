@@ -12,9 +12,9 @@ Status values:
 
 ## Executive Summary
 
-Current trust posture: Yellow, approximately 6.5/10.
+Current trust posture: Yellow, approximately 7.0/10.
 
-HuntPilot is currently suitable as a strong copilot for job discovery, ranking, and draft generation. It is not yet suitable for near-blind trust because the reviewed golden set is too small, v2 prompt quality has not been proven with a fresh full baseline, and production confidence gates are not strict enough.
+HuntPilot is currently suitable as a strong copilot for job discovery, ranking, and draft generation. It is not yet suitable for near-blind trust because v2 prompt quality has not been proven with a fresh full baseline, materials/ATS CV still need quality work, and production review-state UX is not explicit enough.
 
 ## Current Evidence Snapshot
 
@@ -23,13 +23,13 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 - Active materials kit prompt: `materials/nvidia_kit_contract` v2.
 - Active judge prompt: `judge/semantic_rubric` v1.
 - Production jobs in Turso: 419.
-- Production rankings in Turso: 293.
+- Production rankings in Turso: 293 before re-ranking job `#8`.
 - Latest completed recovery ranking job: `#6`, 30/30 saved, 0 failed.
-- Current paused ranking job: `#7`, 12/36 saved, 0 failed, interrupted manually.
+- Current re-ranking job: `#8`, 419 queued, launched after ranking safety gates were added.
 - Stored eval evidence:
   - Ranking: 10 cases, 4 passed, 40.0% pass rate, average score 91.0.
   - Application materials: 3 cases, 0 passed, 0.0% pass rate, average score 65.0.
-- Reviewed golden seed fixtures: 8 cases under `evals/fixtures/golden/seed`.
+- Reviewed golden fixtures: 30 cases under `evals/fixtures/golden` (8 synthetic seed cases plus 22 human-reviewed real ranking cases).
 - Known recurring eval issues:
   - `missing_evidence_terms`
   - `missing_required_terms`
@@ -44,16 +44,16 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 | --- | --- | --- | --- | --- |
 | Prompt registry | Active prompt versions are explicit and shared | Green | Registry points ranking/materials to v2 and judge to v1 | None immediate |
 | Ranking schema | Output validates against structured contract | Yellow-Green | Ranking worker saves valid records; schema was aligned with prompt contract | NVIDIA often needs retry after malformed first response |
-| Ranking quality | >= 90% pass rate, 0 critical failures | Red | Stored evals show 4/10 passing | Need reviewed golden set and fresh v2 baseline |
+| Ranking quality | >= 90% pass rate, 0 critical failures | Yellow | Ranking safety gates cover reviewed dealbreaker/location/specialization failures; 30-case golden set exists | Need fresh v2 baseline after re-ranking completes |
 | Materials quality | >= 90% pass rate, 0 critical failures | Red | Stored evals show 0/3 passing | Need fresh v2 baseline and prompt fixes for length/specificity |
 | ATS CV quality | >= 95% pass rate, 0 critical failures | Red | Historical eval loop showed internal-note and missing-keyword failures | Need current ATS CV baseline and hard gate |
-| Golden set | 30-50 reviewed cases | Red-Yellow | 8 reviewed seed fixtures exist across ranking/materials/ATS CV | Need 22-42 more reviewed cases from real jobs |
+| Golden set | 30-50 reviewed cases | Green-Yellow | 30 reviewed fixtures exist across ranking/materials/ATS CV, including 22 human-reviewed real ranking cases | Need more materials/ATS CV real cases to balance the set |
 | Critical failure gate | Critical failures block promotion | Yellow | Eval loop has hard-stop and regression checks | Need larger coverage and explicit critical taxonomy in reports |
 | Case regressions | 0 regressions on promotion | Green-Yellow | `compare_summaries` regressions are wired into promotion gate | Needs fresh runs to prove effectiveness at scale |
 | Judge rubric | Versioned judge prompt and issue codes | Green-Yellow | Judge rubric v1, issue code normalization, multi-model support | Need stronger calibration against human review |
 | Multi-model judge | Disputed/high-risk evals can use two models | Yellow | NVIDIA secondary model support exists | Not yet used as routine gate |
 | Production ranking | Rankings persist model, version, score, evidence | Yellow-Green | `job_rankings` stores version, decision, confidence, scores/evidence JSON | Need stronger review-state UX and retry metadata |
-| Production confidence gates | Uncertain outputs become review-required drafts | Yellow | Ranking evidence has `requires_llm_review`; storage uses review viability signals | Need explicit UI/API policy for low confidence, retry, weak evidence |
+| Production confidence gates | Uncertain outputs become review-required drafts | Yellow-Green | Ranking safety gates now set `requires_llm_review`, cap score/decision, and raise risk evidence for known high-risk patterns | Need explicit UI/API policy for low confidence, retry, weak evidence |
 | Observability | Outputs trace prompt/model/evidence/status | Yellow-Green | Ranking rows preserve version/model/evidence; eval rows preserve payloads/results | Need candidate profile snapshot/version and user feedback loop |
 | Production health | App/API/DB smokes are green | Green | Vercel backend/UI smokes passed; workers idle before ranking #7 | Ranking #7 is paused and should be cancelled or resumed intentionally |
 
@@ -61,21 +61,21 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 
 | Surface | Score | Rationale |
 | --- | ---: | --- |
-| Ranking | 7.0 | Productive flow works and evidence is structured, but measured pass rate is not high enough and retries are common. |
+| Ranking | 7.5 | Productive flow works, evidence is structured, and post-LLM safety gates now block known high-risk APPLY_NOW failures; needs fresh baseline after re-ranking. |
 | Application materials | 5.5 | Prompt v2 exists, but stored eval evidence still fails on length, specificity, and required terms. |
 | ATS CV | 5.5 | Known historical internal-note failures are high severity; needs fresh v2 proof. |
 | Judge/evals | 7.0 | Strong framework, but small dataset and limited judge calibration. |
 | Production operations | 7.0 | Vercel/Turso/smokes are healthy; remaining risk is quality gating rather than uptime. |
 
-Overall: 6.5/10.
+Overall: 7.0/10.
 
 ## Immediate Blockers To High Trust
 
-1. Golden set is too small: 8 reviewed seed fixtures exist, target is 30-50.
-2. v2 prompts have not been proven with a full fresh baseline.
-3. Materials and ATS CV still have known historical quality failures.
-4. Production confidence gates are not strict enough to support near-blind trust.
-5. Ranking job `#7` is paused after manual interruption and should be intentionally cancelled, requeued, or resumed.
+1. v2 prompts have not been proven with a full fresh baseline.
+2. Materials and ATS CV still have known historical quality failures.
+3. Golden coverage is now at the minimum count, but real materials/ATS CV coverage is still thin.
+4. Production review-state UX/API is not explicit enough to support near-blind trust.
+5. Re-ranking job `#8` is running and should be reviewed when complete.
 
 ## Recommended Next Gates
 
@@ -109,8 +109,9 @@ Done when:
 Current progress:
 
 - 8 reviewed synthetic seed cases exist in `evals/fixtures/golden/seed`.
-- A 40-case real-job review packet can be generated under `logs/` for human review.
-- Real-job packet cases must be reviewed before promotion into `evals/fixtures/golden`.
+- 22 human-reviewed real ranking cases exist in `evals/fixtures/golden/real_reviewed`.
+- A 40-case real-job review packet can still be generated under `logs/` for more human review.
+- Additional real materials/ATS CV cases should be reviewed before promotion into `evals/fixtures/golden`.
 
 ### Gate 3: Run Fresh v2 Baseline
 

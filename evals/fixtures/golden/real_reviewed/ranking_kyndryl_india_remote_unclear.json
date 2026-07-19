@@ -1,0 +1,35 @@
+{
+  "case_id": "ranking-kyndryl-india-remote-unclear",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": false,
+  "source": {"job_id": 221, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "themuse",
+    "title": "Backend Developer- Python",
+    "company": "Kyndryl",
+    "location": "Bangalore, India, Chennai, India, Flexible / Remote, Hyderabad, India",
+    "job_html_or_text": "Backend Developer Python at Kyndryl. Locations listed as Bangalore India, Chennai India, Flexible/Remote, Hyderabad India. Software engineering/development team, cloud and DevOps tools possible.",
+    "url": "https://www.themuse.com/jobs/kyndryl/backend-developer-python-40021d",
+    "apply_url": "https://www.themuse.com/jobs/kyndryl/backend-developer-python-40021d"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer in Malaga, open to remote/hybrid Spain/EU. No India residency/authorization indicated.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"}
+      ],
+      "preferred_locations": ["Spain", "EU", "Remote"],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE", "SKIP", "AVOID"],
+    "max_score": 70,
+    "required_evidence_terms": ["India"],
+    "dealbreaker_terms": ["India", "location"]
+  },
+  "human_review_notes": "Reviewed real case: Python fit exists, but remote/location appears India-restricted or unclear, so APPLY_NOW is unsafe."
+}

@@ -229,10 +229,10 @@ def test_loop_loads_only_reviewed_golden_fixtures(tmp_path):
     assert [fixture["case_id"] for fixture in fixtures] == ["reviewed"]
 
 
-def test_seed_golden_fixtures_are_reviewed_and_cover_surfaces():
-    fixtures = loop.load_golden_fixtures(Path("evals/fixtures/golden/seed"))
+def test_golden_fixtures_are_reviewed_and_cover_surfaces():
+    fixtures = loop.load_golden_fixtures(Path("evals/fixtures/golden"))
 
-    assert len(fixtures) == 8
+    assert len(fixtures) >= 30
     assert {loop.fixture_surface(fixture) for fixture in fixtures} == {
         "application_materials",
         "ats_cv",

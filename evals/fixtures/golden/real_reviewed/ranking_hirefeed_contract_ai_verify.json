@@ -1,0 +1,35 @@
+{
+  "case_id": "ranking-hirefeed-contract-ai-verify",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": false,
+  "source": {"job_id": 93, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "linkedin_scraper",
+    "title": "Python Developer (Remote)",
+    "company": "Hire Feed",
+    "location": "Python Developer (Remote)",
+    "job_html_or_text": "Remote contract Python Developer. Work directly influences training and performance of next-generation AI systems. Develop, test and maintain Python/Django backend applications, PostgreSQL schemas, and real-world inputs that shape how AI models learn and reason.",
+    "url": "https://www.linkedin.com/jobs/view/4432089231/",
+    "apply_url": "https://www.linkedin.com/jobs/view/4432089231/"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer. Prefers real software roles; contract AI training/RLHF-like gigs should be verified before top-tier ranking.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "Django", "level": "strong"},
+        {"name": "PostgreSQL", "level": "strong"}
+      ],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE"],
+    "max_score": 78,
+    "required_evidence_terms": ["contract", "AI"],
+    "dealbreaker_terms": ["contract", "AI training"]
+  },
+  "human_review_notes": "Reviewed real case: stack looks good, but contract/AI-training wording should prevent automatic top-tier APPLY_NOW until verified."
+}

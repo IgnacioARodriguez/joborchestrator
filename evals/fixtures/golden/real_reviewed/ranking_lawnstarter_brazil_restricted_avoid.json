@@ -1,0 +1,37 @@
+{
+  "case_id": "ranking-lawnstarter-brazil-restricted-avoid",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 334, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "remotive",
+    "title": "Staff Software Engineer, Product (Belo Horizonte)",
+    "company": "LawnStarter",
+    "location": "Brazil",
+    "job_html_or_text": "Remote role for candidates located in Belo Horizonte, Brazil. Staff Software Engineer, Product. Product engineer working with PM and designer on marketplace initiatives with a senior team.",
+    "url": "https://remotive.com/remote-jobs/software-development/staff-software-engineer-product-belo-horizonte-2091056",
+    "apply_url": "https://remotive.com/remote-jobs/software-development/staff-software-engineer-product-belo-horizonte-2091056"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer based in Malaga, open to remote or hybrid Spain/EU. Not located in Belo Horizonte or Brazil.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "Django", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"}
+      ],
+      "preferred_locations": ["Spain", "EU", "Remote"],
+      "preferred_work_modes": ["remote", "hybrid"],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["AVOID", "SKIP"],
+    "max_score": 35,
+    "required_evidence_terms": ["Belo Horizonte", "Brazil"],
+    "dealbreaker_terms": ["Brazil", "location"]
+  },
+  "human_review_notes": "Reviewed real case: remote is restricted to candidates in Belo Horizonte, Brazil. For this profile, it should be AVOID."
+}

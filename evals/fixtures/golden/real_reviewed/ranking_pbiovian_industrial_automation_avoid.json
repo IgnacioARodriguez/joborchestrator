@@ -1,0 +1,38 @@
+{
+  "case_id": "ranking-pbiovian-industrial-automation-avoid",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 3, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "linkedin_scraper",
+    "title": "Automation Engineer",
+    "company": "3PBIOVIAN",
+    "location": "Presencial",
+    "job_html_or_text": "Automation Engineer for manufacturing equipment, robotic systems, machinery control systems, production installations, quality, efficiency, productivity, pre-sales and post-sales phases. Onsite/presencial industrial automation role.",
+    "url": "https://www.linkedin.com/jobs/view/4432247088/",
+    "apply_url": "https://www.linkedin.com/jobs/view/4432247088/"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer with 4+ years, Malaga, open to remote or hybrid Spain/EU. No industrial automation, PLC, SCADA, robotics, plant electrical engineering, or relocation profile.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "Django", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"},
+        {"name": "PostgreSQL", "level": "strong"}
+      ],
+      "preferred_locations": ["Spain", "EU", "Remote"],
+      "preferred_work_modes": ["remote", "hybrid"],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["AVOID", "SKIP"],
+    "max_score": 35,
+    "required_evidence_terms": ["industrial automation"],
+    "dealbreaker_terms": ["onsite", "industrial automation"]
+  },
+  "human_review_notes": "Reviewed real case: presencial industrial automation/manufacturing role is not a software backend fit. APPLY_NOW is a critical failure."
+}

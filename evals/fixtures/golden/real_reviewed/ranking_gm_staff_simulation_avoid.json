@@ -1,0 +1,37 @@
+{
+  "case_id": "ranking-gm-staff-simulation-avoid",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 219, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "themuse",
+    "title": "Staff Software Engineer, Simulation",
+    "company": "General Motors",
+    "location": "Flexible / Remote, Sunnyvale, CA",
+    "job_html_or_text": "Staff Software Engineer in autonomous vehicle simulation. Own simulation ecosystem, scalable tools, workflows, scenario libraries, testing and validation pipelines for autonomous driving technology. 7+ years and in-person/relocation risk near Sunnyvale or Mountain View.",
+    "url": "https://www.themuse.com/jobs/generalmotors/staff-software-engineer-simulation-9bac82",
+    "apply_url": "https://www.themuse.com/jobs/generalmotors/staff-software-engineer-simulation-9bac82"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer with 4+ years. No autonomous driving, simulation platform, Staff-level, or California relocation profile.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"},
+        {"name": "PostgreSQL", "level": "strong"}
+      ],
+      "preferred_locations": ["Spain", "EU", "Remote"],
+      "preferred_work_modes": ["remote", "hybrid"],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["AVOID", "SKIP"],
+    "max_score": 35,
+    "required_evidence_terms": ["autonomous", "simulation"],
+    "dealbreaker_terms": ["Staff", "relocation", "autonomous driving"]
+  },
+  "human_review_notes": "Reviewed real case: Staff + autonomous driving simulation + relocation/in-person risk is a double/triple mismatch."
+}

@@ -1,0 +1,35 @@
+{
+  "case_id": "ranking-mecalux-backend-strong-fit",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 40, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "linkedin_scraper",
+    "title": "BackEnd Developer",
+    "company": "Mecalux",
+    "location": "Hibrido",
+    "job_html_or_text": "BackEnd Developer. Design, develop and maintain stable services using Django. Implement asynchronous processes with RabbitMQ. Internal and external APIs. Python, Django, RabbitMQ, SQL/MySQL/Postgres, Linux and Git.",
+    "url": "https://www.linkedin.com/jobs/view/4430376480/",
+    "apply_url": "https://www.linkedin.com/jobs/view/4430376480/"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer with 4+ years, API delivery, AWS, product integrations and backend ownership.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "Django", "level": "strong"},
+        {"name": "PostgreSQL", "level": "strong"},
+        {"name": "RabbitMQ", "level": "working"}
+      ],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_NOW", "APPLY_WITH_TAILORED_CV"],
+    "min_score": 75,
+    "required_evidence_terms": ["Python", "Django", "RabbitMQ"]
+  },
+  "human_review_notes": "Reviewed real case: strong backend/Django fit should rank high unless location details introduce a specific blocker."
+}

@@ -1,0 +1,34 @@
+{
+  "case_id": "ranking-kanidata-join-hq-skip",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 345, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "remoteok",
+    "title": "Join Our HQ",
+    "company": "Kanidata FZE",
+    "location": "Remote",
+    "job_html_or_text": "Help us shape the future of data engineering in the Middle East. Join our core team. Generic title with very little role detail. Please mention the magic word WIN when applying to show you read the job post completely. Anti-spam marker.",
+    "url": "https://remoteOK.com/remote-jobs/remote-join-our-hq-kanidata-fze-1134856",
+    "apply_url": "https://remoteOK.com/remote-jobs/remote-join-our-hq-kanidata-fze-1134856"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer. Needs concrete role requirements to assess fit.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"}
+      ],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["SKIP", "AVOID"],
+    "max_score": 35,
+    "required_evidence_terms": ["low-context"],
+    "dealbreaker_terms": ["generic", "magic word"]
+  },
+  "human_review_notes": "Reviewed real case: low-context RemoteOK generic posting should be SKIP."
+}

@@ -1,0 +1,36 @@
+{
+  "case_id": "ranking-gitlab-solutions-architect-tailored",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 217, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "themuse",
+    "title": "Solutions Architect",
+    "company": "GitLab",
+    "location": "Flexible / Remote",
+    "job_html_or_text": "Solutions Architect for GitLab DevSecOps platform. Customer-facing technical discovery, demos, presales-style solutioning, DevSecOps, security/compliance risk, digital transformation, and enterprise stakeholders.",
+    "url": "https://www.themuse.com/jobs/gitlab/solutions-architect",
+    "apply_url": "https://www.themuse.com/jobs/gitlab/solutions-architect"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer with product delivery and possible presales/SE pivot, but not a direct Solutions Architect background.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"},
+        {"name": "AWS", "level": "working"}
+      ],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV"],
+    "min_score": 55,
+    "max_score": 82,
+    "required_evidence_terms": ["Solutions Architect"],
+    "dealbreaker_terms": ["presales pivot"]
+  },
+  "human_review_notes": "Reviewed real case: good pivot candidate, but it needs a tailored narrative rather than direct APPLY_NOW."
+}

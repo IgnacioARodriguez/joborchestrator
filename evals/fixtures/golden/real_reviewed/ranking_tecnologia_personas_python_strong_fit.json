@@ -1,0 +1,35 @@
+{
+  "case_id": "ranking-tecnologia-personas-python-strong-fit",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 44, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "linkedin_scraper",
+    "title": "Desarrollador de Python",
+    "company": "Tecnologia y Personas",
+    "location": "Hibrido",
+    "job_html_or_text": "Python developer role. Minimum 4 years. Backend development and REST APIs. FastAPI, Django or Flask. SQL databases such as PostgreSQL or MySQL. Git and Agile. Docker and cloud are valuable.",
+    "url": "https://www.linkedin.com/jobs/view/4432095786/",
+    "apply_url": "https://www.linkedin.com/jobs/view/4432095786/"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer with 4+ years, REST APIs, AWS, Docker and product delivery.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"},
+        {"name": "Django", "level": "strong"},
+        {"name": "PostgreSQL", "level": "strong"}
+      ],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_NOW", "APPLY_WITH_TAILORED_CV"],
+    "min_score": 75,
+    "required_evidence_terms": ["Python", "FastAPI", "Django", "PostgreSQL"]
+  },
+  "human_review_notes": "Reviewed real case: central requirements align closely with profile."
+}

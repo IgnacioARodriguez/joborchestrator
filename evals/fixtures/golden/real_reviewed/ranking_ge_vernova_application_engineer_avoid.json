@@ -1,0 +1,38 @@
+{
+  "case_id": "ranking-ge-vernova-application-engineer-avoid",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 358, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "themuse",
+    "title": "Senior Application Engineer",
+    "company": "GE Vernova",
+    "location": "Flexible / Remote, Houston, TX",
+    "job_html_or_text": "Senior Application Engineer for EPC, Engineering Procurement and Construction, extended Balance of Plant scopes, VFD systems, STATCOM, synchronous condenser technologies, technical bid management, cost estimation, system integration, and technical proposals. Houston location and relocation risk.",
+    "url": "https://www.themuse.com/jobs/gevernova/senior-application-engineer-ce91e4",
+    "apply_url": "https://www.themuse.com/jobs/gevernova/senior-application-engineer-ce91e4"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer with 4+ years, Malaga, open to remote or hybrid Spain/EU. No EPC, VFD, STATCOM, plant electrical engineering, Houston relocation, or power systems background.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "Django", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"},
+        {"name": "PostgreSQL", "level": "strong"}
+      ],
+      "preferred_locations": ["Spain", "EU", "Remote"],
+      "preferred_work_modes": ["remote", "hybrid"],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["AVOID", "SKIP"],
+    "max_score": 35,
+    "required_evidence_terms": ["EPC", "VFD"],
+    "dealbreaker_terms": ["relocation", "EPC"]
+  },
+  "human_review_notes": "Reviewed real case: EPC/VFD/STATCOM plant engineering is outside the backend profile. APPLY_NOW 82 was a critical ranking error."
+}

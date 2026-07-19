@@ -1,0 +1,36 @@
+{
+  "case_id": "ranking-fullonnet-python-strong-fit",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 42, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "linkedin_scraper",
+    "title": "Desarrollador Python Senior",
+    "company": "Full On Net",
+    "location": "En remoto",
+    "job_html_or_text": "Remote Python developer building product using AI. Develop services and microservices in Python, support frontend with Vue, CI/CD. Key tools: Python, Django, PostgreSQL, Vue, microservices, Kubernetes.",
+    "url": "https://www.linkedin.com/jobs/view/4406079478/",
+    "apply_url": "https://www.linkedin.com/jobs/view/4406079478/"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer with 4+ years, remote-friendly, product delivery, APIs and practical AI tooling interest.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "Django", "level": "strong"},
+        {"name": "PostgreSQL", "level": "strong"},
+        {"name": "Kubernetes", "level": "familiar"}
+      ],
+      "preferred_work_modes": ["remote", "hybrid"],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_NOW", "APPLY_WITH_TAILORED_CV"],
+    "min_score": 70,
+    "required_evidence_terms": ["Python", "Django", "PostgreSQL"]
+  },
+  "human_review_notes": "Reviewed real case: remote Python/Django/PostgreSQL role is aligned with the profile."
+}

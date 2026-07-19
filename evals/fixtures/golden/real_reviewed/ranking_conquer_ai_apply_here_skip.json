@@ -1,0 +1,34 @@
+{
+  "case_id": "ranking-conquer-ai-apply-here-skip",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 310, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "remoteok",
+    "title": "Apply Here",
+    "company": "Conquer AI",
+    "location": "Remote",
+    "job_html_or_text": "Do not see your role? Apply anyway. Remote first. Generic open application. Please mention the magic word WHOA when applying to show you read the job post completely. Anti-spam applicant marker.",
+    "url": "https://remoteOK.com/remote-jobs/remote-apply-here-conquer-ai-1134722",
+    "apply_url": "https://remoteOK.com/remote-jobs/remote-apply-here-conquer-ai-1134722"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer. Needs concrete role requirements to assess fit.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"}
+      ],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["SKIP", "AVOID"],
+    "max_score": 35,
+    "required_evidence_terms": ["low-context"],
+    "dealbreaker_terms": ["generic", "magic word"]
+  },
+  "human_review_notes": "Reviewed real case: generic open application with anti-spam magic word should be SKIP, not MAYBE/top-tier."
+}

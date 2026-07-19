@@ -1,0 +1,36 @@
+{
+  "case_id": "ranking-qtech-onsite-valladolid-review",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": false,
+  "source": {"job_id": 72, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "linkedin_scraper",
+    "title": "Backend Engineer - Python",
+    "company": "Tech",
+    "location": "Presencial",
+    "job_html_or_text": "Backend Engineer Python for Q-tech/technology company in financial software. Hub de desarrollo in Valladolid. Presencial onsite role. Python backend, cloud migration, devices used by banks and physical cash equipment.",
+    "url": "https://www.linkedin.com/jobs/view/4428731550/",
+    "apply_url": "https://www.linkedin.com/jobs/view/4428731550/"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer based in Malaga, open to remote/hybrid Spain/EU. Regular onsite work outside Malaga should be reviewed.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"}
+      ],
+      "preferred_locations": ["Spain", "EU", "Remote"],
+      "preferred_work_modes": ["remote", "hybrid"],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE"],
+    "max_score": 75,
+    "required_evidence_terms": ["onsite", "Valladolid"],
+    "dealbreaker_terms": ["onsite"]
+  },
+  "human_review_notes": "Reviewed real case: backend Python fit exists, but presencial/Valladolid should prevent APPLY_NOW for a Malaga-based profile."
+}

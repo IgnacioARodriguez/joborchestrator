@@ -1,0 +1,35 @@
+{
+  "case_id": "ranking-lemon-ai-tailored",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 188, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "remotive",
+    "title": "Senior AI Engineer",
+    "company": "Lemon.io",
+    "location": "Northern America, LATAM, Europe, APAC",
+    "job_html_or_text": "Senior AI Engineer marketplace role for startups in the US and Europe. Projects in fast-paced startup environments. Senior AI engineering, often requiring production AI/ML depth and sometimes Rust or specialized model/system skills.",
+    "url": "https://remotive.com/remote-jobs/software-development/senior-ai-engineer",
+    "apply_url": "https://remotive.com/remote-jobs/software-development/senior-ai-engineer"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer with practical AI interest/use, but not a Senior AI Engineer profile and no Rust stack.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"},
+        {"name": "PostgreSQL", "level": "strong"}
+      ],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE"],
+    "max_score": 75,
+    "required_evidence_terms": ["AI"],
+    "dealbreaker_terms": ["Senior AI", "Rust"]
+  },
+  "human_review_notes": "Reviewed real case: interesting adjacent AI role, but APPLY_NOW 82 overstates the fit."
+}

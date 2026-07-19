@@ -1,0 +1,35 @@
+{
+  "case_id": "ranking-crowdstrike-infra-tailored",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 212, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "themuse",
+    "title": "Sr. Infrastructure Engineer - Kubernetes (Remote)",
+    "company": "CrowdStrike",
+    "location": "Flexible / Remote",
+    "job_html_or_text": "Senior Infrastructure Engineer for Kubernetes at cybersecurity company. Large-scale distributed systems processing trillions of events per day, platform infrastructure, Kubernetes, reliability and security domain.",
+    "url": "https://www.themuse.com/jobs/crowdstrike/sr-infrastructure-engineer-kubernetes-remote",
+    "apply_url": "https://www.themuse.com/jobs/crowdstrike/sr-infrastructure-engineer-kubernetes-remote"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer. Docker/Kubernetes are familiar/supporting skills, not the central production infrastructure specialization.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"},
+        {"name": "Kubernetes", "level": "familiar"}
+      ],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE"],
+    "max_score": 75,
+    "required_evidence_terms": ["Kubernetes", "infrastructure"],
+    "dealbreaker_terms": ["senior infrastructure"]
+  },
+  "human_review_notes": "Reviewed real case: relevant adjacent infra role, but not direct APPLY_NOW for the current backend profile."
+}

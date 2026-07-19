@@ -1,0 +1,35 @@
+{
+  "case_id": "ranking-ge-vernova-brazil-tnd-review",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": false,
+  "source": {"job_id": 223, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "themuse",
+    "title": "Software Consulting Engineer - T&D Configuration Systems & Software Solutions",
+    "company": "GE Vernova",
+    "location": "Flexible / Remote, Florianopolis, Brazil",
+    "job_html_or_text": "Software Consulting Engineer for Transmission and Distribution configuration systems, grid automation, protection relays, digital substation systems, power systems, architecture leadership, and Florianopolis Brazil location.",
+    "url": "https://www.themuse.com/jobs/gevernova/software-consulting-engineer-td-configuration-systems-software-solutions-f3bf41",
+    "apply_url": "https://www.themuse.com/jobs/gevernova/software-consulting-engineer-td-configuration-systems-software-solutions-f3bf41"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer in Malaga. No T&D, grid automation, power systems, protection relays, or Brazil residency background.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"}
+      ],
+      "preferred_locations": ["Spain", "EU", "Remote"],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["MAYBE", "SKIP", "AVOID"],
+    "max_score": 60,
+    "required_evidence_terms": ["T&D", "Brazil"],
+    "dealbreaker_terms": ["Brazil", "power systems"]
+  },
+  "human_review_notes": "Reviewed real case: likely Brazil-restricted and power/T&D domain-specific; should not be top-tier."
+}

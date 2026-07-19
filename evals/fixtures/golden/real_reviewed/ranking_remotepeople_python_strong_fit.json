@@ -1,0 +1,35 @@
+{
+  "case_id": "ranking-remotepeople-python-strong-fit",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {"job_id": 59, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "linkedin_scraper",
+    "title": "Python Developer",
+    "company": "Remote People",
+    "location": "Remote People",
+    "job_html_or_text": "Remote software engineer building software for global payroll, benefits, taxes and compliance. Develop secure APIs for frontend and backend applications. Python, FastAPI, microservices, SQL and Agile.",
+    "url": "https://www.linkedin.com/jobs/view/4432089231/",
+    "apply_url": "https://www.linkedin.com/jobs/view/4432089231/"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer with 4+ years, APIs, product delivery and remote-friendly collaboration.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"},
+        {"name": "PostgreSQL", "level": "strong"}
+      ],
+      "preferred_work_modes": ["remote", "hybrid"],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_NOW", "APPLY_WITH_TAILORED_CV"],
+    "min_score": 75,
+    "required_evidence_terms": ["Python", "FastAPI", "SQL"]
+  },
+  "human_review_notes": "Reviewed real case: real remote backend role with strong stack overlap."
+}

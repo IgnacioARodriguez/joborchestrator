@@ -1,0 +1,38 @@
+{
+  "case_id": "ranking-datavant-hybrid-review",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": false,
+  "source": {"job_id": 71, "label": "human-reviewed-real-ranking"},
+  "raw_input": {
+    "source": "linkedin_scraper",
+    "title": "Backend Engineer (Python)",
+    "company": "Datavant",
+    "location": "Hibrido",
+    "job_html_or_text": "Backend Engineer Python for Datavant healthcare data collaboration platform. Life Sciences Tech Hub in Barcelona, hybrid setting, Python backend, AWS/Kubernetes, and seniority around 6+ years.",
+    "url": "https://www.linkedin.com/jobs/view/4376751372/",
+    "apply_url": "https://www.linkedin.com/jobs/view/4376751372/"
+  },
+  "candidate_profile_snapshot": {
+    "source": "human_review_2026_07_19",
+    "profile": {
+      "base_cv_text": "Backend Python/Django/FastAPI/PostgreSQL engineer with 4+ years, Malaga, open to remote/hybrid Spain/EU. Hybrid outside Malaga and 6+ years should be reviewed.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "AWS", "level": "working"},
+        {"name": "Kubernetes", "level": "familiar"}
+      ],
+      "preferred_locations": ["Spain", "EU", "Remote"],
+      "preferred_work_modes": ["remote", "hybrid"],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE"],
+    "min_score": 55,
+    "max_score": 82,
+    "required_evidence_terms": ["hybrid", "6+"],
+    "dealbreaker_terms": ["hybrid"]
+  },
+  "human_review_notes": "Reviewed real case: good technical stack, but hybrid/Barcelona and seniority gap should keep it out of automatic APPLY_NOW."
+}
