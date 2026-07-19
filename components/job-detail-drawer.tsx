@@ -133,6 +133,36 @@ function materialReviewReasonLabel(reason: string): string {
   return reason.replaceAll("_", " ")
 }
 
+function rankingReviewReasonLabel(reason: string): string {
+  if (reason === "ranking_missing") return "This job has not been ranked yet."
+  if (reason === "ranking_requires_llm_review") return "The ranking model flagged this for review."
+  if (reason === "ranking_low_confidence") return "Ranking confidence is low."
+  if (reason === "ranking_validation_retry") return "The ranking needed validation retry before saving."
+  if (reason === "ranking_thin_positive_evidence") return "Apply recommendation has thin positive evidence."
+  if (reason === "ranking_missing_central_requirements") return "Central requirement evidence is missing."
+  return reason.replaceAll("_", " ")
+}
+
+function RankingReviewPanel({ job }: { job: JobPosting }) {
+  const review = job.ranking.review
+  if (!review?.requires_review || review.status === "missing") return null
+  return (
+    <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs leading-relaxed text-warning-foreground">
+      <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
+        <CircleAlert className="size-4" />
+        Review ranking before acting
+      </div>
+      <ul className="flex flex-col gap-1 pl-5">
+        {review.reasons.map((reason) => (
+          <li key={reason} className="list-disc">
+            {rankingReviewReasonLabel(reason)}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function MaterialsReviewPanel({ job }: { job: JobPosting }) {
   const review = job.materials.review
   if (!review?.requires_review || review.status === "missing") return null
@@ -913,6 +943,7 @@ function DetailBody({
               </div>
             ) : null}
           </div>
+          <RankingReviewPanel job={job} />
           <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
             <Lightbulb className="mt-0.5 size-4 shrink-0 text-primary" />
             <div className="flex flex-col gap-0.5">

@@ -145,6 +145,9 @@ def test_jobs_can_select_ranking_version_and_hide_heuristic_versions(tmp_path, m
         "validation_errors": ["missing rankings list"],
         "candidate_profile_hash": "profile-hash",
     }
+    assert default_body["jobs"][0]["ranking"]["review"]["status"] == "needs_review"
+    assert default_body["jobs"][0]["ranking"]["review"]["requires_review"] is True
+    assert "ranking_validation_retry" in default_body["jobs"][0]["ranking"]["review"]["reasons"]
     assert "ranking_v1.1.0-speed" not in default_body["ranking_versions"]
     assert set(default_body["ranking_versions"]) == {
         "ranking_v1.1.0-nvidia",
@@ -168,10 +171,13 @@ def test_jobs_expose_ranking_review_flags(tmp_path, monkeypatch):
 
     body = client.get("/api/jobs").json()
     evidence = body["jobs"][0]["ranking"]["evidence"]
+    review = body["jobs"][0]["ranking"]["review"]
 
     assert evidence["requires_llm_review"] is True
     assert evidence["llm_escalation_reasons"] == ["safety_cap_location"]
     assert evidence["red_flags"] == ["location restriction"]
+    assert review["status"] == "needs_review"
+    assert "ranking_requires_llm_review" in review["reasons"]
 
 
 def test_jobs_expose_materials_review_status(tmp_path, monkeypatch):

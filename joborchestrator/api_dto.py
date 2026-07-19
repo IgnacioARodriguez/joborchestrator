@@ -174,7 +174,7 @@ def ranking_dto(row: dict[str, Any] | None) -> dict[str, Any]:
         item.get("requirement") if isinstance(item, dict) else str(item)
         for item in evidence.get("central_requirements") or []
     ]
-    return {
+    ranking = {
         "final_score": int(row.get("final_score") or 0),
         "decision": row.get("decision") or "MAYBE",
         "confidence": float(row.get("confidence") or 0),
@@ -186,6 +186,32 @@ def ranking_dto(row: dict[str, Any] | None) -> dict[str, Any]:
         "cv_keywords_to_avoid_overclaiming": parse_json_value(row.get("cv_keywords_to_avoid_overclaiming_json"), []),
         "ranking_version": row.get("ranking_version") or NVIDIA_RANKING_VERSION,
         "generation": ranking_generation_dto(row),
+    }
+    ranking["review"] = ranking_review_dto(ranking)
+    return ranking
+
+
+def ranking_review_dto(ranking: dict[str, Any]) -> dict[str, Any]:
+    if ranking.get("ranking_version") == "unranked":
+        return {"status": "missing", "requires_review": True, "reasons": ["ranking_missing"]}
+    evidence = ranking.get("evidence") or {}
+    generation = ranking.get("generation") or {}
+    decision = ranking.get("decision")
+    reasons: list[str] = []
+    if bool(evidence.get("requires_llm_review")):
+        reasons.append("ranking_requires_llm_review")
+    if float(ranking.get("confidence") or 0) < 0.75:
+        reasons.append("ranking_low_confidence")
+    if int(generation.get("validation_attempts") or 0) > 1:
+        reasons.append("ranking_validation_retry")
+    if decision in {"APPLY_NOW", "APPLY_WITH_TAILORED_CV"} and not evidence.get("strong_matches"):
+        reasons.append("ranking_thin_positive_evidence")
+    if decision in {"APPLY_NOW", "APPLY_WITH_TAILORED_CV"} and not evidence.get("central_requirements"):
+        reasons.append("ranking_missing_central_requirements")
+    return {
+        "status": "needs_review" if reasons else "ready",
+        "requires_review": bool(reasons),
+        "reasons": reasons,
     }
 
 
@@ -260,6 +286,11 @@ def _default_ranking() -> dict[str, Any]:
         "cv_keywords_to_emphasize": [],
         "cv_keywords_to_avoid_overclaiming": [],
         "ranking_version": "unranked",
+        "review": {
+            "status": "missing",
+            "requires_review": True,
+            "reasons": ["ranking_missing"],
+        },
         "generation": {
             "provider": None,
             "model": None,

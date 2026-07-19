@@ -71,6 +71,11 @@ export interface JobRanking {
   cv_keywords_to_emphasize: string[]
   cv_keywords_to_avoid_overclaiming: string[]
   ranking_version: string
+  review: {
+    status: "missing" | "needs_review" | "ready" | string
+    requires_review: boolean
+    reasons: string[]
+  }
   generation: {
     provider?: string | null
     model?: string | null
