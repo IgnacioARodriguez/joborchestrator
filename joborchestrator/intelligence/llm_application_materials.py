@@ -132,7 +132,7 @@ def _kit_from_response(response: dict[str, Any]) -> dict[str, str]:
     return {
         "recruiter_message": _clean_recruiter_message(_material_text(response["recruiter_message"])),
         "cover_letter": str(response.get("cover_letter") or ""),
-        "ats_cv_text": str(response["ats_cv_text"]),
+        "ats_cv_text": _clean_cv_text_for_export(str(response["ats_cv_text"])),
         "autofill_notes": _material_text(response["autofill_notes"]),
     }
 
@@ -318,7 +318,7 @@ def _call_openai(payload: dict[str, Any], api_key: str, model: str, timeout: flo
     validation_feedback: str | None = None
     for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
         parsed = _call_openai_once(payload, api_key, model, timeout, validation_feedback)
-        validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload))
+        validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
         if not validation_feedback:
             return parsed
         if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
@@ -332,7 +332,7 @@ def _call_nvidia(payload: dict[str, Any], api_key: str, model: str, timeout: flo
     validation_feedback: str | None = None
     for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
         parsed = _call_nvidia_once(payload, api_key, model, timeout, validation_feedback)
-        validation_feedback = _materials_validation_error(parsed)
+        validation_feedback = _materials_validation_error(parsed, source_payload=payload)
         if not validation_feedback:
             return parsed
         if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
@@ -378,7 +378,7 @@ def _call_nvidia_kit(payload: dict[str, Any], api_key: str, model: str, timeout:
             timeout,
             validation_feedback,
         )
-        validation_feedback = _kit_response_validation_error(parsed)
+        validation_feedback = _kit_response_validation_error(parsed, payload)
         if not validation_feedback:
             return parsed
         if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
@@ -603,9 +603,13 @@ def _openai_materials_contract() -> str:
     )
 
 
-def _materials_validation_error(payload: dict[str, Any], base_cv_text: str | None = None) -> str | None:
+def _materials_validation_error(
+    payload: dict[str, Any],
+    base_cv_text: str | None = None,
+    source_payload: dict[str, Any] | None = None,
+) -> str | None:
     problems = []
-    kit_error = _kit_response_validation_error(payload)
+    kit_error = _kit_response_validation_error(payload, source_payload)
     cv_error = _ats_cv_response_validation_error(payload, base_cv_text)
     if kit_error:
         problems.append(kit_error)
@@ -614,7 +618,10 @@ def _materials_validation_error(payload: dict[str, Any], base_cv_text: str | Non
     return "; ".join(problems) if problems else None
 
 
-def _kit_response_validation_error(payload: dict[str, Any]) -> str | None:
+def _kit_response_validation_error(
+    payload: dict[str, Any],
+    source_payload: dict[str, Any] | None = None,
+) -> str | None:
     problems = []
     for field in ["recruiter_message", "autofill_notes"]:
         if not str(payload.get(field) or "").strip():
@@ -623,6 +630,7 @@ def _kit_response_validation_error(payload: dict[str, Any]) -> str | None:
     if len(recruiter_message) > 500:
         problems.append("recruiter_message is too long")
     problems.extend(_recruiter_message_quality_problems(recruiter_message))
+    problems.extend(_recruiter_message_specificity_problems(recruiter_message, source_payload))
     return "; ".join(problems) if problems else None
 
 
@@ -649,6 +657,54 @@ def _recruiter_message_quality_problems(text: str) -> list[str]:
     if interest_markers > 2:
         problems.append("recruiter_message repeats the interest statement")
     return problems
+
+
+def _recruiter_message_specificity_problems(
+    text: str,
+    source_payload: dict[str, Any] | None,
+) -> list[str]:
+    terms = _recruiter_specificity_terms(source_payload)
+    if not terms:
+        return []
+    normalized = _normalize_for_match(text)
+    if any(term in normalized for term in terms):
+        return []
+    return ["recruiter_message is generic; mention the target company or role"]
+
+
+def _recruiter_specificity_terms(source_payload: dict[str, Any] | None) -> list[str]:
+    if not source_payload:
+        return []
+    job = source_payload.get("job") if isinstance(source_payload.get("job"), dict) else {}
+    company = _normalize_for_match(str(job.get("company") or ""))
+    title = _normalize_for_match(str(job.get("title") or ""))
+    terms = []
+    if company and company not in {"confidential", "unknown", "none"}:
+        terms.append(company)
+    title = re.sub(r"\([^)]*\)", " ", title)
+    title = re.sub(r"\s+", " ", title).strip()
+    if title:
+        terms.append(title)
+        role_words = [
+            word
+            for word in title.split()
+            if len(word) >= 3 and word not in {"remote", "hybrid", "onsite", "senior", "junior", "lead"}
+        ]
+        if len(role_words) >= 2:
+            terms.append(" ".join(role_words[:3]))
+    return _dedupe_strings(terms)
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen = set()
+    deduped = []
+    for value in values:
+        key = str(value or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(key)
+    return deduped
 
 
 def _ats_cv_response_validation_error(payload: dict[str, Any], base_cv_text: str | None = None) -> str | None:

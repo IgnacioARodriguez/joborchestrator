@@ -231,6 +231,27 @@ def test_application_kit_flattens_nested_recruiter_message():
     assert kit["autofill_notes"] == "Use tailored answers\n\nReview before submit"
 
 
+def test_application_kit_cleans_internal_ats_cv_notes():
+    kit = _kit_from_response(
+        {
+            "recruiter_message": "Hi Acme, Python backend fit for the Backend Engineer role.",
+            "cover_letter": "",
+            "ats_cv_text": (
+                "Ignacio Rodriguez\n"
+                "Professional Summary\n"
+                "Backend engineer focused on Python APIs.\n"
+                "Optimization notes\n"
+                "- Add unsupported Kubernetes certification"
+            ),
+            "autofill_notes": "Use tailored answers",
+        }
+    )
+
+    assert "Ignacio Rodriguez" in kit["ats_cv_text"]
+    assert "Optimization notes" not in kit["ats_cv_text"]
+    assert "unsupported Kubernetes certification" not in kit["ats_cv_text"]
+
+
 def test_recruiter_message_cleanup_removes_cover_letter_contamination():
     kit = _kit_from_response(
         {
@@ -248,6 +269,39 @@ def test_recruiter_message_cleanup_removes_cover_letter_contamination():
     assert "Dear Hiring Manager" not in kit["recruiter_message"]
     assert "reaching out to express interest" not in kit["recruiter_message"]
     assert kit["recruiter_message"].startswith("Hi, I'm Ignacio Rodriguez")
+
+
+def test_recruiter_message_validation_rejects_generic_message_with_job_context():
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi team, my background looks relevant and I would be happy to share my CV.",
+            "cover_letter": "",
+            "ats_cv_text": _complete_ats_cv_text(),
+            "autofill_notes": "Use tailored answers.",
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        },
+        source_payload={"job": {"title": "Backend Engineer", "company": "Acme Labs"}},
+    )
+
+    assert error is not None
+    assert "recruiter_message is generic" in error
+
+
+def test_recruiter_message_validation_accepts_company_or_role_specific_message():
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi Acme Labs, my Python API work maps well to the Backend Engineer role.",
+            "cover_letter": "",
+            "ats_cv_text": _complete_ats_cv_text(),
+            "autofill_notes": "Use tailored answers.",
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        },
+        source_payload={"job": {"title": "Backend Engineer", "company": "Acme Labs"}},
+    )
+
+    assert error is None
 
 
 def test_recruiter_message_validation_rejects_cover_letter_style():
@@ -467,3 +521,35 @@ def test_ats_cv_export_strips_internal_optimization_notes():
     assert "Optimization notes" not in text
     assert "Internal note" not in text
     assert "\x7f" not in text
+
+
+def _complete_ats_cv_text() -> str:
+    return """
+Ignacio Rodriguez
+Madrid, Spain | ignacio@example.com
+
+Professional Summary
+Backend engineer focused on Python APIs, FastAPI services, PostgreSQL data models, and reliable product delivery.
+Experienced translating requirements into maintainable backend systems and collaborating with product stakeholders.
+
+Technical Skills
+Python, FastAPI, Django, PostgreSQL, SQL, REST APIs, AWS, Docker, CI/CD, Git, observability, documentation.
+
+Professional Experience
+Backend Engineer | Fiction Express | April 2025 - March 2026
+- Built and maintained Python APIs for product workflows and data operations.
+- Improved service reliability and backend observability through clearer ownership and documentation.
+
+Full Stack Developer | Talan Consulting | October 2022 - April 2025
+- Delivered dashboards, integrations, and SQL-backed features for business users.
+- Collaborated with frontend engineers, QA, and product stakeholders across delivery cycles.
+
+Backend Developer | Globant | August 2022 - October 2022
+- Supported AWS-based backend services, integrations, and production troubleshooting.
+
+Full Stack Developer | Balloon Group | November 2021 - August 2022
+- Built web applications and backend functionality across product delivery cycles.
+
+Education
+Software engineering coursework and continuing professional development in backend engineering.
+""".strip()
