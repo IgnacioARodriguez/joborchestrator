@@ -121,6 +121,8 @@ def test_application_materials_are_saved(tmp_path, monkeypatch):
         materials_provider="nvidia",
         materials_model="test-model",
         materials_prompt_versions={"materials/nvidia_cv_contract": "v2"},
+        materials_validation_attempts=2,
+        materials_validation_errors=["ats_cv_text is too short"],
     )
 
     stored = db.get_job_posting(job_id)
@@ -133,6 +135,8 @@ def test_application_materials_are_saved(tmp_path, monkeypatch):
     assert stored["materials_model"] == "test-model"
     assert stored["materials_prompt_versions_json"] == '{"materials/nvidia_cv_contract": "v2"}'
     assert stored["materials_generated_at"]
+    assert stored["materials_validation_attempts"] == 2
+    assert stored["materials_validation_errors_json"] == '["ats_cv_text is too short"]'
 
 
 def test_application_material_update_preserves_unspecified_fields(tmp_path, monkeypatch):

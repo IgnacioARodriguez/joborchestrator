@@ -584,6 +584,8 @@ def test_generate_materials_persists_application_kit(tmp_path, monkeypatch):
     assert job["materials"]["generation"]["model"] == "heuristic"
     assert job["materials"]["generation"]["prompt_versions"] == {}
     assert job["materials"]["generation"]["generated_at"]
+    assert job["materials"]["generation"]["validation_attempts"] == 1
+    assert job["materials"]["generation"]["validation_errors"] == []
 
 
 def test_application_rest_endpoints(tmp_path, monkeypatch):

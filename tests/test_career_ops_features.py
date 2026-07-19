@@ -5,6 +5,7 @@ from joborchestrator.intelligence.cover_letter_generator import (
 )
 from joborchestrator.intelligence.ats_autofill import build_autofill_plan
 from joborchestrator.intelligence.llm_application_materials import (
+    _call_openai,
     _experience_coverage_problems,
     _kit_from_response,
     _materials_validation_error,
@@ -406,6 +407,47 @@ Computer Science coursework and continuing professional development in backend e
     )
 
     assert error is None
+
+
+def test_openai_materials_call_reports_validation_retry_metadata(monkeypatch):
+    calls = []
+
+    def fake_call_once(payload, api_key, model, timeout, validation_feedback=None):
+        calls.append(validation_feedback)
+        if validation_feedback:
+            return {
+                "recruiter_message": "Hi Acme Labs, my backend API work maps well to the Backend Engineer role.",
+                "cover_letter": "",
+                "ats_cv_text": _complete_ats_cv_text(),
+                "autofill_notes": "Paste the recruiter note.",
+                "risk_flags": [],
+                "keywords_used": ["Python"],
+            }
+        return {
+            "recruiter_message": "",
+            "cover_letter": "",
+            "ats_cv_text": "Tiny",
+            "autofill_notes": "",
+            "risk_flags": [],
+            "keywords_used": [],
+        }
+
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(llm_application_materials, "DEFAULT_MATERIALS_VALIDATION_RETRIES", 1)
+    monkeypatch.setattr(llm_application_materials, "_call_openai_once", fake_call_once)
+
+    response = _call_openai(
+        {"job": {"title": "Backend Engineer", "company": "Acme Labs"}, "base_cv": {"text": _complete_ats_cv_text()}},
+        "test-key",
+        "test-model",
+        1.0,
+    )
+
+    assert calls[0] is None
+    assert calls[1]
+    assert response["_generation_metadata"]["validation_attempts"] == 2
+    assert response["_generation_metadata"]["validation_errors"]
 
 
 def test_ats_cv_validation_rejects_ranking_avoid_overclaiming_terms_without_source_support():

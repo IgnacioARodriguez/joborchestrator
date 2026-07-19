@@ -109,6 +109,10 @@ def test_worker_processes_application_materials_generation(monkeypatch):
             "cover_letter": "Dear team",
             "ats_cv_text": "Professional Summary\nBackend engineer\n\nTechnical Skills\nPython\n\nProfessional Experience\nBuilt APIs\n\nEducation\nCS",
             "autofill_notes": "Paste answers",
+            "_generation_metadata": {
+                "validation_attempts": 2,
+                "validation_errors": ["recruiter_message is generic"],
+            },
         },
     )
     monkeypatch.setattr(
@@ -144,6 +148,8 @@ def test_worker_processes_application_materials_generation(monkeypatch):
         "materials/nvidia_cv_contract": "v2",
         "materials/nvidia_kit_contract": "v2",
     }
+    assert saved["materials_validation_attempts"] == 2
+    assert saved["materials_validation_errors"] == ["recruiter_message is generic"]
     assert completed["output"]["materials_saved"] is True
     assert completed["output"]["resume_variant_id"] == 9
     assert "Generating nvidia application materials." in progress

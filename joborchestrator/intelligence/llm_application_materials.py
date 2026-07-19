@@ -68,7 +68,9 @@ def build_application_kit_with_llm(
 
     payload = _materials_payload(job, ranking)
     kit_response = _call_openai(payload, key, model or DEFAULT_MATERIALS_MODEL, timeout)
-    return _kit_from_response(kit_response)
+    kit = _kit_from_response(kit_response)
+    _attach_generation_metadata(kit, kit_response)
+    return kit
 
 
 def build_application_kit_with_nvidia(
@@ -87,7 +89,11 @@ def build_application_kit_with_nvidia(
     selected_model = model or DEFAULT_NVIDIA_MATERIALS_MODEL
     cv_response = _call_nvidia_cv(payload, key, selected_model, timeout)
     kit_response = _call_nvidia_kit(payload, key, selected_model, timeout)
-    return _kit_from_response({**kit_response, **cv_response})
+    response = {**kit_response, **cv_response}
+    response["_generation_metadata"] = _combined_generation_metadata([cv_response, kit_response])
+    kit = _kit_from_response(response)
+    _attach_generation_metadata(kit, response)
+    return kit
 
 
 def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
@@ -142,6 +148,24 @@ def _kit_from_response(response: dict[str, Any]) -> dict[str, str]:
         "ats_cv_text": _clean_cv_text_for_export(str(response["ats_cv_text"])),
         "autofill_notes": _material_text(response["autofill_notes"]),
     }
+
+
+def _attach_generation_metadata(kit: dict[str, Any], response: dict[str, Any]) -> None:
+    metadata = response.get("_generation_metadata")
+    if isinstance(metadata, dict):
+        kit["_generation_metadata"] = metadata
+
+
+def _combined_generation_metadata(responses: list[dict[str, Any]]) -> dict[str, Any]:
+    attempts = 0
+    errors: list[str] = []
+    for response in responses:
+        metadata = response.get("_generation_metadata")
+        if not isinstance(metadata, dict):
+            continue
+        attempts += int(metadata.get("validation_attempts") or 0)
+        errors.extend(str(error) for error in metadata.get("validation_errors") or [])
+    return {"validation_attempts": attempts or 1, "validation_errors": errors}
 
 
 def _clean_recruiter_message(text: str) -> str:
@@ -323,12 +347,18 @@ def _wrap_pdf_line(line: str, max_chars: int) -> list[str]:
 
 def _call_openai(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
     validation_feedback: str | None = None
+    validation_errors: list[str] = []
     for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
         parsed = _call_openai_once(payload, api_key, model, timeout, validation_feedback)
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
         if not validation_feedback:
+            parsed["_generation_metadata"] = {
+                "validation_attempts": attempt + 1,
+                "validation_errors": validation_errors,
+            }
             return parsed
         if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
+            validation_errors.append(validation_feedback)
             logger.warning("Retrying OpenAI materials generation after invalid response: %s", validation_feedback)
             continue
         raise LLMMaterialsError(f"OpenAI materials response was incomplete: {validation_feedback}")
@@ -337,12 +367,18 @@ def _call_openai(payload: dict[str, Any], api_key: str, model: str, timeout: flo
 
 def _call_nvidia(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
     validation_feedback: str | None = None
+    validation_errors: list[str] = []
     for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
         parsed = _call_nvidia_once(payload, api_key, model, timeout, validation_feedback)
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
         if not validation_feedback:
+            parsed["_generation_metadata"] = {
+                "validation_attempts": attempt + 1,
+                "validation_errors": validation_errors,
+            }
             return parsed
         if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
+            validation_errors.append(validation_feedback)
             logger.warning("Retrying NVIDIA materials generation after invalid response: %s", validation_feedback)
             continue
         raise LLMMaterialsError(f"NVIDIA materials response was incomplete: {validation_feedback}")
@@ -351,6 +387,7 @@ def _call_nvidia(payload: dict[str, Any], api_key: str, model: str, timeout: flo
 
 def _call_nvidia_cv(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
     validation_feedback: str | None = None
+    validation_errors: list[str] = []
     for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
         parsed = _call_nvidia_contract_once(
             _nvidia_cv_contract(),
@@ -362,8 +399,13 @@ def _call_nvidia_cv(payload: dict[str, Any], api_key: str, model: str, timeout: 
         )
         validation_feedback = _ats_cv_response_validation_error(parsed, _base_cv_text(payload), payload)
         if not validation_feedback:
+            parsed["_generation_metadata"] = {
+                "validation_attempts": attempt + 1,
+                "validation_errors": validation_errors,
+            }
             return parsed
         if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
+            validation_errors.append(validation_feedback)
             logger.warning(
                 "Retrying NVIDIA ATS CV generation after invalid response: %s received_keys=%s",
                 validation_feedback,
@@ -376,6 +418,7 @@ def _call_nvidia_cv(payload: dict[str, Any], api_key: str, model: str, timeout: 
 
 def _call_nvidia_kit(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
     validation_feedback: str | None = None
+    validation_errors: list[str] = []
     for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
         parsed = _call_nvidia_contract_once(
             _nvidia_kit_contract(),
@@ -387,8 +430,13 @@ def _call_nvidia_kit(payload: dict[str, Any], api_key: str, model: str, timeout:
         )
         validation_feedback = _kit_response_validation_error(parsed, payload)
         if not validation_feedback:
+            parsed["_generation_metadata"] = {
+                "validation_attempts": attempt + 1,
+                "validation_errors": validation_errors,
+            }
             return parsed
         if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
+            validation_errors.append(validation_feedback)
             logger.warning(
                 "Retrying NVIDIA kit generation after invalid response: %s received_keys=%s",
                 validation_feedback,

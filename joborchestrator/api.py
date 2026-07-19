@@ -1009,6 +1009,8 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
         materials_provider=provider,
         materials_model="heuristic",
         materials_prompt_versions=materials_prompt_versions() if provider != "heuristic" else {},
+        materials_validation_attempts=1,
+        materials_validation_errors=[],
     )
     fresh = db.get_job_posting(job_id)
     rankings = latest_rankings_by_job_id()

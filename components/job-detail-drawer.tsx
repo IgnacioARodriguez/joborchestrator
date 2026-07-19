@@ -174,6 +174,14 @@ function MaterialsGenerationMeta({ job }: { job: JobPosting }) {
           {generation.generated_at}
         </span>
       ) : null}
+      {generation.validation_attempts && generation.validation_attempts > 1 ? (
+        <span
+          className="rounded-md border border-warning/30 bg-warning/10 px-2 py-0.5 text-warning-foreground"
+          title={generation.validation_errors.join(" | ")}
+        >
+          {generation.validation_attempts} validation attempts
+        </span>
+      ) : null}
       {promptVersions.map(([target, version]) => (
         <span key={target} className="rounded-md border border-border bg-muted/40 px-2 py-0.5">
           {target.split("/").slice(-1)[0]} {version}

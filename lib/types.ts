@@ -88,6 +88,8 @@ export interface ApplicationMaterials {
     model?: string | null
     prompt_versions: Record<string, string>
     generated_at?: string | null
+    validation_attempts?: number | null
+    validation_errors: string[]
   }
 }
 

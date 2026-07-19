@@ -167,6 +167,7 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
 
     db.update_operation_progress(operation_id, "Saving generated application materials.")
     ats_cv_text = kit.get("ats_cv_text") or kit.get("ats_cv_notes")
+    generation_metadata = kit.get("_generation_metadata") if isinstance(kit.get("_generation_metadata"), dict) else {}
     db.update_job_application_materials(
         job_id,
         pipeline_status="shortlisted" if shortlist else None,
@@ -177,6 +178,8 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
         materials_provider=provider,
         materials_model=selected_model,
         materials_prompt_versions=prompt_versions,
+        materials_validation_attempts=int(generation_metadata.get("validation_attempts") or 1),
+        materials_validation_errors=list(generation_metadata.get("validation_errors") or []),
     )
     resume_variant = None
     if ats_cv_text:

@@ -985,6 +985,8 @@ def update_job_application_materials(
     materials_provider: str | None = None,
     materials_model: str | None = None,
     materials_prompt_versions: dict | None = None,
+    materials_validation_attempts: int | None = None,
+    materials_validation_errors: list | None = None,
 ) -> None:
     generated_at = (
         datetime.now().isoformat(timespec="seconds")
@@ -994,6 +996,11 @@ def update_job_application_materials(
     prompt_versions_json = (
         json.dumps(materials_prompt_versions, ensure_ascii=False, sort_keys=True)
         if materials_prompt_versions is not None
+        else None
+    )
+    validation_errors_json = (
+        json.dumps(materials_validation_errors, ensure_ascii=False)
+        if materials_validation_errors is not None
         else None
     )
     conn = connect()
@@ -1008,7 +1015,9 @@ def update_job_application_materials(
                    materials_provider = COALESCE(?, materials_provider),
                    materials_model = COALESCE(?, materials_model),
                    materials_prompt_versions_json = COALESCE(?, materials_prompt_versions_json),
-                   materials_generated_at = COALESCE(?, materials_generated_at)
+                   materials_generated_at = COALESCE(?, materials_generated_at),
+                   materials_validation_attempts = COALESCE(?, materials_validation_attempts),
+                   materials_validation_errors_json = COALESCE(?, materials_validation_errors_json)
                WHERE id = ?""",
             (
                 pipeline_status,
@@ -1020,6 +1029,8 @@ def update_job_application_materials(
                 materials_model,
                 prompt_versions_json,
                 generated_at,
+                materials_validation_attempts,
+                validation_errors_json,
                 job_id,
             ),
         )

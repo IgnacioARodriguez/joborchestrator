@@ -119,6 +119,8 @@ def materials_generation_dto(job: dict[str, Any]) -> dict[str, Any]:
         "model": _nullable_string(job.get("materials_model")),
         "prompt_versions": parse_json_value(job.get("materials_prompt_versions_json"), {}),
         "generated_at": _nullable_string(job.get("materials_generated_at")),
+        "validation_attempts": _int_or_none(job.get("materials_validation_attempts")),
+        "validation_errors": parse_json_value(job.get("materials_validation_errors_json"), []),
     }
 
 
