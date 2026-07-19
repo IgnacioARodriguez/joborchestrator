@@ -33,6 +33,7 @@ HuntPilot is currently suitable as an operational copilot for job discovery, ran
   - Ranking: 22 persisted real reviewed cases evaluated, 5 passed, 17 failed, 22.7% pass rate, 11 critical failures, average score 77.5.
   - Application materials: 3 cases, 0 passed, 0.0% pass rate, average score 65.0.
 - Post-baseline ranking safety follow-up: deterministic caps now cover low-context magic-word postings, contract AI training/verification work, autonomous-driving simulation specialization, hybrid 6+ seniority review, unclear India remote eligibility, Brazil location restrictions, industrial automation/manufacturing mismatch, Munich/German signals, Madrid freelance review, senior infrastructure review, and Solutions Architect false security-gap avoidance. Unit/full pytest suites passed. In-memory replay over the persisted post-rerank outputs estimates 16/22 passing, 72.7% pass rate, and 4 critical failures, but these fixes still need a fresh reranking/baseline measurement.
+- Materials follow-up: application kit validation now rejects recruiter messages over the same 320-character limit used by golden evals. Persisted golden baseline currently evaluates 0 materials/ATS cases because the reviewed seed fixtures are synthetic and not DB-backed.
 - Reviewed golden fixtures: 34 cases under `evals/fixtures/golden` (12 synthetic seed cases plus 22 human-reviewed real ranking cases).
 - Known recurring eval issues:
   - `missing_evidence_terms`
@@ -53,8 +54,8 @@ HuntPilot is currently suitable as an operational copilot for job discovery, ran
 | Prompt registry | Active prompt versions are explicit and shared | Green | Registry points ranking/materials to v2 and judge to v1 | None immediate |
 | Ranking schema | Output validates against structured contract | Green-Yellow | Reranking job `#8` saved 419/419 records with 0 failed; schema was aligned with prompt contract | NVIDIA may still need retry after malformed first response |
 | Ranking quality | >= 90% pass rate, 0 critical failures | Red | Fresh persisted ranking baseline after job `#8`: 5/22 passed, 22.7% pass rate, 11 critical failures; deterministic safety replay estimates 16/22 passed, 72.7% pass rate, 4 critical failures | Must rerank/rebaseline and continue fixing remaining decision banding issues before trusting rankings |
-| Materials quality | >= 90% pass rate, 0 critical failures | Red | Stored evals show 0/3 passing | Need fresh v2 baseline and prompt fixes for length/specificity |
-| ATS CV quality | >= 95% pass rate, 0 critical failures | Red-Yellow | Internal-note validation exists, complete-CV validation preserves base experience, and ranking avoid-overclaiming terms are blocked when unsupported by source CV/profile | Need current ATS CV baseline and more reviewed ATS CV cases |
+| Materials quality | >= 90% pass rate, 0 critical failures | Red | Stored evals show 0/3 passing; generation validation now enforces the 320-character recruiter-message limit | Need fresh v2 generation proof and DB-backed reviewed materials fixtures |
+| ATS CV quality | >= 95% pass rate, 0 critical failures | Red-Yellow | Internal-note validation exists, complete-CV validation preserves base experience, and ranking avoid-overclaiming terms are blocked when unsupported by source CV/profile | Need current ATS CV generation proof and DB-backed reviewed ATS CV cases |
 | Golden set | 30-50 reviewed cases | Green-Yellow | 34 reviewed fixtures exist across ranking/materials/ATS CV, including 22 human-reviewed real ranking cases; local trust gate requires at least 3 cases per surface | Need more real materials/ATS CV cases to balance beyond synthetic coverage |
 | Critical failure gate | Critical failures block promotion | Green-Yellow | Eval loop has hard-stop and regression checks; local trust gate verifies deterministic guardrails reject known-bad ranking/materials/ATS CV outputs | Need larger coverage and explicit critical taxonomy in reports |
 | Case regressions | 0 regressions on promotion | Green-Yellow | `compare_summaries` regressions are wired into promotion gate | Needs fresh runs to prove effectiveness at scale |
@@ -70,7 +71,7 @@ HuntPilot is currently suitable as an operational copilot for job discovery, ran
 | Surface | Score | Rationale |
 | --- | ---: | --- |
 | Ranking | 5.8 | Productive flow works and 419/419 rerank rows were saved with traceability. The official fresh reviewed golden baseline is still 5/22 with 11 critical failures, but deterministic safety replay now estimates 16/22 with 4 critical failures. Treat rankings as review inputs, not trusted decisions, until a fresh rerank confirms this. |
-| Application materials | 6.1 | Prompt v2 exists, recruiter specificity/length gates improved, materials review status is exposed, and generation/retry/profile trace metadata is persisted; stored eval evidence still needs a fresh pass. |
+| Application materials | 6.2 | Prompt v2 exists, recruiter specificity/length gates improved and now match the 320-character golden limit, materials review status is exposed, and generation/retry/profile trace metadata is persisted; stored eval evidence still needs a fresh pass. |
 | ATS CV | 6.0 | Internal notes, incomplete CVs, omitted base experiences, and unsupported ranking avoid-overclaiming terms now have deterministic gates; needs fresh v2 proof. |
 | Judge/evals | 7.5 | Strong framework, offline trust gate, feedback records, saved fresh ranking eval runs, and summary analytics are available for calibration; dataset is still small outside ranking and judge calibration remains limited. |
 | Production operations | 7.8 | Vercel/Turso/smokes are healthy; `npm run verify` is repeatable, materials/ranking outputs are traceable for new writes, retry/profile metadata is stored, ranking/material review status is visible, and user feedback can be captured/summarized; remaining risk is quality gating rather than uptime. |
@@ -80,7 +81,7 @@ Overall: 6.6/10.
 ## Immediate Blockers To High Trust
 
 1. Ranking v2 failed the fresh persisted real reviewed baseline: 5/22 passed, 17 failed, 11 critical failures.
-2. Materials and ATS CV still need fresh proof against known historical quality failures.
+2. Materials and ATS CV still need fresh generation proof against known historical quality failures; current reviewed seed fixtures are not DB-backed, so persisted golden baseline skips them.
 3. Golden coverage is above the minimum count, but real materials/ATS CV coverage is still thin.
 4. Ranking failures still cluster around cases where the persisted LLM decision is too low for an adjacent opportunity, plus one strong-fit under-score; deterministic safety gates do not promote low decisions and need fresh rerank proof.
 5. Review gates need to catch or downgrade the remaining unsafe positive recommendations before ranking can be treated as high trust.
