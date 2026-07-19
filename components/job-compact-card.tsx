@@ -1,7 +1,7 @@
 "use client"
 
 import { Building2, CircleAlert, Clock3, ExternalLink, MapPin, UserRoundCheck } from "lucide-react"
-import { DecisionBadge, ScoreBadge } from "@/components/badges"
+import { DecisionBadge, MaterialsReviewBadge, ScoreBadge } from "@/components/badges"
 import { Button } from "@/components/ui/button"
 import type { JobPosting } from "@/lib/types"
 import { rankingSummaryText, relativeTime } from "@/lib/job-ui"
@@ -48,6 +48,9 @@ export function JobCompactCard({
                 <CircleAlert className="size-3" />
                 Review
               </span>
+            ) : null}
+            {job.materials.review?.status !== "missing" ? (
+              <MaterialsReviewBadge materials={job.materials} className="text-[10px]" />
             ) : null}
           </div>
           <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">

@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils"
 import { DECISION_STYLES, hasDecisionScoreMismatch, scoreTone } from "@/lib/job-ui"
-import type { Decision } from "@/lib/types"
+import type { ApplicationMaterials, Decision } from "@/lib/types"
 
 export function ScoreBadge({
   score,
@@ -61,6 +61,29 @@ export function DecisionBadge({
     >
       <span className={cn("size-1.5 rounded-full", style.dot)} />
       {style.label}
+    </span>
+  )
+}
+
+export function MaterialsReviewBadge({
+  materials,
+  className,
+}: {
+  materials: ApplicationMaterials
+  className?: string
+}) {
+  if (!materials.review?.requires_review) return null
+  const label = materials.review.status === "missing" ? "Materials missing" : "Materials review"
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/15 px-1.5 py-0.5 text-[11px] font-medium text-warning-foreground",
+        className,
+      )}
+      title={materials.review.reasons.join(", ")}
+    >
+      <span className="size-1.5 rounded-full bg-warning" />
+      {label}
     </span>
   )
 }

@@ -16,7 +16,7 @@ import {
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { DecisionBadge, ScoreBadge } from "@/components/badges"
+import { DecisionBadge, MaterialsReviewBadge, ScoreBadge } from "@/components/badges"
 import { useStore } from "@/lib/store"
 import type { JobPosting } from "@/lib/types"
 import {
@@ -70,6 +70,7 @@ export function JobCard({
                   Kit ready
                 </span>
               ) : null}
+              {hasMaterials ? <MaterialsReviewBadge materials={job.materials} /> : null}
               {job.ranking.evidence.requires_llm_review ? (
                 <span className="inline-flex items-center gap-1 rounded-md border border-warning/30 bg-warning/15 px-1.5 py-0.5 text-[11px] font-medium text-warning-foreground">
                   <CircleAlert className="size-3" />

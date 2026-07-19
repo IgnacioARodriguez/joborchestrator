@@ -117,6 +117,41 @@ function MaterialBlock({
   )
 }
 
+function materialReviewReasonLabel(reason: string): string {
+  if (reason === "materials_missing") return "Application materials have not been generated yet."
+  if (reason === "ranking_requires_review") return "The ranking was flagged for review."
+  if (reason === "ranking_low_confidence") return "Ranking confidence is low."
+  if (reason === "ranking_not_actionable") return "Ranking decision is not an apply decision."
+  if (reason === "recruiter_message_missing") return "Recruiter message is missing."
+  if (reason === "ats_cv_missing") return "Optimized ATS CV is missing."
+  if (reason === "ats_cv_too_short") return "Optimized ATS CV looks too short."
+  if (reason === "autofill_notes_missing") return "Autofill notes are missing."
+  if (reason.startsWith("ats_cv_contains_avoid_overclaiming_terms:")) {
+    return `ATS CV includes avoid-overclaiming terms: ${reason.split(":", 2)[1]}`
+  }
+  return reason.replaceAll("_", " ")
+}
+
+function MaterialsReviewPanel({ job }: { job: JobPosting }) {
+  const review = job.materials.review
+  if (!review?.requires_review || review.status === "missing") return null
+  return (
+    <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs leading-relaxed text-warning-foreground">
+      <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
+        <CircleAlert className="size-4" />
+        Review generated materials before using them
+      </div>
+      <ul className="flex flex-col gap-1 pl-5">
+        {review.reasons.map((reason) => (
+          <li key={reason} className="list-disc">
+            {materialReviewReasonLabel(reason)}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function parseAutofillPlan(text: string) {
   try {
     const parsed = JSON.parse(text) as {
@@ -988,6 +1023,7 @@ function DetailBody({
               <h3 className="text-sm font-semibold text-foreground">
                 Application materials
               </h3>
+              <MaterialsReviewPanel job={job} />
               <div className="flex flex-col gap-2">
                 <MaterialBlock
                   label="Recruiter message"

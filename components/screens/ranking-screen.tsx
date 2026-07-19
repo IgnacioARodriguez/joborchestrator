@@ -49,6 +49,7 @@ function rankingVersionLabel(version: string): string {
 
 function needsReview(job: JobPosting): boolean {
   if (job.ranking.evidence.requires_llm_review) return true
+  if (job.materials.review?.status === "needs_review") return true
   return (
     (job.ranking.decision === "APPLY_NOW" ||
       job.ranking.decision === "APPLY_WITH_TAILORED_CV") &&

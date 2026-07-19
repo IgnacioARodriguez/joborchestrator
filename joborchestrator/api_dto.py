@@ -65,7 +65,50 @@ def job_dto(
             "cover_letter": _string(job.get("cover_letter")) if not compact else "",
             "ats_cv_notes": _string(job.get("ats_cv_text")) if not compact else "",
             "autofill_notes": _string(job.get("autofill_notes")) if not compact else "",
+            "review": materials_review_dto(job, ranking),
         },
+    }
+
+
+def materials_review_dto(job: dict[str, Any], ranking: dict[str, Any]) -> dict[str, Any]:
+    recruiter_message = _string(job.get("recruiter_message")).strip()
+    cover_letter = _string(job.get("cover_letter")).strip()
+    ats_cv_text = _string(job.get("ats_cv_text")).strip()
+    autofill_notes = _string(job.get("autofill_notes")).strip()
+    has_materials = bool(recruiter_message or cover_letter or ats_cv_text or autofill_notes)
+    reasons: list[str] = []
+    if not has_materials:
+        return {"status": "missing", "requires_review": True, "reasons": ["materials_missing"]}
+
+    evidence = ranking.get("evidence") or {}
+    if bool(evidence.get("requires_llm_review")):
+        reasons.append("ranking_requires_review")
+    if float(ranking.get("confidence") or 0) < 0.75:
+        reasons.append("ranking_low_confidence")
+    if ranking.get("decision") not in {"APPLY_NOW", "APPLY_WITH_TAILORED_CV"}:
+        reasons.append("ranking_not_actionable")
+    if not recruiter_message:
+        reasons.append("recruiter_message_missing")
+    if not ats_cv_text:
+        reasons.append("ats_cv_missing")
+    elif len(ats_cv_text) < 500:
+        reasons.append("ats_cv_too_short")
+    if not autofill_notes:
+        reasons.append("autofill_notes_missing")
+
+    normalized_ats_cv = _normalize_for_review(ats_cv_text)
+    overclaim_terms = [
+        term
+        for term in ranking.get("cv_keywords_to_avoid_overclaiming") or []
+        if _normalize_for_review(str(term)) and _normalize_for_review(str(term)) in normalized_ats_cv
+    ]
+    if overclaim_terms:
+        reasons.append("ats_cv_contains_avoid_overclaiming_terms:" + ",".join(overclaim_terms[:6]))
+
+    return {
+        "status": "needs_review" if reasons else "ready",
+        "requires_review": bool(reasons),
+        "reasons": reasons,
     }
 
 
@@ -240,3 +283,7 @@ def _float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_for_review(value: str) -> str:
+    return " ".join(str(value or "").lower().split())

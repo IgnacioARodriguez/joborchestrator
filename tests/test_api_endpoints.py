@@ -45,6 +45,7 @@ def make_ranking(
     decision: str = "APPLY_NOW",
     *,
     requires_review: bool = False,
+    avoid_keywords: list[str] | None = None,
 ) -> RankingResult:
     evidence = RankingEvidence(strong_matches=["Python"])
     if requires_review:
@@ -68,7 +69,7 @@ def make_ranking(
         reasoning_summary=f"{version} summary",
         recommended_application_angle=f"{version} angle",
         cv_keywords_to_emphasize=["Python", "FastAPI"],
-        cv_keywords_to_avoid_overclaiming=[],
+        cv_keywords_to_avoid_overclaiming=avoid_keywords or [],
         ranking_version=version,
     )
 
@@ -153,6 +154,36 @@ def test_jobs_expose_ranking_review_flags(tmp_path, monkeypatch):
     assert evidence["requires_llm_review"] is True
     assert evidence["llm_escalation_reasons"] == ["safety_cap_location"]
     assert evidence["red_flags"] == ["location restriction"]
+
+
+def test_jobs_expose_materials_review_status(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(external_id="materials-review-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    db.save_job_ranking(
+        job_id,
+        make_ranking(
+            "ranking_v1.1.0-nvidia",
+            64,
+            "APPLY_WITH_TAILORED_CV",
+            requires_review=True,
+            avoid_keywords=["Kubernetes"],
+        ),
+    )
+    db.update_job_application_materials(
+        job_id,
+        recruiter_message="Hi Acme",
+        ats_cv_text="Kubernetes platform ownership.",
+    )
+
+    materials = client.get("/api/jobs").json()["jobs"][0]["materials"]
+
+    assert materials["review"]["status"] == "needs_review"
+    assert materials["review"]["requires_review"] is True
+    assert "ranking_requires_review" in materials["review"]["reasons"]
+    assert "ats_cv_too_short" in materials["review"]["reasons"]
+    assert "autofill_notes_missing" in materials["review"]["reasons"]
+    assert "ats_cv_contains_avoid_overclaiming_terms:Kubernetes" in materials["review"]["reasons"]
 
 
 def test_jobs_reject_heuristic_ranking_versions(tmp_path, monkeypatch):

@@ -78,6 +78,11 @@ export interface ApplicationMaterials {
   cover_letter: string
   ats_cv_notes: string
   autofill_notes: string
+  review: {
+    status: "missing" | "needs_review" | "ready" | string
+    requires_review: boolean
+    reasons: string[]
+  }
 }
 
 export interface PriorityBreakdown {
