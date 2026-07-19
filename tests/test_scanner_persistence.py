@@ -159,6 +159,34 @@ def test_application_material_update_preserves_unspecified_fields(tmp_path, monk
     assert stored["autofill_notes"] == "Initial autofill"
 
 
+def test_llm_output_feedback_is_persisted(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+
+    saved = db.save_llm_output_feedback(
+        {
+            "job_id": job_id,
+            "artifact_type": "ranking",
+            "action": "accepted",
+            "ranking_version": "ranking_v1.1.0-nvidia",
+            "provider": "nvidia",
+            "model": "test-model",
+            "prompt_versions": {"ranking/nvidia_response_contract": "v2"},
+            "metadata": {"score": 91},
+            "notes": "Looks right.",
+        }
+    )
+
+    rows = db.list_llm_output_feedback(job_id=job_id).to_dict("records")
+    assert saved["id"] == rows[0]["id"]
+    assert rows[0]["artifact_type"] == "ranking"
+    assert rows[0]["action"] == "accepted"
+    assert rows[0]["prompt_versions_json"] == '{"ranking/nvidia_response_contract": "v2"}'
+    assert rows[0]["metadata_json"] == '{"score": 91}'
+
+
 def test_application_entities_and_events_are_persisted(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()

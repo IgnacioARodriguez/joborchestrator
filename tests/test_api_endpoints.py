@@ -186,6 +186,34 @@ def test_jobs_expose_materials_review_status(tmp_path, monkeypatch):
     assert "ats_cv_contains_avoid_overclaiming_terms:Kubernetes" in materials["review"]["reasons"]
 
 
+def test_jobs_accept_llm_output_feedback(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    job_id = save_job_with_rankings()
+
+    response = client.post(
+        f"/api/jobs/{job_id}/llm-feedback",
+        json={
+            "artifact_type": "ranking",
+            "action": "accepted",
+            "notes": "Decision matched manual review.",
+            "metadata": {"source": "human_review"},
+        },
+    )
+
+    assert response.status_code == 200
+    feedback = response.json()["feedback"]
+    assert feedback["job_id"] == job_id
+    assert feedback["artifact_type"] == "ranking"
+    assert feedback["action"] == "accepted"
+    assert feedback["ranking_version"] == "ranking_v1.1.0-nvidia"
+    assert feedback["provider"] == "nvidia"
+    assert feedback["metadata"]["decision"] == "APPLY_NOW"
+    assert feedback["metadata"]["source"] == "human_review"
+
+    listed = client.get("/api/llm-feedback", params={"job_id": job_id, "artifact_type": "ranking"}).json()
+    assert listed["feedback"][0]["action"] == "accepted"
+
+
 def test_jobs_reject_heuristic_ranking_versions(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
 

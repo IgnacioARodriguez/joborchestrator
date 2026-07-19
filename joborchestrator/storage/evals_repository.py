@@ -75,3 +75,59 @@ def list_llm_eval_runs(
         return read_sql_query(query, conn, params=params)
     finally:
         conn.close()
+
+
+def save_llm_output_feedback(connect: ConnectionFactory, payload: dict[str, Any]) -> dict[str, Any]:
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = connect()
+    try:
+        cursor = conn.execute(
+            """INSERT INTO llm_output_feedback (
+                   job_id, artifact_type, action, ranking_version, provider, model,
+                   prompt_versions_json, metadata_json, notes, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                int(payload["job_id"]),
+                payload["artifact_type"],
+                payload["action"],
+                payload.get("ranking_version"),
+                payload.get("provider"),
+                payload.get("model"),
+                json.dumps(payload.get("prompt_versions") or {}, ensure_ascii=False, sort_keys=True),
+                json.dumps(payload.get("metadata") or {}, ensure_ascii=False, sort_keys=True),
+                payload.get("notes"),
+                now,
+            ),
+        )
+        conn.commit()
+        saved = dict(payload)
+        saved["id"] = int(cursor.lastrowid)
+        saved["created_at"] = now
+        return saved
+    finally:
+        conn.close()
+
+
+def list_llm_output_feedback(
+    connect: ConnectionFactory,
+    read_sql_query: ReadSqlQuery,
+    *,
+    limit: int = 50,
+    job_id: int | None = None,
+    artifact_type: str | None = None,
+) -> pd.DataFrame:
+    params: list[object] = []
+    query = "SELECT * FROM llm_output_feedback WHERE 1 = 1"
+    if job_id is not None:
+        query += " AND job_id = ?"
+        params.append(job_id)
+    if artifact_type:
+        query += " AND artifact_type = ?"
+        params.append(artifact_type)
+    query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+    params.append(limit)
+    conn = connect()
+    try:
+        return read_sql_query(query, conn, params=params)
+    finally:
+        conn.close()

@@ -96,6 +96,13 @@ class ApplicationEventPayload(BaseModel):
     note: str | None = None
 
 
+class LLMOutputFeedbackPayload(BaseModel):
+    artifact_type: Literal["ranking", "application_materials", "ats_cv"]
+    action: Literal["accepted", "edited", "rejected", "applied", "ignored"]
+    notes: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ResumePayload(BaseModel):
     label: str
     file_ref: str | None = None
@@ -557,6 +564,47 @@ def _ranking_from_apply_queue_row(row: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _llm_feedback_context(job_id: int, job: dict[str, Any], artifact_type: str) -> dict[str, Any]:
+    if artifact_type == "ranking":
+        ranking = latest_rankings_by_job_id().get(job_id) or {}
+        ranking_version = str(ranking.get("ranking_version") or "")
+        return {
+            "ranking_version": ranking_version or None,
+            "provider": _provider_from_label(ranking_version),
+            "model": None,
+            "prompt_versions": {},
+            "metadata": {
+                "decision": ranking.get("decision"),
+                "final_score": ranking.get("final_score"),
+                "confidence": ranking.get("confidence"),
+            },
+        }
+    prompt_versions = parse_json_value(job.get("materials_prompt_versions_json"), {})
+    return {
+        "ranking_version": None,
+        "provider": job.get("materials_provider"),
+        "model": job.get("materials_model"),
+        "prompt_versions": prompt_versions,
+        "metadata": {
+            "materials_generated_at": job.get("materials_generated_at"),
+            "has_recruiter_message": bool(str(job.get("recruiter_message") or "").strip()),
+            "has_ats_cv": bool(str(job.get("ats_cv_text") or "").strip()),
+            "has_autofill_notes": bool(str(job.get("autofill_notes") or "").strip()),
+        },
+    }
+
+
+def _provider_from_label(value: str) -> str | None:
+    normalized = str(value or "").lower()
+    if "nvidia" in normalized:
+        return "nvidia"
+    if "openai" in normalized:
+        return "openai"
+    if "speed" in normalized or "heuristic" in normalized:
+        return "heuristic"
+    return None
+
+
 def _apply_queue_sort_key(job: dict[str, Any]) -> tuple[int, int, int, int, int]:
     action_rank = {
         "Apply now": 7,
@@ -635,6 +683,39 @@ def mark_opened(job_id: int) -> dict[str, Any]:
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Job not found") from exc
     return {"ok": True, "event": event}
+
+
+@app.post("/api/jobs/{job_id}/llm-feedback")
+def create_llm_output_feedback(job_id: int, payload: LLMOutputFeedbackPayload) -> dict[str, Any]:
+    job = db.get_job_posting(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    context = _llm_feedback_context(job_id, job, payload.artifact_type)
+    feedback = db.save_llm_output_feedback(
+        {
+            "job_id": job_id,
+            "artifact_type": payload.artifact_type,
+            "action": payload.action,
+            "notes": payload.notes,
+            "metadata": {**context["metadata"], **payload.metadata},
+            "ranking_version": context.get("ranking_version"),
+            "provider": context.get("provider"),
+            "model": context.get("model"),
+            "prompt_versions": context.get("prompt_versions") or {},
+        }
+    )
+    return {"feedback": feedback}
+
+
+@app.get("/api/llm-feedback")
+def list_llm_output_feedback(
+    job_id: int | None = None,
+    artifact_type: Literal["ranking", "application_materials", "ats_cv"] | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    effective_limit = max(1, min(limit, 500))
+    frame = db.list_llm_output_feedback(limit=effective_limit, job_id=job_id, artifact_type=artifact_type)
+    return {"feedback": frame.to_dict("records")}
 
 
 @app.post("/api/jobs/{job_id}/applications")

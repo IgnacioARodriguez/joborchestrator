@@ -64,6 +64,10 @@ LLM_EVAL_RUN_COLUMNS = {
     "judge_model": "TEXT",
     "judge_result_json": "TEXT",
 }
+LLM_OUTPUT_FEEDBACK_COLUMNS = {
+    "prompt_versions_json": "TEXT",
+    "metadata_json": "TEXT",
+}
 _SCHEMA_READY = False
 _SCHEMA_READY_PATH: str | None = None
 
@@ -529,6 +533,24 @@ CREATE TABLE IF NOT EXISTS llm_eval_runs (
 
 CREATE INDEX IF NOT EXISTS idx_llm_eval_runs_case ON llm_eval_runs(case_id, artifact_type);
 CREATE INDEX IF NOT EXISTS idx_llm_eval_runs_created ON llm_eval_runs(created_at);
+
+CREATE TABLE IF NOT EXISTS llm_output_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    artifact_type TEXT NOT NULL,
+    action TEXT NOT NULL,
+    ranking_version TEXT,
+    provider TEXT,
+    model TEXT,
+    prompt_versions_json TEXT,
+    metadata_json TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(job_id) REFERENCES job_postings(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_output_feedback_job ON llm_output_feedback(job_id, artifact_type, created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_output_feedback_action ON llm_output_feedback(action, created_at);
 """
 
 
@@ -554,6 +576,7 @@ def _conn():
         _ensure_scanner_columns(conn)
         _ensure_hiring_contacts_schema(conn)
         _ensure_llm_eval_schema(conn)
+        _ensure_llm_output_feedback_schema(conn)
         skill_catalog_repository.seed_skill_catalog(conn)
         _backfill_speed_ranking_columns(conn)
         _backfill_legacy_hiring_contacts(conn)
@@ -577,6 +600,7 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
         "linkedin_scan_pages",
         "linkedin_job_enrichments",
         "llm_eval_runs",
+        "llm_output_feedback",
     }
     placeholders = ",".join("?" for _ in required_tables)
     rows = conn.execute(
@@ -587,7 +611,10 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
     if not required_tables.issubset(existing):
         return False
     eval_columns = _table_columns(conn, "llm_eval_runs")
-    return set(LLM_EVAL_RUN_COLUMNS).issubset(eval_columns)
+    feedback_columns = _table_columns(conn, "llm_output_feedback")
+    return set(LLM_EVAL_RUN_COLUMNS).issubset(eval_columns) and set(LLM_OUTPUT_FEEDBACK_COLUMNS).issubset(
+        feedback_columns
+    )
 
 
 def backup_database(reason: str = "manual") -> Path | None:
@@ -678,6 +705,32 @@ def _ensure_llm_eval_schema(conn: sqlite3.Connection) -> None:
             columns.add(column)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_eval_runs_case ON llm_eval_runs(case_id, artifact_type)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_eval_runs_created ON llm_eval_runs(created_at)")
+
+
+def _ensure_llm_output_feedback_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS llm_output_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            artifact_type TEXT NOT NULL,
+            action TEXT NOT NULL,
+            ranking_version TEXT,
+            provider TEXT,
+            model TEXT,
+            prompt_versions_json TEXT,
+            metadata_json TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(job_id) REFERENCES job_postings(id)
+        )"""
+    )
+    columns = _table_columns(conn, "llm_output_feedback")
+    for column, column_type in LLM_OUTPUT_FEEDBACK_COLUMNS.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE llm_output_feedback ADD COLUMN {column} {column_type}")
+            columns.add(column)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_output_feedback_job ON llm_output_feedback(job_id, artifact_type, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_output_feedback_action ON llm_output_feedback(action, created_at)")
 
 
 def _scanner_migration_needed(conn: sqlite3.Connection) -> bool:
@@ -1438,5 +1491,24 @@ def list_llm_eval_runs(
         _read_sql_query,
         limit=limit,
         case_id=case_id,
+        artifact_type=artifact_type,
+    )
+
+
+def save_llm_output_feedback(payload: dict) -> dict:
+    return evals_repository.save_llm_output_feedback(_conn, payload)
+
+
+def list_llm_output_feedback(
+    *,
+    limit: int = 50,
+    job_id: int | None = None,
+    artifact_type: str | None = None,
+) -> pd.DataFrame:
+    return evals_repository.list_llm_output_feedback(
+        _conn,
+        _read_sql_query,
+        limit=limit,
+        job_id=job_id,
         artifact_type=artifact_type,
     )
