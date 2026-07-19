@@ -92,6 +92,12 @@ Done when:
 
 Goal: create the minimum evidence base.
 
+Candidate review packet command:
+
+```bash
+python scripts/select_llm_golden_candidates.py --target-total 40 --output logs/llm_golden_candidate_review_packet.json
+```
+
 Done when:
 
 - At least 30 reviewed cases exist.
