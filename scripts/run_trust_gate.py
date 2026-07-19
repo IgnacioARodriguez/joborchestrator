@@ -23,6 +23,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the local LLM trust gate without live LLM calls.")
     parser.add_argument("--golden-cases", type=Path, default=DEFAULT_GOLDEN_CASES_DIR)
     parser.add_argument("--min-reviewed-golden", type=int, default=30)
+    parser.add_argument("--min-per-surface", type=int, default=3)
     parser.add_argument("--min-restraint-cases", type=int, default=10)
     parser.add_argument("--ranking-version", default="ranking_v1.1.0-nvidia")
     parser.add_argument("--run-golden-baseline", action="store_true")
@@ -41,6 +42,7 @@ def run_trust_gate(args: argparse.Namespace) -> dict[str, Any]:
             "golden_fixtures": audit_golden_fixtures(
                 args.golden_cases,
                 min_reviewed=args.min_reviewed_golden,
+                min_per_surface=args.min_per_surface,
                 min_restraint_cases=args.min_restraint_cases,
             ),
         }
@@ -58,7 +60,13 @@ def run_trust_gate(args: argparse.Namespace) -> dict[str, Any]:
     return summary
 
 
-def audit_golden_fixtures(path: Path, *, min_reviewed: int, min_restraint_cases: int) -> dict[str, Any]:
+def audit_golden_fixtures(
+    path: Path,
+    *,
+    min_reviewed: int,
+    min_per_surface: int,
+    min_restraint_cases: int,
+) -> dict[str, Any]:
     fixtures = load_golden_fixtures(path)
     by_surface = {surface: 0 for surface in SURFACES}
     for fixture in fixtures:
@@ -70,8 +78,8 @@ def audit_golden_fixtures(path: Path, *, min_reviewed: int, min_restraint_cases:
     if len(fixtures) < min_reviewed:
         issues.append(f"reviewed_golden_below_minimum:{len(fixtures)}<{min_reviewed}")
     for surface, count in by_surface.items():
-        if count == 0:
-            issues.append(f"missing_surface:{surface}")
+        if count < min_per_surface:
+            issues.append(f"surface_below_minimum:{surface}:{count}<{min_per_surface}")
     if restraint_cases < min_restraint_cases:
         issues.append(f"restraint_cases_below_minimum:{restraint_cases}<{min_restraint_cases}")
     return {

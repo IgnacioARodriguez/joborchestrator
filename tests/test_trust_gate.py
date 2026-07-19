@@ -23,6 +23,8 @@ def test_trust_gate_runs_offline_checks_and_writes_summary(tmp_path, monkeypatch
                 str(fixture_dir),
                 "--min-reviewed-golden",
                 "3",
+                "--min-per-surface",
+                "1",
                 "--min-restraint-cases",
                 "1",
                 "--output",
@@ -45,12 +47,12 @@ def test_golden_fixture_audit_requires_minimum_coverage(tmp_path):
     fixture_dir.mkdir()
     _write_fixture(fixture_dir / "ranking.json", "ranking-only", "ranking", restraint=False)
 
-    result = gate.audit_golden_fixtures(fixture_dir, min_reviewed=3, min_restraint_cases=1)
+    result = gate.audit_golden_fixtures(fixture_dir, min_reviewed=3, min_per_surface=1, min_restraint_cases=1)
 
     assert result["passed"] is False
     assert "reviewed_golden_below_minimum:1<3" in result["issues"]
-    assert "missing_surface:application_materials" in result["issues"]
-    assert "missing_surface:ats_cv" in result["issues"]
+    assert "surface_below_minimum:application_materials:0<1" in result["issues"]
+    assert "surface_below_minimum:ats_cv:0<1" in result["issues"]
     assert "restraint_cases_below_minimum:0<1" in result["issues"]
 
 

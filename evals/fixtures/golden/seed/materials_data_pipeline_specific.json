@@ -1,0 +1,38 @@
+{
+  "case_id": "materials-data-pipeline-specific",
+  "surface": "application_materials",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {
+    "job_id": null,
+    "label": "materials-data-pipeline-synthetic"
+  },
+  "raw_input": {
+    "source": "synthetic_golden_seed",
+    "title": "Backend Data Pipeline Engineer",
+    "company": "DataNest",
+    "location": "Remote Europe",
+    "job_html_or_text": "DataNest needs a Backend Data Pipeline Engineer to build Python services, own SQL data pipelines, improve observability, and collaborate with analytics stakeholders.",
+    "url": null,
+    "apply_url": null
+  },
+  "candidate_profile_snapshot": {
+    "source": "synthetic_reviewed_profile",
+    "profile": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend engineer with Python APIs, SQL data workflows, dashboards, observability, stakeholder collaboration, Fiction Express, Talan Consulting, Globant, and Balloon Group.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "SQL", "level": "strong"},
+        {"name": "observability", "level": "working"},
+        {"name": "stakeholder collaboration", "level": "working"}
+      ]
+    }
+  },
+  "expected": {
+    "required_terms": ["Python", "SQL", "observability"],
+    "specificity_terms": ["DataNest", "Backend Data Pipeline Engineer"],
+    "max_recruiter_message_chars": 320,
+    "forbidden_claims": ["data scientist", "Apache Spark expert", "managed ML models"]
+  },
+  "human_review_notes": "Reviewed seed case: materials must be specific to DataNest and pipeline/backend work without turning the profile into a data science background."
+}

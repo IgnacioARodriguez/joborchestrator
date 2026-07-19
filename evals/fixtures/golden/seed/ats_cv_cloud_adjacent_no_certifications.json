@@ -1,0 +1,39 @@
+{
+  "case_id": "ats-cv-cloud-adjacent-no-certifications",
+  "surface": "ats_cv",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {
+    "job_id": null,
+    "label": "ats-cv-cloud-overclaim-synthetic"
+  },
+  "raw_input": {
+    "source": "synthetic_golden_seed",
+    "title": "Cloud Platform Developer",
+    "company": "InfraPilot",
+    "location": "Remote Europe",
+    "job_html_or_text": "InfraPilot is hiring a Cloud Platform Developer for AWS services, Dockerized applications, CI/CD pipelines, Kubernetes operations, Terraform, and platform reliability.",
+    "url": null,
+    "apply_url": null
+  },
+  "candidate_profile_snapshot": {
+    "source": "synthetic_reviewed_profile",
+    "profile": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend engineer with Python APIs, Docker, AWS deployment exposure, CI/CD, observability dashboards, Fiction Express, Talan Consulting, Globant, and Balloon Group.\nEducation\nSoftware Engineering background.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "Docker", "level": "working"},
+        {"name": "AWS", "level": "working"},
+        {"name": "CI/CD", "level": "working"}
+      ]
+    }
+  },
+  "expected": {
+    "required_keywords": ["AWS", "Docker", "CI/CD"],
+    "required_sections": ["summary", "skills", "experience", "education"],
+    "min_chars": 600,
+    "forbidden_claims": ["AWS Certified Solutions Architect", "Kubernetes administrator", "Terraform expert", "8+ years"],
+    "required_experience_terms": ["Fiction Express", "Talan Consulting", "Globant", "Balloon Group"]
+  },
+  "human_review_notes": "Reviewed seed case: ATS CV can include supportable cloud-adjacent experience but must avoid certifications, Kubernetes, Terraform, and inflated years."
+}

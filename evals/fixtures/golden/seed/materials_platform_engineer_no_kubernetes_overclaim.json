@@ -1,0 +1,38 @@
+{
+  "case_id": "materials-platform-engineer-no-kubernetes-overclaim",
+  "surface": "application_materials",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {
+    "job_id": null,
+    "label": "materials-platform-overclaim-synthetic"
+  },
+  "raw_input": {
+    "source": "synthetic_golden_seed",
+    "title": "Platform Engineer",
+    "company": "DeployWorks",
+    "location": "Remote Europe",
+    "job_html_or_text": "DeployWorks is hiring a Platform Engineer for CI/CD, Docker, AWS deployment workflows, Kubernetes operations, Terraform modules, and production reliability.",
+    "url": null,
+    "apply_url": null
+  },
+  "candidate_profile_snapshot": {
+    "source": "synthetic_reviewed_profile",
+    "profile": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend engineer with Python APIs, Docker, AWS deployment exposure, CI/CD, observability, dashboards, Fiction Express, Talan Consulting, Globant, and Balloon Group.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "Docker", "level": "working"},
+        {"name": "AWS", "level": "working"},
+        {"name": "CI/CD", "level": "working"}
+      ]
+    }
+  },
+  "expected": {
+    "required_terms": ["Docker", "AWS", "CI/CD"],
+    "specificity_terms": ["DeployWorks", "Platform Engineer"],
+    "max_recruiter_message_chars": 320,
+    "forbidden_claims": ["Kubernetes operator", "Terraform modules", "owned Kubernetes clusters", "SRE lead"]
+  },
+  "human_review_notes": "Reviewed seed case: materials can position adjacent deployment experience but must not claim Kubernetes or Terraform ownership."
+}

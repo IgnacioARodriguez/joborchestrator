@@ -1,0 +1,42 @@
+{
+  "case_id": "ats-cv-preserve-base-experience",
+  "surface": "ats_cv",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {
+    "job_id": null,
+    "label": "ats-cv-preserve-experience-synthetic"
+  },
+  "raw_input": {
+    "source": "synthetic_golden_seed",
+    "title": "Python Backend Developer",
+    "company": "CloudWorks",
+    "location": "Remote Spain",
+    "job_html_or_text": "CloudWorks needs a Python Backend Developer for REST APIs, SQL persistence, observability, and collaboration with product teams.",
+    "url": null,
+    "apply_url": null
+  },
+  "candidate_profile_snapshot": {
+    "source": "synthetic_reviewed_profile",
+    "profile": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend Engineer\nExperience\nFiction Express - Python APIs and product delivery.\nTalan Consulting - backend services and SQL workflows.\nGlobant - software engineering delivery.\nBalloon Group - dashboards and automation.\nEducation\nSoftware Engineering background.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "REST APIs", "level": "strong"},
+        {"name": "SQL", "level": "strong"},
+        {"name": "observability", "level": "working"}
+      ]
+    }
+  },
+  "expected": {
+    "required_keywords": ["Python", "REST", "SQL", "observability"],
+    "required_sections": ["summary", "skills", "experience", "education"],
+    "min_chars": 650,
+    "keyword_synonyms": {
+      "REST": ["REST APIs", "APIs"],
+      "SQL": ["PostgreSQL", "relational database"]
+    },
+    "required_experience_terms": ["Fiction Express", "Talan Consulting", "Globant", "Balloon Group"]
+  },
+  "human_review_notes": "Reviewed seed case: ATS CV must preserve real employer history while tailoring toward Python backend requirements."
+}
