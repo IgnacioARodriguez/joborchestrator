@@ -684,7 +684,7 @@ def _kit_response_validation_error(
         if not str(payload.get(field) or "").strip():
             problems.append(f"{field} is required")
     recruiter_message = str(payload.get("recruiter_message") or "")
-    if len(recruiter_message) > 500:
+    if len(recruiter_message) > 320:
         problems.append("recruiter_message is too long")
     problems.extend(_recruiter_message_quality_problems(recruiter_message))
     problems.extend(_recruiter_message_specificity_problems(recruiter_message, source_payload))

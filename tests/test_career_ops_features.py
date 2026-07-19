@@ -305,6 +305,23 @@ def test_recruiter_message_validation_accepts_company_or_role_specific_message()
     assert error is None
 
 
+def test_recruiter_message_validation_rejects_messages_over_golden_limit():
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi Acme Labs, " + ("Python backend fit. " * 20),
+            "cover_letter": "",
+            "ats_cv_text": _complete_ats_cv_text(),
+            "autofill_notes": "Use tailored answers.",
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        },
+        source_payload={"job": {"title": "Backend Engineer", "company": "Acme Labs"}},
+    )
+
+    assert error is not None
+    assert "recruiter_message is too long" in error
+
+
 def test_recruiter_message_validation_rejects_cover_letter_style():
     error = _materials_validation_error(
         {
