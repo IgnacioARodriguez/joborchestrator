@@ -23,6 +23,7 @@ import type {
   ApplicationSessionResponse,
   LLMFeedbackAction,
   LLMFeedbackArtifact,
+  LLMFeedbackSummary,
   LLMOutputFeedback,
 } from "./types"
 
@@ -171,6 +172,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     })
+  },
+
+  async getLlmFeedbackSummary() {
+    return request<{ summary: LLMFeedbackSummary }>("/api/llm-feedback/summary", { fresh: true })
   },
 
   async createJob(input: {

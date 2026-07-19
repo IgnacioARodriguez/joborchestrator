@@ -110,6 +110,15 @@ export interface LLMOutputFeedback {
   created_at: string
 }
 
+export interface LLMFeedbackSummary {
+  total: number
+  positive: number
+  negative: number
+  acceptance_rate: number
+  by_action: Record<string, number>
+  by_artifact: Record<string, Record<string, number>>
+}
+
 export interface PriorityBreakdown {
   priority_score: number
   fit_score: number

@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/page-chrome"
 import { useStore } from "@/lib/store"
 import { computeKpis } from "@/lib/stats"
 import { api } from "@/lib/api"
-import type { ApplicationRecord, ResumeVariant } from "@/lib/types"
+import type { ApplicationRecord, LLMFeedbackSummary, ResumeVariant } from "@/lib/types"
 import { Briefcase, CheckCircle2, Gauge, Send, Sparkles } from "lucide-react"
 
 const RESPONSE_STATUSES = new Set(["recruiter_screen", "interview", "technical", "offer"])
@@ -87,25 +87,70 @@ function RateTable({ title, rows }: { title: string; rows: RateRow[] }) {
   )
 }
 
+function FeedbackSummaryPanel({ summary }: { summary: LLMFeedbackSummary | null }) {
+  const artifacts = summary ? Object.entries(summary.by_artifact) : []
+  return (
+    <section className="rounded-lg border border-border bg-card">
+      <div className="border-b border-border px-4 py-3">
+        <h2 className="text-sm font-semibold text-foreground">LLM feedback</h2>
+      </div>
+      <div className="grid gap-3 p-4 sm:grid-cols-3">
+        <div>
+          <p className="text-xs text-muted-foreground">Total signals</p>
+          <p className="text-2xl font-semibold text-foreground">{summary?.total ?? 0}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Accepted/applied</p>
+          <p className="text-2xl font-semibold text-success">{summary?.positive ?? 0}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Rejected</p>
+          <p className="text-2xl font-semibold text-destructive">{summary?.negative ?? 0}</p>
+        </div>
+      </div>
+      <div className="border-t border-border px-4 py-3">
+        {artifacts.length ? (
+          <div className="flex flex-wrap gap-2">
+            {artifacts.map(([artifact, row]) => (
+              <span key={artifact} className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+                {artifact.replaceAll("_", " ")}: {row.total}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">No feedback captured yet.</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
 export function InsightsScreen() {
   const { jobs } = useStore()
   const [applications, setApplications] = useState<ApplicationRecord[]>([])
   const [resumes, setResumes] = useState<ResumeVariant[]>([])
+  const [feedbackSummary, setFeedbackSummary] = useState<LLMFeedbackSummary | null>(null)
   const kpis = computeKpis(jobs)
 
   useEffect(() => {
     let cancelled = false
     async function loadFeedbackLoop() {
-      const [applicationData, resumeData] = await Promise.all([api.getApplications(), api.getResumes()])
+      const [applicationData, resumeData, feedbackData] = await Promise.all([
+        api.getApplications(),
+        api.getResumes(),
+        api.getLlmFeedbackSummary(),
+      ])
       if (!cancelled) {
         setApplications(applicationData.applications)
         setResumes(resumeData.resumes)
+        setFeedbackSummary(feedbackData.summary)
       }
     }
     void loadFeedbackLoop().catch(() => {
       if (!cancelled) {
         setApplications([])
         setResumes([])
+        setFeedbackSummary(null)
       }
     })
     return () => {
@@ -142,6 +187,7 @@ export function InsightsScreen() {
             <RateTable title="Response by resume variant" rows={byResume} />
             <RateTable title="Response by job age at apply" rows={byAge} />
           </div>
+          <FeedbackSummaryPanel summary={feedbackSummary} />
           <DashboardCharts jobs={jobs} />
         </div>
       </div>
