@@ -28,6 +28,7 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 - Current re-ranking job: `#8`, 419 queued, 375 processed, 375 saved, 0 failed as of the latest Vercel backend smoke.
 - Local offline trust gate: `npm run trust:gate` passed on 2026-07-19.
 - Latest Vercel backend smoke: passed against Turso on 2026-07-19; warning only for 27 recent historical scan errors, while latest scan completed with 0 errors. Error sample points to `themuse`/`remotive` API timeouts from 2026-07-15.
+- Latest Vercel UI smoke: passed on 2026-07-19; dashboard rendered 419 visible jobs across Today/Review/Applications/Profile/Automations/Insights with no console errors or failed requests.
 - Stored eval evidence:
   - Ranking: 10 cases, 4 passed, 40.0% pass rate, average score 91.0.
   - Application materials: 3 cases, 0 passed, 0.0% pass rate, average score 65.0.
@@ -58,7 +59,7 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 | Production ranking | Rankings persist model, version, score, evidence | Green-Yellow | `job_rankings` stores version, decision, confidence, scores/evidence JSON, and new NVIDIA rows persist provider, model, prompt version, validation attempts/errors, and candidate profile snapshot hash; API/UI expose ranking review status | Existing ranking rows need reranking to populate trace metadata; review thresholds need calibration |
 | Production confidence gates | Uncertain outputs become review-required drafts | Green-Yellow | Ranking safety gates set `requires_llm_review`; ranking API/UI marks low confidence, validation retry, thin positive evidence, and missing central requirements for review; materials expose derived review status and reasons in API/UI | Need fresh production review of false positives/negatives |
 | Observability | Outputs trace prompt/model/evidence/status | Green-Yellow | Ranking rows now support provider, model, prompt version, validation attempts/errors, and candidate profile snapshot hash for new NVIDIA rankings; ranking review status is exposed in API/UI; materials persist provider, model, prompt versions, generated timestamp, validation attempts/errors, and candidate profile snapshot hash; eval rows preserve payloads/results; LLM output feedback is stored and summarized by job/artifact/action | Need fresh reranking to backfill production ranking metadata |
-| Production health | App/API/DB smokes are green | Green | Vercel backend smoke passed against Turso on 2026-07-19; local trust gate runs offline e2e, scan, guardrail, and golden-fixture coverage checks; smoke now summarizes recent scan error samples | Historical `themuse`/`remotive` timeout rate should be reviewed separately from latest healthy scan |
+| Production health | App/API/DB smokes are green | Green | Vercel backend and UI smokes passed against Turso on 2026-07-19; local trust gate runs offline e2e, scan, guardrail, and golden-fixture coverage checks; smoke now summarizes recent scan error samples | Historical `themuse`/`remotive` timeout rate should be reviewed separately from latest healthy scan |
 
 ## Current Trust Score By Surface
 
