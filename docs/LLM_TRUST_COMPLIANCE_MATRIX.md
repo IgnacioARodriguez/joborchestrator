@@ -14,7 +14,7 @@ Status values:
 
 Current trust posture: Yellow, approximately 7.7/10.
 
-HuntPilot is currently suitable as a strong copilot for job discovery, ranking, and draft generation. It is not yet suitable for near-blind trust because v2 prompt quality has not been proven with a fresh full baseline, materials/ATS CV still need measured quality work, and review-state policy is not yet strict enough for every risky production output.
+HuntPilot is currently suitable as a strong copilot for job discovery, ranking, and draft generation. It is not yet suitable for near-blind trust because v2 prompt quality has not been proven with a fresh full baseline, materials/ATS CV still need measured quality work, and review-state thresholds still need calibration against fresh production results.
 
 ## Current Evidence Snapshot
 
@@ -53,20 +53,20 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 | Case regressions | 0 regressions on promotion | Green-Yellow | `compare_summaries` regressions are wired into promotion gate | Needs fresh runs to prove effectiveness at scale |
 | Judge rubric | Versioned judge prompt and issue codes | Green-Yellow | Judge rubric v1, issue code normalization, multi-model support | Need stronger calibration against human review |
 | Multi-model judge | Disputed/high-risk evals can use two models | Yellow | NVIDIA secondary model support exists | Not yet used as routine gate |
-| Production ranking | Rankings persist model, version, score, evidence | Yellow-Green | `job_rankings` stores version, decision, confidence, scores/evidence JSON, and new NVIDIA rows persist provider, model, prompt version, validation attempts/errors, and candidate profile snapshot hash | Existing ranking rows need reranking to populate trace metadata; review-state policy still needs tightening |
-| Production confidence gates | Uncertain outputs become review-required drafts | Yellow-Green | Ranking safety gates now set `requires_llm_review`; materials expose derived review status and reasons in API/UI | Need explicit policy for ranking retry/schema repair metadata and weak evidence |
-| Observability | Outputs trace prompt/model/evidence/status | Green-Yellow | Ranking rows now support provider, model, prompt version, validation attempts/errors, and candidate profile snapshot hash for new NVIDIA rankings; materials persist provider, model, prompt versions, generated timestamp, validation attempts/errors, and candidate profile snapshot hash; eval rows preserve payloads/results; LLM output feedback is stored and summarized by job/artifact/action | Need fresh reranking to backfill production ranking metadata and clearer UI treatment for retry-derived risk |
+| Production ranking | Rankings persist model, version, score, evidence | Green-Yellow | `job_rankings` stores version, decision, confidence, scores/evidence JSON, and new NVIDIA rows persist provider, model, prompt version, validation attempts/errors, and candidate profile snapshot hash; API/UI expose ranking review status | Existing ranking rows need reranking to populate trace metadata; review thresholds need calibration |
+| Production confidence gates | Uncertain outputs become review-required drafts | Green-Yellow | Ranking safety gates set `requires_llm_review`; ranking API/UI marks low confidence, validation retry, thin positive evidence, and missing central requirements for review; materials expose derived review status and reasons in API/UI | Need fresh production review of false positives/negatives |
+| Observability | Outputs trace prompt/model/evidence/status | Green-Yellow | Ranking rows now support provider, model, prompt version, validation attempts/errors, and candidate profile snapshot hash for new NVIDIA rankings; ranking review status is exposed in API/UI; materials persist provider, model, prompt versions, generated timestamp, validation attempts/errors, and candidate profile snapshot hash; eval rows preserve payloads/results; LLM output feedback is stored and summarized by job/artifact/action | Need fresh reranking to backfill production ranking metadata |
 | Production health | App/API/DB smokes are green | Green | Vercel backend/UI smokes passed; workers idle before ranking #7 | Ranking #7 is paused and should be cancelled or resumed intentionally |
 
 ## Current Trust Score By Surface
 
 | Surface | Score | Rationale |
 | --- | ---: | --- |
-| Ranking | 7.6 | Productive flow works, evidence is structured, new NVIDIA rankings are traceable to provider/model/prompt/profile/retry metadata, and post-LLM safety gates now block known high-risk APPLY_NOW failures; needs fresh baseline after re-ranking. |
+| Ranking | 7.7 | Productive flow works, evidence is structured, new NVIDIA rankings are traceable to provider/model/prompt/profile/retry metadata, API/UI expose review status, and post-LLM safety gates now block known high-risk APPLY_NOW failures; needs fresh baseline after re-ranking. |
 | Application materials | 6.1 | Prompt v2 exists, recruiter specificity/length gates improved, materials review status is exposed, and generation/retry/profile trace metadata is persisted; stored eval evidence still needs a fresh pass. |
 | ATS CV | 6.0 | Internal notes, incomplete CVs, omitted base experiences, and unsupported ranking avoid-overclaiming terms now have deterministic gates; needs fresh v2 proof. |
 | Judge/evals | 7.2 | Strong framework, feedback records and summary analytics are now available for calibration, but dataset is still small and judge calibration remains limited. |
-| Production operations | 7.7 | Vercel/Turso/smokes are healthy; materials/ranking outputs are traceable for new writes, retry/profile metadata is stored, and user feedback can be captured/summarized; remaining risk is quality gating rather than uptime. |
+| Production operations | 7.8 | Vercel/Turso/smokes are healthy; materials/ranking outputs are traceable for new writes, retry/profile metadata is stored, ranking/material review status is visible, and user feedback can be captured/summarized; remaining risk is quality gating rather than uptime. |
 
 Overall: 7.7/10.
 
