@@ -791,6 +791,12 @@ function DetailBody({
               tone="text-destructive"
             />
             <EvidenceList
+              title="Review reasons"
+              items={evidence.llm_escalation_reasons}
+              icon={CircleAlert}
+              tone="text-warning-foreground"
+            />
+            <EvidenceList
               title="Must-haves with evidence"
               items={evidence.strong_matches}
               icon={CircleCheck}

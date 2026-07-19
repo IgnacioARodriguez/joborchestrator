@@ -111,13 +111,13 @@ def ranking_dto(row: dict[str, Any] | None) -> dict[str, Any]:
     evidence.setdefault("missing_requirements", [])
     evidence.setdefault("dealbreakers", [])
     evidence.setdefault("red_flags", [])
+    evidence.setdefault("requires_llm_review", False)
+    evidence.setdefault("llm_escalation_reasons", [])
     evidence.setdefault("central_requirements", [])
     evidence["central_requirements"] = [
         item.get("requirement") if isinstance(item, dict) else str(item)
         for item in evidence.get("central_requirements") or []
     ]
-    evidence.pop("requires_llm_review", None)
-    evidence.pop("llm_escalation_reasons", None)
     return {
         "final_score": int(row.get("final_score") or 0),
         "decision": row.get("decision") or "MAYBE",
@@ -183,6 +183,8 @@ def _default_ranking() -> dict[str, Any]:
             "missing_requirements": [],
             "dealbreakers": [],
             "red_flags": [],
+            "requires_llm_review": False,
+            "llm_escalation_reasons": [],
             "central_requirements": [],
         },
         "reasoning_summary": "Not ranked yet.",

@@ -55,6 +55,8 @@ export interface RankingEvidence {
   missing_requirements: string[]
   dealbreakers: string[]
   red_flags: string[]
+  requires_llm_review: boolean
+  llm_escalation_reasons: string[]
   central_requirements: string[]
 }
 

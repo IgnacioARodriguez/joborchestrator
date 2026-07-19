@@ -11,6 +11,7 @@ import {
   FileText,
   Users,
   WalletCards,
+  CircleAlert,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -67,6 +68,12 @@ export function JobCard({
                 <span className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                   <FileText className="size-3" />
                   Kit ready
+                </span>
+              ) : null}
+              {job.ranking.evidence.requires_llm_review ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-warning/30 bg-warning/15 px-1.5 py-0.5 text-[11px] font-medium text-warning-foreground">
+                  <CircleAlert className="size-3" />
+                  Review
                 </span>
               ) : null}
               {applicants ? (

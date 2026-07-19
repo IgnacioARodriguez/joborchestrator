@@ -1,6 +1,6 @@
 "use client"
 
-import { Building2, Clock3, ExternalLink, MapPin, UserRoundCheck } from "lucide-react"
+import { Building2, CircleAlert, Clock3, ExternalLink, MapPin, UserRoundCheck } from "lucide-react"
 import { DecisionBadge, ScoreBadge } from "@/components/badges"
 import { Button } from "@/components/ui/button"
 import type { JobPosting } from "@/lib/types"
@@ -43,6 +43,12 @@ export function JobCompactCard({
             <span className="rounded-md border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
               {freshnessLabel(job.priority.freshness_bucket, job.priority.freshness_age_days)}
             </span>
+            {job.ranking.evidence.requires_llm_review ? (
+              <span className="inline-flex items-center gap-1 rounded-md border border-warning/30 bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning-foreground">
+                <CircleAlert className="size-3" />
+                Review
+              </span>
+            ) : null}
           </div>
           <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
             {job.title}

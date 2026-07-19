@@ -39,7 +39,18 @@ def make_job(
     )
 
 
-def make_ranking(version: str, score: int, decision: str = "APPLY_NOW") -> RankingResult:
+def make_ranking(
+    version: str,
+    score: int,
+    decision: str = "APPLY_NOW",
+    *,
+    requires_review: bool = False,
+) -> RankingResult:
+    evidence = RankingEvidence(strong_matches=["Python"])
+    if requires_review:
+        evidence.requires_llm_review = True
+        evidence.llm_escalation_reasons = ["safety_cap_location"]
+        evidence.red_flags = ["location restriction"]
     return RankingResult(
         final_score=score,
         decision=decision,  # type: ignore[arg-type]
@@ -53,7 +64,7 @@ def make_ranking(version: str, score: int, decision: str = "APPLY_NOW") -> Ranki
             market_alignment=score,
             risk_penalty=2,
         ),
-        evidence=RankingEvidence(strong_matches=["Python"]),
+        evidence=evidence,
         reasoning_summary=f"{version} summary",
         recommended_application_angle=f"{version} angle",
         cv_keywords_to_emphasize=["Python", "FastAPI"],
@@ -125,6 +136,23 @@ def test_jobs_can_select_ranking_version_and_hide_heuristic_versions(tmp_path, m
     openai_body = openai_response.json()
     assert openai_body["selected_ranking_version"] == "ranking_v1.1.0-openai:gpt-5.4-mini"
     assert openai_body["jobs"][0]["ranking"]["final_score"] == 72
+
+
+def test_jobs_expose_ranking_review_flags(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(external_id="review-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    db.save_job_ranking(
+        job_id,
+        make_ranking("ranking_v1.1.0-nvidia", 64, "APPLY_WITH_TAILORED_CV", requires_review=True),
+    )
+
+    body = client.get("/api/jobs").json()
+    evidence = body["jobs"][0]["ranking"]["evidence"]
+
+    assert evidence["requires_llm_review"] is True
+    assert evidence["llm_escalation_reasons"] == ["safety_cap_location"]
+    assert evidence["red_flags"] == ["location restriction"]
 
 
 def test_jobs_reject_heuristic_ranking_versions(tmp_path, monkeypatch):
