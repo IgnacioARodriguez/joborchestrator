@@ -32,6 +32,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     export_ats_cv_pdf_bytes,
     materials_prompt_versions,
 )
+from joborchestrator.intelligence.profile_trace import profile_trace
 from joborchestrator.automation.adapters import AdapterRegistry
 from joborchestrator.automation.accounts import site_identity_from_url, store_password
 from joborchestrator.paths import SALIDAS_DIR
@@ -1027,6 +1028,7 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
     except (ApplicationMaterialsError, LLMMaterialsError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    profile_metadata = profile_trace(db.get_candidate_profile_payload())
     db.update_job_application_materials(
         job_id,
         pipeline_status="shortlisted" if payload.shortlist else None,
@@ -1039,6 +1041,8 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
         materials_prompt_versions=materials_prompt_versions() if provider != "heuristic" else {},
         materials_validation_attempts=1,
         materials_validation_errors=[],
+        materials_candidate_profile_hash=profile_metadata.get("hash"),
+        materials_candidate_profile_snapshot=profile_metadata.get("snapshot"),
     )
     fresh = db.get_job_posting(job_id)
     rankings = latest_rankings_by_job_id()

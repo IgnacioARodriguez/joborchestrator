@@ -52,6 +52,8 @@ APPLICATION_KIT_COLUMNS = {
     "materials_generated_at": "TEXT",
     "materials_validation_attempts": "INTEGER",
     "materials_validation_errors_json": "TEXT",
+    "materials_candidate_profile_hash": "TEXT",
+    "materials_candidate_profile_snapshot_json": "TEXT",
 }
 LINKEDIN_ENRICHMENT_COLUMNS = {
     "applicant_count": "INTEGER",
@@ -1314,6 +1316,8 @@ def update_job_application_materials(
     materials_prompt_versions: dict | None = None,
     materials_validation_attempts: int | None = None,
     materials_validation_errors: list | None = None,
+    materials_candidate_profile_hash: str | None = None,
+    materials_candidate_profile_snapshot: dict | None = None,
 ) -> None:
     jobs_repository.update_job_application_materials(
         _conn,
@@ -1328,6 +1332,8 @@ def update_job_application_materials(
         materials_prompt_versions=materials_prompt_versions,
         materials_validation_attempts=materials_validation_attempts,
         materials_validation_errors=materials_validation_errors,
+        materials_candidate_profile_hash=materials_candidate_profile_hash,
+        materials_candidate_profile_snapshot=materials_candidate_profile_snapshot,
     )
 
 

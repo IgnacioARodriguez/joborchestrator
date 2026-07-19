@@ -593,6 +593,7 @@ def test_generate_materials_persists_application_kit(tmp_path, monkeypatch):
     assert job["materials"]["generation"]["generated_at"]
     assert job["materials"]["generation"]["validation_attempts"] == 1
     assert job["materials"]["generation"]["validation_errors"] == []
+    assert len(job["materials"]["generation"]["candidate_profile_hash"]) == 64
 
 
 def test_application_rest_endpoints(tmp_path, monkeypatch):

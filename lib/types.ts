@@ -90,6 +90,7 @@ export interface ApplicationMaterials {
     generated_at?: string | null
     validation_attempts?: number | null
     validation_errors: string[]
+    candidate_profile_hash?: string | null
   }
 }
 

@@ -20,6 +20,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     build_application_kit_with_nvidia,
     materials_prompt_versions,
 )
+from joborchestrator.intelligence.profile_trace import profile_trace
 from joborchestrator.llm.provider import ProviderRegistry
 from joborchestrator.automation.executor import run_application_execution
 from joborchestrator.ranking.nvidia_ranker import (
@@ -168,6 +169,7 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
     db.update_operation_progress(operation_id, "Saving generated application materials.")
     ats_cv_text = kit.get("ats_cv_text") or kit.get("ats_cv_notes")
     generation_metadata = kit.get("_generation_metadata") if isinstance(kit.get("_generation_metadata"), dict) else {}
+    profile_metadata = profile_trace(db.get_candidate_profile_payload())
     db.update_job_application_materials(
         job_id,
         pipeline_status="shortlisted" if shortlist else None,
@@ -180,6 +182,8 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
         materials_prompt_versions=prompt_versions,
         materials_validation_attempts=int(generation_metadata.get("validation_attempts") or 1),
         materials_validation_errors=list(generation_metadata.get("validation_errors") or []),
+        materials_candidate_profile_hash=profile_metadata.get("hash"),
+        materials_candidate_profile_snapshot=profile_metadata.get("snapshot"),
     )
     resume_variant = None
     if ats_cv_text:

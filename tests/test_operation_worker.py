@@ -122,6 +122,11 @@ def test_worker_processes_application_materials_generation(monkeypatch):
     )
     monkeypatch.setattr(
         worker.db,
+        "get_candidate_profile_payload",
+        lambda: {"headline": "Backend engineer", "skills": [{"name": "Python"}]},
+    )
+    monkeypatch.setattr(
+        worker.db,
         "update_job_application_materials",
         lambda job_id, **kwargs: saved.update({"job_id": job_id, **kwargs}),
     )
@@ -150,6 +155,8 @@ def test_worker_processes_application_materials_generation(monkeypatch):
     }
     assert saved["materials_validation_attempts"] == 2
     assert saved["materials_validation_errors"] == ["recruiter_message is generic"]
+    assert len(saved["materials_candidate_profile_hash"]) == 64
+    assert saved["materials_candidate_profile_snapshot"]["headline"] == "Backend engineer"
     assert completed["output"]["materials_saved"] is True
     assert completed["output"]["resume_variant_id"] == 9
     assert "Generating nvidia application materials." in progress

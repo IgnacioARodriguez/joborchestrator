@@ -182,6 +182,11 @@ function MaterialsGenerationMeta({ job }: { job: JobPosting }) {
           {generation.validation_attempts} validation attempts
         </span>
       ) : null}
+      {generation.candidate_profile_hash ? (
+        <span className="rounded-md border border-border bg-muted/40 px-2 py-0.5">
+          profile {generation.candidate_profile_hash.slice(0, 8)}
+        </span>
+      ) : null}
       {promptVersions.map(([target, version]) => (
         <span key={target} className="rounded-md border border-border bg-muted/40 px-2 py-0.5">
           {target.split("/").slice(-1)[0]} {version}

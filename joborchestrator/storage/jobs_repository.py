@@ -987,6 +987,8 @@ def update_job_application_materials(
     materials_prompt_versions: dict | None = None,
     materials_validation_attempts: int | None = None,
     materials_validation_errors: list | None = None,
+    materials_candidate_profile_hash: str | None = None,
+    materials_candidate_profile_snapshot: dict | None = None,
 ) -> None:
     generated_at = (
         datetime.now().isoformat(timespec="seconds")
@@ -1003,6 +1005,11 @@ def update_job_application_materials(
         if materials_validation_errors is not None
         else None
     )
+    profile_snapshot_json = (
+        json.dumps(materials_candidate_profile_snapshot, ensure_ascii=False, sort_keys=True)
+        if materials_candidate_profile_snapshot is not None
+        else None
+    )
     conn = connect()
     try:
         conn.execute(
@@ -1017,7 +1024,9 @@ def update_job_application_materials(
                    materials_prompt_versions_json = COALESCE(?, materials_prompt_versions_json),
                    materials_generated_at = COALESCE(?, materials_generated_at),
                    materials_validation_attempts = COALESCE(?, materials_validation_attempts),
-                   materials_validation_errors_json = COALESCE(?, materials_validation_errors_json)
+                   materials_validation_errors_json = COALESCE(?, materials_validation_errors_json),
+                   materials_candidate_profile_hash = COALESCE(?, materials_candidate_profile_hash),
+                   materials_candidate_profile_snapshot_json = COALESCE(?, materials_candidate_profile_snapshot_json)
                WHERE id = ?""",
             (
                 pipeline_status,
@@ -1031,6 +1040,8 @@ def update_job_application_materials(
                 generated_at,
                 materials_validation_attempts,
                 validation_errors_json,
+                materials_candidate_profile_hash,
+                profile_snapshot_json,
                 job_id,
             ),
         )
