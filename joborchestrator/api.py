@@ -30,6 +30,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     LLMMaterialsError,
     export_ats_cv_docx_bytes,
     export_ats_cv_pdf_bytes,
+    materials_prompt_versions,
 )
 from joborchestrator.automation.adapters import AdapterRegistry
 from joborchestrator.automation.accounts import site_identity_from_url, store_password
@@ -924,6 +925,9 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
         cover_letter=kit.get("cover_letter"),
         ats_cv_text=kit.get("ats_cv_text") or kit.get("ats_cv_notes"),
         autofill_notes=kit.get("autofill_notes"),
+        materials_provider=provider,
+        materials_model="heuristic",
+        materials_prompt_versions=materials_prompt_versions() if provider != "heuristic" else {},
     )
     fresh = db.get_job_posting(job_id)
     rankings = latest_rankings_by_job_id()

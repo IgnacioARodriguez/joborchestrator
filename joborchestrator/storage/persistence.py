@@ -46,6 +46,10 @@ APPLICATION_KIT_COLUMNS = {
     "cover_letter": "TEXT",
     "ats_cv_text": "TEXT",
     "autofill_notes": "TEXT",
+    "materials_provider": "TEXT",
+    "materials_model": "TEXT",
+    "materials_prompt_versions_json": "TEXT",
+    "materials_generated_at": "TEXT",
 }
 LINKEDIN_ENRICHMENT_COLUMNS = {
     "applicant_count": "INTEGER",
@@ -1250,6 +1254,9 @@ def update_job_application_materials(
     cover_letter: str | None = None,
     ats_cv_text: str | None = None,
     autofill_notes: str | None = None,
+    materials_provider: str | None = None,
+    materials_model: str | None = None,
+    materials_prompt_versions: dict | None = None,
 ) -> None:
     jobs_repository.update_job_application_materials(
         _conn,
@@ -1259,6 +1266,9 @@ def update_job_application_materials(
         cover_letter=cover_letter,
         ats_cv_text=ats_cv_text,
         autofill_notes=autofill_notes,
+        materials_provider=materials_provider,
+        materials_model=materials_model,
+        materials_prompt_versions=materials_prompt_versions,
     )
 
 

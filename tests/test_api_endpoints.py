@@ -552,6 +552,10 @@ def test_generate_materials_persists_application_kit(tmp_path, monkeypatch):
     assert job["materials"]["recruiter_message"] == "Hello recruiter"
     assert job["materials"]["cover_letter"] == "Dear team"
     assert job["materials"]["ats_cv_notes"] == "Python\nFastAPI"
+    assert job["materials"]["generation"]["provider"] == "heuristic"
+    assert job["materials"]["generation"]["model"] == "heuristic"
+    assert job["materials"]["generation"]["prompt_versions"] == {}
+    assert job["materials"]["generation"]["generated_at"]
 
 
 def test_application_rest_endpoints(tmp_path, monkeypatch):

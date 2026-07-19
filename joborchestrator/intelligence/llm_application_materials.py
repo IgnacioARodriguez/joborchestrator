@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from joborchestrator.llm.provider import LLMProviderError, ProviderRegistry
-from joborchestrator.prompts import load_prompt
+from joborchestrator.prompts import active_prompt_version, load_prompt
 from joborchestrator.intelligence.llm_costs import estimate_application_kit_tokens, estimate_cost
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
 from joborchestrator.ranking.schemas import CandidateProfile
@@ -45,6 +45,13 @@ def estimate_materials_cost(
 ) -> float:
     input_tokens, output_tokens = estimate_application_kit_tokens(job_count, avg_description_chars)
     return estimate_cost(input_tokens, output_tokens, model, batch=batch)
+
+
+def materials_prompt_versions() -> dict[str, str]:
+    return {
+        "materials/nvidia_cv_contract": active_prompt_version("materials", "nvidia_cv_contract"),
+        "materials/nvidia_kit_contract": active_prompt_version("materials", "nvidia_kit_contract"),
+    }
 
 
 def build_application_kit_with_llm(

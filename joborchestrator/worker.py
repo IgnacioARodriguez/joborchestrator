@@ -18,6 +18,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     DEFAULT_NVIDIA_MATERIALS_MODEL,
     build_application_kit_with_llm,
     build_application_kit_with_nvidia,
+    materials_prompt_versions,
 )
 from joborchestrator.llm.provider import ProviderRegistry
 from joborchestrator.automation.executor import run_application_execution
@@ -147,15 +148,19 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
     db.update_operation_progress(operation_id, f"Generating {provider} application materials.")
 
     keywords = parse_json_value(ranking.get("cv_keywords_to_emphasize_json"), []) if ranking else []
+    selected_model = model or DEFAULT_MATERIALS_MODEL
+    prompt_versions = materials_prompt_versions() if provider in {"openai", "nvidia"} else {}
     if provider == "openai":
-        kit = build_application_kit_with_llm(job, ranking=ranking, model=model or DEFAULT_MATERIALS_MODEL)
+        kit = build_application_kit_with_llm(job, ranking=ranking, model=selected_model)
     elif provider == "nvidia":
+        selected_model = model if model and model != DEFAULT_MATERIALS_MODEL else DEFAULT_NVIDIA_MATERIALS_MODEL
         kit = build_application_kit_with_nvidia(
             job,
             ranking=ranking,
-            model=model if model and model != DEFAULT_MATERIALS_MODEL else DEFAULT_NVIDIA_MATERIALS_MODEL,
+            model=selected_model,
         )
     elif provider == "heuristic":
+        selected_model = "heuristic"
         kit = build_application_kit(job, keywords=keywords)
     else:
         raise RuntimeError(f"Unsupported materials provider: {provider}")
@@ -169,6 +174,9 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
         cover_letter=kit.get("cover_letter"),
         ats_cv_text=ats_cv_text,
         autofill_notes=kit.get("autofill_notes"),
+        materials_provider=provider,
+        materials_model=selected_model,
+        materials_prompt_versions=prompt_versions,
     )
     resume_variant = None
     if ats_cv_text:

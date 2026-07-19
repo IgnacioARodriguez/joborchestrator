@@ -83,6 +83,12 @@ export interface ApplicationMaterials {
     requires_review: boolean
     reasons: string[]
   }
+  generation: {
+    provider?: string | null
+    model?: string | null
+    prompt_versions: Record<string, string>
+    generated_at?: string | null
+  }
 }
 
 export interface PriorityBreakdown {

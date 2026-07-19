@@ -112,6 +112,11 @@ def test_worker_processes_application_materials_generation(monkeypatch):
         },
     )
     monkeypatch.setattr(
+        worker,
+        "materials_prompt_versions",
+        lambda: {"materials/nvidia_cv_contract": "v2", "materials/nvidia_kit_contract": "v2"},
+    )
+    monkeypatch.setattr(
         worker.db,
         "update_job_application_materials",
         lambda job_id, **kwargs: saved.update({"job_id": job_id, **kwargs}),
@@ -133,6 +138,12 @@ def test_worker_processes_application_materials_generation(monkeypatch):
     assert saved["job_id"] == 5
     assert saved["pipeline_status"] == "shortlisted"
     assert saved["recruiter_message"] == "Hi recruiter"
+    assert saved["materials_provider"] == "nvidia"
+    assert saved["materials_model"] == "test-model"
+    assert saved["materials_prompt_versions"] == {
+        "materials/nvidia_cv_contract": "v2",
+        "materials/nvidia_kit_contract": "v2",
+    }
     assert completed["output"]["materials_saved"] is True
     assert completed["output"]["resume_variant_id"] == 9
     assert "Generating nvidia application materials." in progress

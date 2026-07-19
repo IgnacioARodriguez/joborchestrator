@@ -118,6 +118,9 @@ def test_application_materials_are_saved(tmp_path, monkeypatch):
         cover_letter="Dear team",
         ats_cv_text="Python, APIs",
         autofill_notes="why_join: strong fit",
+        materials_provider="nvidia",
+        materials_model="test-model",
+        materials_prompt_versions={"materials/nvidia_cv_contract": "v2"},
     )
 
     stored = db.get_job_posting(job_id)
@@ -126,6 +129,10 @@ def test_application_materials_are_saved(tmp_path, monkeypatch):
     assert stored["cover_letter"] == "Dear team"
     assert stored["ats_cv_text"] == "Python, APIs"
     assert stored["autofill_notes"] == "why_join: strong fit"
+    assert stored["materials_provider"] == "nvidia"
+    assert stored["materials_model"] == "test-model"
+    assert stored["materials_prompt_versions_json"] == '{"materials/nvidia_cv_contract": "v2"}'
+    assert stored["materials_generated_at"]
 
 
 def test_application_material_update_preserves_unspecified_fields(tmp_path, monkeypatch):

@@ -152,6 +152,36 @@ function MaterialsReviewPanel({ job }: { job: JobPosting }) {
   )
 }
 
+function MaterialsGenerationMeta({ job }: { job: JobPosting }) {
+  const generation = job.materials.generation
+  if (!generation?.provider && !generation?.model && !generation?.generated_at) return null
+  const promptVersions = Object.entries(generation.prompt_versions || {})
+  return (
+    <div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+      {generation.provider ? (
+        <span className="rounded-md border border-border bg-muted/40 px-2 py-0.5">
+          {generation.provider}
+        </span>
+      ) : null}
+      {generation.model ? (
+        <span className="rounded-md border border-border bg-muted/40 px-2 py-0.5">
+          {generation.model}
+        </span>
+      ) : null}
+      {generation.generated_at ? (
+        <span className="rounded-md border border-border bg-muted/40 px-2 py-0.5">
+          {generation.generated_at}
+        </span>
+      ) : null}
+      {promptVersions.map(([target, version]) => (
+        <span key={target} className="rounded-md border border-border bg-muted/40 px-2 py-0.5">
+          {target.split("/").slice(-1)[0]} {version}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function parseAutofillPlan(text: string) {
   try {
     const parsed = JSON.parse(text) as {
@@ -1023,6 +1053,7 @@ function DetailBody({
               <h3 className="text-sm font-semibold text-foreground">
                 Application materials
               </h3>
+              <MaterialsGenerationMeta job={job} />
               <MaterialsReviewPanel job={job} />
               <div className="flex flex-col gap-2">
                 <MaterialBlock

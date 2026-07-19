@@ -982,7 +982,20 @@ def update_job_application_materials(
     cover_letter: str | None = None,
     ats_cv_text: str | None = None,
     autofill_notes: str | None = None,
+    materials_provider: str | None = None,
+    materials_model: str | None = None,
+    materials_prompt_versions: dict | None = None,
 ) -> None:
+    generated_at = (
+        datetime.now().isoformat(timespec="seconds")
+        if materials_provider or materials_model or materials_prompt_versions is not None
+        else None
+    )
+    prompt_versions_json = (
+        json.dumps(materials_prompt_versions, ensure_ascii=False, sort_keys=True)
+        if materials_prompt_versions is not None
+        else None
+    )
     conn = connect()
     try:
         conn.execute(
@@ -991,7 +1004,11 @@ def update_job_application_materials(
                    recruiter_message = COALESCE(?, recruiter_message),
                    cover_letter = COALESCE(?, cover_letter),
                    ats_cv_text = COALESCE(?, ats_cv_text),
-                   autofill_notes = COALESCE(?, autofill_notes)
+                   autofill_notes = COALESCE(?, autofill_notes),
+                   materials_provider = COALESCE(?, materials_provider),
+                   materials_model = COALESCE(?, materials_model),
+                   materials_prompt_versions_json = COALESCE(?, materials_prompt_versions_json),
+                   materials_generated_at = COALESCE(?, materials_generated_at)
                WHERE id = ?""",
             (
                 pipeline_status,
@@ -999,6 +1016,10 @@ def update_job_application_materials(
                 cover_letter,
                 ats_cv_text,
                 autofill_notes,
+                materials_provider,
+                materials_model,
+                prompt_versions_json,
+                generated_at,
                 job_id,
             ),
         )

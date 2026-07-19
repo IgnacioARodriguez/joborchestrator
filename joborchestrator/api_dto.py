@@ -66,6 +66,7 @@ def job_dto(
             "ats_cv_notes": _string(job.get("ats_cv_text")) if not compact else "",
             "autofill_notes": _string(job.get("autofill_notes")) if not compact else "",
             "review": materials_review_dto(job, ranking),
+            "generation": materials_generation_dto(job),
         },
     }
 
@@ -109,6 +110,15 @@ def materials_review_dto(job: dict[str, Any], ranking: dict[str, Any]) -> dict[s
         "status": "needs_review" if reasons else "ready",
         "requires_review": bool(reasons),
         "reasons": reasons,
+    }
+
+
+def materials_generation_dto(job: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "provider": _nullable_string(job.get("materials_provider")),
+        "model": _nullable_string(job.get("materials_model")),
+        "prompt_versions": parse_json_value(job.get("materials_prompt_versions_json"), {}),
+        "generated_at": _nullable_string(job.get("materials_generated_at")),
     }
 
 
