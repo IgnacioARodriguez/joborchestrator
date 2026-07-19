@@ -28,6 +28,25 @@ def profile_payload() -> dict:
     }
 
 
+def profile_payload_no_industrial_automation() -> dict:
+    payload = profile_payload()
+    payload["dealbreakers"] = [
+        *payload["dealbreakers"],
+        "No industrial automation, PLC, SCADA, robotics, or plant electrical engineering.",
+    ]
+    return payload
+
+
+def profile_payload_with_negative_gaps() -> dict:
+    payload = profile_payload()
+    payload["dealbreakers"] = [
+        *payload["dealbreakers"],
+        "No German language, Munich relocation, ERP consulting, or MS Dynamics background.",
+        "No core security, cybersecurity, AppSec, or DevSecOps trajectory.",
+    ]
+    return payload
+
+
 def test_build_nvidia_ranking_payload_compacts_jobs(monkeypatch):
     monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
 
@@ -244,7 +263,7 @@ def test_nvidia_ranking_blocks_explicit_location_restriction(monkeypatch):
                 "company": "LawnStarter",
                 "location": "Belo Horizonte, Brazil",
                 "workplace_type": "hybrid",
-                "description_text": "Candidates must be located in Belo Horizonte, Brazil. Staff-level product engineering role.",
+                "description_text": "Remote role for candidates located in Belo Horizonte, Brazil. Staff-level product engineering role.",
             }
         ]
     )
@@ -286,7 +305,7 @@ def test_nvidia_ranking_downgrades_required_language_gap(monkeypatch):
         return {"rankings": [_ranking_payload(1, 82, "APPLY_NOW")]}
 
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
-    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload_with_negative_gaps)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
     monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
 
@@ -296,7 +315,8 @@ def test_nvidia_ranking_downgrades_required_language_gap(monkeypatch):
     assert summary["MAYBE"] == 1
     assert saved[1].decision == "MAYBE"
     assert saved[1].final_score == 55
-    assert "required language not supported by profile" in saved[1].evidence.red_flags
+    assert "German language requirement not supported by profile" in saved[1].evidence.dealbreakers
+    assert "Munich location outside preferred remote/Spain profile" in saved[1].evidence.dealbreakers
     assert "safety_cap_language_gap" in saved[1].evidence.llm_escalation_reasons
 
 
@@ -309,7 +329,7 @@ def test_nvidia_ranking_blocks_industrial_automation_mismatch(monkeypatch):
                 "company": "PBiovian",
                 "location": "Turku, Finland",
                 "workplace_type": "onsite",
-                "description_text": "Presencial industrial automation role with PLC, SCADA, biopharma plant systems, and VFD controls.",
+                "description_text": "Presencial role with manufacturing equipment, robotic systems, machinery control systems, and production requirements.",
             }
         ]
     )
@@ -333,6 +353,130 @@ def test_nvidia_ranking_blocks_industrial_automation_mismatch(monkeypatch):
     assert "hard_override_domain_mismatch" in saved[1].evidence.llm_escalation_reasons
 
 
+def test_nvidia_ranking_treats_negative_industrial_profile_as_gap(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Automation Engineer",
+                "company": "PBiovian",
+                "description_text": "Onsite/presencial industrial automation role for manufacturing equipment and control systems.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        return {"rankings": [_ranking_payload(1, 80, "APPLY_NOW")]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(
+        nvidia_ranker.db,
+        "get_candidate_profile_payload",
+        profile_payload_no_industrial_automation,
+    )
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["APPLY_NOW"] == 0
+    assert summary["AVOID"] == 1
+    assert saved[1].final_score == 35
+    assert "industrial automation/electrical domain mismatch" in saved[1].evidence.dealbreakers
+
+
+def test_nvidia_ranking_caps_hybrid_six_year_seniority_gap(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Backend Engineer (Python)",
+                "company": "Datavant",
+                "location": "Hibrido",
+                "description_text": "Hybrid setting in Barcelona for Python backend, AWS/Kubernetes, and seniority around 6+ years.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        return {"rankings": [_ranking_payload(1, 88, "APPLY_NOW")]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["APPLY_NOW"] == 0
+    assert summary["APPLY_WITH_TAILORED_CV"] == 1
+    assert saved[1].final_score == 82
+    assert "hybrid role with 6+ years seniority gap" in saved[1].evidence.dealbreakers
+    assert "safety_cap_hybrid_seniority_review" in saved[1].evidence.llm_escalation_reasons
+
+
+def test_nvidia_ranking_caps_unclear_india_remote_location(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Backend Developer- Python",
+                "company": "Kyndryl",
+                "location": "Bangalore, India, Chennai, India, Flexible / Remote",
+                "description_text": "Locations listed as Bangalore India, Chennai India, Flexible/Remote, and Hyderabad India.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        return {"rankings": [_ranking_payload(1, 88, "APPLY_NOW")]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["APPLY_NOW"] == 0
+    assert summary["APPLY_WITH_TAILORED_CV"] == 1
+    assert saved[1].final_score == 70
+    assert "India location/remote eligibility requires review" in saved[1].evidence.dealbreakers
+
+
+def test_nvidia_ranking_evidences_madrid_freelance_review(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Backend Python Freelance",
+                "company": "Pixie",
+                "location": "Madrid",
+                "description_text": "Freelance backend Python contract role in Madrid for a client project.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        return {"rankings": [_ranking_payload(1, 86, "APPLY_NOW")]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["APPLY_NOW"] == 0
+    assert summary["APPLY_WITH_TAILORED_CV"] == 1
+    assert saved[1].final_score == 75
+    assert "Madrid freelance role requires tailored review" in saved[1].evidence.red_flags
+
+
 def test_nvidia_ranking_caps_specialized_adjacent_roles(monkeypatch):
     jobs = pd.DataFrame(
         [
@@ -346,7 +490,13 @@ def test_nvidia_ranking_caps_specialized_adjacent_roles(monkeypatch):
                 "id": 2,
                 "title": "Solutions Architect",
                 "company": "GitLab",
-                "description_text": "Customer-facing solutions architect and presales role for technical discovery and demos.",
+                "description_text": "Customer-facing solutions architect for a DevSecOps platform with presales technical discovery and demos.",
+            },
+            {
+                "id": 3,
+                "title": "Sr. Infrastructure Engineer - Kubernetes",
+                "company": "CrowdStrike",
+                "description_text": "Senior Infrastructure Engineer for Kubernetes, reliability, and platform infrastructure.",
             },
         ]
     )
@@ -357,24 +507,29 @@ def test_nvidia_ranking_caps_specialized_adjacent_roles(monkeypatch):
             "rankings": [
                 _ranking_payload(1, 82, "APPLY_NOW"),
                 _ranking_payload(2, 92, "APPLY_NOW"),
+                _ranking_payload(3, 86, "APPLY_NOW"),
             ]
         }
 
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
-    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload_with_negative_gaps)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
     monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
 
-    summary = rank_jobs_with_nvidia(jobs, request_batch_size=2)
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=3)
 
     assert summary["APPLY_NOW"] == 0
-    assert summary["APPLY_WITH_TAILORED_CV"] == 2
+    assert summary["APPLY_WITH_TAILORED_CV"] == 3
     assert saved[1].decision == "APPLY_WITH_TAILORED_CV"
     assert saved[1].final_score == 68
     assert "security specialization outside core profile" in saved[1].evidence.red_flags
     assert saved[2].decision == "APPLY_WITH_TAILORED_CV"
     assert saved[2].final_score == 78
     assert "solutions architect/presales pivot requires tailoring" in saved[2].evidence.red_flags
+    assert "security specialization outside core profile" not in saved[2].evidence.red_flags
+    assert saved[3].decision == "APPLY_WITH_TAILORED_CV"
+    assert saved[3].final_score == 68
+    assert "senior infrastructure specialization outside core profile" in saved[3].evidence.red_flags
 
 
 def test_nvidia_ranking_skips_low_context_spam_like_posting(monkeypatch):
@@ -415,7 +570,10 @@ def test_nvidia_ranking_caps_contract_ai_training(monkeypatch):
                 "id": 1,
                 "title": "AI Verification Contractor",
                 "company": "HireFeed",
-                "description_text": "Contract role to verify AI training responses and evaluate AI output quality.",
+                "description_text": (
+                    "Remote contract Python Developer. Work directly influences training and performance "
+                    "of next-generation AI systems and shapes how AI models learn and reason."
+                ),
             }
         ]
     )

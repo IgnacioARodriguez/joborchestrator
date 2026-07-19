@@ -626,6 +626,43 @@ def _ranking_safety_signals(
             )
         )
 
+    if _hybrid_seniority_review(job_text, safety_context):
+        signals.append(
+            RankingSafetySignal(
+                label="hybrid role with 6+ years seniority gap",
+                decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
+                max_score=82,
+                risk_penalty=20,
+                reason="safety_cap_hybrid_seniority_review",
+                evidence_kind="dealbreaker",
+            )
+        )
+
+    india_location_label = _india_remote_location_unclear(job_text, safety_context)
+    if india_location_label:
+        signals.append(
+            RankingSafetySignal(
+                label=india_location_label,
+                decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
+                max_score=70,
+                risk_penalty=20,
+                reason="safety_cap_location_review",
+                evidence_kind="dealbreaker",
+            )
+        )
+
+    madrid_freelance_label = _madrid_freelance_review(job_text)
+    if madrid_freelance_label:
+        signals.append(
+            RankingSafetySignal(
+                label=madrid_freelance_label,
+                decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
+                max_score=75,
+                risk_penalty=15,
+                reason="safety_cap_freelance_location_review",
+            )
+        )
+
     if _industrial_automation_mismatch(job_text, profile_text):
         signals.append(
             RankingSafetySignal(
@@ -638,14 +675,28 @@ def _ranking_safety_signals(
             )
         )
 
-    if _required_language_gap(job_text, profile_text):
+    language_gap_label = _required_language_gap_label(job_text, profile_text)
+    if language_gap_label:
         signals.append(
             RankingSafetySignal(
-                label="required language not supported by profile",
+                label=language_gap_label,
                 decision_cap=cast(Decision, "MAYBE"),
                 max_score=55,
                 risk_penalty=30,
                 reason="safety_cap_language_gap",
+                evidence_kind="dealbreaker",
+            )
+        )
+
+    if _munich_location_review(job_text, safety_context):
+        signals.append(
+            RankingSafetySignal(
+                label="Munich location outside preferred remote/Spain profile",
+                decision_cap=cast(Decision, "MAYBE"),
+                max_score=55,
+                risk_penalty=20,
+                reason="safety_cap_location_review",
+                evidence_kind="dealbreaker",
             )
         )
 
@@ -657,6 +708,17 @@ def _ranking_safety_signals(
                 max_score=68,
                 risk_penalty=25,
                 reason="safety_cap_specialization_gap",
+            )
+        )
+
+    if _senior_infrastructure_review(job_text, safety_context):
+        signals.append(
+            RankingSafetySignal(
+                label="senior infrastructure specialization outside core profile",
+                decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
+                max_score=75,
+                risk_penalty=20,
+                reason="safety_cap_senior_infrastructure_review",
             )
         )
 
@@ -763,6 +825,8 @@ def _restricted_location_mismatch(job_text: str, safety_context: dict[str, Any])
         "must be located in",
         "candidates must be located",
         "candidates must be based",
+        "candidates located in",
+        "candidates based in",
         "only candidates in",
         "applicants must be located",
         "applicants must be based",
@@ -789,7 +853,6 @@ def _restricted_location_mismatch(job_text: str, safety_context: dict[str, Any])
         "united states",
         "usa",
         "u s ",
-        "valladolid",
     ]
     for location in outside_locations:
         if _contains_location_marker(job_text, location) and location not in preference_text:
@@ -811,31 +874,135 @@ def _is_low_context_spam(job: dict[str, Any], job_text: str) -> bool:
 def _contract_ai_training_risk(job_text: str) -> bool:
     return "contract" in job_text and _contains_any(
         job_text,
-        ["ai training", "train ai", "training ai", "verify ai", "ai verification", "evaluate ai"],
+        [
+            "ai training",
+            "train ai",
+            "training ai",
+            "verify ai",
+            "ai verification",
+            "evaluate ai",
+            "next-generation ai systems",
+            "ai systems",
+            "ai models learn",
+            "shape how ai models",
+        ],
     )
 
 
-def _industrial_automation_mismatch(job_text: str, profile_text: str) -> bool:
-    if _contains_any(profile_text, ["plc", "scada", "vfd", "statcom", "epc", "industrial automation"]):
+def _hybrid_seniority_review(job_text: str, safety_context: dict[str, Any]) -> bool:
+    years = safety_context.get("real_experience_years")
+    try:
+        real_years = float(years)
+    except (TypeError, ValueError):
+        real_years = 0
+    if real_years >= 6:
         return False
-    industrial_terms = ["plc", "scada", "vfd", "statcom", "epc", "plant electrical", "industrial automation", "biofarma", "biopharma"]
+    if not _contains_any(job_text, ["hybrid", "hibrido"]):
+        return False
+    return _contains_any(job_text, ["6+ years", "6 years", "6+ anos", "seniority around 6+"])
+
+
+def _india_remote_location_unclear(job_text: str, safety_context: dict[str, Any]) -> str | None:
+    preferred_locations = _normalize_text(" ".join(str(item) for item in safety_context.get("preferred_locations") or []))
+    if "india" in preferred_locations or "india" not in job_text:
+        return None
+    if _contains_any(job_text, ["locations listed as", "flexible/remote", "flexible / remote"]):
+        return "India location/remote eligibility requires review"
+    return None
+
+
+def _madrid_freelance_review(job_text: str) -> str | None:
+    if "madrid" in job_text and _contains_any(job_text, ["freelance", "contractor", "contract role"]):
+        return "Madrid freelance role requires tailored review"
+    return None
+
+
+def _industrial_automation_mismatch(job_text: str, profile_text: str) -> bool:
+    profile_negates_automation = _contains_any(
+        profile_text,
+        [
+            "no industrial automation",
+            "no plc",
+            "no scada",
+            "no robotics",
+            "without industrial automation",
+        ],
+    )
+    if not profile_negates_automation and _contains_any(profile_text, ["plc", "scada", "vfd", "statcom", "epc"]):
+        return False
+    industrial_terms = [
+        "plc",
+        "scada",
+        "vfd",
+        "statcom",
+        "epc",
+        "plant electrical",
+        "industrial automation",
+        "manufacturing equipment",
+        "robotic systems",
+        "machinery",
+        "automated solutions",
+        "production requirements",
+        "biofarma",
+        "biopharma",
+    ]
     role_terms = ["automation engineer", "application engineer", "electrical engineer", "control systems"]
     return _contains_any(job_text, industrial_terms) and _contains_any(job_text, role_terms)
 
 
-def _required_language_gap(job_text: str, profile_text: str) -> bool:
-    if "german" in profile_text:
-        return False
-    return _contains_any(
+def _required_language_gap_label(job_text: str, profile_text: str) -> str | None:
+    profile_negates_german = _contains_any(
+        profile_text,
+        ["no german", "without german", "german language absent", "not fluent in german"],
+    )
+    if "german" in profile_text and not profile_negates_german:
+        return None
+    if _contains_any(
         job_text,
         ["german required", "fluent german", "c1 german", "b2 german", "must speak german", "german language"],
-    )
+    ):
+        return "German language requirement not supported by profile"
+    if "german" in job_text:
+        return "German language signal not supported by profile"
+    return None
+
+
+def _munich_location_review(job_text: str, safety_context: dict[str, Any]) -> bool:
+    preferred_locations = _normalize_text(" ".join(str(item) for item in safety_context.get("preferred_locations") or []))
+    if "munich" in preferred_locations or "munich" not in job_text:
+        return False
+    return not _contains_any(job_text, ["fully remote", "remote anywhere", "remote first"])
 
 
 def _security_specialization_gap(job_text: str, profile_text: str) -> bool:
-    if _contains_any(profile_text, ["security", "cybersecurity", "devsecops", "appsec"]):
+    profile_negates_security = _contains_any(
+        profile_text,
+        ["no core security", "no security", "no cybersecurity", "no appsec", "no devsecops"],
+    )
+    if not profile_negates_security and _contains_any(profile_text, ["security", "cybersecurity", "devsecops", "appsec"]):
+        return False
+    if _solutions_architect_pivot(job_text, profile_text):
         return False
     return _contains_any(job_text, ["security engineer", "cybersecurity", "appsec", "devsecops"])
+
+
+def _senior_infrastructure_review(job_text: str, safety_context: dict[str, Any]) -> bool:
+    years = safety_context.get("real_experience_years")
+    try:
+        real_years = float(years)
+    except (TypeError, ValueError):
+        real_years = 0
+    if real_years >= 6:
+        return False
+    return _contains_any(
+        job_text,
+        [
+            "senior infrastructure engineer",
+            "sr infrastructure engineer",
+            "sr. infrastructure engineer",
+            "staff infrastructure engineer",
+        ],
+    )
 
 
 def _deep_specialization_gap(job_text: str, profile_text: str) -> str | None:
