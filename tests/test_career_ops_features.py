@@ -408,6 +408,54 @@ Computer Science coursework and continuing professional development in backend e
     assert error is None
 
 
+def test_ats_cv_validation_rejects_ranking_avoid_overclaiming_terms_without_source_support():
+    ats_cv_text = _complete_ats_cv_text() + "\n- Kubernetes platform ownership for production clusters."
+
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi Acme Labs, my backend API work maps well to the Backend Engineer role.",
+            "cover_letter": "",
+            "ats_cv_text": ats_cv_text,
+            "autofill_notes": "Paste the recruiter note.",
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        },
+        source_payload={
+            "base_cv": {"text": _complete_ats_cv_text()},
+            "candidate_profile": {"skills": [{"name": "Python"}]},
+            "ranking": {"cv_keywords_to_avoid_overclaiming": ["Kubernetes"]},
+            "job": {"title": "Backend Engineer", "company": "Acme Labs"},
+        },
+    )
+
+    assert error is not None
+    assert "avoid-overclaiming terms: Kubernetes" in error
+
+
+def test_ats_cv_validation_allows_ranking_avoid_term_when_source_supports_it():
+    source_cv = _complete_ats_cv_text() + "\n- Supported Kubernetes-adjacent deployment work."
+    ats_cv_text = _complete_ats_cv_text() + "\n- Supported Kubernetes-adjacent deployment work."
+
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi Acme Labs, my backend API work maps well to the Backend Engineer role.",
+            "cover_letter": "",
+            "ats_cv_text": ats_cv_text,
+            "autofill_notes": "Paste the recruiter note.",
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        },
+        source_payload={
+            "base_cv": {"text": source_cv},
+            "candidate_profile": {"skills": [{"name": "Python"}, {"name": "Kubernetes"}]},
+            "ranking": {"cv_keywords_to_avoid_overclaiming_json": '["Kubernetes"]'},
+            "job": {"title": "Backend Engineer", "company": "Acme Labs"},
+        },
+    )
+
+    assert error is None
+
+
 def test_ats_cv_validation_rejects_omitted_base_experiences():
     base_cv = """
 EXPERIENCE

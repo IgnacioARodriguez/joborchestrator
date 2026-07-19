@@ -332,7 +332,7 @@ def _call_nvidia(payload: dict[str, Any], api_key: str, model: str, timeout: flo
     validation_feedback: str | None = None
     for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
         parsed = _call_nvidia_once(payload, api_key, model, timeout, validation_feedback)
-        validation_feedback = _materials_validation_error(parsed, source_payload=payload)
+        validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
         if not validation_feedback:
             return parsed
         if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
@@ -353,7 +353,7 @@ def _call_nvidia_cv(payload: dict[str, Any], api_key: str, model: str, timeout: 
             timeout,
             validation_feedback,
         )
-        validation_feedback = _ats_cv_response_validation_error(parsed, _base_cv_text(payload))
+        validation_feedback = _ats_cv_response_validation_error(parsed, _base_cv_text(payload), payload)
         if not validation_feedback:
             return parsed
         if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
@@ -608,9 +608,11 @@ def _materials_validation_error(
     base_cv_text: str | None = None,
     source_payload: dict[str, Any] | None = None,
 ) -> str | None:
+    if base_cv_text is None and source_payload is not None:
+        base_cv_text = _base_cv_text(source_payload)
     problems = []
     kit_error = _kit_response_validation_error(payload, source_payload)
-    cv_error = _ats_cv_response_validation_error(payload, base_cv_text)
+    cv_error = _ats_cv_response_validation_error(payload, base_cv_text, source_payload)
     if kit_error:
         problems.append(kit_error)
     if cv_error:
@@ -707,7 +709,11 @@ def _dedupe_strings(values: list[str]) -> list[str]:
     return deduped
 
 
-def _ats_cv_response_validation_error(payload: dict[str, Any], base_cv_text: str | None = None) -> str | None:
+def _ats_cv_response_validation_error(
+    payload: dict[str, Any],
+    base_cv_text: str | None = None,
+    source_payload: dict[str, Any] | None = None,
+) -> str | None:
     problems = []
     ats_cv_text = str(payload.get("ats_cv_text") or "")
     if not ats_cv_text.strip():
@@ -717,6 +723,7 @@ def _ats_cv_response_validation_error(payload: dict[str, Any], base_cv_text: str
             problems.append(f"{field} must be an array")
     problems.extend(_ats_cv_quality_problems(ats_cv_text))
     problems.extend(_experience_coverage_problems(str(base_cv_text or ""), ats_cv_text))
+    problems.extend(_ats_cv_overclaiming_problems(ats_cv_text, source_payload))
     return "; ".join(problems) if problems else None
 
 
@@ -787,6 +794,59 @@ def _experience_coverage_problems(base_cv_text: str, ats_cv_text: str) -> list[s
             missing.append(entry["label"])
     if missing:
         return [f"ats_cv_text omitted base CV experience entries: {', '.join(missing[:6])}"]
+    return []
+
+
+def _ats_cv_overclaiming_problems(text: str, source_payload: dict[str, Any] | None) -> list[str]:
+    if not source_payload:
+        return []
+    ranking = source_payload.get("ranking") if isinstance(source_payload.get("ranking"), dict) else {}
+    avoid_terms = _terms_from_maybe_json(
+        ranking.get("cv_keywords_to_avoid_overclaiming")
+        or ranking.get("cv_keywords_to_avoid_overclaiming_json")
+        or source_payload.get("cv_keywords_to_avoid_overclaiming")
+    )
+    if not avoid_terms:
+        return []
+
+    normalized_cv = _normalize_for_match(text)
+    supported_source = _normalize_for_match(_supported_materials_source_text(source_payload))
+    unsupported_terms = [
+        term
+        for term in avoid_terms
+        if _contains_phrase_for_materials(normalized_cv, term)
+        and not _contains_phrase_for_materials(supported_source, term)
+    ]
+    if not unsupported_terms:
+        return []
+    return [
+        "ats_cv_text contains unsupported ranking avoid-overclaiming terms: "
+        + ", ".join(unsupported_terms[:6])
+    ]
+
+
+def _supported_materials_source_text(source_payload: dict[str, Any]) -> str:
+    base_cv = source_payload.get("base_cv")
+    profile = source_payload.get("candidate_profile")
+    return "\n".join(
+        [
+            str(base_cv.get("text") or "") if isinstance(base_cv, dict) else "",
+            json.dumps(profile, ensure_ascii=False) if isinstance(profile, dict) else str(profile or ""),
+        ]
+    )
+
+
+def _terms_from_maybe_json(value: Any) -> list[str]:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("["):
+            try:
+                return _dedupe_strings([str(item).strip() for item in json.loads(stripped) if str(item).strip()])
+            except json.JSONDecodeError:
+                pass
+        return [stripped] if stripped else []
+    if isinstance(value, list):
+        return _dedupe_strings([str(item).strip() for item in value if str(item).strip()])
     return []
 
 
@@ -879,6 +939,13 @@ def _normalize_for_match(text: str) -> str:
     decomposed = unicodedata.normalize("NFKD", str(text or ""))
     ascii_text = "".join(char for char in decomposed if not unicodedata.combining(char))
     return ascii_text.lower()
+
+
+def _contains_phrase_for_materials(normalized_text: str, phrase: str) -> bool:
+    normalized_phrase = _normalize_for_match(phrase)
+    if not normalized_phrase:
+        return False
+    return normalized_phrase in normalized_text
 
 
 def _to_dict(value: Any) -> dict[str, Any]:
