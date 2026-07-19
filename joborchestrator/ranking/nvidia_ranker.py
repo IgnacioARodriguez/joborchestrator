@@ -592,7 +592,8 @@ def _ranking_safety_signals(
             )
         )
 
-    if _is_low_context_spam(job, job_text):
+    low_context_spam = _is_low_context_spam(job, job_text)
+    if low_context_spam:
         signals.append(
             RankingSafetySignal(
                 label="low-context or spam-like posting",
@@ -600,6 +601,28 @@ def _ranking_safety_signals(
                 max_score=25,
                 risk_penalty=35,
                 reason="safety_cap_low_context",
+            )
+        )
+        signals.append(
+            RankingSafetySignal(
+                label="generic low-context posting with magic word filter",
+                decision_cap=cast(Decision, "SKIP"),
+                max_score=25,
+                risk_penalty=35,
+                reason="safety_cap_low_context",
+                evidence_kind="dealbreaker",
+            )
+        )
+
+    if _contract_ai_training_risk(job_text):
+        signals.append(
+            RankingSafetySignal(
+                label="contract AI training/verification work",
+                decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
+                max_score=70,
+                risk_penalty=25,
+                reason="safety_cap_contract_ai_training",
+                evidence_kind="dealbreaker",
             )
         )
 
@@ -637,12 +660,19 @@ def _ranking_safety_signals(
             )
         )
 
-    if _deep_specialization_gap(job_text, profile_text):
+    deep_specialization_label = _deep_specialization_gap(job_text, profile_text)
+    if deep_specialization_label:
+        cap = (
+            cast(Decision, "AVOID")
+            if "autonomous driving" in deep_specialization_label
+            else cast(Decision, "APPLY_WITH_TAILORED_CV")
+        )
+        max_score = 35 if cap == "AVOID" else 68
         signals.append(
             RankingSafetySignal(
-                label="deep specialization outside core profile",
-                decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
-                max_score=68,
+                label=deep_specialization_label,
+                decision_cap=cap,
+                max_score=max_score,
                 risk_penalty=25,
                 reason="safety_cap_specialization_gap",
             )
@@ -752,10 +782,14 @@ def _restricted_location_mismatch(job_text: str, safety_context: dict[str, Any])
         "india",
         "munich",
         "germany",
+        "finland",
         "houston",
+        "navarra",
+        "turku",
         "united states",
         "usa",
         "u s ",
+        "valladolid",
     ]
     for location in outside_locations:
         if _contains_location_marker(job_text, location) and location not in preference_text:
@@ -772,6 +806,13 @@ def _is_low_context_spam(job: dict[str, Any], job_text: str) -> bool:
     if len(description) < 120 and _contains_any(title, ["apply", "join", "general application"]):
         return True
     return _contains_any(job_text, ["magic word", "anti spam", "prove you read this"]) and len(description) < 800
+
+
+def _contract_ai_training_risk(job_text: str) -> bool:
+    return "contract" in job_text and _contains_any(
+        job_text,
+        ["ai training", "train ai", "training ai", "verify ai", "ai verification", "evaluate ai"],
+    )
 
 
 def _industrial_automation_mismatch(job_text: str, profile_text: str) -> bool:
@@ -797,17 +838,33 @@ def _security_specialization_gap(job_text: str, profile_text: str) -> bool:
     return _contains_any(job_text, ["security engineer", "cybersecurity", "appsec", "devsecops"])
 
 
-def _deep_specialization_gap(job_text: str, profile_text: str) -> bool:
+def _deep_specialization_gap(job_text: str, profile_text: str) -> str | None:
     checks = [
-        (["rust kernel", "linux kernel", "device driver", "device drivers"], ["rust", "kernel", "device driver"]),
-        (["autonomous driving", "vehicle simulation", "simulation engineer"], ["autonomous", "simulation"]),
-        (["erp consultant", "sap consultant", "erp implementation"], ["erp", "sap"]),
-        (["senior infrastructure engineer", "sr infrastructure engineer", "staff infrastructure engineer"], ["infrastructure", "sre", "kubernetes"]),
+        (
+            ["rust kernel", "linux kernel", "device driver", "device drivers"],
+            ["rust", "kernel", "device driver"],
+            "Rust kernel/device-driver specialization outside core profile",
+        ),
+        (
+            ["autonomous driving", "vehicle simulation", "simulation engineer"],
+            ["autonomous", "simulation"],
+            "autonomous driving simulation specialization outside core profile",
+        ),
+        (
+            ["erp consultant", "sap consultant", "erp implementation"],
+            ["erp", "sap"],
+            "ERP implementation specialization outside core profile",
+        ),
+        (
+            ["senior infrastructure engineer", "sr infrastructure engineer", "staff infrastructure engineer"],
+            ["infrastructure", "sre", "kubernetes"],
+            "senior infrastructure specialization outside core profile",
+        ),
     ]
-    for job_terms, profile_terms in checks:
+    for job_terms, profile_terms, label in checks:
         if _contains_any(job_text, job_terms) and not _contains_any(profile_text, profile_terms):
-            return True
-    return False
+            return label
+    return None
 
 
 def _solutions_architect_pivot(job_text: str, profile_text: str) -> bool:

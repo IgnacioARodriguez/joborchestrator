@@ -405,6 +405,66 @@ def test_nvidia_ranking_skips_low_context_spam_like_posting(monkeypatch):
     assert saved[1].decision == "SKIP"
     assert saved[1].final_score == 25
     assert "low-context or spam-like posting" in saved[1].evidence.red_flags
+    assert "generic low-context posting with magic word filter" in saved[1].evidence.dealbreakers
+
+
+def test_nvidia_ranking_caps_contract_ai_training(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "AI Verification Contractor",
+                "company": "HireFeed",
+                "description_text": "Contract role to verify AI training responses and evaluate AI output quality.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        return {"rankings": [_ranking_payload(1, 88, "APPLY_NOW")]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["APPLY_NOW"] == 0
+    assert summary["APPLY_WITH_TAILORED_CV"] == 1
+    assert saved[1].final_score == 70
+    assert "contract AI training/verification work" in saved[1].evidence.dealbreakers
+    assert "safety_cap_contract_ai_training" in saved[1].evidence.llm_escalation_reasons
+
+
+def test_nvidia_ranking_blocks_autonomous_simulation_specialization(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Staff Simulation Engineer",
+                "company": "GM",
+                "description_text": "Autonomous driving vehicle simulation engineer for test frameworks and robotics simulation.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        return {"rankings": [_ranking_payload(1, 84, "APPLY_NOW")]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["APPLY_NOW"] == 0
+    assert summary["AVOID"] == 1
+    assert saved[1].final_score == 35
+    assert "autonomous driving simulation specialization outside core profile" in saved[1].evidence.red_flags
 
 
 def test_call_nvidia_batch_uses_chat_completions(monkeypatch):
