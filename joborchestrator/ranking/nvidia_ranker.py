@@ -5,7 +5,7 @@ import os
 import re
 import asyncio
 import logging
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Callable, cast
 
 import httpx
@@ -36,6 +36,16 @@ logger = logging.getLogger(__name__)
 
 class NvidiaRankingError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class RankingSafetySignal:
+    label: str
+    decision_cap: Decision
+    max_score: int
+    risk_penalty: int
+    reason: str
+    evidence_kind: str = "red_flag"
 
 
 def nvidia_api_key() -> str | None:
@@ -292,7 +302,7 @@ def _apply_nvidia_batch_result(
         missing = sorted(set(expected_ids) - set(by_id))
         if missing:
             logger.warning("NVIDIA response is missing job_id values: %s", missing)
-        active_dealbreakers = _active_profile_dealbreakers()
+        safety_context = _active_profile_safety_context()
 
         for row in batch:
             job_id = int(row.get("id") or row.get("job_id"))
@@ -312,7 +322,7 @@ def _apply_nvidia_batch_result(
                     reasons.append("nvidia_ranking_applied")
                 ranking.evidence.llm_escalation_reasons = reasons
                 ranking.ranking_version = ranking_version
-                _apply_hard_override_gate(row, ranking, active_dealbreakers)
+                _apply_ranking_safety_gate(row, ranking, safety_context)
                 db.save_job_ranking(job_id, ranking)
                 summary["saved"] += 1
                 summary[ranking.decision] += 1
@@ -433,37 +443,187 @@ def _decision_score_inconsistent(decision: Any, score: Any) -> bool:
     return False
 
 
-def _active_profile_dealbreakers() -> list[str]:
+_DECISION_SEVERITY = {
+    "APPLY_NOW": 0,
+    "APPLY_WITH_TAILORED_CV": 1,
+    "MAYBE": 2,
+    "SKIP": 3,
+    "AVOID": 4,
+}
+
+
+def _active_profile_safety_context() -> dict[str, Any]:
     profile_payload = db.get_candidate_profile_payload() or {}
-    return [
-        str(item).strip()
-        for item in profile_payload.get("dealbreakers", [])
-        if str(item).strip()
-    ]
+    return {
+        "dealbreakers": [
+            str(item).strip()
+            for item in profile_payload.get("dealbreakers", [])
+            if str(item).strip()
+        ],
+        "preferred_locations": _clean_profile_list(profile_payload.get("preferred_locations")),
+        "preferred_work_modes": _clean_profile_list(profile_payload.get("preferred_work_modes")),
+        "profile_text": _normalize_text(_flatten_profile_text(profile_payload)),
+        "real_experience_years": profile_payload.get("real_experience_years"),
+    }
 
 
-def _apply_hard_override_gate(
+def _apply_ranking_safety_gate(
     job: dict[str, Any],
     ranking: Any,
-    active_dealbreakers: list[str],
+    safety_context: dict[str, Any],
 ) -> None:
-    triggered = _triggered_dealbreakers(job, ranking, active_dealbreakers)
-    if not triggered:
+    signals = _ranking_safety_signals(job, ranking, safety_context)
+    if not signals:
         return
-    for item in triggered:
-        if item not in ranking.evidence.dealbreakers:
-            ranking.evidence.dealbreakers.append(item)
-        flag = f"profile dealbreaker: {item}"
-        if flag not in ranking.evidence.red_flags:
-            ranking.evidence.red_flags.append(flag)
-    reason = "hard_override_dealbreaker"
-    if reason not in ranking.evidence.llm_escalation_reasons:
-        ranking.evidence.llm_escalation_reasons.append(reason)
-    ranking.decision = cast(Decision, "AVOID")
-    ranking.final_score = min(int(ranking.final_score), 20)
-    ranking.scores.risk_penalty = 40
-    prefix = f"Forced AVOID because profile dealbreaker(s) matched: {', '.join(triggered)}."
+
+    for signal in signals:
+        target = ranking.evidence.dealbreakers if signal.evidence_kind == "dealbreaker" else ranking.evidence.red_flags
+        if signal.label not in target:
+            target.append(signal.label)
+        if signal.reason == "hard_override_dealbreaker":
+            profile_flag = f"profile dealbreaker: {signal.label}"
+            if profile_flag not in ranking.evidence.red_flags:
+                ranking.evidence.red_flags.append(profile_flag)
+        if signal.reason not in ranking.evidence.llm_escalation_reasons:
+            ranking.evidence.llm_escalation_reasons.append(signal.reason)
+
+    most_conservative = max(signals, key=lambda item: _DECISION_SEVERITY[item.decision_cap])
+    if _DECISION_SEVERITY[ranking.decision] < _DECISION_SEVERITY[most_conservative.decision_cap]:
+        ranking.decision = most_conservative.decision_cap
+    ranking.final_score = min(int(ranking.final_score), min(signal.max_score for signal in signals))
+    ranking.scores.risk_penalty = max(int(ranking.scores.risk_penalty), max(signal.risk_penalty for signal in signals))
+    ranking.evidence.requires_llm_review = True
+    prefix = "Safety gate applied: " + "; ".join(signal.label for signal in signals) + "."
     ranking.reasoning_summary = f"{prefix} {ranking.reasoning_summary}".strip()
+
+
+def _ranking_safety_signals(
+    job: dict[str, Any],
+    ranking: Any,
+    safety_context: dict[str, Any],
+) -> list[RankingSafetySignal]:
+    haystack = _normalized_job_and_ranking_text(job, ranking)
+    job_text = _normalized_job_text(job)
+    profile_text = str(safety_context.get("profile_text") or "")
+    signals: list[RankingSafetySignal] = []
+
+    for item in _triggered_dealbreakers(job, ranking, safety_context.get("dealbreakers") or []):
+        signals.append(
+            RankingSafetySignal(
+                label=item,
+                decision_cap=cast(Decision, "AVOID"),
+                max_score=20,
+                risk_penalty=40,
+                reason="hard_override_dealbreaker",
+                evidence_kind="dealbreaker",
+            )
+        )
+
+    if _is_unpaid_or_commission_only(haystack):
+        signals.append(
+            RankingSafetySignal(
+                label="unpaid or commission-only compensation",
+                decision_cap=cast(Decision, "AVOID"),
+                max_score=20,
+                risk_penalty=40,
+                reason="hard_override_compensation",
+                evidence_kind="dealbreaker",
+            )
+        )
+
+    if _requires_relocation_without_remote(job_text):
+        signals.append(
+            RankingSafetySignal(
+                label="mandatory relocation without clear remote option",
+                decision_cap=cast(Decision, "AVOID"),
+                max_score=30,
+                risk_penalty=40,
+                reason="hard_override_relocation",
+                evidence_kind="dealbreaker",
+            )
+        )
+
+    location_label = _restricted_location_mismatch(job_text, safety_context)
+    if location_label:
+        signals.append(
+            RankingSafetySignal(
+                label=location_label,
+                decision_cap=cast(Decision, "AVOID"),
+                max_score=35,
+                risk_penalty=35,
+                reason="hard_override_location_restriction",
+                evidence_kind="dealbreaker",
+            )
+        )
+
+    if _is_low_context_spam(job, job_text):
+        signals.append(
+            RankingSafetySignal(
+                label="low-context or spam-like posting",
+                decision_cap=cast(Decision, "SKIP"),
+                max_score=25,
+                risk_penalty=35,
+                reason="safety_cap_low_context",
+            )
+        )
+
+    if _industrial_automation_mismatch(job_text, profile_text):
+        signals.append(
+            RankingSafetySignal(
+                label="industrial automation/electrical domain mismatch",
+                decision_cap=cast(Decision, "AVOID"),
+                max_score=35,
+                risk_penalty=35,
+                reason="hard_override_domain_mismatch",
+                evidence_kind="dealbreaker",
+            )
+        )
+
+    if _required_language_gap(job_text, profile_text):
+        signals.append(
+            RankingSafetySignal(
+                label="required language not supported by profile",
+                decision_cap=cast(Decision, "MAYBE"),
+                max_score=55,
+                risk_penalty=30,
+                reason="safety_cap_language_gap",
+            )
+        )
+
+    if _security_specialization_gap(job_text, profile_text):
+        signals.append(
+            RankingSafetySignal(
+                label="security specialization outside core profile",
+                decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
+                max_score=68,
+                risk_penalty=25,
+                reason="safety_cap_specialization_gap",
+            )
+        )
+
+    if _deep_specialization_gap(job_text, profile_text):
+        signals.append(
+            RankingSafetySignal(
+                label="deep specialization outside core profile",
+                decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
+                max_score=68,
+                risk_penalty=25,
+                reason="safety_cap_specialization_gap",
+            )
+        )
+
+    if _solutions_architect_pivot(job_text, profile_text):
+        signals.append(
+            RankingSafetySignal(
+                label="solutions architect/presales pivot requires tailoring",
+                decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
+                max_score=78,
+                risk_penalty=20,
+                reason="safety_cap_pivot_role",
+            )
+        )
+
+    return _dedupe_safety_signals(signals)
 
 
 def _triggered_dealbreakers(
@@ -497,6 +657,141 @@ def _dealbreaker_matches(dealbreaker: str, haystack: str) -> bool:
     return dealbreaker in haystack
 
 
+def _is_unpaid_or_commission_only(haystack: str) -> bool:
+    return any(marker in haystack for marker in ["unpaid", "no salary", "without pay", "unremunerated"]) or any(
+        marker in haystack for marker in ["commission only", "100% commission", "no base salary"]
+    )
+
+
+def _requires_relocation_without_remote(job_text: str) -> bool:
+    if _contains_any(job_text, ["no relocation required", "relocation not required", "without relocation"]):
+        return False
+    relocation_required = _contains_any(
+        job_text,
+        [
+            "mandatory relocation",
+            "required relocation",
+            "requires relocation",
+            "must relocate",
+            "relocation to",
+            "relocation package",
+            "relocation assistance",
+        ],
+    )
+    if not relocation_required:
+        return False
+    return not _contains_any(job_text, ["fully remote", "remote anywhere", "remote first", "remote within spain"])
+
+
+def _restricted_location_mismatch(job_text: str, safety_context: dict[str, Any]) -> str | None:
+    preferred_locations = " ".join(str(item) for item in safety_context.get("preferred_locations") or [])
+    preferred_work_modes = " ".join(str(item) for item in safety_context.get("preferred_work_modes") or [])
+    preference_text = _normalize_text(f"{preferred_locations} {preferred_work_modes}")
+    if not preference_text:
+        return None
+    if "remote" in preference_text and _contains_any(job_text, ["fully remote", "remote anywhere", "remote first"]):
+        return None
+
+    restricted_markers = [
+        "must be based in",
+        "must be located in",
+        "candidates must be located",
+        "candidates must be based",
+        "only candidates in",
+        "applicants must be located",
+        "applicants must be based",
+        "hybrid in",
+        "on site in",
+        "onsite in",
+        "presencial",
+    ]
+    if not _contains_any(job_text, restricted_markers):
+        return None
+
+    outside_locations = [
+        "belo horizonte",
+        "brazil",
+        "brasil",
+        "florianopolis",
+        "india",
+        "munich",
+        "germany",
+        "houston",
+        "united states",
+        "usa",
+        "u s ",
+    ]
+    for location in outside_locations:
+        if _contains_location_marker(job_text, location) and location not in preference_text:
+            return f"location restriction outside preferences: {location.strip()}"
+    return None
+
+
+def _is_low_context_spam(job: dict[str, Any], job_text: str) -> bool:
+    title = _normalize_text(str(job.get("title") or ""))
+    description = _normalize_text(str(job.get("description_text") or ""))
+    generic_titles = {"apply here", "join our hq", "join our team", "open application"}
+    if title in generic_titles:
+        return True
+    if len(description) < 120 and _contains_any(title, ["apply", "join", "general application"]):
+        return True
+    return _contains_any(job_text, ["magic word", "anti spam", "prove you read this"]) and len(description) < 800
+
+
+def _industrial_automation_mismatch(job_text: str, profile_text: str) -> bool:
+    if _contains_any(profile_text, ["plc", "scada", "vfd", "statcom", "epc", "industrial automation"]):
+        return False
+    industrial_terms = ["plc", "scada", "vfd", "statcom", "epc", "plant electrical", "industrial automation", "biofarma", "biopharma"]
+    role_terms = ["automation engineer", "application engineer", "electrical engineer", "control systems"]
+    return _contains_any(job_text, industrial_terms) and _contains_any(job_text, role_terms)
+
+
+def _required_language_gap(job_text: str, profile_text: str) -> bool:
+    if "german" in profile_text:
+        return False
+    return _contains_any(
+        job_text,
+        ["german required", "fluent german", "c1 german", "b2 german", "must speak german", "german language"],
+    )
+
+
+def _security_specialization_gap(job_text: str, profile_text: str) -> bool:
+    if _contains_any(profile_text, ["security", "cybersecurity", "devsecops", "appsec"]):
+        return False
+    return _contains_any(job_text, ["security engineer", "cybersecurity", "appsec", "devsecops"])
+
+
+def _deep_specialization_gap(job_text: str, profile_text: str) -> bool:
+    checks = [
+        (["rust kernel", "linux kernel", "device driver", "device drivers"], ["rust", "kernel", "device driver"]),
+        (["autonomous driving", "vehicle simulation", "simulation engineer"], ["autonomous", "simulation"]),
+        (["erp consultant", "sap consultant", "erp implementation"], ["erp", "sap"]),
+        (["senior infrastructure engineer", "sr infrastructure engineer", "staff infrastructure engineer"], ["infrastructure", "sre", "kubernetes"]),
+    ]
+    for job_terms, profile_terms in checks:
+        if _contains_any(job_text, job_terms) and not _contains_any(profile_text, profile_terms):
+            return True
+    return False
+
+
+def _solutions_architect_pivot(job_text: str, profile_text: str) -> bool:
+    if _contains_any(profile_text, ["solutions architect", "presales", "sales engineer"]):
+        return False
+    return _contains_any(job_text, ["solutions architect", "solution architect", "sales engineer", "presales"])
+
+
+def _dedupe_safety_signals(signals: list[RankingSafetySignal]) -> list[RankingSafetySignal]:
+    deduped: list[RankingSafetySignal] = []
+    seen = set()
+    for signal in signals:
+        key = (signal.label, signal.reason)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(signal)
+    return deduped
+
+
 def _normalized_job_and_ranking_text(job: dict[str, Any], ranking: Any) -> str:
     parts = [
         job.get("title"),
@@ -513,8 +808,45 @@ def _normalized_job_and_ranking_text(job: dict[str, Any], ranking: Any) -> str:
     return _normalize_text(" ".join(str(part) for part in parts if part))
 
 
+def _normalized_job_text(job: dict[str, Any]) -> str:
+    parts = [
+        job.get("title"),
+        job.get("company"),
+        job.get("location"),
+        job.get("workplace_type"),
+        job.get("description_text"),
+        job.get("data_quality_flags"),
+    ]
+    return _normalize_text(" ".join(str(part) for part in parts if part))
+
+
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower().replace("-", " ")).strip()
+
+
+def _contains_any(text: str, markers: list[str]) -> bool:
+    return any(marker in text for marker in markers)
+
+
+def _contains_location_marker(text: str, marker: str) -> bool:
+    normalized = marker.strip()
+    if normalized in {"usa", "u s"}:
+        return bool(re.search(r"\b(?:usa|u s)\b", text))
+    return normalized in text
+
+
+def _clean_profile_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _flatten_profile_text(value: Any) -> str:
+    if isinstance(value, dict):
+        return " ".join(_flatten_profile_text(item) for item in value.values())
+    if isinstance(value, list):
+        return " ".join(_flatten_profile_text(item) for item in value)
+    return str(value or "")
 
 
 def _exception_summary(exc: Exception) -> str:
