@@ -1,0 +1,41 @@
+{
+  "case_id": "ats-cv-product-owner-no-overclaim",
+  "surface": "ats_cv",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {
+    "job_id": null,
+    "label": "ats-cv-adjacent-role-synthetic"
+  },
+  "raw_input": {
+    "source": "synthetic_golden_seed",
+    "title": "Technical Product Owner",
+    "company": "WorkflowAI",
+    "location": "Remote Europe",
+    "job_html_or_text": "Own API roadmap, translate customer automation needs into product requirements, partner with engineering, and improve delivery metrics. Product owner experience preferred.",
+    "url": null,
+    "apply_url": null
+  },
+  "candidate_profile_snapshot": {
+    "source": "synthetic_reviewed_profile",
+    "profile": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend and full-stack engineer with Python, APIs, stakeholder collaboration, dashboards, automation delivery, Fiction Express, Talan Consulting, Globant, and Balloon Group.\nEducation\nSoftware Engineering background.",
+      "skills": [
+        {"name": "APIs", "level": "strong"},
+        {"name": "automation", "level": "strong"},
+        {"name": "stakeholder collaboration", "level": "working"}
+      ]
+    }
+  },
+  "expected": {
+    "required_keywords": ["API", "automation", "stakeholder"],
+    "required_sections": ["summary", "skills", "experience", "education"],
+    "min_chars": 500,
+    "keyword_synonyms": {
+      "API": ["APIs", "REST"],
+      "stakeholder": ["stakeholders", "cross-functional"]
+    },
+    "forbidden_claims": ["Certified Scrum Product Owner", "Head of Product", "managed product P&L"]
+  },
+  "human_review_notes": "Reviewed seed case: ATS CV can tailor toward product collaboration, but must not overclaim formal product ownership."
+}

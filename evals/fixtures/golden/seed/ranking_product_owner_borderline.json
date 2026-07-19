@@ -1,0 +1,38 @@
+{
+  "case_id": "ranking-product-owner-borderline",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": false,
+  "source": {
+    "job_id": null,
+    "label": "borderline-synthetic"
+  },
+  "raw_input": {
+    "source": "synthetic_golden_seed",
+    "title": "Technical Product Owner",
+    "company": "WorkflowAI",
+    "location": "Remote Europe",
+    "job_html_or_text": "Own API roadmap, translate customer automation needs into product requirements, partner with engineering, and improve delivery metrics. Product owner experience preferred.",
+    "url": null,
+    "apply_url": null
+  },
+  "candidate_profile_snapshot": {
+    "source": "synthetic_reviewed_profile",
+    "profile": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend and full-stack engineer with Python, APIs, stakeholder collaboration, dashboards, automation delivery, Fiction Express, Talan Consulting, Globant, and Balloon Group.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "APIs", "level": "strong"},
+        {"name": "automation", "level": "strong"},
+        {"name": "stakeholder collaboration", "level": "working"}
+      ]
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE"],
+    "min_score": 55,
+    "max_score": 82,
+    "required_evidence_terms": ["API", "product"]
+  },
+  "human_review_notes": "Reviewed seed case: adjacent role should be considered but not treated as an obvious APPLY_NOW."
+}

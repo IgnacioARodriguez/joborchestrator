@@ -29,6 +29,7 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 - Stored eval evidence:
   - Ranking: 10 cases, 4 passed, 40.0% pass rate, average score 91.0.
   - Application materials: 3 cases, 0 passed, 0.0% pass rate, average score 65.0.
+- Reviewed golden seed fixtures: 8 cases under `evals/fixtures/golden/seed`.
 - Known recurring eval issues:
   - `missing_evidence_terms`
   - `missing_required_terms`
@@ -46,7 +47,7 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 | Ranking quality | >= 90% pass rate, 0 critical failures | Red | Stored evals show 4/10 passing | Need reviewed golden set and fresh v2 baseline |
 | Materials quality | >= 90% pass rate, 0 critical failures | Red | Stored evals show 0/3 passing | Need fresh v2 baseline and prompt fixes for length/specificity |
 | ATS CV quality | >= 95% pass rate, 0 critical failures | Red | Historical eval loop showed internal-note and missing-keyword failures | Need current ATS CV baseline and hard gate |
-| Golden set | 30-50 reviewed cases | Red | Current stored eval evidence is small and mixed | Need curated reviewed cases |
+| Golden set | 30-50 reviewed cases | Red-Yellow | 8 reviewed seed fixtures exist across ranking/materials/ATS CV | Need 22-42 more reviewed cases from real jobs |
 | Critical failure gate | Critical failures block promotion | Yellow | Eval loop has hard-stop and regression checks | Need larger coverage and explicit critical taxonomy in reports |
 | Case regressions | 0 regressions on promotion | Green-Yellow | `compare_summaries` regressions are wired into promotion gate | Needs fresh runs to prove effectiveness at scale |
 | Judge rubric | Versioned judge prompt and issue codes | Green-Yellow | Judge rubric v1, issue code normalization, multi-model support | Need stronger calibration against human review |
@@ -70,7 +71,7 @@ Overall: 6.5/10.
 
 ## Immediate Blockers To High Trust
 
-1. Golden set is too small.
+1. Golden set is too small: 8 reviewed seed fixtures exist, target is 30-50.
 2. v2 prompts have not been proven with a full fresh baseline.
 3. Materials and ATS CV still have known historical quality failures.
 4. Production confidence gates are not strict enough to support near-blind trust.
@@ -104,6 +105,12 @@ Done when:
 - Cases cover ranking decisions, dealbreakers, weak-fit jobs, strong-fit jobs, materials, and ATS CV.
 - Each case has expected behavior and critical-failure markers.
 - No protected fixtures are modified without explicit human approval.
+
+Current progress:
+
+- 8 reviewed synthetic seed cases exist in `evals/fixtures/golden/seed`.
+- A 40-case real-job review packet can be generated under `logs/` for human review.
+- Real-job packet cases must be reviewed before promotion into `evals/fixtures/golden`.
 
 ### Gate 3: Run Fresh v2 Baseline
 

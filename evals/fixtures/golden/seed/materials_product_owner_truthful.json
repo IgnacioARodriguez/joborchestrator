@@ -1,0 +1,37 @@
+{
+  "case_id": "materials-product-owner-truthful",
+  "surface": "application_materials",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {
+    "job_id": null,
+    "label": "materials-adjacent-role-synthetic"
+  },
+  "raw_input": {
+    "source": "synthetic_golden_seed",
+    "title": "Technical Product Owner",
+    "company": "WorkflowAI",
+    "location": "Remote Europe",
+    "job_html_or_text": "Own API roadmap, translate customer automation needs into product requirements, partner with engineering, and improve delivery metrics. Product owner experience preferred.",
+    "url": null,
+    "apply_url": null
+  },
+  "candidate_profile_snapshot": {
+    "source": "synthetic_reviewed_profile",
+    "profile": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend and full-stack engineer with Python, APIs, stakeholder collaboration, dashboards, automation delivery, Fiction Express, Talan Consulting, Globant, and Balloon Group.",
+      "skills": [
+        {"name": "APIs", "level": "strong"},
+        {"name": "automation", "level": "strong"},
+        {"name": "stakeholder collaboration", "level": "working"}
+      ]
+    }
+  },
+  "expected": {
+    "required_terms": ["API", "automation", "stakeholder"],
+    "specificity_terms": ["WorkflowAI", "Technical Product Owner"],
+    "max_recruiter_message_chars": 320,
+    "forbidden_claims": ["Certified Scrum Product Owner", "Head of Product", "managed product P&L"]
+  },
+  "human_review_notes": "Reviewed seed case: materials may position adjacent experience but must not invent formal product-owner credentials."
+}

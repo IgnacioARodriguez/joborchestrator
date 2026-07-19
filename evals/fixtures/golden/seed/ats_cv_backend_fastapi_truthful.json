@@ -1,0 +1,39 @@
+{
+  "case_id": "ats-cv-backend-fastapi-truthful",
+  "surface": "ats_cv",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {
+    "job_id": null,
+    "label": "ats-cv-truthful-synthetic"
+  },
+  "raw_input": {
+    "source": "synthetic_golden_seed",
+    "title": "Backend Engineer",
+    "company": "Acme Labs",
+    "location": "Remote Spain",
+    "job_html_or_text": "Acme Labs is hiring a Backend Engineer to build Python and FastAPI APIs, own PostgreSQL data models, improve observability, and collaborate with product teams.",
+    "url": null,
+    "apply_url": null
+  },
+  "candidate_profile_snapshot": {
+    "source": "synthetic_reviewed_profile",
+    "profile": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend Engineer\nExperience with Python APIs, FastAPI, PostgreSQL, AWS, dashboards, product delivery, Fiction Express, Talan Consulting, Globant, and Balloon Group.\nEducation\nSoftware Engineering background.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"},
+        {"name": "PostgreSQL", "level": "strong"}
+      ]
+    }
+  },
+  "expected": {
+    "required_keywords": ["Python", "FastAPI", "PostgreSQL"],
+    "required_sections": ["summary", "skills", "experience", "education"],
+    "min_chars": 500,
+    "keyword_synonyms": {
+      "PostgreSQL": ["SQL", "relational database"]
+    }
+  },
+  "human_review_notes": "Reviewed seed case: ATS CV must be candidate-facing, parseable, truthful, and free of internal notes."
+}

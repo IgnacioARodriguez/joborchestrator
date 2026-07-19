@@ -1,0 +1,36 @@
+{
+  "case_id": "materials-backend-fastapi-specific",
+  "surface": "application_materials",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {
+    "job_id": null,
+    "label": "materials-specific-synthetic"
+  },
+  "raw_input": {
+    "source": "synthetic_golden_seed",
+    "title": "Backend Engineer",
+    "company": "Acme Labs",
+    "location": "Remote Spain",
+    "job_html_or_text": "Acme Labs is hiring a Backend Engineer to build Python and FastAPI APIs, own PostgreSQL data models, improve observability, and collaborate with product teams.",
+    "url": null,
+    "apply_url": null
+  },
+  "candidate_profile_snapshot": {
+    "source": "synthetic_reviewed_profile",
+    "profile": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend Engineer\nExperience with Python APIs, FastAPI, PostgreSQL, AWS, dashboards, product delivery, Fiction Express, Talan Consulting, Globant, and Balloon Group.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"},
+        {"name": "PostgreSQL", "level": "strong"}
+      ]
+    }
+  },
+  "expected": {
+    "required_terms": ["Python", "FastAPI", "PostgreSQL"],
+    "specificity_terms": ["Acme Labs", "Backend Engineer"],
+    "max_recruiter_message_chars": 320
+  },
+  "human_review_notes": "Reviewed seed case: materials must be concise, specific to Acme Labs, and truthful."
+}

@@ -1,0 +1,38 @@
+{
+  "case_id": "ranking-commission-relocation-avoid",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {
+    "job_id": null,
+    "label": "avoid-synthetic"
+  },
+  "raw_input": {
+    "source": "synthetic_golden_seed",
+    "title": "Manual QA Lead",
+    "company": "SalesSprint",
+    "location": "Outside Spain",
+    "job_html_or_text": "Commission-only contract. Manual QA for ad campaigns, mandatory relocation outside Spain, weekend availability, and no base salary.",
+    "url": null,
+    "apply_url": null
+  },
+  "candidate_profile_snapshot": {
+    "source": "synthetic_reviewed_profile",
+    "profile": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend engineer focused on Python, APIs, automation, FastAPI, PostgreSQL, AWS, and product integrations.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"},
+        {"name": "automation", "level": "strong"}
+      ],
+      "preferred_locations": ["Spain", "Remote"]
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["AVOID", "SKIP"],
+    "max_score": 35,
+    "required_evidence_terms": ["manual QA", "commission"],
+    "dealbreaker_terms": ["commission", "relocation"]
+  },
+  "human_review_notes": "Reviewed seed case: non-engineering role, commission-only, and relocation should be rejected."
+}

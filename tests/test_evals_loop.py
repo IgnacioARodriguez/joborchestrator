@@ -1,6 +1,7 @@
 from scripts import run_evals_loop as loop
 from argparse import Namespace
 import json
+from pathlib import Path
 
 
 def test_loop_summarizes_by_surface_and_issue_counts():
@@ -226,6 +227,19 @@ def test_loop_loads_only_reviewed_golden_fixtures(tmp_path):
     fixtures = loop.load_golden_fixtures(tmp_path)
 
     assert [fixture["case_id"] for fixture in fixtures] == ["reviewed"]
+
+
+def test_seed_golden_fixtures_are_reviewed_and_cover_surfaces():
+    fixtures = loop.load_golden_fixtures(Path("evals/fixtures/golden/seed"))
+
+    assert len(fixtures) == 8
+    assert {loop.fixture_surface(fixture) for fixture in fixtures} == {
+        "application_materials",
+        "ats_cv",
+        "ranking",
+    }
+    assert all(fixture["review_status"] == "reviewed" for fixture in fixtures)
+    assert any(fixture.get("critical") for fixture in fixtures)
 
 
 def test_loop_golden_fixture_case_maps_expected_by_surface():

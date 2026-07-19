@@ -1,0 +1,39 @@
+{
+  "case_id": "ranking-rust-kernel-mismatch",
+  "surface": "ranking",
+  "review_status": "reviewed",
+  "critical": true,
+  "source": {
+    "job_id": null,
+    "label": "dealbreaker-synthetic"
+  },
+  "raw_input": {
+    "source": "synthetic_golden_seed",
+    "title": "Senior Rust Kernel Engineer",
+    "company": "LowLevel Systems",
+    "location": "Berlin onsite",
+    "job_html_or_text": "LowLevel Systems requires 8+ years of Rust, C++, Linux kernel internals, device drivers, and on-site relocation to Berlin.",
+    "url": null,
+    "apply_url": null
+  },
+  "candidate_profile_snapshot": {
+    "source": "synthetic_reviewed_profile",
+    "profile": {
+      "base_cv_text": "Ignacio Rodriguez\nBackend engineer focused on Python, Django, FastAPI, PostgreSQL, AWS, APIs, automation, and product integrations.",
+      "skills": [
+        {"name": "Python", "level": "strong"},
+        {"name": "FastAPI", "level": "strong"},
+        {"name": "PostgreSQL", "level": "strong"}
+      ],
+      "preferred_locations": ["Spain", "Remote"],
+      "real_experience_years": 4
+    }
+  },
+  "expected": {
+    "allowed_decisions": ["MAYBE", "SKIP", "AVOID"],
+    "max_score": 55,
+    "required_evidence_terms": ["Rust", "kernel"],
+    "dealbreaker_terms": ["relocation", "Rust kernel"]
+  },
+  "human_review_notes": "Reviewed seed case: APPLY_NOW is a critical failure because the central Rust/kernel and relocation requirements are mismatched."
+}
