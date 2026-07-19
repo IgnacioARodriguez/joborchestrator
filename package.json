@@ -18,7 +18,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint app components lib --max-warnings=0",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm run lint && npm run build && npm run trust:gate"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
