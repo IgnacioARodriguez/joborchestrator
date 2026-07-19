@@ -1,3 +1,8 @@
+import asyncio
+
+import httpx
+
+from joborchestrator.scanning import providers
 from joborchestrator.scanning.search_providers import (
     AdzunaSearchProvider,
     ArbeitnowSearchProvider,
@@ -9,8 +14,20 @@ from joborchestrator.scanning.search_providers import (
     configured_search_provider_names,
     provider_requires_configuration,
 )
+from joborchestrator.scanning.providers import BaseProvider, ProviderError
 from joborchestrator.scanning.search_scanner import summarize_duplicate_rates
 from joborchestrator.scanning.models import JobPosting, ScanResult
+
+
+class FakeResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
 
 
 def test_remotive_normalization():
@@ -35,6 +52,57 @@ def test_remotive_normalization():
     assert job.workplace_type == "Remote"
     assert job.description_text == "Build APIs with Python."
     assert job.content_hash
+
+
+def test_base_provider_retries_timeout_once(monkeypatch):
+    calls = {"count": 0}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, **kwargs):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise httpx.TimeoutException("temporary timeout")
+            return FakeResponse({"ok": True})
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", FakeClient)
+
+    result = asyncio.run(BaseProvider(timeout=1, retries=1)._get_json("https://example.test/jobs"))
+
+    assert result == {"ok": True}
+    assert calls["count"] == 2
+
+
+def test_base_provider_reports_exhausted_timeout_attempts(monkeypatch):
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, **kwargs):
+            raise httpx.TimeoutException("still timing out")
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", FakeClient)
+
+    try:
+        asyncio.run(BaseProvider(timeout=1, retries=2)._get_json("https://example.test/jobs"))
+    except ProviderError as exc:
+        assert "after 3 attempts" in str(exc)
+    else:
+        raise AssertionError("Expected ProviderError")
 
 
 def test_arbeitnow_normalization():

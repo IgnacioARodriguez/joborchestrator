@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Protocol
 
 import httpx
@@ -8,6 +9,7 @@ from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.normalization import compute_content_hash, first_value, html_to_text
 
 DEFAULT_TIMEOUT_SECONDS = 20.0
+DEFAULT_RETRIES = int(os.getenv("JOB_PROVIDER_RETRIES", "1"))
 
 
 class ProviderError(RuntimeError):
@@ -32,40 +34,45 @@ class JobProvider(Protocol):
 class BaseProvider:
     source = "base"
 
-    def __init__(self, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> None:
+    def __init__(self, timeout: float = DEFAULT_TIMEOUT_SECONDS, retries: int = DEFAULT_RETRIES) -> None:
         self.timeout = timeout
+        self.retries = max(0, int(retries))
 
     async def _get_json(self, url: str, **kwargs: Any) -> Any:
-        timeout = httpx.Timeout(self.timeout)
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            try:
-                response = await client.get(url, **kwargs)
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPStatusError as exc:
-                raise ProviderError(f"{self.source} returned HTTP {exc.response.status_code} for {url}") from exc
-            except httpx.TimeoutException as exc:
-                raise ProviderError(f"{self.source} timed out after {self.timeout}s for {url}") from exc
-            except httpx.HTTPError as exc:
-                raise ProviderError(f"{self.source} request failed for {url}: {exc}") from exc
-            except ValueError as exc:
-                raise ProviderError(f"{self.source} returned invalid JSON for {url}") from exc
+        return await self._request_json("get", url, **kwargs)
 
     async def _post_json(self, url: str, payload: dict[str, Any]) -> Any:
+        return await self._request_json("post", url, json=payload)
+
+    async def _request_json(self, method: str, url: str, **kwargs: Any) -> Any:
         timeout = httpx.Timeout(self.timeout)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            try:
-                response = await client.post(url, json=payload)
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPStatusError as exc:
-                raise ProviderError(f"{self.source} returned HTTP {exc.response.status_code} for {url}") from exc
-            except httpx.TimeoutException as exc:
-                raise ProviderError(f"{self.source} timed out after {self.timeout}s for {url}") from exc
-            except httpx.HTTPError as exc:
-                raise ProviderError(f"{self.source} request failed for {url}: {exc}") from exc
-            except ValueError as exc:
-                raise ProviderError(f"{self.source} returned invalid JSON for {url}") from exc
+            request = getattr(client, method)
+            attempts = self.retries + 1
+            for attempt in range(attempts):
+                try:
+                    response = await request(url, **kwargs)
+                    response.raise_for_status()
+                    return response.json()
+                except httpx.HTTPStatusError as exc:
+                    if _retryable_status(exc.response.status_code) and attempt < self.retries:
+                        continue
+                    raise ProviderError(
+                        f"{self.source} returned HTTP {exc.response.status_code} for {url} after {attempt + 1} attempts"
+                    ) from exc
+                except httpx.TimeoutException as exc:
+                    if attempt < self.retries:
+                        continue
+                    raise ProviderError(
+                        f"{self.source} timed out after {self.timeout}s for {url} after {attempt + 1} attempts"
+                    ) from exc
+                except httpx.HTTPError as exc:
+                    if attempt < self.retries:
+                        continue
+                    raise ProviderError(f"{self.source} request failed for {url} after {attempt + 1} attempts: {exc}") from exc
+                except ValueError as exc:
+                    raise ProviderError(f"{self.source} returned invalid JSON for {url}") from exc
+        raise ProviderError(f"{self.source} request failed for {url}")
 
     def _finalize(self, job: JobPosting) -> JobPosting:
         job.content_hash = compute_content_hash(
@@ -275,6 +282,10 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _retryable_status(status_code: int) -> bool:
+    return status_code == 429 or status_code >= 500
+
+
 PROVIDERS: dict[str, JobProvider] = {
     "greenhouse": GreenhouseProvider(),
     "lever": LeverProvider(),
@@ -295,4 +306,3 @@ async def list_jobs_for_source(
     if provider is None:
         raise ProviderError(f"Unsupported provider: {source_type}")
     return await provider.list_jobs(company_ref, company_name)
-
