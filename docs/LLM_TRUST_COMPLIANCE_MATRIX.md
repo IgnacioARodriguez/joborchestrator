@@ -26,7 +26,7 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 - Production rankings in Turso: 293 before re-ranking job `#8`.
 - Latest completed recovery ranking job: `#6`, 30/30 saved, 0 failed.
 - Current re-ranking job: `#8`, 419 queued, 375 processed, 375 saved, 0 failed as of the latest Vercel backend smoke.
-- Local offline trust gate: `npm run trust:gate` passed on 2026-07-19.
+- Local offline trust gate: `npm run trust:gate` passed on 2026-07-19; `npm run verify` now runs typecheck, lint, build, and the trust gate.
 - Latest Vercel backend smoke: passed against Turso on 2026-07-19; warning only for 27 recent historical scan errors, while latest scan completed with 0 errors. Error sample points to `themuse`/`remotive` API timeouts from 2026-07-15.
 - Latest Vercel UI smoke: passed on 2026-07-19; dashboard rendered 419 visible jobs across Today/Review/Applications/Profile/Automations/Insights with no console errors or failed requests.
 - Stored eval evidence:
@@ -69,7 +69,7 @@ HuntPilot is currently suitable as a strong copilot for job discovery, ranking, 
 | Application materials | 6.1 | Prompt v2 exists, recruiter specificity/length gates improved, materials review status is exposed, and generation/retry/profile trace metadata is persisted; stored eval evidence still needs a fresh pass. |
 | ATS CV | 6.0 | Internal notes, incomplete CVs, omitted base experiences, and unsupported ranking avoid-overclaiming terms now have deterministic gates; needs fresh v2 proof. |
 | Judge/evals | 7.3 | Strong framework, offline trust gate, feedback records, and summary analytics are now available for calibration, but dataset is still small and judge calibration remains limited. |
-| Production operations | 7.8 | Vercel/Turso/smokes are healthy; local trust gate is repeatable, materials/ranking outputs are traceable for new writes, retry/profile metadata is stored, ranking/material review status is visible, and user feedback can be captured/summarized; remaining risk is quality gating rather than uptime. |
+| Production operations | 7.8 | Vercel/Turso/smokes are healthy; `npm run verify` is repeatable, materials/ranking outputs are traceable for new writes, retry/profile metadata is stored, ranking/material review status is visible, and user feedback can be captured/summarized; remaining risk is quality gating rather than uptime. |
 
 Overall: 7.7/10.
 
@@ -128,7 +128,7 @@ Done when:
 - ATS CV v2 baseline is run.
 - Results are compared to prior summaries.
 - Critical failures are listed separately from ordinary misses.
-- `npm run trust:gate` passes before and after prompt changes.
+- `npm run verify` passes before and after prompt changes.
 
 ### Gate 4: Fix Highest-Severity Prompt Failures
 
