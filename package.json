@@ -14,6 +14,7 @@
     "evals:baseline": "python scripts/run_llm_eval_baseline.py",
     "evals:capture": "python scripts/capture_llm_eval_fixture.py",
     "evals:loop": "python scripts/run_evals_loop.py",
+    "trust:gate": ".venv\\Scripts\\python.exe scripts/run_trust_gate.py",
     "build": "next build",
     "start": "next start",
     "lint": "eslint app components lib --max-warnings=0",
