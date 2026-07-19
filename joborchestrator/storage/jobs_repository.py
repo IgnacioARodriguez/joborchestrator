@@ -610,6 +610,12 @@ def get_apply_queue_job_postings(
               jr.recommended_application_angle AS ranking_recommended_application_angle,
               jr.cv_keywords_to_emphasize_json AS ranking_cv_keywords_to_emphasize_json,
               jr.cv_keywords_to_avoid_overclaiming_json AS ranking_cv_keywords_to_avoid_overclaiming_json,
+              jr.ranking_provider AS ranking_ranking_provider,
+              jr.ranking_model AS ranking_ranking_model,
+              jr.ranking_prompt_versions_json AS ranking_ranking_prompt_versions_json,
+              jr.ranking_validation_attempts AS ranking_ranking_validation_attempts,
+              jr.ranking_validation_errors_json AS ranking_ranking_validation_errors_json,
+              jr.ranking_candidate_profile_hash AS ranking_ranking_candidate_profile_hash,
               jr.ranking_version AS ranking_ranking_version
             FROM job_postings jp
             {join_sql}

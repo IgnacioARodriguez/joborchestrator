@@ -886,6 +886,32 @@ function DetailBody({
                 job.ranking.reasoning_summary,
               )}
             </p>
+            {(job.ranking.generation.provider ||
+              job.ranking.generation.model ||
+              job.ranking.generation.candidate_profile_hash) ? (
+              <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+                {job.ranking.generation.provider ? (
+                  <span className="rounded-md border border-border bg-background/70 px-2 py-0.5">
+                    {job.ranking.generation.provider}
+                  </span>
+                ) : null}
+                {job.ranking.generation.model ? (
+                  <span className="rounded-md border border-border bg-background/70 px-2 py-0.5">
+                    {job.ranking.generation.model}
+                  </span>
+                ) : null}
+                {job.ranking.generation.validation_attempts && job.ranking.generation.validation_attempts > 1 ? (
+                  <span className="rounded-md border border-warning/30 bg-warning/10 px-2 py-0.5 text-warning-foreground">
+                    {job.ranking.generation.validation_attempts} validation attempts
+                  </span>
+                ) : null}
+                {job.ranking.generation.candidate_profile_hash ? (
+                  <span className="rounded-md border border-border bg-background/70 px-2 py-0.5">
+                    profile {job.ranking.generation.candidate_profile_hash.slice(0, 8)}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
             <Lightbulb className="mt-0.5 size-4 shrink-0 text-primary" />

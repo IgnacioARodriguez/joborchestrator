@@ -561,6 +561,12 @@ def _ranking_from_apply_queue_row(row: dict[str, Any]) -> dict[str, Any] | None:
         "recommended_application_angle": row.get("ranking_recommended_application_angle"),
         "cv_keywords_to_emphasize_json": row.get("ranking_cv_keywords_to_emphasize_json"),
         "cv_keywords_to_avoid_overclaiming_json": row.get("ranking_cv_keywords_to_avoid_overclaiming_json"),
+        "ranking_provider": row.get("ranking_ranking_provider"),
+        "ranking_model": row.get("ranking_ranking_model"),
+        "ranking_prompt_versions_json": row.get("ranking_ranking_prompt_versions_json"),
+        "ranking_validation_attempts": row.get("ranking_ranking_validation_attempts"),
+        "ranking_validation_errors_json": row.get("ranking_ranking_validation_errors_json"),
+        "ranking_candidate_profile_hash": row.get("ranking_ranking_candidate_profile_hash"),
         "ranking_version": row.get("ranking_ranking_version"),
     }
 
@@ -571,13 +577,15 @@ def _llm_feedback_context(job_id: int, job: dict[str, Any], artifact_type: str) 
         ranking_version = str(ranking.get("ranking_version") or "")
         return {
             "ranking_version": ranking_version or None,
-            "provider": _provider_from_label(ranking_version),
-            "model": None,
-            "prompt_versions": {},
+            "provider": ranking.get("ranking_provider") or _provider_from_label(ranking_version),
+            "model": ranking.get("ranking_model"),
+            "prompt_versions": parse_json_value(ranking.get("ranking_prompt_versions_json"), {}),
             "metadata": {
                 "decision": ranking.get("decision"),
                 "final_score": ranking.get("final_score"),
                 "confidence": ranking.get("confidence"),
+                "validation_attempts": ranking.get("ranking_validation_attempts"),
+                "candidate_profile_hash": ranking.get("ranking_candidate_profile_hash"),
             },
         }
     prompt_versions = parse_json_value(job.get("materials_prompt_versions_json"), {})

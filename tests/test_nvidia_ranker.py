@@ -72,6 +72,7 @@ def test_rank_jobs_with_nvidia_saves_each_ranking(monkeypatch):
         ]
     )
     saved = {}
+    saved_metadata = {}
 
     async def fake_call(batch, **kwargs):
         return {
@@ -81,8 +82,9 @@ def test_rank_jobs_with_nvidia_saves_each_ranking(monkeypatch):
             ]
         }
 
-    def fake_save(job_id, ranking):
+    def fake_save(job_id, ranking, **kwargs):
         saved[job_id] = ranking
+        saved_metadata[job_id] = kwargs
         return 1
 
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
@@ -99,6 +101,12 @@ def test_rank_jobs_with_nvidia_saves_each_ranking(monkeypatch):
     assert saved[1].final_score == 82
     assert saved[1].ranking_version == NVIDIA_RANKING_VERSION
     assert "nvidia_ranking_applied" in saved[1].evidence.llm_escalation_reasons
+    assert saved_metadata[1]["ranking_provider"] == "nvidia"
+    assert saved_metadata[1]["ranking_model"] == DEFAULT_NVIDIA_MODEL
+    assert saved_metadata[1]["ranking_validation_attempts"] == 1
+    assert saved_metadata[1]["ranking_validation_errors"] == []
+    assert len(saved_metadata[1]["ranking_candidate_profile_hash"]) == 64
+    assert saved_metadata[1]["ranking_candidate_profile_snapshot"]
 
 
 def test_rank_jobs_with_nvidia_async_runs_batches_concurrently(monkeypatch):
@@ -124,7 +132,7 @@ def test_rank_jobs_with_nvidia_async_runs_batches_concurrently(monkeypatch):
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
     monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
-    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
 
     summary = asyncio.run(rank_jobs_with_nvidia_async(jobs, request_batch_size=1, max_concurrency=2))
 
@@ -150,7 +158,7 @@ def test_rank_jobs_with_nvidia_reports_progress(monkeypatch):
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
     monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
-    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: 1)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: 1)
 
     summary = rank_jobs_with_nvidia(
         jobs,
@@ -179,7 +187,7 @@ def test_rank_jobs_with_nvidia_saves_partial_batch_when_response_omits_job(monke
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
     monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
-    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
 
     summary = rank_jobs_with_nvidia(jobs, request_batch_size=2)
 
@@ -213,7 +221,7 @@ def test_nvidia_ranking_is_capped_by_profile_dealbreaker_guards(monkeypatch):
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
     monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
-    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
 
     summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
 
@@ -248,7 +256,7 @@ def test_nvidia_ranking_blocks_explicit_location_restriction(monkeypatch):
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
     monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
-    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
 
     summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
 
@@ -280,7 +288,7 @@ def test_nvidia_ranking_downgrades_required_language_gap(monkeypatch):
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
     monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
-    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
 
     summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
 
@@ -313,7 +321,7 @@ def test_nvidia_ranking_blocks_industrial_automation_mismatch(monkeypatch):
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
     monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
-    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
 
     summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
 
@@ -355,7 +363,7 @@ def test_nvidia_ranking_caps_specialized_adjacent_roles(monkeypatch):
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
     monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
-    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
 
     summary = rank_jobs_with_nvidia(jobs, request_batch_size=2)
 
@@ -388,7 +396,7 @@ def test_nvidia_ranking_skips_low_context_spam_like_posting(monkeypatch):
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
     monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
-    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
 
     summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
 
@@ -496,7 +504,7 @@ def test_rank_jobs_with_nvidia_skips_inconsistent_partial_result(monkeypatch):
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
     monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
     monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
-    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking: saved.setdefault(job_id, ranking))
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
 
     summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
 

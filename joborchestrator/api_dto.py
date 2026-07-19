@@ -185,6 +185,18 @@ def ranking_dto(row: dict[str, Any] | None) -> dict[str, Any]:
         "cv_keywords_to_emphasize": parse_json_value(row.get("cv_keywords_to_emphasize_json"), []),
         "cv_keywords_to_avoid_overclaiming": parse_json_value(row.get("cv_keywords_to_avoid_overclaiming_json"), []),
         "ranking_version": row.get("ranking_version") or NVIDIA_RANKING_VERSION,
+        "generation": ranking_generation_dto(row),
+    }
+
+
+def ranking_generation_dto(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "provider": _nullable_string(row.get("ranking_provider")),
+        "model": _nullable_string(row.get("ranking_model")),
+        "prompt_versions": parse_json_value(row.get("ranking_prompt_versions_json"), {}),
+        "validation_attempts": _int_or_none(row.get("ranking_validation_attempts")),
+        "validation_errors": parse_json_value(row.get("ranking_validation_errors_json"), []),
+        "candidate_profile_hash": _nullable_string(row.get("ranking_candidate_profile_hash")),
     }
 
 
@@ -248,6 +260,14 @@ def _default_ranking() -> dict[str, Any]:
         "cv_keywords_to_emphasize": [],
         "cv_keywords_to_avoid_overclaiming": [],
         "ranking_version": "unranked",
+        "generation": {
+            "provider": None,
+            "model": None,
+            "prompt_versions": {},
+            "validation_attempts": None,
+            "validation_errors": [],
+            "candidate_profile_hash": None,
+        },
     }
 
 

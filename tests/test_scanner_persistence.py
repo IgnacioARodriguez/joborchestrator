@@ -195,6 +195,34 @@ def test_llm_output_feedback_is_persisted(tmp_path, monkeypatch):
     assert rows[0]["metadata_json"] == '{"score": 91}'
 
 
+def test_ranking_trace_metadata_is_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+
+    db.save_job_ranking(
+        job_id,
+        make_ranking(),
+        ranking_provider="nvidia",
+        ranking_model="test-model",
+        ranking_prompt_versions={"ranking/nvidia_response_contract": "v2"},
+        ranking_validation_attempts=2,
+        ranking_validation_errors=["missing rankings list"],
+        ranking_candidate_profile_hash="profile-hash",
+        ranking_candidate_profile_snapshot={"headline": "Backend engineer"},
+    )
+
+    stored = db.get_rankings_for_job_ids("ranking_v1.1.0-nvidia", [job_id]).iloc[0].to_dict()
+    assert stored["ranking_provider"] == "nvidia"
+    assert stored["ranking_model"] == "test-model"
+    assert stored["ranking_prompt_versions_json"] == '{"ranking/nvidia_response_contract": "v2"}'
+    assert stored["ranking_validation_attempts"] == 2
+    assert stored["ranking_validation_errors_json"] == '["missing rankings list"]'
+    assert stored["ranking_candidate_profile_hash"] == "profile-hash"
+    assert stored["ranking_candidate_profile_snapshot_json"] == '{"headline": "Backend engineer"}'
+
+
 def test_application_entities_and_events_are_persisted(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()

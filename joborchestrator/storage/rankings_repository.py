@@ -19,9 +19,36 @@ ReadSqlQuery = Callable[
 ]
 
 
-def save_job_ranking(connect: ConnectionFactory, job_id: int, ranking: RankingResult) -> int:
+def save_job_ranking(
+    connect: ConnectionFactory,
+    job_id: int,
+    ranking: RankingResult,
+    *,
+    ranking_provider: str | None = None,
+    ranking_model: str | None = None,
+    ranking_prompt_versions: dict | None = None,
+    ranking_validation_attempts: int | None = None,
+    ranking_validation_errors: list | None = None,
+    ranking_candidate_profile_hash: str | None = None,
+    ranking_candidate_profile_snapshot: dict | None = None,
+) -> int:
     now = datetime.now().isoformat(timespec="seconds")
     payload = result_to_dict(ranking)
+    prompt_versions_json = (
+        json.dumps(ranking_prompt_versions, ensure_ascii=False, sort_keys=True)
+        if ranking_prompt_versions is not None
+        else None
+    )
+    validation_errors_json = (
+        json.dumps(ranking_validation_errors, ensure_ascii=False)
+        if ranking_validation_errors is not None
+        else None
+    )
+    profile_snapshot_json = (
+        json.dumps(ranking_candidate_profile_snapshot, ensure_ascii=False, sort_keys=True)
+        if ranking_candidate_profile_snapshot is not None
+        else None
+    )
     conn = connect()
     try:
         existing = conn.execute(
@@ -34,6 +61,13 @@ def save_job_ranking(connect: ConnectionFactory, job_id: int, ranking: RankingRe
                        final_score = ?, decision = ?, confidence = ?, scores_json = ?,
                        evidence_json = ?, reasoning_summary = ?, recommended_application_angle = ?,
                        cv_keywords_to_emphasize_json = ?, cv_keywords_to_avoid_overclaiming_json = ?,
+                       ranking_provider = COALESCE(?, ranking_provider),
+                       ranking_model = COALESCE(?, ranking_model),
+                       ranking_prompt_versions_json = COALESCE(?, ranking_prompt_versions_json),
+                       ranking_validation_attempts = COALESCE(?, ranking_validation_attempts),
+                       ranking_validation_errors_json = COALESCE(?, ranking_validation_errors_json),
+                       ranking_candidate_profile_hash = COALESCE(?, ranking_candidate_profile_hash),
+                       ranking_candidate_profile_snapshot_json = COALESCE(?, ranking_candidate_profile_snapshot_json),
                        updated_at = ?
                    WHERE id = ?""",
                 (
@@ -46,6 +80,13 @@ def save_job_ranking(connect: ConnectionFactory, job_id: int, ranking: RankingRe
                     ranking.recommended_application_angle,
                     json.dumps(ranking.cv_keywords_to_emphasize, ensure_ascii=False),
                     json.dumps(ranking.cv_keywords_to_avoid_overclaiming, ensure_ascii=False),
+                    ranking_provider,
+                    ranking_model,
+                    prompt_versions_json,
+                    ranking_validation_attempts,
+                    validation_errors_json,
+                    ranking_candidate_profile_hash,
+                    profile_snapshot_json,
                     now,
                     existing["id"],
                 ),
@@ -57,8 +98,11 @@ def save_job_ranking(connect: ConnectionFactory, job_id: int, ranking: RankingRe
                        job_id, final_score, decision, confidence, scores_json, evidence_json,
                        reasoning_summary, recommended_application_angle,
                        cv_keywords_to_emphasize_json, cv_keywords_to_avoid_overclaiming_json,
-                       ranking_version, created_at, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       ranking_version, ranking_provider, ranking_model, ranking_prompt_versions_json,
+                       ranking_validation_attempts, ranking_validation_errors_json,
+                       ranking_candidate_profile_hash, ranking_candidate_profile_snapshot_json,
+                       created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     job_id,
                     ranking.final_score,
@@ -71,6 +115,13 @@ def save_job_ranking(connect: ConnectionFactory, job_id: int, ranking: RankingRe
                     json.dumps(ranking.cv_keywords_to_emphasize, ensure_ascii=False),
                     json.dumps(ranking.cv_keywords_to_avoid_overclaiming, ensure_ascii=False),
                     ranking.ranking_version,
+                    ranking_provider,
+                    ranking_model,
+                    prompt_versions_json,
+                    ranking_validation_attempts,
+                    validation_errors_json,
+                    ranking_candidate_profile_hash,
+                    profile_snapshot_json,
                     now,
                     now,
                 ),
@@ -131,6 +182,9 @@ def get_ranked_jobs(
                 jr.final_score, jr.decision, jr.confidence, jr.scores_json, jr.evidence_json,
                 jr.reasoning_summary, jr.recommended_application_angle,
                 jr.cv_keywords_to_emphasize_json, jr.cv_keywords_to_avoid_overclaiming_json,
+                jr.ranking_provider, jr.ranking_model, jr.ranking_prompt_versions_json,
+                jr.ranking_validation_attempts, jr.ranking_validation_errors_json,
+                jr.ranking_candidate_profile_hash,
                 jr.ranking_version, jr.updated_at AS ranked_at
             FROM job_rankings jr
             JOIN job_postings jp ON jp.id = jr.job_id

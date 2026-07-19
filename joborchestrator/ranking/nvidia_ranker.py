@@ -12,7 +12,8 @@ import httpx
 import pandas as pd
 
 from joborchestrator.llm.provider import NvidiaProvider, ProviderRegistry
-from joborchestrator.prompts import load_prompt
+from joborchestrator.prompts import active_prompt_version, load_prompt
+from joborchestrator.intelligence.profile_trace import profile_trace
 from joborchestrator.ranking.llm_ranker import _ranking_from_payload
 from joborchestrator.ranking.ranking_rules import NVIDIA_EXTRA_RULES, RANKING_GOAL, RANKING_RULES, SCORING_RUBRIC
 from joborchestrator.ranking.schemas import CandidateProfile, Decision, VALID_DECISIONS
@@ -127,7 +128,7 @@ async def rank_jobs_with_nvidia_async(
         for task in asyncio.as_completed(tasks):
             batch, result = await task
             completed_batches += 1
-            _apply_nvidia_batch_result(batch, result, ranking_version, summary)
+            _apply_nvidia_batch_result(batch, result, ranking_version, summary, model=model)
             if progress_callback:
                 progress_callback(completed_batches, len(batches), dict(summary))
     return summary
@@ -157,6 +158,7 @@ def _call_nvidia_batch(
 ) -> dict[str, Any]:
     payload = build_nvidia_ranking_payload(jobs)
     validation_feedback: str | None = None
+    validation_errors: list[str] = []
     provider = cast(
         NvidiaProvider,
         ProviderRegistry().get(
@@ -182,11 +184,20 @@ def _call_nvidia_batch(
         parsed = _extract_json_object(response.text)
         validation_feedback = _nvidia_batch_validation_error(parsed, jobs)
         if not validation_feedback:
+            parsed["_generation_metadata"] = {
+                "validation_attempts": attempt + 1,
+                "validation_errors": validation_errors,
+            }
             return parsed
         if attempt < DEFAULT_NVIDIA_VALIDATION_RETRIES:
+            validation_errors.append(validation_feedback)
             logger.warning("Retrying NVIDIA ranking batch after invalid response: %s", validation_feedback)
             continue
         logger.warning("NVIDIA ranking batch still invalid after retry; applying valid partial results: %s", validation_feedback)
+        parsed["_generation_metadata"] = {
+            "validation_attempts": attempt + 1,
+            "validation_errors": [*validation_errors, validation_feedback],
+        }
         return parsed
     raise NvidiaRankingError("NVIDIA ranking batch could not be validated.")
 
@@ -248,6 +259,7 @@ async def _call_nvidia_batch_async(
 ) -> dict[str, Any]:
     payload = build_nvidia_ranking_payload(jobs)
     validation_feedback: str | None = None
+    validation_errors: list[str] = []
     provider = cast(
         NvidiaProvider,
         ProviderRegistry().get(
@@ -273,11 +285,20 @@ async def _call_nvidia_batch_async(
         parsed = _extract_json_object(response.text)
         validation_feedback = _nvidia_batch_validation_error(parsed, jobs)
         if not validation_feedback:
+            parsed["_generation_metadata"] = {
+                "validation_attempts": attempt + 1,
+                "validation_errors": validation_errors,
+            }
             return parsed
         if attempt < DEFAULT_NVIDIA_VALIDATION_RETRIES:
+            validation_errors.append(validation_feedback)
             logger.warning("Retrying NVIDIA ranking batch after invalid response: %s", validation_feedback)
             continue
         logger.warning("NVIDIA ranking batch still invalid after retry; applying valid partial results: %s", validation_feedback)
+        parsed["_generation_metadata"] = {
+            "validation_attempts": attempt + 1,
+            "validation_errors": [*validation_errors, validation_feedback],
+        }
         return parsed
     raise NvidiaRankingError("NVIDIA ranking batch could not be validated.")
 
@@ -287,6 +308,8 @@ def _apply_nvidia_batch_result(
     result: dict[str, Any] | Exception,
     ranking_version: str,
     summary: dict[str, int],
+    *,
+    model: str,
 ) -> None:
     summary["processed"] += len(batch)
     if isinstance(result, Exception):
@@ -303,6 +326,9 @@ def _apply_nvidia_batch_result(
         if missing:
             logger.warning("NVIDIA response is missing job_id values: %s", missing)
         safety_context = _active_profile_safety_context()
+        generation_metadata = result.get("_generation_metadata") if isinstance(result.get("_generation_metadata"), dict) else {}
+        profile_metadata = profile_trace(db.get_candidate_profile_payload())
+        prompt_versions = {"ranking/nvidia_response_contract": active_prompt_version("ranking", "nvidia_response_contract")}
 
         for row in batch:
             job_id = int(row.get("id") or row.get("job_id"))
@@ -323,7 +349,17 @@ def _apply_nvidia_batch_result(
                 ranking.evidence.llm_escalation_reasons = reasons
                 ranking.ranking_version = ranking_version
                 _apply_ranking_safety_gate(row, ranking, safety_context)
-                db.save_job_ranking(job_id, ranking)
+                db.save_job_ranking(
+                    job_id,
+                    ranking,
+                    ranking_provider="nvidia",
+                    ranking_model=model,
+                    ranking_prompt_versions=prompt_versions,
+                    ranking_validation_attempts=int(generation_metadata.get("validation_attempts") or 1),
+                    ranking_validation_errors=list(generation_metadata.get("validation_errors") or []),
+                    ranking_candidate_profile_hash=profile_metadata.get("hash"),
+                    ranking_candidate_profile_snapshot=profile_metadata.get("snapshot"),
+                )
                 summary["saved"] += 1
                 summary[ranking.decision] += 1
             except (KeyError, TypeError, ValueError) as exc:

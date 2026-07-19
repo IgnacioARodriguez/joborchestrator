@@ -77,7 +77,17 @@ def make_ranking(
 def save_job_with_rankings() -> int:
     db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
     job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
-    db.save_job_ranking(job_id, make_ranking("ranking_v1.1.0-nvidia", 91, "APPLY_NOW"))
+    db.save_job_ranking(
+        job_id,
+        make_ranking("ranking_v1.1.0-nvidia", 91, "APPLY_NOW"),
+        ranking_provider="nvidia",
+        ranking_model="test-ranking-model",
+        ranking_prompt_versions={"ranking/nvidia_response_contract": "v2"},
+        ranking_validation_attempts=2,
+        ranking_validation_errors=["missing rankings list"],
+        ranking_candidate_profile_hash="profile-hash",
+        ranking_candidate_profile_snapshot={"headline": "Backend engineer"},
+    )
     db.save_job_ranking(job_id, make_ranking("ranking_v1.1.0-openai:gpt-5.4-mini", 72, "APPLY_WITH_TAILORED_CV"))
     db.save_job_ranking(job_id, make_ranking("ranking_v1.1.0-speed", 15, "AVOID"))
     return job_id
@@ -127,6 +137,14 @@ def test_jobs_can_select_ranking_version_and_hide_heuristic_versions(tmp_path, m
     default_body = default_response.json()
     assert default_body["jobs"][0]["ranking"]["ranking_version"] == "ranking_v1.1.0-nvidia"
     assert default_body["jobs"][0]["ranking"]["final_score"] == 91
+    assert default_body["jobs"][0]["ranking"]["generation"] == {
+        "provider": "nvidia",
+        "model": "test-ranking-model",
+        "prompt_versions": {"ranking/nvidia_response_contract": "v2"},
+        "validation_attempts": 2,
+        "validation_errors": ["missing rankings list"],
+        "candidate_profile_hash": "profile-hash",
+    }
     assert "ranking_v1.1.0-speed" not in default_body["ranking_versions"]
     assert set(default_body["ranking_versions"]) == {
         "ranking_v1.1.0-nvidia",

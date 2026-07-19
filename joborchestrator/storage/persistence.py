@@ -72,6 +72,15 @@ LLM_OUTPUT_FEEDBACK_COLUMNS = {
     "prompt_versions_json": "TEXT",
     "metadata_json": "TEXT",
 }
+RANKING_TRACE_COLUMNS = {
+    "ranking_provider": "TEXT",
+    "ranking_model": "TEXT",
+    "ranking_prompt_versions_json": "TEXT",
+    "ranking_validation_attempts": "INTEGER",
+    "ranking_validation_errors_json": "TEXT",
+    "ranking_candidate_profile_hash": "TEXT",
+    "ranking_candidate_profile_snapshot_json": "TEXT",
+}
 _SCHEMA_READY = False
 _SCHEMA_READY_PATH: str | None = None
 
@@ -291,6 +300,13 @@ CREATE TABLE IF NOT EXISTS job_rankings (
     cv_keywords_to_emphasize_json TEXT,
     cv_keywords_to_avoid_overclaiming_json TEXT,
     ranking_version TEXT NOT NULL,
+    ranking_provider TEXT,
+    ranking_model TEXT,
+    ranking_prompt_versions_json TEXT,
+    ranking_validation_attempts INTEGER,
+    ranking_validation_errors_json TEXT,
+    ranking_candidate_profile_hash TEXT,
+    ranking_candidate_profile_snapshot_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(job_id, ranking_version),
@@ -579,6 +595,7 @@ def _conn():
             backup_database("before_speed_ranking_migration")
         _ensure_scanner_columns(conn)
         _ensure_hiring_contacts_schema(conn)
+        _ensure_ranking_trace_schema(conn)
         _ensure_llm_eval_schema(conn)
         _ensure_llm_output_feedback_schema(conn)
         skill_catalog_repository.seed_skill_catalog(conn)
@@ -614,10 +631,13 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
     existing = {row["name"] for row in rows}
     if not required_tables.issubset(existing):
         return False
+    ranking_columns = _table_columns(conn, "job_rankings")
     eval_columns = _table_columns(conn, "llm_eval_runs")
     feedback_columns = _table_columns(conn, "llm_output_feedback")
-    return set(LLM_EVAL_RUN_COLUMNS).issubset(eval_columns) and set(LLM_OUTPUT_FEEDBACK_COLUMNS).issubset(
-        feedback_columns
+    return (
+        set(RANKING_TRACE_COLUMNS).issubset(ranking_columns)
+        and set(LLM_EVAL_RUN_COLUMNS).issubset(eval_columns)
+        and set(LLM_OUTPUT_FEEDBACK_COLUMNS).issubset(feedback_columns)
     )
 
 
@@ -709,6 +729,14 @@ def _ensure_llm_eval_schema(conn: sqlite3.Connection) -> None:
             columns.add(column)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_eval_runs_case ON llm_eval_runs(case_id, artifact_type)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_eval_runs_created ON llm_eval_runs(created_at)")
+
+
+def _ensure_ranking_trace_schema(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "job_rankings")
+    for column, column_type in RANKING_TRACE_COLUMNS.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE job_rankings ADD COLUMN {column} {column_type}")
+            columns.add(column)
 
 
 def _ensure_llm_output_feedback_schema(conn: sqlite3.Connection) -> None:
@@ -1357,8 +1385,30 @@ def get_linkedin_scan_pages(run_id: int, limit: int = 500) -> pd.DataFrame:
     return jobs_repository.get_linkedin_scan_pages(_conn, _read_sql_query, run_id, limit)
 
 
-def save_job_ranking(job_id: int, ranking: RankingResult) -> int:
-    return rankings_repository.save_job_ranking(_conn, job_id, ranking)
+def save_job_ranking(
+    job_id: int,
+    ranking: RankingResult,
+    *,
+    ranking_provider: str | None = None,
+    ranking_model: str | None = None,
+    ranking_prompt_versions: dict | None = None,
+    ranking_validation_attempts: int | None = None,
+    ranking_validation_errors: list | None = None,
+    ranking_candidate_profile_hash: str | None = None,
+    ranking_candidate_profile_snapshot: dict | None = None,
+) -> int:
+    return rankings_repository.save_job_ranking(
+        _conn,
+        job_id,
+        ranking,
+        ranking_provider=ranking_provider,
+        ranking_model=ranking_model,
+        ranking_prompt_versions=ranking_prompt_versions,
+        ranking_validation_attempts=ranking_validation_attempts,
+        ranking_validation_errors=ranking_validation_errors,
+        ranking_candidate_profile_hash=ranking_candidate_profile_hash,
+        ranking_candidate_profile_snapshot=ranking_candidate_profile_snapshot,
+    )
 
 
 def delete_job_rankings(ranking_version: str | None = None) -> int:

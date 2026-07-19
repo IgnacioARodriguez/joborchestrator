@@ -71,6 +71,14 @@ export interface JobRanking {
   cv_keywords_to_emphasize: string[]
   cv_keywords_to_avoid_overclaiming: string[]
   ranking_version: string
+  generation: {
+    provider?: string | null
+    model?: string | null
+    prompt_versions: Record<string, string>
+    validation_attempts?: number | null
+    validation_errors: string[]
+    candidate_profile_hash?: string | null
+  }
 }
 
 export interface ApplicationMaterials {
