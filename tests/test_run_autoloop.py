@@ -306,4 +306,4 @@ def test_halt_metric_summary_includes_non_active_prompt_examples():
     )
 
     assert summary["non_active_prompt_examples"] == [{"job_id": 7, "prompt_version": "v3"}]
-    assert "unsafe_apply_now_examples" not in summary
+    assert summary["unsafe_apply_now_examples"] == [{"job_id": 9}]

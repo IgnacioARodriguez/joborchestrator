@@ -368,7 +368,9 @@ def halt_metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
         "unsafe_apply_now_count",
         "apply_now_unsafe_rate",
         "stale_completion_count",
+        "stale_completion_examples",
         "failed_item_count",
+        "failed_item_examples",
         "retry_or_schema_count",
         "schema_failure_retry_rate",
         "active_ranking_prompt_version",
@@ -376,6 +378,7 @@ def halt_metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
         "non_active_prompt_count",
         "non_active_prompt_rate",
         "non_active_prompt_examples",
+        "unsafe_apply_now_examples",
     ]
     return {key: metrics.get(key) for key in keys if key in metrics}
 
