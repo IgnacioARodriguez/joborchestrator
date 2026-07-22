@@ -9,11 +9,13 @@ def test_decide_halts_when_guard_fails():
         "critical_failures": 1,
         "stale_completion_count": 0,
         "apply_now_unsafe_rate": 0.2,
+        "non_active_prompt_rate": 0.5,
     }
     guards = {
         "max_critical_failures": 0,
         "max_stale_completion_count": 0,
         "max_apply_now_unsafe_rate": 0,
+        "max_non_active_prompt_rate": 0,
     }
 
     decision = run_autoloop.decide(metrics, None, guards)
@@ -21,6 +23,7 @@ def test_decide_halts_when_guard_fails():
     assert decision["action"] == "halt_required"
     assert "critical_failures:1>0" in decision["guard_failures"]
     assert "apply_now_unsafe_rate:0.2>0" in decision["guard_failures"]
+    assert "non_active_prompt_rate:0.5>0" in decision["guard_failures"]
 
 
 def test_compare_metrics_marks_critical_regression():
@@ -31,6 +34,8 @@ def test_compare_metrics_marks_critical_regression():
         "stale_completion_count": 0,
         "retry_or_schema_count": 2,
         "schema_failure_retry_rate": 0.2,
+        "non_active_prompt_count": 0,
+        "non_active_prompt_rate": 0.0,
         "ranked_rows": 10,
     }
     after = {
@@ -40,6 +45,8 @@ def test_compare_metrics_marks_critical_regression():
         "stale_completion_count": 0,
         "retry_or_schema_count": 1,
         "schema_failure_retry_rate": 0.1,
+        "non_active_prompt_count": 2,
+        "non_active_prompt_rate": 0.2,
         "ranked_rows": 12,
     }
 
@@ -48,6 +55,7 @@ def test_compare_metrics_marks_critical_regression():
     assert "retry_or_schema_count:2->1" in comparison["improvements"]
     assert "ranked_rows:10->12" in comparison["improvements"]
     assert "critical_failures:0->1" in comparison["critical_regressions"]
+    assert "non_active_prompt_rate:0->0.2" in comparison["critical_regressions"]
 
 
 def test_run_autoloop_stop_file_writes_state_and_log(tmp_path):

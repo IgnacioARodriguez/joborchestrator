@@ -139,6 +139,7 @@ def evaluate_guards(metrics: dict[str, Any], guards: dict[str, Any]) -> list[str
         ("critical_failures", "max_critical_failures"),
         ("stale_completion_count", "max_stale_completion_count"),
         ("apply_now_unsafe_rate", "max_apply_now_unsafe_rate"),
+        ("non_active_prompt_rate", "max_non_active_prompt_rate"),
     ]
     failures = []
     for metric_key, guard_key in checks:
@@ -161,6 +162,8 @@ def compare_metrics(baseline: dict[str, Any] | None, current: dict[str, Any]) ->
         "stale_completion_count",
         "retry_or_schema_count",
         "schema_failure_retry_rate",
+        "non_active_prompt_count",
+        "non_active_prompt_rate",
     ]
     higher_is_better = ["ranked_rows"]
     improvements = []
@@ -174,7 +177,14 @@ def compare_metrics(baseline: dict[str, Any] | None, current: dict[str, Any]) ->
         elif after > before:
             item = f"{key}:{before:g}->{after:g}"
             regressions.append(item)
-            if key in {"critical_failures", "unsafe_apply_now_count", "apply_now_unsafe_rate", "stale_completion_count"}:
+            if key in {
+                "critical_failures",
+                "unsafe_apply_now_count",
+                "apply_now_unsafe_rate",
+                "stale_completion_count",
+                "non_active_prompt_count",
+                "non_active_prompt_rate",
+            }:
                 critical_regressions.append(item)
     for key in higher_is_better:
         before = float(baseline.get(key) or 0)

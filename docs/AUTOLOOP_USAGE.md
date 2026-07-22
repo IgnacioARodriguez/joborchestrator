@@ -73,6 +73,9 @@ The loop must not auto-accept a change when any of these regress:
 - `critical_failures`
 - `apply_now_unsafe_rate`
 - `stale_completion_count`
+- `non_active_prompt_rate`
 - case-level regressions against the previous accepted baseline
 
 Operational trust is not absolute correctness. The target is zero known critical failures under current coverage, honest review flags for uncertain cases, and repeatable gates before future prompt/model changes.
+
+`non_active_prompt_rate` must be `0.0` before trusting a ranking-job baseline. A mixed prompt set can make safety metrics look green while old rankings still represent the prior behavior.
