@@ -27,6 +27,7 @@ def _row(job_id: int, **overrides):
         ),
         "ranking_validation_attempts": 1,
         "ranking_validation_errors_json": "[]",
+        "ranking_prompt_versions_json": json.dumps({"ranking/nvidia_response_contract": "v3"}),
     }
     row.update(overrides)
     return row
@@ -90,3 +91,19 @@ def test_compute_metrics_ignores_queued_items_with_old_rankings():
     assert summary["item_status_counts"] == {"completed": 1, "queued": 1}
     assert summary["ranked_rows"] == 1
     assert summary["apply_now_count"] == 1
+
+
+def test_compute_metrics_counts_non_active_prompt_versions(monkeypatch):
+    monkeypatch.setattr(metrics, "active_prompt_version", lambda surface, sub_case: "v3")
+    rows = [
+        _row(1, ranking_prompt_versions_json=json.dumps({"ranking/nvidia_response_contract": "v3"})),
+        _row(2, ranking_prompt_versions_json=json.dumps({"ranking/nvidia_response_contract": "v2"})),
+        _row(3, ranking_prompt_versions_json=json.dumps({})),
+    ]
+
+    summary = metrics.compute_metrics(rows)
+
+    assert summary["active_ranking_prompt_version"] == "v3"
+    assert summary["prompt_version_counts"] == {"unknown": 1, "v2": 1, "v3": 1}
+    assert summary["non_active_prompt_count"] == 1
+    assert summary["non_active_prompt_rate"] == 0.3333

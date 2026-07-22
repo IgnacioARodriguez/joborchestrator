@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION  # noqa: E402
+from joborchestrator.prompts import active_prompt_version  # noqa: E402
 from joborchestrator.storage import persistence as db  # noqa: E402
 
 
@@ -102,6 +103,11 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     review_rows = [row for row in ranked if bool(evidence(row).get("requires_llm_review"))]
     scores = [int(row["final_score"]) for row in ranked if row.get("final_score") is not None]
     coverage_values = [coverage for row in ranked if (coverage := central_coverage(row)) is not None]
+    active_ranking_prompt = active_prompt_version("ranking", "nvidia_response_contract")
+    prompt_versions = Counter(ranking_prompt_version(row) for row in ranked)
+    non_active_prompt_rows = [
+        row for row in ranked if ranking_prompt_version(row) not in {active_ranking_prompt, "unknown"}
+    ]
 
     return {
         "evaluated_rows": len(rows),
@@ -119,6 +125,10 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "schema_failure_retry_rate": round(len(retry_rows) / len(ranked), 4) if ranked else 0.0,
         "review_required_count": len(review_rows),
         "review_required_rate": round(len(review_rows) / len(ranked), 4) if ranked else 0.0,
+        "active_ranking_prompt_version": active_ranking_prompt,
+        "prompt_version_counts": dict(sorted(prompt_versions.items())),
+        "non_active_prompt_count": len(non_active_prompt_rows),
+        "non_active_prompt_rate": round(len(non_active_prompt_rows) / len(ranked), 4) if ranked else 0.0,
         "unsafe_apply_now_examples": examples(unsafe_apply_now),
         "stale_completion_examples": examples(stale_completed),
     }
@@ -153,6 +163,14 @@ def evidence(row: dict[str, Any]) -> dict[str, Any]:
 def scores(row: dict[str, Any]) -> dict[str, Any]:
     loaded = loads_json(row.get("scores_json"), {})
     return loaded if isinstance(loaded, dict) else {}
+
+
+def ranking_prompt_version(row: dict[str, Any]) -> str:
+    payload = loads_json(row.get("ranking_prompt_versions_json"), {})
+    if not isinstance(payload, dict):
+        return "unknown"
+    value = payload.get("ranking/nvidia_response_contract")
+    return str(value or "unknown")
 
 
 def central_coverage(row: dict[str, Any]) -> float | None:
