@@ -1,0 +1,26 @@
+{
+  "max_iterations": 3,
+  "max_api_calls": 50,
+  "max_tokens": 500000,
+  "max_consecutive_no_improvement": 3,
+  "probe_target_total": 20,
+  "probe_category_quotas": {
+    "golden_failure": 6,
+    "suspicious_apply_now": 5,
+    "risk_evidence": 3,
+    "borderline": 3,
+    "low_central_coverage": 2,
+    "retry_or_schema": 1
+  },
+  "runtime": {
+    "state_path": "logs/autoloop_state.json",
+    "log_path": "logs/autoloop_log.jsonl",
+    "stop_file": "AUTOLOOP_STOP"
+  },
+  "guards": {
+    "max_apply_now_unsafe_rate": 0.0,
+    "max_stale_completion_count": 0,
+    "max_case_regressions": 0,
+    "max_critical_failures": 0
+  }
+}

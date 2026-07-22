@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "protected_fixture_policy": "This file is outside evals/fixtures and may be edited by automation. Golden fixtures remain read-only without explicit human approval.",
+  "cases": [
+    {
+      "job_id": 188,
+      "label": "lemon-ai-tailored",
+      "reason": "APPLY_NOW risk when central AI stack terms such as vector DB, LangChain, RAG, or production LLM evidence are unsupported."
+    },
+    {
+      "job_id": 222,
+      "label": "mlb-security-tailored",
+      "reason": "Security specialization should not be treated as direct APPLY_NOW for the backend profile."
+    },
+    {
+      "job_id": 223,
+      "label": "ge-vernova-brazil-tnd-review",
+      "reason": "Brazil and power systems domain mismatch must be explicit in evidence."
+    },
+    {
+      "job_id": 344,
+      "label": "lawnstarter-florianopolis-location",
+      "reason": "Country/city restriction outside Malaga profile should block APPLY_NOW."
+    },
+    {
+      "job_id": 401,
+      "label": "bjak-malaysia-hybrid",
+      "reason": "Malaysia/hybrid location mismatch should block APPLY_NOW and require review or skip."
+    }
+  ]
+}
