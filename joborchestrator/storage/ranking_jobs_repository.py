@@ -324,6 +324,66 @@ def requeue_failed_ranking_items(connect: ConnectionFactory, ranking_job_id: int
         conn.close()
 
 
+def requeue_ranking_items(
+    connect: ConnectionFactory,
+    ranking_job_id: int,
+    job_ids: list[int],
+    *,
+    reason: str = "Requeued for ranking refresh.",
+    statuses: tuple[str, ...] = ("completed", "failed"),
+) -> int:
+    target_job_ids = list(dict.fromkeys(int(job_id) for job_id in job_ids))
+    target_statuses = tuple(str(status) for status in statuses if str(status))
+    if not target_job_ids or not target_statuses:
+        return 0
+
+    now = datetime.now().isoformat(timespec="seconds")
+    job_placeholders = ",".join("?" for _ in target_job_ids)
+    status_placeholders = ",".join("?" for _ in target_statuses)
+    conn = connect()
+    try:
+        cursor = conn.execute(
+            f"""UPDATE ranking_job_items
+                SET status = 'queued',
+                    error = ?,
+                    finished_at = NULL,
+                    updated_at = ?
+                WHERE ranking_job_id = ?
+                  AND job_posting_id IN ({job_placeholders})
+                  AND status IN ({status_placeholders})""",
+            [reason[:2000], now, int(ranking_job_id), *target_job_ids, *target_statuses],
+        )
+        conn.execute(
+            """UPDATE ranking_jobs
+               SET status = 'queued',
+                   error = NULL,
+                   finished_at = NULL,
+                   updated_at = ?
+               WHERE id = ? AND status IN ('failed', 'running', 'queued', 'completed')""",
+            (now, int(ranking_job_id)),
+        )
+        counts = _ranking_job_item_counts(conn, int(ranking_job_id))
+        conn.execute(
+            """UPDATE ranking_jobs
+               SET processed_items = ?,
+                   saved_items = ?,
+                   failed_items = ?,
+                   updated_at = ?
+               WHERE id = ?""",
+            (
+                counts["completed"] + counts["failed"],
+                counts["completed"],
+                counts["failed"],
+                now,
+                int(ranking_job_id),
+            ),
+        )
+        conn.commit()
+        return int(cursor.rowcount if cursor.rowcount is not None else 0)
+    finally:
+        conn.close()
+
+
 def mark_ranking_items_running(connect: ConnectionFactory, ranking_job_id: int, job_ids: list[int]) -> None:
     if not job_ids:
         return

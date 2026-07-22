@@ -229,3 +229,52 @@ def test_worker_does_not_complete_item_from_stale_existing_ranking(tmp_path, mon
         "NVIDIA did not return a valid ranking for this job. "
         "Try rerunning with a smaller batch size if this repeats."
     )
+
+
+def test_requeue_ranking_items_refreshes_completed_items(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+    ranking_version = "worker-refresh-test-v1"
+    ranking_job_id = db.create_ranking_job(
+        provider="nvidia",
+        model="nvidia/test",
+        ranking_version=ranking_version,
+        job_ids=[job_id],
+        request_batch_size=1,
+        max_concurrency=1,
+    )
+    db.start_ranking_job(ranking_job_id)
+    db.mark_ranking_items_running(ranking_job_id, [job_id])
+    db.save_job_ranking(job_id, make_ranking(ranking_version))
+    db.sync_ranking_items_from_rankings(ranking_job_id, ranking_version, [job_id])
+    db.complete_ranking_job_if_done(ranking_job_id)
+
+    assert db.get_ranking_job(ranking_job_id)["status"] == "completed"
+
+    requeued = db.requeue_ranking_items(
+        ranking_job_id,
+        [job_id],
+        reason="Requeued because prompt version is no longer active.",
+    )
+
+    assert requeued == 1
+    refreshed = db.get_ranking_job(ranking_job_id)
+    assert refreshed["status"] == "queued"
+    assert refreshed["processed_items"] == 0
+    assert refreshed["saved_items"] == 0
+    assert refreshed["failed_items"] == 0
+
+    conn = db._conn()
+    try:
+        item = conn.execute(
+            "SELECT status, error, finished_at FROM ranking_job_items WHERE ranking_job_id = ?",
+            (ranking_job_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert item["status"] == "queued"
+    assert item["error"] == "Requeued because prompt version is no longer active."
+    assert item["finished_at"] is None

@@ -1519,6 +1519,22 @@ def requeue_failed_ranking_items(ranking_job_id: int) -> int:
     return ranking_jobs_repository.requeue_failed_ranking_items(_conn, ranking_job_id)
 
 
+def requeue_ranking_items(
+    ranking_job_id: int,
+    job_ids: list[int],
+    *,
+    reason: str = "Requeued for ranking refresh.",
+    statuses: tuple[str, ...] = ("completed", "failed"),
+) -> int:
+    return ranking_jobs_repository.requeue_ranking_items(
+        _conn,
+        ranking_job_id,
+        job_ids,
+        reason=reason,
+        statuses=statuses,
+    )
+
+
 def mark_ranking_items_running(ranking_job_id: int, job_ids: list[int]) -> None:
     ranking_jobs_repository.mark_ranking_items_running(_conn, ranking_job_id, job_ids)
 
