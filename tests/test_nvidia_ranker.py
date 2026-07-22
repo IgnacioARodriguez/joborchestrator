@@ -785,6 +785,20 @@ def test_nvidia_batch_validation_rejects_apply_with_zero_score():
     assert "decision/score mismatch for job_id values [1]" in error
 
 
+def test_nvidia_batch_validation_rejects_missing_contract_fields():
+    payload = _ranking_payload(1, 80, "APPLY_NOW")
+    del payload["scores"]["opportunity_quality"]
+    del payload["evidence"]["requires_llm_review"]
+
+    error = nvidia_ranker._nvidia_batch_validation_error({"rankings": [payload]}, [{"id": 1}])
+
+    assert error is not None
+    assert "contract shape errors" in error
+    assert "job_id 1 missing" in error
+    assert "scores.opportunity_quality" in error
+    assert "evidence.requires_llm_review" in error
+
+
 def test_rank_jobs_with_nvidia_skips_inconsistent_partial_result(monkeypatch):
     jobs = pd.DataFrame(
         [{"id": 1, "title": "Backend Engineer", "company": "Acme", "description_text": "Python"}]

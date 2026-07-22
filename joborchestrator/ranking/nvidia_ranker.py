@@ -33,6 +33,48 @@ DEFAULT_NVIDIA_MAX_TOKENS = int(os.getenv("NVIDIA_RANKING_MAX_TOKENS", "8192"))
 DEFAULT_NVIDIA_TIMEOUT_SECONDS = float(os.getenv("NVIDIA_RANKING_TIMEOUT_SECONDS", "180"))
 DEFAULT_NVIDIA_VALIDATION_RETRIES = int(os.getenv("NVIDIA_RANKING_VALIDATION_RETRIES", "1"))
 logger = logging.getLogger(__name__)
+REQUIRED_RANKING_FIELDS = {
+    "final_score",
+    "decision",
+    "confidence",
+    "scores",
+    "evidence",
+    "reasoning_summary",
+    "recommended_application_angle",
+    "cv_keywords_to_emphasize",
+    "cv_keywords_to_avoid_overclaiming",
+}
+REQUIRED_SCORE_FIELDS = {
+    "technical_fit",
+    "seniority_fit",
+    "role_fit",
+    "opportunity_quality",
+    "application_roi",
+    "market_alignment",
+    "risk_penalty",
+    "technical_readiness",
+    "central_requirement_coverage",
+    "role_confidence",
+    "application_effort_signal",
+    "data_quality_signal",
+    "source_reliability_signal",
+}
+REQUIRED_EVIDENCE_FIELDS = {
+    "strong_matches",
+    "partial_matches",
+    "missing_requirements",
+    "nice_to_have_matches",
+    "dealbreakers",
+    "red_flags",
+    "central_requirement_coverage",
+    "central_requirement_raw_coverage",
+    "central_requirement_evidence_quality",
+    "requirement_backed_signal_count",
+    "central_requirement_thresholds",
+    "central_requirements",
+    "requires_llm_review",
+    "llm_escalation_reasons",
+}
 
 
 class NvidiaRankingError(RuntimeError):
@@ -458,6 +500,7 @@ def _nvidia_batch_validation_error(result: dict[str, Any], jobs: list[dict[str, 
             and _decision_score_inconsistent(item.get("decision"), item.get("final_score"))
         }
     )
+    contract_errors = _nvidia_contract_errors(rankings)
     problems = []
     if missing_ids:
         problems.append(f"missing job_id values {missing_ids}")
@@ -465,7 +508,44 @@ def _nvidia_batch_validation_error(result: dict[str, Any], jobs: list[dict[str, 
         problems.append(f"invalid decision values {invalid_decisions}")
     if inconsistent_decisions:
         problems.append(f"decision/score mismatch for job_id values {inconsistent_decisions}")
+    if contract_errors:
+        problems.append("contract shape errors: " + "; ".join(contract_errors))
     return "; ".join(problems) if problems else None
+
+
+def _nvidia_contract_errors(rankings: list[Any]) -> list[str]:
+    errors = []
+    for index, item in enumerate(rankings):
+        if not isinstance(item, dict):
+            errors.append(f"index {index}: ranking must be an object")
+            continue
+        missing = _missing_required_contract_fields(item)
+        if missing:
+            errors.append(f"{_ranking_item_label(item, index)} missing {', '.join(missing)}")
+    return errors
+
+
+def _missing_required_contract_fields(item: dict[str, Any]) -> list[str]:
+    missing = sorted(field for field in REQUIRED_RANKING_FIELDS if field not in item)
+    scores = item.get("scores")
+    if isinstance(scores, dict):
+        missing.extend(f"scores.{field}" for field in sorted(REQUIRED_SCORE_FIELDS) if field not in scores)
+    elif "scores" not in missing:
+        missing.append("scores")
+
+    evidence = item.get("evidence")
+    if isinstance(evidence, dict):
+        missing.extend(f"evidence.{field}" for field in sorted(REQUIRED_EVIDENCE_FIELDS) if field not in evidence)
+    elif "evidence" not in missing:
+        missing.append("evidence")
+    return missing
+
+
+def _ranking_item_label(item: dict[str, Any], index: int) -> str:
+    job_id = item.get("job_id")
+    if job_id is None:
+        return f"index {index}"
+    return f"job_id {job_id}"
 
 
 def _decision_score_inconsistent(decision: Any, score: Any) -> bool:
