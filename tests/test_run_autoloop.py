@@ -87,6 +87,7 @@ def test_run_autoloop_stop_file_writes_state_and_log(tmp_path):
     config_path = tmp_path / "config.json"
     state_path = tmp_path / "state.json"
     log_path = tmp_path / "log.jsonl"
+    halt_report_dir = tmp_path / "halt"
     stop_file = tmp_path / "AUTOLOOP_STOP"
     stop_file.write_text("stop", encoding="utf-8")
     config_path.write_text(
@@ -95,6 +96,7 @@ def test_run_autoloop_stop_file_writes_state_and_log(tmp_path):
                 "runtime": {
                     "state_path": str(state_path),
                     "log_path": str(log_path),
+                    "halt_report_dir": str(halt_report_dir),
                     "stop_file": str(stop_file),
                 }
             }
@@ -117,7 +119,12 @@ def test_run_autoloop_stop_file_writes_state_and_log(tmp_path):
 
     assert event["status"] == "halted"
     assert event["decision"]["reason"] == "stop_file_present"
-    assert json.loads(state_path.read_text(encoding="utf-8"))["status"] == "halted"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["status"] == "halted"
+    assert persisted["halt_report"]
+    assert "stop_file_present" in (halt_report_dir / "autoloop_HALT_stop_file_present.md").read_text(
+        encoding="utf-8"
+    )
     assert len(log_path.read_text(encoding="utf-8").strip().splitlines()) == 1
 
 
@@ -143,6 +150,7 @@ def test_run_autoloop_runtime_limit_halts_before_fetching(tmp_path, monkeypatch)
                 "runtime": {
                     "state_path": str(state_path),
                     "log_path": str(log_path),
+                    "halt_report_dir": str(tmp_path / "halt"),
                     "stop_file": str(tmp_path / "missing-stop"),
                 },
             }
@@ -171,6 +179,7 @@ def test_run_autoloop_runtime_limit_halts_before_fetching(tmp_path, monkeypatch)
     assert event["decision"]["runtime_limit_failures"] == ["iteration:3>=3"]
     assert persisted["baseline"] == baseline
     assert persisted["halt_reason"] == "iteration:3>=3"
+    assert persisted["halt_report"].endswith("autoloop_HALT_iteration_3_3.md")
 
 
 def test_run_autoloop_dry_run_records_metrics_and_probe(tmp_path, monkeypatch):

@@ -53,6 +53,7 @@ The dry-run command writes:
 - `logs/autoloop_state.json`
 - `logs/autoloop_log.jsonl`
 - `logs/autoloop_probe_cases.json`
+- `logs/autoloop_HALT_<reason>.md` when a guardrail stops the loop
 
 It does not call an LLM, edit prompts, rerank jobs, commit, or push.
 

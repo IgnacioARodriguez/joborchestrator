@@ -48,6 +48,7 @@ def run_autoloop(args: argparse.Namespace) -> dict[str, Any]:
     state_path = args.state_path or Path(runtime.get("state_path") or "logs/autoloop_state.json")
     log_path = args.log_path or Path(runtime.get("log_path") or "logs/autoloop_log.jsonl")
     probe_output = args.probe_output or Path("logs/autoloop_probe_cases.json")
+    halt_report_dir = Path(runtime.get("halt_report_dir") or state_path.parent)
     stop_file = Path(runtime.get("stop_file") or "AUTOLOOP_STOP")
     previous_state = load_state(state_path)
 
@@ -64,7 +65,7 @@ def run_autoloop(args: argparse.Namespace) -> dict[str, Any]:
             probe=None,
             previous_state=previous_state,
         )
-        persist_event(event, state_path=state_path, log_path=log_path)
+        persist_event(event, state_path=state_path, log_path=log_path, halt_report_dir=halt_report_dir)
         return event
 
     runtime_limit_failures = evaluate_runtime_limits(previous_state, config)
@@ -81,7 +82,7 @@ def run_autoloop(args: argparse.Namespace) -> dict[str, Any]:
             probe=None,
             previous_state=previous_state,
         )
-        persist_event(event, state_path=state_path, log_path=log_path)
+        persist_event(event, state_path=state_path, log_path=log_path, halt_report_dir=halt_report_dir)
         return event
 
     metrics = compute_metrics(fetch_ranking_rows(ranking_job_id=args.ranking_job_id, ranking_version=args.ranking_version))
@@ -102,7 +103,7 @@ def run_autoloop(args: argparse.Namespace) -> dict[str, Any]:
         },
         previous_state=previous_state,
     )
-    persist_event(event, state_path=state_path, log_path=log_path)
+    persist_event(event, state_path=state_path, log_path=log_path, halt_report_dir=halt_report_dir)
     return event
 
 
@@ -268,7 +269,16 @@ def autoloop_event(
     }
 
 
-def persist_event(event: dict[str, Any], *, state_path: Path, log_path: Path) -> None:
+def persist_event(
+    event: dict[str, Any],
+    *,
+    state_path: Path,
+    log_path: Path,
+    halt_report_dir: Path | None = None,
+) -> None:
+    halt_report = None
+    if event["status"] == "halted":
+        halt_report = write_halt_report(event, report_dir=halt_report_dir or state_path.parent)
     state = {
         "status": event["status"],
         "iteration": event["iteration"],
@@ -278,6 +288,7 @@ def persist_event(event: dict[str, Any], *, state_path: Path, log_path: Path) ->
         "budgets": event.get("budgets"),
         "consecutive_no_improvement": consecutive_no_improvement_count(event),
         "halt_reason": halt_reason(event),
+        "halt_report": str(halt_report) if halt_report else None,
         "updated_at": event["generated_at"],
     }
     state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -285,6 +296,63 @@ def persist_event(event: dict[str, Any], *, state_path: Path, log_path: Path) ->
     state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+def write_halt_report(event: dict[str, Any], *, report_dir: Path) -> Path:
+    reason = halt_reason(event) or "halt_required"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    path = report_dir / f"autoloop_HALT_{halt_report_slug(reason)}.md"
+    lines = [
+        "# Autoloop Halt Report",
+        "",
+        f"- generated_at: `{event['generated_at']}`",
+        f"- iteration: `{event['iteration']}`",
+        f"- ranking_job_id: `{event.get('ranking_job_id')}`",
+        f"- ranking_version: `{event.get('ranking_version')}`",
+        f"- reason: `{reason}`",
+        "",
+        "## Decision",
+        "",
+        "```json",
+        json.dumps(event.get("decision") or {}, ensure_ascii=False, indent=2),
+        "```",
+    ]
+    if event.get("metrics"):
+        lines.extend(
+            [
+                "",
+                "## Metrics",
+                "",
+                "```json",
+                json.dumps(halt_metric_summary(event["metrics"]), ensure_ascii=False, indent=2),
+                "```",
+            ]
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def halt_report_slug(reason: str) -> str:
+    slug = "".join(char.lower() if char.isalnum() else "_" for char in reason)
+    slug = "_".join(part for part in slug.split("_") if part)
+    return (slug or "halt_required")[:80]
+
+
+def halt_metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
+    keys = [
+        "ranked_rows",
+        "critical_failures",
+        "unsafe_apply_now_count",
+        "apply_now_unsafe_rate",
+        "stale_completion_count",
+        "retry_or_schema_count",
+        "schema_failure_retry_rate",
+        "active_ranking_prompt_version",
+        "prompt_version_counts",
+        "non_active_prompt_count",
+        "non_active_prompt_rate",
+    ]
+    return {key: metrics.get(key) for key in keys if key in metrics}
 
 
 def halt_reason(event: dict[str, Any]) -> str | None:

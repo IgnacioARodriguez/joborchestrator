@@ -15,6 +15,7 @@
   "runtime": {
     "state_path": "logs/autoloop_state.json",
     "log_path": "logs/autoloop_log.jsonl",
+    "halt_report_dir": "logs",
     "stop_file": "AUTOLOOP_STOP"
   },
   "guards": {
