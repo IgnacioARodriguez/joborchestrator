@@ -18,6 +18,7 @@ The autoloop is a controlled optimization framework for ranking prompts, safety 
 - `scripts/select_probe_cases.py`: selects a small stratified probe set.
 - `scripts/compute_autoloop_metrics.py`: computes safety metrics over persisted rankings.
 - `scripts/run_autoloop.py`: runs one dry-run iteration, writes state/logs, and evaluates guardrails.
+- `scripts/create_probe_ranking_job.py`: turns selected probe cases into a small ranking job; dry-run unless `--execute` is passed.
 
 ## Dry-Run Commands
 
@@ -52,6 +53,18 @@ The dry-run command writes:
 - `logs/autoloop_probe_cases.json`
 
 It does not call an LLM, edit prompts, rerank jobs, commit, or push.
+
+Preview a small probe ranking job from selected risky cases:
+
+```bash
+python scripts/create_probe_ranking_job.py --category suspicious_apply_now --limit 8
+```
+
+Create that small ranking job explicitly:
+
+```bash
+python scripts/create_probe_ranking_job.py --category suspicious_apply_now --limit 8 --execute
+```
 
 ## Acceptance Gates
 
