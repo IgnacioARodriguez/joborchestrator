@@ -17,6 +17,7 @@ The autoloop is a controlled optimization framework for ranking prompts, safety 
 - `config/autoloop_known_hard_cases.json`: editable hard-case pool outside protected fixtures.
 - `scripts/select_probe_cases.py`: selects a small stratified probe set.
 - `scripts/compute_autoloop_metrics.py`: computes safety metrics over persisted rankings.
+- `scripts/run_autoloop.py`: runs one dry-run iteration, writes state/logs, and evaluates guardrails.
 
 ## Dry-Run Commands
 
@@ -37,6 +38,20 @@ Write metrics to logs:
 ```bash
 python scripts/compute_autoloop_metrics.py --ranking-job-id 9 --output logs/autoloop_metrics.json
 ```
+
+Run one dry-run iteration:
+
+```bash
+python scripts/run_autoloop.py --dry-run --ranking-job-id 9
+```
+
+The dry-run command writes:
+
+- `logs/autoloop_state.json`
+- `logs/autoloop_log.jsonl`
+- `logs/autoloop_probe_cases.json`
+
+It does not call an LLM, edit prompts, rerank jobs, commit, or push.
 
 ## Acceptance Gates
 
