@@ -13,7 +13,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION  # noqa: E402
 from joborchestrator.storage import persistence as db  # noqa: E402
-from scripts.compute_autoloop_metrics import central_coverage, evidence, is_unsafe_apply_now, loads_json, scores  # noqa: E402
+from scripts.compute_autoloop_metrics import (  # noqa: E402
+    central_coverage,
+    evidence,
+    is_low_central_coverage,
+    is_unsafe_apply_now,
+    loads_json,
+    scores,
+)
 from scripts.run_golden_baseline import (  # noqa: E402
     DEFAULT_GOLDEN_CASES_DIR,
     parse_args as parse_golden_args,
@@ -160,7 +167,6 @@ def classify_probe_categories(
     categories: list[str] = []
     job_id = int(row["job_id"])
     ev = evidence(row)
-    sc = scores(row)
     decision = str(row.get("decision") or "")
     score = int(row.get("final_score") or 0)
 
@@ -172,7 +178,7 @@ def classify_probe_categories(
         categories.append("risk_evidence")
     if 55 <= score <= 80:
         categories.append("borderline")
-    if (central_coverage(row) or 100) < 80 or float(sc.get("central_requirement_coverage") or 100) < 80:
+    if is_low_central_coverage(row):
         categories.append("low_central_coverage")
     if int(row.get("ranking_validation_attempts") or 0) > 1 or bool(loads_json(row.get("ranking_validation_errors_json"), [])):
         categories.append("retry_or_schema")

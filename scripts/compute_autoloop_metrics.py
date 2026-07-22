@@ -140,10 +140,17 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def is_unsafe_apply_now(row: dict[str, Any]) -> bool:
     ev = evidence(row)
-    score_payload = scores(row)
-    return bool(ev.get("dealbreakers")) or bool(ev.get("red_flags")) or bool(ev.get("missing_requirements")) or (
-        (central_coverage(row) or 100) < 80
-    ) or float(score_payload.get("central_requirement_coverage") or 100) < 80
+    return bool(ev.get("dealbreakers")) or bool(ev.get("red_flags")) or bool(
+        ev.get("missing_requirements")
+    ) or is_low_central_coverage(row)
+
+
+def is_low_central_coverage(row: dict[str, Any], *, threshold: float = 80.0) -> bool:
+    values = [
+        central_coverage(row),
+        percent_value(scores(row).get("central_requirement_coverage")),
+    ]
+    return any(value < threshold for value in values if value is not None)
 
 
 def row_is_current_for_metrics(row: dict[str, Any]) -> bool:
@@ -181,6 +188,10 @@ def central_coverage(row: dict[str, Any]) -> float | None:
     ev_value = evidence(row).get("central_requirement_coverage")
     score_value = scores(row).get("central_requirement_coverage")
     value = ev_value if ev_value is not None else score_value
+    return percent_value(value)
+
+
+def percent_value(value: Any) -> float | None:
     try:
         number = float(value)
     except (TypeError, ValueError):

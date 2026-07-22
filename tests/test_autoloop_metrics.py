@@ -67,6 +67,30 @@ def test_compute_metrics_detects_unsafe_apply_now_and_stale_completion():
     assert summary["review_required_count"] == 1
 
 
+def test_compute_metrics_treats_zero_coverage_apply_now_as_unsafe():
+    rows = [
+        _row(
+            1,
+            scores_json=json.dumps({"central_requirement_coverage": 0.0}),
+            evidence_json=json.dumps(
+                {
+                    "dealbreakers": [],
+                    "red_flags": [],
+                    "missing_requirements": [],
+                    "requires_llm_review": False,
+                    "central_requirement_coverage": 0.0,
+                }
+            ),
+        ),
+    ]
+
+    summary = metrics.compute_metrics(rows)
+
+    assert summary["unsafe_apply_now_count"] == 1
+    assert summary["critical_failures"] == 1
+    assert summary["unsafe_apply_now_examples"][0]["job_id"] == 1
+
+
 def test_compute_metrics_counts_schema_retry_rate():
     rows = [
         _row(1, ranking_validation_attempts=2),
