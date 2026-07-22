@@ -820,6 +820,29 @@ def test_rank_jobs_with_nvidia_skips_inconsistent_partial_result(monkeypatch):
     assert saved == {}
 
 
+def test_rank_jobs_with_nvidia_skips_incomplete_contract_partial_result(monkeypatch):
+    jobs = pd.DataFrame(
+        [{"id": 1, "title": "Backend Engineer", "company": "Acme", "description_text": "Python"}]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 80, "APPLY_NOW")
+        del payload["evidence"]["central_requirement_thresholds"]
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["saved"] == 0
+    assert summary["failed"] == 1
+    assert saved == {}
+
+
 def _ranking_payload(job_id: int, score: int, decision: str) -> dict:
     return {
         "job_id": job_id,

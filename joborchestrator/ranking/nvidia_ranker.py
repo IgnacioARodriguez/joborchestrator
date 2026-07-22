@@ -378,12 +378,16 @@ def _apply_nvidia_batch_result(
                 summary["failed"] += 1
                 continue
             try:
+                item = by_id[job_id]
                 if _decision_score_inconsistent(
-                    by_id[job_id].get("decision"),
-                    by_id[job_id].get("final_score"),
+                    item.get("decision"),
+                    item.get("final_score"),
                 ):
                     raise ValueError("decision/score mismatch")
-                ranking = _ranking_from_payload(by_id[job_id], ranking_version)
+                contract_errors = _nvidia_contract_errors([item])
+                if contract_errors:
+                    raise ValueError("contract shape errors: " + "; ".join(contract_errors))
+                ranking = _ranking_from_payload(item, ranking_version)
                 ranking.evidence.requires_llm_review = False
                 reasons = list(ranking.evidence.llm_escalation_reasons or [])
                 if "nvidia_ranking_applied" not in reasons:
