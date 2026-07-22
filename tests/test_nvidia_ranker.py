@@ -625,6 +625,72 @@ def test_nvidia_ranking_blocks_autonomous_simulation_specialization(monkeypatch)
     assert "autonomous driving simulation specialization outside core profile" in saved[1].evidence.red_flags
 
 
+def test_nvidia_ranking_caps_apply_now_when_model_reports_risky_evidence(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Senior AI Engineer",
+                "company": "Acme",
+                "description_text": "Build Python APIs plus production RAG systems and vector databases.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 88, "APPLY_NOW")
+        payload["evidence"]["missing_requirements"] = ["production RAG systems", "vector databases"]
+        payload["evidence"]["central_requirement_coverage"] = 0.65
+        payload["scores"]["central_requirement_coverage"] = 65
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["APPLY_NOW"] == 0
+    assert summary["APPLY_WITH_TAILORED_CV"] == 1
+    assert saved[1].decision == "APPLY_WITH_TAILORED_CV"
+    assert saved[1].final_score == 78
+    assert saved[1].evidence.requires_llm_review is True
+    assert "evidence_consistency_cap_apply_now" in saved[1].evidence.llm_escalation_reasons
+    assert "evidence_requires_review" in saved[1].evidence.llm_escalation_reasons
+
+
+def test_nvidia_ranking_marks_tailored_risky_evidence_for_review(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Hybrid Backend Engineer",
+                "company": "Acme",
+                "description_text": "Hybrid backend role with Python and location eligibility to verify.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 68, "APPLY_WITH_TAILORED_CV")
+        payload["evidence"]["red_flags"] = ["location eligibility unclear"]
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["APPLY_WITH_TAILORED_CV"] == 1
+    assert saved[1].evidence.requires_llm_review is True
+    assert "evidence_requires_review" in saved[1].evidence.llm_escalation_reasons
+
+
 def test_call_nvidia_batch_uses_chat_completions(monkeypatch):
     calls = []
 

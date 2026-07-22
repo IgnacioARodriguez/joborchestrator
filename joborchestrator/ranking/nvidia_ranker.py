@@ -349,6 +349,7 @@ def _apply_nvidia_batch_result(
                 ranking.evidence.llm_escalation_reasons = reasons
                 ranking.ranking_version = ranking_version
                 _apply_ranking_safety_gate(row, ranking, safety_context)
+                _apply_evidence_consistency_gate(ranking)
                 db.save_job_ranking(
                     job_id,
                     ranking,
@@ -531,6 +532,44 @@ def _apply_ranking_safety_gate(
     ranking.evidence.requires_llm_review = True
     prefix = "Safety gate applied: " + "; ".join(signal.label for signal in signals) + "."
     ranking.reasoning_summary = f"{prefix} {ranking.reasoning_summary}".strip()
+
+
+def _apply_evidence_consistency_gate(ranking: Any) -> None:
+    evidence = ranking.evidence
+    reasons = list(evidence.llm_escalation_reasons or [])
+    review_reasons = [reason for reason in reasons if reason != "nvidia_ranking_applied"]
+    has_dealbreakers = bool(evidence.dealbreakers)
+    has_red_flags = bool(evidence.red_flags)
+    has_missing = bool(evidence.missing_requirements)
+    low_coverage = _ranking_central_coverage_percent(ranking) < 80
+
+    if ranking.decision == "APPLY_NOW" and (has_dealbreakers or has_red_flags or has_missing or low_coverage):
+        ranking.decision = cast(Decision, "APPLY_WITH_TAILORED_CV")
+        ranking.final_score = min(int(ranking.final_score), 78)
+        ranking.scores.risk_penalty = max(int(ranking.scores.risk_penalty), 20)
+        if "evidence_consistency_cap_apply_now" not in reasons:
+            reasons.append("evidence_consistency_cap_apply_now")
+        review_reasons.append("evidence_consistency_cap_apply_now")
+
+    if ranking.decision in {"APPLY_WITH_TAILORED_CV", "MAYBE"} and (
+        has_dealbreakers or has_red_flags or has_missing or low_coverage or review_reasons
+    ):
+        evidence.requires_llm_review = True
+        if "evidence_requires_review" not in reasons:
+            reasons.append("evidence_requires_review")
+
+    evidence.llm_escalation_reasons = reasons
+
+
+def _ranking_central_coverage_percent(ranking: Any) -> float:
+    value = ranking.evidence.central_requirement_coverage
+    if value is None:
+        value = getattr(ranking.scores, "central_requirement_coverage", None)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 100.0
+    return number * 100 if number <= 1 else number
 
 
 def _ranking_safety_signals(
