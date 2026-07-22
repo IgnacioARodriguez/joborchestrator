@@ -28,6 +28,12 @@ Use this as the plain-language maturity scale:
 
 Target state for HuntPilot: 8+ across ranking, materials, and ATS CV.
 
+Operational interpretation:
+
+- 8/10 means critical failures and unsafe APPLY_NOW cases are zero on the reviewed golden set plus recent probes, case regressions are zero, and current production outputs are traceable to active prompt versions. This is enough for supervised personal use.
+- 9/10 means the 8/10 bar plus human sampling of APPLY_NOW precision/recall and at least two consecutive reranking/eval runs without critical regression.
+- 10/10 is not an automation target. LLM confidence is operational confidence, not a proof of perfect judgment.
+
 ## Required Golden Set
 
 Before calling prompts high-trust, maintain a reviewed golden set with at least:
