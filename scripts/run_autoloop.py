@@ -375,6 +375,7 @@ def halt_metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
         "prompt_version_counts",
         "non_active_prompt_count",
         "non_active_prompt_rate",
+        "non_active_prompt_examples",
     ]
     return {key: metrics.get(key) for key in keys if key in metrics}
 

@@ -145,3 +145,14 @@ def test_compute_metrics_counts_non_active_prompt_versions(monkeypatch):
     assert summary["prompt_version_counts"] == {"unknown": 1, "v2": 1, "v3": 1}
     assert summary["non_active_prompt_count"] == 1
     assert summary["non_active_prompt_rate"] == 0.3333
+    assert summary["non_active_prompt_examples"] == [
+        {
+            "job_id": 2,
+            "decision": "APPLY_NOW",
+            "final_score": 82,
+            "title": "Backend Engineer",
+            "company": "Acme",
+            "location": "Remote",
+            "prompt_version": "v2",
+        }
+    ]

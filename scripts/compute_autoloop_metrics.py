@@ -135,6 +135,7 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "unsafe_apply_now_examples": examples(unsafe_apply_now),
         "stale_completion_examples": examples(stale_completed),
         "failed_item_examples": examples(failed_items),
+        "non_active_prompt_examples": prompt_version_examples(non_active_prompt_rows),
     }
 
 
@@ -222,6 +223,15 @@ def examples(rows: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]
         }
         for row in rows[:limit]
     ]
+
+
+def prompt_version_examples(rows: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
+    items = []
+    for row in rows[:limit]:
+        item = examples([row], limit=1)[0]
+        item["prompt_version"] = ranking_prompt_version(row)
+        items.append(item)
+    return items
 
 
 def loads_json(value: Any, fallback: Any) -> Any:

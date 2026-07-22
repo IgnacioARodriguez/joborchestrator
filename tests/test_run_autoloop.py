@@ -293,3 +293,17 @@ def test_persist_event_preserves_baseline_when_guard_halts(tmp_path):
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
     assert persisted["baseline"] == previous_baseline
     assert persisted["halt_reason"] == "critical_failures:1>0"
+
+
+def test_halt_metric_summary_includes_non_active_prompt_examples():
+    summary = run_autoloop.halt_metric_summary(
+        {
+            "ranked_rows": 12,
+            "non_active_prompt_count": 2,
+            "non_active_prompt_examples": [{"job_id": 7, "prompt_version": "v3"}],
+            "unsafe_apply_now_examples": [{"job_id": 9}],
+        }
+    )
+
+    assert summary["non_active_prompt_examples"] == [{"job_id": 7, "prompt_version": "v3"}]
+    assert "unsafe_apply_now_examples" not in summary
