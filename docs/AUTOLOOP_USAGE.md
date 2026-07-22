@@ -90,6 +90,8 @@ Requeue a capped batch explicitly:
 python scripts/requeue_non_active_prompt_items.py --ranking-job-id 9 --limit 25 --execute
 ```
 
+`--execute` refuses to run while the ranking job has running items. Use `--force` only when you intentionally accept that race.
+
 ## Acceptance Gates
 
 The loop must not auto-accept a change when any of these regress:

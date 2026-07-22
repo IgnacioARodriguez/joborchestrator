@@ -38,6 +38,7 @@ def test_requeue_non_active_prompt_items_dry_run_writes_payload(tmp_path, monkey
         limit=None,
         output=output,
         execute=False,
+        force=False,
     )
 
     payload = requeue.run(args)
@@ -68,6 +69,7 @@ def test_requeue_non_active_prompt_items_execute_limits_and_requeues(tmp_path, m
         limit=1,
         output=tmp_path / "payload.json",
         execute=True,
+        force=False,
     )
 
     payload = requeue.run(args)
@@ -83,3 +85,31 @@ def test_requeue_non_active_prompt_items_execute_limits_and_requeues(tmp_path, m
             },
         )
     ]
+
+
+def test_requeue_non_active_prompt_items_execute_rejects_running_items(tmp_path, monkeypatch):
+    monkeypatch.setattr(requeue, "active_prompt_version", lambda surface, sub_case: "v4")
+    monkeypatch.setattr(
+        requeue,
+        "fetch_ranking_rows",
+        lambda **kwargs: [
+            _row(1, prompt_version="v3"),
+            _row(2, status="running", prompt_version="v3"),
+        ],
+    )
+    monkeypatch.setattr(requeue.db, "requeue_ranking_items", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError))
+    args = argparse.Namespace(
+        ranking_job_id=9,
+        ranking_version="ranking-test",
+        limit=None,
+        output=tmp_path / "payload.json",
+        execute=True,
+        force=False,
+    )
+
+    try:
+        requeue.run(args)
+    except requeue.RequeueError as exc:
+        assert "running items" in str(exc)
+    else:
+        raise AssertionError("Expected RequeueError")

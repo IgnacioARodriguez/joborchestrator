@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--force", action="store_true", help="Allow execute while the ranking job has running items.")
     return parser.parse_args(argv)
 
 
@@ -44,12 +46,14 @@ def non_active_prompt_job_ids(rows: list[dict[str, Any]], *, active_version: str
 def build_requeue_payload(args: argparse.Namespace) -> dict[str, Any]:
     active_version = active_prompt_version("ranking", "nvidia_response_contract")
     rows = fetch_ranking_rows(ranking_job_id=args.ranking_job_id, ranking_version=args.ranking_version)
+    counter = Counter(str(row.get("item_status") or "none") for row in rows)
     job_ids = non_active_prompt_job_ids(rows, active_version=active_version)
     if args.limit is not None:
         job_ids = job_ids[: max(0, int(args.limit))]
     return {
         "ranking_job_id": args.ranking_job_id,
         "ranking_version": args.ranking_version,
+        "item_status_counts": dict(sorted(counter.items())),
         "prompt_key": PROMPT_KEY,
         "active_prompt_version": active_version,
         "candidate_count": len(job_ids),
@@ -62,6 +66,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     payload = build_requeue_payload(args)
     requeued = 0
     if args.execute and payload["job_ids"]:
+        running_count = int((payload.get("item_status_counts") or {}).get("running") or 0)
+        if running_count and not args.force:
+            raise RequeueError(
+                f"ranking job has {running_count} running items; wait for the worker chunk or pass --force"
+            )
         requeued = db.requeue_ranking_items(
             args.ranking_job_id,
             list(payload["job_ids"]),
@@ -75,9 +84,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    payload = run(parse_args(argv))
+    try:
+        payload = run(parse_args(argv))
+    except RequeueError as exc:
+        print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+        return 2
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
+
+
+class RequeueError(RuntimeError):
+    pass
 
 
 if __name__ == "__main__":
