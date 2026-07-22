@@ -684,6 +684,15 @@ def test_nvidia_response_contract_avoids_decision_placeholder():
     assert "Never return the pipe-separated placeholder" in contract
 
 
+def test_nvidia_response_contract_caps_apply_now_for_central_risk():
+    contract = nvidia_ranker._response_contract()
+
+    assert "APPLY_NOW is allowed only when" in contract
+    assert "If evidence.dealbreakers is non-empty, decision must not be APPLY_NOW" in contract
+    assert "If central_requirement_coverage is below 80, decision must not be APPLY_NOW" in contract
+    assert "location, work mode, seniority, language, central domain, contract type, or role pivot" in contract
+
+
 def test_nvidia_batch_validation_reports_missing_ids_and_invalid_decisions():
     result = {
         "rankings": [
