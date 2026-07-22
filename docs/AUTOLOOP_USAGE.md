@@ -78,6 +78,8 @@ Create that small ranking job explicitly:
 python scripts/create_probe_ranking_job.py --category suspicious_apply_now --limit 8 --execute
 ```
 
+`--execute` refuses to create duplicate ranking work when any selected job id is already queued or running in an active ranking job. Wait for the active job to drain, or use `--force` only when the duplicate probe is intentional.
+
 Preview completed job items that need reranking because the active ranking prompt changed:
 
 ```bash
