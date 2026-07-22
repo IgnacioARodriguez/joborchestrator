@@ -1,6 +1,8 @@
 import argparse
 import json
 
+import pytest
+
 from scripts import run_autoloop
 
 
@@ -58,6 +60,29 @@ def test_compare_metrics_marks_critical_regression():
     assert "non_active_prompt_rate:0->0.2" in comparison["critical_regressions"]
 
 
+def test_evaluate_runtime_limits_reports_budget_and_iteration_caps():
+    previous_state = {
+        "iteration": 3,
+        "consecutive_no_improvement": 2,
+        "budgets": {"api_calls_used": 50, "estimated_tokens_used": 500000},
+    }
+    config = {
+        "max_iterations": 3,
+        "max_api_calls": 50,
+        "max_tokens": 500000,
+        "max_consecutive_no_improvement": 2,
+    }
+
+    failures = run_autoloop.evaluate_runtime_limits(previous_state, config)
+
+    assert failures == [
+        "iteration:3>=3",
+        "api_calls_used:50>=50",
+        "estimated_tokens_used:500000>=500000",
+        "consecutive_no_improvement:2>=2",
+    ]
+
+
 def test_run_autoloop_stop_file_writes_state_and_log(tmp_path):
     config_path = tmp_path / "config.json"
     state_path = tmp_path / "state.json"
@@ -94,6 +119,58 @@ def test_run_autoloop_stop_file_writes_state_and_log(tmp_path):
     assert event["decision"]["reason"] == "stop_file_present"
     assert json.loads(state_path.read_text(encoding="utf-8"))["status"] == "halted"
     assert len(log_path.read_text(encoding="utf-8").strip().splitlines()) == 1
+
+
+def test_run_autoloop_runtime_limit_halts_before_fetching(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    state_path = tmp_path / "state.json"
+    log_path = tmp_path / "log.jsonl"
+    baseline = {"ranked_rows": 7}
+    state_path.write_text(
+        json.dumps(
+            {
+                "iteration": 3,
+                "baseline": baseline,
+                "budgets": {"api_calls_used": 0, "estimated_tokens_used": 0},
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "max_iterations": 3,
+                "runtime": {
+                    "state_path": str(state_path),
+                    "log_path": str(log_path),
+                    "stop_file": str(tmp_path / "missing-stop"),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(run_autoloop, "fetch_ranking_rows", lambda **kwargs: pytest.fail("should not fetch rankings"))
+    monkeypatch.setattr(run_autoloop, "fetch_candidate_rows", lambda **kwargs: pytest.fail("should not select probes"))
+    args = argparse.Namespace(
+        dry_run=True,
+        ranking_job_id=9,
+        ranking_version="ranking-test",
+        config=config_path,
+        known_hard_cases=tmp_path / "hard.json",
+        golden_cases=tmp_path / "golden",
+        state_path=None,
+        log_path=None,
+        probe_output=tmp_path / "probe.json",
+    )
+
+    event = run_autoloop.run_autoloop(args)
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert event["status"] == "halted"
+    assert event["decision"]["reason"] == "runtime_limits_exceeded"
+    assert event["decision"]["runtime_limit_failures"] == ["iteration:3>=3"]
+    assert persisted["baseline"] == baseline
+    assert persisted["halt_reason"] == "iteration:3>=3"
 
 
 def test_run_autoloop_dry_run_records_metrics_and_probe(tmp_path, monkeypatch):

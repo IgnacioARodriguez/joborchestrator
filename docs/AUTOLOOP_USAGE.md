@@ -7,6 +7,7 @@ The autoloop is a controlled optimization framework for ranking prompts, safety 
 - Golden fixtures under `evals/fixtures/` are read-only unless a human explicitly approves edits.
 - Runtime state and logs live under `logs/`, which is ignored by git.
 - `AUTOLOOP_STOP` is the planned kill switch for the future orchestrator.
+- Runtime limits in `config/autoloop_config.json` stop the loop before work starts when iteration, API-call, token, or no-improvement caps are reached.
 - Probe selection must stay small before any unattended rerank.
 - Any future loop that applies changes must run `python -m pytest -q` before and after each commit.
 

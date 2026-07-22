@@ -67,6 +67,23 @@ def run_autoloop(args: argparse.Namespace) -> dict[str, Any]:
         persist_event(event, state_path=state_path, log_path=log_path)
         return event
 
+    runtime_limit_failures = evaluate_runtime_limits(previous_state, config)
+    if runtime_limit_failures:
+        event = autoloop_event(
+            args=args,
+            status="halted",
+            decision={
+                "action": "halt_required",
+                "reason": "runtime_limits_exceeded",
+                "runtime_limit_failures": runtime_limit_failures,
+            },
+            metrics=None,
+            probe=None,
+            previous_state=previous_state,
+        )
+        persist_event(event, state_path=state_path, log_path=log_path)
+        return event
+
     metrics = compute_metrics(fetch_ranking_rows(ranking_job_id=args.ranking_job_id, ranking_version=args.ranking_version))
     probe = build_probe_payload(args, config)
     probe_output.parent.mkdir(parents=True, exist_ok=True)
@@ -152,6 +169,31 @@ def evaluate_guards(metrics: dict[str, Any], guards: dict[str, Any]) -> list[str
     return failures
 
 
+def evaluate_runtime_limits(previous_state: dict[str, Any], config: dict[str, Any]) -> list[str]:
+    failures = []
+    iteration = int(previous_state.get("iteration") or 0)
+    max_iterations = config.get("max_iterations")
+    if max_iterations is not None and iteration >= int(max_iterations):
+        failures.append(f"iteration:{iteration}>={int(max_iterations)}")
+
+    budgets = previous_state.get("budgets") or {}
+    api_calls_used = int(budgets.get("api_calls_used") or 0)
+    max_api_calls = config.get("max_api_calls")
+    if max_api_calls is not None and api_calls_used >= int(max_api_calls):
+        failures.append(f"api_calls_used:{api_calls_used}>={int(max_api_calls)}")
+
+    estimated_tokens_used = int(budgets.get("estimated_tokens_used") or 0)
+    max_tokens = config.get("max_tokens")
+    if max_tokens is not None and estimated_tokens_used >= int(max_tokens):
+        failures.append(f"estimated_tokens_used:{estimated_tokens_used}>={int(max_tokens)}")
+
+    no_improvement_count = int(previous_state.get("consecutive_no_improvement") or 0)
+    max_no_improvement = config.get("max_consecutive_no_improvement")
+    if max_no_improvement is not None and no_improvement_count >= int(max_no_improvement):
+        failures.append(f"consecutive_no_improvement:{no_improvement_count}>={int(max_no_improvement)}")
+    return failures
+
+
 def compare_metrics(baseline: dict[str, Any] | None, current: dict[str, Any]) -> dict[str, Any]:
     if not baseline:
         return {"baseline": "missing"}
@@ -221,6 +263,8 @@ def autoloop_event(
         "metrics": metrics,
         "probe": probe,
         "budgets": previous_state.get("budgets") or {"api_calls_used": 0, "estimated_tokens_used": 0},
+        "previous_baseline": previous_state.get("baseline"),
+        "previous_consecutive_no_improvement": int(previous_state.get("consecutive_no_improvement") or 0),
     }
 
 
@@ -228,10 +272,11 @@ def persist_event(event: dict[str, Any], *, state_path: Path, log_path: Path) ->
     state = {
         "status": event["status"],
         "iteration": event["iteration"],
-        "baseline": event.get("metrics"),
+        "baseline": event.get("metrics") if event.get("metrics") is not None else event.get("previous_baseline"),
         "last_decision": event.get("decision"),
         "last_probe": event.get("probe"),
         "budgets": event.get("budgets"),
+        "consecutive_no_improvement": consecutive_no_improvement_count(event),
         "halt_reason": halt_reason(event),
         "updated_at": event["generated_at"],
     }
@@ -249,7 +294,20 @@ def halt_reason(event: dict[str, Any]) -> str | None:
     failures = decision.get("guard_failures") or []
     if failures:
         return "; ".join(str(item) for item in failures)
+    runtime_failures = decision.get("runtime_limit_failures") or []
+    if runtime_failures:
+        return "; ".join(str(item) for item in runtime_failures)
     return str(decision.get("reason") or "halt_required")
+
+
+def consecutive_no_improvement_count(event: dict[str, Any]) -> int:
+    current = int(event.get("previous_consecutive_no_improvement") or 0)
+    action = (event.get("decision") or {}).get("action")
+    if action in {"continue", "baseline_recorded"}:
+        return 0
+    if action in {"no_op", "reject"}:
+        return current + 1
+    return current
 
 
 def load_state(path: Path) -> dict[str, Any]:
