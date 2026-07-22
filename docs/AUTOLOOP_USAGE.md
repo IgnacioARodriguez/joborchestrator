@@ -84,6 +84,7 @@ The loop must not auto-accept a change when any of these regress:
 - `critical_failures`
 - `apply_now_unsafe_rate`
 - `stale_completion_count`
+- `failed_item_count`
 - `non_active_prompt_rate`
 - `schema_failure_retry_rate`
 - case-level regressions against the previous accepted baseline

@@ -93,6 +93,20 @@ def test_compute_metrics_ignores_queued_items_with_old_rankings():
     assert summary["apply_now_count"] == 1
 
 
+def test_compute_metrics_counts_failed_items():
+    rows = [
+        _row(1),
+        _row(2, item_status="failed", decision=None, final_score=None),
+    ]
+
+    summary = metrics.compute_metrics(rows)
+
+    assert summary["item_status_counts"] == {"completed": 1, "failed": 1}
+    assert summary["failed_item_count"] == 1
+    assert summary["failed_item_examples"][0]["job_id"] == 2
+    assert summary["ranked_rows"] == 1
+
+
 def test_compute_metrics_counts_non_active_prompt_versions(monkeypatch):
     monkeypatch.setattr(metrics, "active_prompt_version", lambda surface, sub_case: "v3")
     rows = [

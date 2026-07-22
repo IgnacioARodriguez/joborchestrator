@@ -22,6 +22,7 @@
     "max_apply_now_unsafe_rate": 0.0,
     "max_non_active_prompt_rate": 0.0,
     "max_schema_failure_retry_rate": 0.1,
+    "max_failed_item_count": 0,
     "max_stale_completion_count": 0,
     "max_case_regressions": 0,
     "max_critical_failures": 0

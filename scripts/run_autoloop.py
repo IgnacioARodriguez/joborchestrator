@@ -160,6 +160,7 @@ def evaluate_guards(metrics: dict[str, Any], guards: dict[str, Any]) -> list[str
         ("non_active_prompt_rate", "max_non_active_prompt_rate"),
         ("case_regressions", "max_case_regressions"),
         ("schema_failure_retry_rate", "max_schema_failure_retry_rate"),
+        ("failed_item_count", "max_failed_item_count"),
     ]
     failures = []
     for metric_key, guard_key in checks:
@@ -216,6 +217,7 @@ def compare_metrics(baseline: dict[str, Any] | None, current: dict[str, Any]) ->
         "unsafe_apply_now_count",
         "apply_now_unsafe_rate",
         "stale_completion_count",
+        "failed_item_count",
         "retry_or_schema_count",
         "schema_failure_retry_rate",
         "non_active_prompt_count",
@@ -238,6 +240,7 @@ def compare_metrics(baseline: dict[str, Any] | None, current: dict[str, Any]) ->
                 "unsafe_apply_now_count",
                 "apply_now_unsafe_rate",
                 "stale_completion_count",
+                "failed_item_count",
                 "non_active_prompt_count",
                 "non_active_prompt_rate",
             }:
@@ -358,6 +361,7 @@ def halt_metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
         "unsafe_apply_now_count",
         "apply_now_unsafe_rate",
         "stale_completion_count",
+        "failed_item_count",
         "retry_or_schema_count",
         "schema_failure_retry_rate",
         "active_ranking_prompt_version",

@@ -96,6 +96,8 @@ def fetch_ranking_rows(*, ranking_job_id: int | None, ranking_version: str) -> l
 
 def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ranked = [row for row in rows if row.get("decision") and row_is_current_for_metrics(row)]
+    status_counts = Counter(str(row.get("item_status") or "none") for row in rows)
+    failed_items = [row for row in rows if row.get("item_status") == "failed"]
     apply_now = [row for row in ranked if row.get("decision") == "APPLY_NOW"]
     unsafe_apply_now = [row for row in apply_now if is_unsafe_apply_now(row)]
     stale_completed = [row for row in rows if is_stale_completion(row)]
@@ -111,7 +113,8 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "evaluated_rows": len(rows),
-        "item_status_counts": dict(sorted(Counter(str(row.get("item_status") or "none") for row in rows).items())),
+        "item_status_counts": dict(sorted(status_counts.items())),
+        "failed_item_count": len(failed_items),
         "ranked_rows": len(ranked),
         "decision_counts": dict(sorted(Counter(str(row.get("decision")) for row in ranked).items())),
         "score": stats(scores),
@@ -131,6 +134,7 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "non_active_prompt_rate": round(len(non_active_prompt_rows) / len(ranked), 4) if ranked else 0.0,
         "unsafe_apply_now_examples": examples(unsafe_apply_now),
         "stale_completion_examples": examples(stale_completed),
+        "failed_item_examples": examples(failed_items),
     }
 
 
