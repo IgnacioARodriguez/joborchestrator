@@ -376,10 +376,15 @@ def sync_ranking_items_from_rankings(
         if item_job_ids:
             placeholders = ",".join("?" for _ in item_job_ids)
             ranked_rows = conn.execute(
-                f"""SELECT job_id
-                    FROM job_rankings
-                    WHERE ranking_version = ? AND job_id IN ({placeholders})""",
-                [ranking_version, *item_job_ids],
+                f"""SELECT jr.job_id
+                    FROM job_rankings jr
+                    JOIN ranking_job_items rji
+                      ON rji.job_posting_id = jr.job_id
+                     AND rji.ranking_job_id = ?
+                    WHERE jr.ranking_version = ?
+                      AND jr.job_id IN ({placeholders})
+                      AND jr.updated_at >= rji.updated_at""",
+                [ranking_job_id, ranking_version, *item_job_ids],
             ).fetchall()
             ranked_job_ids = {int(row["job_id"]) for row in ranked_rows}
 
