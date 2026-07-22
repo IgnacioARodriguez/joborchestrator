@@ -30,6 +30,7 @@ def test_create_probe_job_dry_run_does_not_create_db_job(tmp_path, monkeypatch):
         request_batch_size=2,
         max_concurrency=1,
         execute=False,
+        force=False,
     )
 
     response = creator.create_probe_job(args)
@@ -49,6 +50,7 @@ def test_create_probe_job_execute_creates_db_job(tmp_path, monkeypatch):
         return 123
 
     monkeypatch.setattr(creator.db, "create_ranking_job", fake_create_ranking_job)
+    monkeypatch.setattr(creator, "active_ranking_item_job_ids", lambda job_ids: [])
     args = argparse.Namespace(
         probe=probe_path,
         ranking_version="ranking-test",
@@ -58,10 +60,65 @@ def test_create_probe_job_execute_creates_db_job(tmp_path, monkeypatch):
         request_batch_size=2,
         max_concurrency=1,
         execute=True,
+        force=False,
     )
 
     response = creator.create_probe_job(args)
 
     assert response["ranking_job_id"] == 123
     assert calls["provider"] == "nvidia"
+    assert calls["job_ids"] == [7]
+
+
+def test_create_probe_job_execute_rejects_already_active_items(tmp_path, monkeypatch):
+    probe_path = tmp_path / "probe.json"
+    probe_path.write_text(json.dumps({"cases": [{"job_id": 7, "categories": ["risk_evidence"]}]}), encoding="utf-8")
+    monkeypatch.setattr(creator, "active_ranking_item_job_ids", lambda job_ids: [7])
+    monkeypatch.setattr(creator.db, "create_ranking_job", lambda **kwargs: (_ for _ in ()).throw(AssertionError))
+    args = argparse.Namespace(
+        probe=probe_path,
+        ranking_version="ranking-test",
+        model="nvidia/test",
+        category=["risk_evidence"],
+        limit=8,
+        request_batch_size=2,
+        max_concurrency=1,
+        execute=True,
+        force=False,
+    )
+
+    try:
+        creator.create_probe_job(args)
+    except creator.ProbeRankingJobError as exc:
+        assert "queued/running" in str(exc)
+    else:
+        raise AssertionError("Expected ProbeRankingJobError")
+
+
+def test_create_probe_job_execute_force_allows_active_items(tmp_path, monkeypatch):
+    probe_path = tmp_path / "probe.json"
+    probe_path.write_text(json.dumps({"cases": [{"job_id": 7, "categories": ["risk_evidence"]}]}), encoding="utf-8")
+    calls = {}
+    monkeypatch.setattr(creator, "active_ranking_item_job_ids", lambda job_ids: [7])
+
+    def fake_create_ranking_job(**kwargs):
+        calls.update(kwargs)
+        return 123
+
+    monkeypatch.setattr(creator.db, "create_ranking_job", fake_create_ranking_job)
+    args = argparse.Namespace(
+        probe=probe_path,
+        ranking_version="ranking-test",
+        model="nvidia/test",
+        category=["risk_evidence"],
+        limit=8,
+        request_batch_size=2,
+        max_concurrency=1,
+        execute=True,
+        force=True,
+    )
+
+    response = creator.create_probe_job(args)
+
+    assert response["ranking_job_id"] == 123
     assert calls["job_ids"] == [7]

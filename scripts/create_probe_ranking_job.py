@@ -27,6 +27,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--request-batch-size", type=int, default=2)
     parser.add_argument("--max-concurrency", type=int, default=1)
     parser.add_argument("--execute", action="store_true", help="Actually create the ranking job. Without this, dry-run only.")
+    parser.add_argument("--force", action="store_true", help="Allow creating a probe job even when selected ids are already queued/running.")
     return parser.parse_args(argv)
 
 
@@ -65,6 +66,12 @@ def create_probe_job(args: argparse.Namespace) -> dict[str, Any]:
     if args.execute:
         if not job_ids:
             raise ProbeRankingJobError("No probe job ids matched the requested filters.")
+        active_job_ids = active_ranking_item_job_ids(job_ids)
+        if active_job_ids and not args.force:
+            raise ProbeRankingJobError(
+                "Selected job ids already have queued/running ranking items: "
+                f"{active_job_ids}. Re-run after the active job drains, or use --force intentionally."
+            )
         response["ranking_job_id"] = db.create_ranking_job(
             provider="nvidia",
             model=str(args.model),
@@ -74,6 +81,28 @@ def create_probe_job(args: argparse.Namespace) -> dict[str, Any]:
             max_concurrency=int(args.max_concurrency),
         )
     return response
+
+
+def active_ranking_item_job_ids(job_ids: list[int]) -> list[int]:
+    target_job_ids = list(dict.fromkeys(int(job_id) for job_id in job_ids))
+    if not target_job_ids:
+        return []
+    placeholders = ",".join("?" for _ in target_job_ids)
+    conn = db._conn()
+    try:
+        rows = conn.execute(
+            f"""SELECT DISTINCT rji.job_posting_id
+                FROM ranking_job_items rji
+                JOIN ranking_jobs rj ON rj.id = rji.ranking_job_id
+                WHERE rji.job_posting_id IN ({placeholders})
+                  AND rji.status IN ('queued', 'running')
+                  AND rj.status IN ('queued', 'running')
+                ORDER BY rji.job_posting_id ASC""",
+            target_job_ids,
+        ).fetchall()
+        return [int(row["job_posting_id"]) for row in rows]
+    finally:
+        conn.close()
 
 
 class ProbeRankingJobError(RuntimeError):
