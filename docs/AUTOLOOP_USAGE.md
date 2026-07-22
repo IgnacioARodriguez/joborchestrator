@@ -19,6 +19,7 @@ The autoloop is a controlled optimization framework for ranking prompts, safety 
 - `scripts/compute_autoloop_metrics.py`: computes safety metrics over persisted rankings.
 - `scripts/run_autoloop.py`: runs one dry-run iteration, writes state/logs, and evaluates guardrails.
 - `scripts/create_probe_ranking_job.py`: turns selected probe cases into a small ranking job; dry-run unless `--execute` is passed.
+- `scripts/autoloop_checkpoints.py`: creates idempotent annotated git tags such as `autoloop-checkpoint-3`.
 
 ## Dry-Run Commands
 
@@ -53,6 +54,14 @@ The dry-run command writes:
 - `logs/autoloop_probe_cases.json`
 
 It does not call an LLM, edit prompts, rerank jobs, commit, or push.
+
+Create a git checkpoint before a future real loop applies a change:
+
+```bash
+python scripts/autoloop_checkpoints.py --iteration 3
+```
+
+The checkpoint command refuses a dirty worktree by default. Re-running it for the same iteration is allowed only when the existing tag points at the current commit.
 
 Preview a small probe ranking job from selected risky cases:
 
