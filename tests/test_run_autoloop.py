@@ -265,3 +265,31 @@ def test_run_autoloop_dry_run_records_metrics_and_probe(tmp_path, monkeypatch):
     assert event["metrics"]["ranked_rows"] == 1
     assert json.loads(probe_output.read_text(encoding="utf-8"))["candidate_count"] == 1
     assert json.loads(state_path.read_text(encoding="utf-8"))["baseline"]["ranked_rows"] == 1
+
+
+def test_persist_event_preserves_baseline_when_guard_halts(tmp_path):
+    previous_baseline = {"ranked_rows": 10, "critical_failures": 0}
+    event = {
+        "generated_at": "2026-07-22T10:00:00+00:00",
+        "status": "halted",
+        "iteration": 2,
+        "ranking_job_id": 9,
+        "ranking_version": "ranking-test",
+        "decision": {
+            "action": "halt_required",
+            "guard_failures": ["critical_failures:1>0"],
+        },
+        "metrics": {"ranked_rows": 12, "critical_failures": 1},
+        "probe": None,
+        "budgets": {"api_calls_used": 0, "estimated_tokens_used": 0},
+        "previous_baseline": previous_baseline,
+        "previous_consecutive_no_improvement": 0,
+    }
+    state_path = tmp_path / "state.json"
+    log_path = tmp_path / "log.jsonl"
+
+    run_autoloop.persist_event(event, state_path=state_path, log_path=log_path, halt_report_dir=tmp_path)
+
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["baseline"] == previous_baseline
+    assert persisted["halt_reason"] == "critical_failures:1>0"

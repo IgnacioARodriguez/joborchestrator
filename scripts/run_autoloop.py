@@ -298,7 +298,7 @@ def persist_event(
     state = {
         "status": event["status"],
         "iteration": event["iteration"],
-        "baseline": event.get("metrics") if event.get("metrics") is not None else event.get("previous_baseline"),
+        "baseline": accepted_baseline(event),
         "last_decision": event.get("decision"),
         "last_probe": event.get("probe"),
         "budgets": event.get("budgets"),
@@ -312,6 +312,13 @@ def persist_event(
     state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+def accepted_baseline(event: dict[str, Any]) -> dict[str, Any] | None:
+    action = (event.get("decision") or {}).get("action")
+    if action in {"baseline_recorded", "continue"} and event.get("metrics") is not None:
+        return event.get("metrics")
+    return event.get("previous_baseline")
 
 
 def write_halt_report(event: dict[str, Any], *, report_dir: Path) -> Path:
