@@ -85,6 +85,7 @@ The loop must not auto-accept a change when any of these regress:
 - `apply_now_unsafe_rate`
 - `stale_completion_count`
 - `non_active_prompt_rate`
+- `schema_failure_retry_rate`
 - case-level regressions against the previous accepted baseline
 
 Operational trust is not absolute correctness. The target is zero known critical failures under current coverage, honest review flags for uncertain cases, and repeatable gates before future prompt/model changes.

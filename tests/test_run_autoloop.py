@@ -13,6 +13,7 @@ def test_decide_halts_when_guard_fails():
         "apply_now_unsafe_rate": 0.2,
         "non_active_prompt_rate": 0.5,
         "case_regressions": ["case-1"],
+        "schema_failure_retry_rate": 0.2,
     }
     guards = {
         "max_critical_failures": 0,
@@ -20,6 +21,7 @@ def test_decide_halts_when_guard_fails():
         "max_apply_now_unsafe_rate": 0,
         "max_non_active_prompt_rate": 0,
         "max_case_regressions": 0,
+        "max_schema_failure_retry_rate": 0.1,
     }
 
     decision = run_autoloop.decide(metrics, None, guards)
@@ -29,6 +31,7 @@ def test_decide_halts_when_guard_fails():
     assert "apply_now_unsafe_rate:0.2>0" in decision["guard_failures"]
     assert "non_active_prompt_rate:0.5>0" in decision["guard_failures"]
     assert "case_regressions:1>0" in decision["guard_failures"]
+    assert "schema_failure_retry_rate:0.2>0.1" in decision["guard_failures"]
 
 
 def test_compare_metrics_marks_critical_regression():

@@ -159,6 +159,7 @@ def evaluate_guards(metrics: dict[str, Any], guards: dict[str, Any]) -> list[str
         ("apply_now_unsafe_rate", "max_apply_now_unsafe_rate"),
         ("non_active_prompt_rate", "max_non_active_prompt_rate"),
         ("case_regressions", "max_case_regressions"),
+        ("schema_failure_retry_rate", "max_schema_failure_retry_rate"),
     ]
     failures = []
     for metric_key, guard_key in checks:
