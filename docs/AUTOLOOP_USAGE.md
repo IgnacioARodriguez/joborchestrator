@@ -21,6 +21,7 @@ The autoloop is a controlled optimization framework for ranking prompts, safety 
 - `scripts/run_autoloop.py`: runs one dry-run iteration, writes state/logs, and evaluates guardrails.
 - `scripts/create_probe_ranking_job.py`: turns selected probe cases into a small ranking job; dry-run unless `--execute` is passed.
 - `scripts/autoloop_checkpoints.py`: creates idempotent annotated git tags such as `autoloop-checkpoint-3`.
+- `scripts/requeue_non_active_prompt_items.py`: previews or requeues completed ranking items whose prompt version is no longer active.
 
 ## Dry-Run Commands
 
@@ -75,6 +76,18 @@ Create that small ranking job explicitly:
 
 ```bash
 python scripts/create_probe_ranking_job.py --category suspicious_apply_now --limit 8 --execute
+```
+
+Preview completed job items that need reranking because the active ranking prompt changed:
+
+```bash
+python scripts/requeue_non_active_prompt_items.py --ranking-job-id 9
+```
+
+Requeue a capped batch explicitly:
+
+```bash
+python scripts/requeue_non_active_prompt_items.py --ranking-job-id 9 --limit 25 --execute
 ```
 
 ## Acceptance Gates
