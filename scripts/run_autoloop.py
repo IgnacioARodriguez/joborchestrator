@@ -158,16 +158,28 @@ def evaluate_guards(metrics: dict[str, Any], guards: dict[str, Any]) -> list[str
         ("stale_completion_count", "max_stale_completion_count"),
         ("apply_now_unsafe_rate", "max_apply_now_unsafe_rate"),
         ("non_active_prompt_rate", "max_non_active_prompt_rate"),
+        ("case_regressions", "max_case_regressions"),
     ]
     failures = []
     for metric_key, guard_key in checks:
         if guard_key not in guards:
             continue
-        value = float(metrics.get(metric_key) or 0)
+        value = metric_guard_value(metrics.get(metric_key))
         limit = float(guards[guard_key])
         if value > limit:
             failures.append(f"{metric_key}:{value:g}>{limit:g}")
     return failures
+
+
+def metric_guard_value(value: Any) -> float:
+    if isinstance(value, list):
+        return float(len(value))
+    if isinstance(value, dict):
+        return float(len(value))
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def evaluate_runtime_limits(previous_state: dict[str, Any], config: dict[str, Any]) -> list[str]:
