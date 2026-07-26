@@ -1005,6 +1005,18 @@ def test_nvidia_batch_validation_reports_missing_ids_and_invalid_decisions():
     assert "invalid decision values" in error
 
 
+def test_nvidia_batch_validation_explains_rankings_array_for_single_job_batches():
+    error = nvidia_ranker._nvidia_batch_validation_error(
+        _ranking_payload(1, 80, "APPLY_NOW"),
+        [{"id": 1}],
+    )
+
+    assert error is not None
+    assert "top-level `rankings` array" in error
+    assert "Context.jobs" in error
+    assert "single job" in error
+
+
 def test_nvidia_batch_validation_rejects_apply_with_zero_score():
     result = {"rankings": [_ranking_payload(1, 0, "APPLY_NOW")]}
 
