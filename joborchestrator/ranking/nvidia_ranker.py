@@ -94,6 +94,11 @@ _PROFILE_AUDIT_MARKERS = {
         "aliases": ["vue", "vue.js", "vuejs"],
         "primary_aliases": ["vue", "vue.js", "vuejs"],
     },
+    "angular": {
+        "label": "Angular",
+        "aliases": ["angular", "angular.js", "angularjs"],
+        "primary_aliases": ["angular", "angular.js", "angularjs"],
+    },
     "go": {
         "label": "Go/Golang",
         "aliases": ["go", "golang"],
@@ -673,6 +678,18 @@ def _apply_evidence_consistency_gate(ranking: Any) -> None:
     has_missing = bool(evidence.missing_requirements)
     low_coverage = _ranking_central_coverage_percent(ranking) < 80
 
+    dealbreaker_cap = _dealbreaker_consistency_cap(evidence.dealbreakers)
+    if dealbreaker_cap and ranking.decision in {"APPLY_NOW", "APPLY_WITH_TAILORED_CV"}:
+        cap_decision, max_score, risk_penalty, reason = dealbreaker_cap
+        if _DECISION_SEVERITY[ranking.decision] < _DECISION_SEVERITY[cap_decision]:
+            ranking.decision = cap_decision
+        ranking.final_score = min(int(ranking.final_score), max_score)
+        ranking.scores.risk_penalty = max(int(ranking.scores.risk_penalty), risk_penalty)
+        evidence.requires_llm_review = True
+        if reason not in reasons:
+            reasons.append(reason)
+        review_reasons.append(reason)
+
     if ranking.decision == "APPLY_NOW" and (has_dealbreakers or has_red_flags or has_missing or low_coverage):
         ranking.decision = cast(Decision, "APPLY_WITH_TAILORED_CV")
         ranking.final_score = min(int(ranking.final_score), 78)
@@ -689,6 +706,26 @@ def _apply_evidence_consistency_gate(ranking: Any) -> None:
             reasons.append("evidence_requires_review")
 
     evidence.llm_escalation_reasons = reasons
+
+
+def _dealbreaker_consistency_cap(dealbreakers: list[str]) -> tuple[Decision, int, int, str] | None:
+    if not dealbreakers:
+        return None
+    normalized = [_normalize_text(str(item)) for item in dealbreakers]
+    skip_markers = [
+        "contract ai training",
+        "training/verification work",
+        "generic low context posting",
+        "magic word filter",
+        "industrial automation/electrical domain mismatch",
+        "autonomous driving simulation specialization",
+        "unpaid",
+        "commission only",
+        "mandatory relocation",
+    ]
+    if any(any(marker in item for marker in skip_markers) for item in normalized):
+        return cast(Decision, "SKIP"), 45, 30, "evidence_dealbreaker_cap_skip"
+    return cast(Decision, "MAYBE"), 58, 25, "evidence_dealbreaker_cap_maybe"
 
 
 def _ranking_central_coverage_percent(ranking: Any) -> float:
@@ -1164,6 +1201,7 @@ def _normalized_claim_text(ranking: Any) -> str:
     evidence = ranking.evidence
     parts = [
         *[str(item) for item in evidence.strong_matches],
+        *[str(item) for item in evidence.partial_matches],
         *[str(item) for item in evidence.central_requirements],
         *[str(item) for item in ranking.cv_keywords_to_emphasize],
     ]

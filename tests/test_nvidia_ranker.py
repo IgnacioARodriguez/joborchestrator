@@ -541,10 +541,12 @@ def test_nvidia_ranking_caps_hybrid_six_year_seniority_gap(monkeypatch):
     summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
 
     assert summary["APPLY_NOW"] == 0
-    assert summary["APPLY_WITH_TAILORED_CV"] == 1
-    assert saved[1].final_score == 82
+    assert summary["MAYBE"] == 1
+    assert saved[1].decision == "MAYBE"
+    assert saved[1].final_score == 58
     assert "hybrid role with 6+ years seniority gap" in saved[1].evidence.dealbreakers
     assert "safety_cap_hybrid_seniority_review" in saved[1].evidence.llm_escalation_reasons
+    assert "evidence_dealbreaker_cap_maybe" in saved[1].evidence.llm_escalation_reasons
 
 
 def test_nvidia_ranking_caps_unclear_india_remote_location(monkeypatch):
@@ -572,8 +574,9 @@ def test_nvidia_ranking_caps_unclear_india_remote_location(monkeypatch):
     summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
 
     assert summary["APPLY_NOW"] == 0
-    assert summary["APPLY_WITH_TAILORED_CV"] == 1
-    assert saved[1].final_score == 70
+    assert summary["MAYBE"] == 1
+    assert saved[1].decision == "MAYBE"
+    assert saved[1].final_score == 58
     assert "India location/remote eligibility requires review" in saved[1].evidence.dealbreakers
 
 
@@ -720,10 +723,12 @@ def test_nvidia_ranking_caps_contract_ai_training(monkeypatch):
     summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
 
     assert summary["APPLY_NOW"] == 0
-    assert summary["APPLY_WITH_TAILORED_CV"] == 1
-    assert saved[1].final_score == 70
+    assert summary["SKIP"] == 1
+    assert saved[1].decision == "SKIP"
+    assert saved[1].final_score == 45
     assert "contract AI training/verification work" in saved[1].evidence.dealbreakers
     assert "safety_cap_contract_ai_training" in saved[1].evidence.llm_escalation_reasons
+    assert "evidence_dealbreaker_cap_skip" in saved[1].evidence.llm_escalation_reasons
 
 
 def test_nvidia_ranking_blocks_autonomous_simulation_specialization(monkeypatch):
@@ -789,6 +794,71 @@ def test_nvidia_ranking_caps_apply_now_when_model_reports_risky_evidence(monkeyp
     assert saved[1].evidence.requires_llm_review is True
     assert "evidence_consistency_cap_apply_now" in saved[1].evidence.llm_escalation_reasons
     assert "evidence_requires_review" in saved[1].evidence.llm_escalation_reasons
+
+
+def test_nvidia_ranking_caps_unsupported_partial_match_claim(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Backend Engineer",
+                "company": "Acme",
+                "description_text": "Python backend role with event streaming and cloud infrastructure.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 88, "APPLY_NOW")
+        payload["evidence"]["partial_matches"] = ["GCP Pub/Sub migration experience"]
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["APPLY_NOW"] == 0
+    assert summary["APPLY_WITH_TAILORED_CV"] == 1
+    assert saved[1].final_score == 78
+    assert "profile does not support GCP as a strong match" in saved[1].evidence.red_flags
+    assert "safety_cap_unsupported_profile_claim" in saved[1].evidence.llm_escalation_reasons
+
+
+def test_nvidia_ranking_caps_unsupported_angular_claim(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Fullstack Python + Angular Engineer",
+                "company": "Acme",
+                "description_text": "Build Python APIs and Angular frontend workflows.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 90, "APPLY_NOW")
+        payload["evidence"]["strong_matches"] = ["Python backend", "Frontend fit through Angular/React"]
+        payload["evidence"]["central_requirements"] = ["Angular frontend"]
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["APPLY_NOW"] == 0
+    assert summary["APPLY_WITH_TAILORED_CV"] == 1
+    assert saved[1].final_score == 78
+    assert "profile does not support Angular as a strong match" in saved[1].evidence.red_flags
+    assert "safety_cap_unsupported_profile_claim" in saved[1].evidence.llm_escalation_reasons
 
 
 def test_nvidia_ranking_marks_tailored_risky_evidence_for_review(monkeypatch):
