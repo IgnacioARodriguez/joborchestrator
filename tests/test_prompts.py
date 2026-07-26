@@ -5,9 +5,10 @@ from joborchestrator.prompts import PromptRegistryError, active_prompt_version, 
 
 
 def test_load_prompt_uses_registry_active_version():
-    assert active_prompt_version("ranking", "nvidia_response_contract") == "v4"
+    assert active_prompt_version("ranking", "nvidia_response_contract") == "v5"
     assert "Decision calibration" in load_prompt("ranking", "nvidia_response_contract")
     assert "central_requirement_thresholds" in load_prompt("ranking", "nvidia_response_contract")
+    assert "Evidence completeness is mandatory" in load_prompt("ranking", "nvidia_response_contract")
     assert active_prompt_version("judge", "semantic_rubric") == "v1"
     assert "calibrated evaluator" in load_prompt("judge", "semantic_rubric")
 
