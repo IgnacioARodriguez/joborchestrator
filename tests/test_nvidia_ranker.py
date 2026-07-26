@@ -128,6 +128,136 @@ def test_rank_jobs_with_nvidia_saves_each_ranking(monkeypatch):
     assert saved_metadata[1]["ranking_candidate_profile_snapshot"]
 
 
+def test_rank_jobs_with_nvidia_caps_unsupported_strong_skill_claim(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Programador Full-Stack (Node.js + React) REMOTE",
+                "company": "Capitole",
+                "location": "Remote",
+                "workplace_type": "remote",
+                "description_text": "Buscamos Full Stack Developer con 3+ years with Node.js, Express, React and PostgreSQL.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 88, "APPLY_NOW")
+        payload["evidence"]["strong_matches"] = ["Node.js", "React", "PostgreSQL"]
+        payload["evidence"]["central_requirements"] = ["Node.js", "React", "PostgreSQL"]
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(
+        nvidia_ranker.db,
+        "save_job_ranking",
+        lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking),
+    )
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    ranking = saved[1]
+    assert summary["APPLY_NOW"] == 0
+    assert summary["APPLY_WITH_TAILORED_CV"] == 1
+    assert ranking.decision == "APPLY_WITH_TAILORED_CV"
+    assert ranking.final_score == 78
+    assert ranking.evidence.requires_llm_review is True
+    assert any("Node.js" in item for item in ranking.evidence.red_flags)
+    assert "safety_cap_unsupported_profile_claim" in ranking.evidence.llm_escalation_reasons
+
+
+def test_rank_jobs_with_nvidia_caps_medium_skill_as_primary_apply_now(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Desarrollador Senior React + TypeScript - Trabajo Remoto",
+                "company": "BairesDev",
+                "location": "Remote",
+                "workplace_type": "remote",
+                "description_text": "Como Senior React + TypeScript developer, desarrollarás aplicaciones web sofisticadas.",
+            }
+        ]
+    )
+    saved = {}
+
+    def frontend_profile_payload() -> dict:
+        payload = profile_payload()
+        payload["skills"] = [
+            *payload["skills"],
+            {"name": "React", "category": "Frontend", "level": "medium"},
+            {"name": "TypeScript", "category": "Programming", "level": "medium"},
+        ]
+        return payload
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 92, "APPLY_NOW")
+        payload["evidence"]["strong_matches"] = ["React", "TypeScript"]
+        payload["evidence"]["central_requirements"] = ["React", "TypeScript"]
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", frontend_profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(
+        nvidia_ranker.db,
+        "save_job_ranking",
+        lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking),
+    )
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    ranking = saved[1]
+    assert summary["APPLY_NOW"] == 0
+    assert summary["APPLY_WITH_TAILORED_CV"] == 1
+    assert ranking.decision == "APPLY_WITH_TAILORED_CV"
+    assert ranking.evidence.requires_llm_review is True
+    assert any("only medium" in item and "React" in item for item in ranking.evidence.red_flags)
+    assert "safety_cap_medium_skill_central_requirement" in ranking.evidence.llm_escalation_reasons
+
+
+def test_rank_jobs_with_nvidia_caps_onsite_outside_preferred_location(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Backend Engineer - Python",
+                "company": "Tech",
+                "location": "Presencial",
+                "workplace_type": "onsite",
+                "description_text": "El equipo trabaja presencialmente desde el hub de Valladolid. Python backend.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        return {"rankings": [_ranking_payload(1, 92, "APPLY_NOW")]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(
+        nvidia_ranker.db,
+        "save_job_ranking",
+        lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking),
+    )
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    ranking = saved[1]
+    assert summary["APPLY_NOW"] == 0
+    assert summary["APPLY_WITH_TAILORED_CV"] == 1
+    assert ranking.decision == "APPLY_WITH_TAILORED_CV"
+    assert ranking.evidence.requires_llm_review is True
+    assert any("onsite/hybrid" in item for item in ranking.evidence.red_flags)
+    assert "safety_cap_location_review" in ranking.evidence.llm_escalation_reasons
+
+
 def test_rank_jobs_with_nvidia_async_runs_batches_concurrently(monkeypatch):
     jobs = pd.DataFrame(
         [

@@ -76,6 +76,51 @@ REQUIRED_EVIDENCE_FIELDS = {
     "llm_escalation_reasons",
 }
 
+_SKILL_LEVEL_WEIGHT = {"weak": 1, "medium": 2, "strong": 3}
+
+_PROFILE_AUDIT_MARKERS = {
+    "java": {
+        "label": "Java",
+        "aliases": ["java", "spring boot", "spring"],
+        "primary_aliases": ["java"],
+    },
+    "node": {
+        "label": "Node.js",
+        "aliases": ["node.js", "nodejs", "node", "express.js", "express"],
+        "primary_aliases": ["node.js", "nodejs", "node"],
+    },
+    "vue": {
+        "label": "Vue",
+        "aliases": ["vue", "vue.js", "vuejs"],
+        "primary_aliases": ["vue", "vue.js", "vuejs"],
+    },
+    "go": {
+        "label": "Go/Golang",
+        "aliases": ["go", "golang"],
+        "primary_aliases": ["go", "golang"],
+    },
+    "gcp": {
+        "label": "GCP",
+        "aliases": ["gcp", "google cloud"],
+        "primary_aliases": ["gcp", "google cloud"],
+    },
+    "react": {
+        "label": "React",
+        "aliases": ["react", "react.js", "reactjs"],
+        "primary_aliases": ["react", "react.js", "reactjs"],
+    },
+    "typescript": {
+        "label": "TypeScript",
+        "aliases": ["typescript", "type script"],
+        "primary_aliases": ["typescript", "type script"],
+    },
+    "technical_leadership": {
+        "label": "technical leadership",
+        "aliases": ["technical leadership", "technical leader", "tech lead", "team lead"],
+        "primary_aliases": ["technical leader", "tech lead"],
+    },
+}
+
 
 class NvidiaRankingError(RuntimeError):
     pass
@@ -584,6 +629,7 @@ def _active_profile_safety_context() -> dict[str, Any]:
         "preferred_locations": _clean_profile_list(profile_payload.get("preferred_locations")),
         "preferred_work_modes": _clean_profile_list(profile_payload.get("preferred_work_modes")),
         "profile_text": _normalize_text(_flatten_profile_text(profile_payload)),
+        "skill_levels": _profile_skill_levels(profile_payload),
         "real_experience_years": profile_payload.get("real_experience_years"),
     }
 
@@ -714,6 +760,20 @@ def _ranking_safety_signals(
                 evidence_kind="dealbreaker",
             )
         )
+
+    onsite_label = _onsite_or_hybrid_outside_preferred_location(job_text, safety_context)
+    if onsite_label:
+        signals.append(
+            RankingSafetySignal(
+                label=onsite_label,
+                decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
+                max_score=82,
+                risk_penalty=20,
+                reason="safety_cap_location_review",
+            )
+        )
+
+    signals.extend(_unsupported_profile_claim_signals(job, ranking, safety_context))
 
     low_context_spam = _is_low_context_spam(job, job_text)
     if low_context_spam:
@@ -983,6 +1043,195 @@ def _restricted_location_mismatch(job_text: str, safety_context: dict[str, Any])
     return None
 
 
+def _onsite_or_hybrid_outside_preferred_location(
+    job_text: str,
+    safety_context: dict[str, Any],
+) -> str | None:
+    has_onsite = _contains_any(job_text, ["onsite", "on site", "presencial"])
+    has_hybrid = _contains_any(job_text, ["hybrid", "hibrido"])
+    if not has_onsite and not has_hybrid:
+        return None
+    if _has_clear_remote_option(job_text) and not has_onsite and not _hybrid_with_specific_site(job_text):
+        return None
+    preferred_locations = [
+        _normalize_text(str(item))
+        for item in safety_context.get("preferred_locations") or []
+        if str(item).strip()
+    ]
+    if not preferred_locations:
+        return "onsite/hybrid location requires review"
+    if any(location and location in job_text for location in preferred_locations):
+        return None
+    preferred_cities = [location.split(",", 1)[0].strip() for location in preferred_locations]
+    if any(city and city in job_text for city in preferred_cities):
+        return None
+    return "onsite/hybrid location is not clearly within preferred locations"
+
+
+def _has_clear_remote_option(job_text: str) -> bool:
+    return _contains_any(
+        job_text,
+        [
+            "fully remote",
+            "full remote",
+            "100% remote",
+            "100% remoto",
+            "trabajo remoto",
+            "en remoto",
+            "remote first",
+            "remote-first",
+            "remote anywhere",
+        ],
+    )
+
+
+def _hybrid_with_specific_site(job_text: str) -> bool:
+    return _contains_any(
+        job_text,
+        [
+            "hybrid in",
+            "hibrido en",
+            "hybrid setting in",
+            "days onsite",
+            "days on site",
+            "dias presencial",
+            "dias presenciales",
+            "office in",
+            "oficina en",
+        ],
+    )
+
+
+def _unsupported_profile_claim_signals(
+    job: dict[str, Any],
+    ranking: Any,
+    safety_context: dict[str, Any],
+) -> list[RankingSafetySignal]:
+    claim_text = _normalized_claim_text(ranking)
+    job_text = _normalized_job_text(job)
+    title_text = _normalize_text(str(job.get("title") or ""))
+    skill_levels = safety_context.get("skill_levels") if isinstance(safety_context.get("skill_levels"), dict) else {}
+    signals: list[RankingSafetySignal] = []
+
+    for key, marker in _PROFILE_AUDIT_MARKERS.items():
+        if not _marker_present_in_ranking_or_central_job(marker, claim_text, job_text, title_text):
+            continue
+        support_level = str(skill_levels.get(key) or "")
+        if not support_level:
+            signals.append(
+                RankingSafetySignal(
+                    label=f"profile does not support {marker['label']} as a strong match",
+                    decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
+                    max_score=78,
+                    risk_penalty=20,
+                    reason="safety_cap_unsupported_profile_claim",
+                )
+            )
+            continue
+        if (
+            support_level != "strong"
+            and ranking.decision == "APPLY_NOW"
+            and _marker_is_medium_only_primary_gap(key, marker, job_text, title_text)
+        ):
+            signals.append(
+                RankingSafetySignal(
+                    label=f"{marker['label']} is only {support_level} in profile but central to this role",
+                    decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
+                    max_score=78,
+                    risk_penalty=15,
+                    reason="safety_cap_medium_skill_central_requirement",
+                )
+            )
+
+    return signals
+
+
+def _marker_is_medium_only_primary_gap(
+    key: str,
+    marker: dict[str, Any],
+    job_text: str,
+    title_text: str,
+) -> bool:
+    if key not in {"react", "typescript"}:
+        return _marker_is_primary_role_requirement(marker, job_text, title_text)
+    aliases = [str(item) for item in marker.get("primary_aliases") or marker.get("aliases") or []]
+    if not any(_contains_skill_marker(title_text, alias) for alias in aliases):
+        return False
+    return not _contains_any(title_text, ["python", "backend", "back end", "fullstack", "full stack"])
+
+
+def _normalized_claim_text(ranking: Any) -> str:
+    evidence = ranking.evidence
+    parts = [
+        *[str(item) for item in evidence.strong_matches],
+        *[str(item) for item in evidence.central_requirements],
+        *[str(item) for item in ranking.cv_keywords_to_emphasize],
+    ]
+    return _normalize_text(" ".join(parts))
+
+
+def _marker_present_in_ranking_or_central_job(
+    marker: dict[str, Any],
+    claim_text: str,
+    job_text: str,
+    title_text: str,
+) -> bool:
+    aliases = [str(item) for item in marker.get("aliases") or []]
+    if any(_contains_skill_marker(claim_text, alias) for alias in aliases):
+        return True
+    return _marker_is_primary_role_requirement(marker, job_text, title_text)
+
+
+def _marker_is_primary_role_requirement(
+    marker: dict[str, Any],
+    job_text: str,
+    title_text: str,
+) -> bool:
+    aliases = [str(item) for item in marker.get("primary_aliases") or marker.get("aliases") or []]
+    if any(_contains_skill_marker(title_text, alias) for alias in aliases):
+        return True
+    return any(
+        _contains_skill_marker(job_text, phrase)
+        for alias in aliases
+        for phrase in [
+            f"{alias} developer",
+            f"{alias} engineer",
+            f"{alias} technical leader",
+            f"{alias} tech lead",
+            f"+3 years with {alias}",
+            f"3+ years with {alias}",
+            f"experience with {alias}",
+            f"experiencia con {alias}",
+            f"desarrollador {alias}",
+        ]
+    )
+
+
+def _profile_skill_levels(profile_payload: dict[str, Any]) -> dict[str, str]:
+    levels: dict[str, str] = {}
+    for skill in profile_payload.get("skills") or []:
+        if not isinstance(skill, dict):
+            continue
+        skill_name = _normalize_text(str(skill.get("name") or ""))
+        skill_level = _normalize_skill_level(skill.get("level"))
+        if not skill_name or not skill_level:
+            continue
+        for key, marker in _PROFILE_AUDIT_MARKERS.items():
+            aliases = [str(item) for item in marker.get("aliases") or []]
+            if any(_contains_skill_marker(skill_name, alias) for alias in aliases):
+                current = levels.get(key)
+                if current is None or _SKILL_LEVEL_WEIGHT[skill_level] > _SKILL_LEVEL_WEIGHT[current]:
+                    levels[key] = skill_level
+    return levels
+
+
+def _normalize_skill_level(value: Any) -> str | None:
+    normalized = _normalize_text(str(value or ""))
+    if normalized in _SKILL_LEVEL_WEIGHT:
+        return normalized
+    return None
+
+
 def _is_low_context_spam(job: dict[str, Any], job_text: str) -> bool:
     title = _normalize_text(str(job.get("title") or ""))
     description = _normalize_text(str(job.get("description_text") or ""))
@@ -1209,6 +1458,13 @@ def _normalize_text(text: str) -> str:
 
 def _contains_any(text: str, markers: list[str]) -> bool:
     return any(marker in text for marker in markers)
+
+
+def _contains_skill_marker(text: str, marker: str) -> bool:
+    normalized_marker = _normalize_text(marker)
+    if not normalized_marker:
+        return False
+    return bool(re.search(rf"(?<![a-z0-9]){re.escape(normalized_marker)}(?![a-z0-9])", text))
 
 
 def _contains_location_marker(text: str, marker: str) -> bool:
