@@ -527,7 +527,10 @@ def _extract_json_object(text: str) -> dict[str, Any]:
 def _nvidia_batch_validation_error(result: dict[str, Any], jobs: list[dict[str, Any]]) -> str | None:
     rankings = result.get("rankings")
     if not isinstance(rankings, list):
-        return "response must include a `rankings` array"
+        return (
+            "response must include a top-level `rankings` array because the request uses Context.jobs, "
+            "even when the batch contains a single job"
+        )
 
     expected_ids = sorted({int(row.get("id") or row.get("job_id")) for row in jobs})
     returned_ids = sorted(
