@@ -16,6 +16,8 @@ from joborchestrator.ranking.serialization import result_to_dict  # noqa: E402
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION  # noqa: E402
 from joborchestrator.storage import persistence as db  # noqa: E402
 
+DEFAULT_REVALIDATION_DECISIONS = ["APPLY_NOW", "APPLY_WITH_TAILORED_CV"]
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -28,7 +30,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="append",
         dest="decisions",
         default=None,
-        help="Decision to revalidate. Repeatable. Defaults to APPLY_NOW.",
+        help=(
+            "Decision to revalidate. Repeatable. Defaults to APPLY_NOW and "
+            "APPLY_WITH_TAILORED_CV, the optimistic decisions safety gates can downgrade."
+        ),
     )
     parser.add_argument("--execute", action="store_true", help="Persist changed rankings.")
     parser.add_argument("--output", type=Path)
@@ -208,7 +213,7 @@ def int_or_none(value: Any) -> int | None:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    decisions = args.decisions or ["APPLY_NOW"]
+    decisions = args.decisions or DEFAULT_REVALIDATION_DECISIONS
     rows = fetch_rows(
         ranking_job_id=args.ranking_job_id,
         ranking_version=args.ranking_version,
