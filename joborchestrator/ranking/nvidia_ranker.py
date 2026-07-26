@@ -666,7 +666,8 @@ def _apply_ranking_safety_gate(
     ranking.scores.risk_penalty = max(int(ranking.scores.risk_penalty), max(signal.risk_penalty for signal in signals))
     ranking.evidence.requires_llm_review = True
     prefix = "Safety gate applied: " + "; ".join(signal.label for signal in signals) + "."
-    ranking.reasoning_summary = f"{prefix} {ranking.reasoning_summary}".strip()
+    if not str(ranking.reasoning_summary or "").startswith(prefix):
+        ranking.reasoning_summary = f"{prefix} {ranking.reasoning_summary}".strip()
 
 
 def _apply_evidence_consistency_gate(ranking: Any) -> None:

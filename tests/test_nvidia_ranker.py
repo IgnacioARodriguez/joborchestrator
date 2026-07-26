@@ -731,6 +731,35 @@ def test_nvidia_ranking_caps_contract_ai_training(monkeypatch):
     assert "evidence_dealbreaker_cap_skip" in saved[1].evidence.llm_escalation_reasons
 
 
+def test_nvidia_ranking_safety_gate_reasoning_summary_is_idempotent(monkeypatch):
+    job = {
+        "id": 1,
+        "title": "AI Verification Contractor",
+        "company": "HireFeed",
+        "description_text": (
+            "Remote contract Python Developer. Work directly influences training and performance "
+            "of next-generation AI systems and shapes how AI models learn and reason."
+        ),
+    }
+    jobs = pd.DataFrame([job])
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        return {"rankings": [_ranking_payload(1, 88, "APPLY_NOW")]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    rank_jobs_with_nvidia(jobs, request_batch_size=1)
+    first_summary = saved[1].reasoning_summary
+
+    nvidia_ranker._apply_ranking_safety_gate(job, saved[1], nvidia_ranker._active_profile_safety_context())
+
+    assert saved[1].reasoning_summary == first_summary
+
+
 def test_nvidia_ranking_blocks_autonomous_simulation_specialization(monkeypatch):
     jobs = pd.DataFrame(
         [
