@@ -1,8 +1,34 @@
 # LLM Trust Progress Review For Claude
 
-Last updated: 2026-07-19
+Last updated: 2026-07-27
 
 Purpose: give Claude or another external reviewer enough context to decide whether the HuntPilot/joborchestrator LLM trust work is converging or looping.
+
+## 2026-07-27 Checkpoint Addendum
+
+New code-state facts since the original review:
+
+- Active ranking prompt is now `ranking/nvidia_response_contract` v6.
+- v6 removes the prompt ambiguity that allowed a single bare ranking object. The NVIDIA ranking path always sends `Context.jobs`, even for one job, so the contract now always requires one top-level `rankings` array.
+- The NVIDIA batch validator now returns explicit feedback when `rankings` is missing for `Context.jobs`, and this is covered by tests.
+- Commits pushed to `main` include the stale-item recovery fix, ranking stale-timeout config documentation, high item-attempt autoloop flagging, v5 evidence-contract tightening, v6 `rankings` array contract, and the validator-feedback test.
+- Full pytest after the latest commits passed: 321/321.
+- Live one-job v6 probe could not validate model behavior because NVIDIA timed out before returning a response.
+
+Current DB/eval facts:
+
+- Ranking job `#9` completed 419/419 saved, 0 failed, on 2026-07-26.
+- Ranking jobs `#10` and `#11` also completed with 0 failed items.
+- Current persisted ranking prompt traces are 416 rows v4, 3 rows v5, and 2 rows without prompt trace. There is not yet a full v6 production rerank.
+- A persisted golden ranking baseline was saved on 2026-07-27 over current stored outputs with notes `post-v6 contract baseline over persisted rankings; no fresh full rerank`.
+- That baseline measured 22 real reviewed ranking cases: 16 passed, 6 failed, 72.7% pass rate, 3 critical failures.
+- Remaining failed cases are jobs 223, 217, 93, 72, 59, and 44. Critical failures are 217, 59, and 44.
+
+Updated interpretation:
+
+- We are no longer stuck at the old official 5/22 ranking baseline; the formal persisted baseline now matches the prior 16/22 improvement estimate.
+- This is still not high-trust: 3 critical failures remain, and v6 has not been proven by a full rerank.
+- Next ranking work should focus on the six failing reviewed cases and small live probes, not another blind full rerank loop.
 
 ## Executive Verdict
 
@@ -346,4 +372,3 @@ Parallel non-LLM action:
 
 - Review the 4 materials-ready candidates in `logs/llm_golden_candidate_review_packet.json`.
 - Promote approved real materials/ATS cases into protected fixtures only with explicit human approval.
-
