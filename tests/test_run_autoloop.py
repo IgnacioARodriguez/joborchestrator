@@ -15,6 +15,7 @@ def test_decide_halts_when_guard_fails():
         "case_regressions": ["case-1"],
         "schema_failure_retry_rate": 0.2,
         "failed_item_count": 1,
+        "high_item_attempt_count": 2,
     }
     guards = {
         "max_critical_failures": 0,
@@ -24,6 +25,7 @@ def test_decide_halts_when_guard_fails():
         "max_case_regressions": 0,
         "max_schema_failure_retry_rate": 0.1,
         "max_failed_item_count": 0,
+        "max_high_item_attempt_count": 0,
     }
 
     decision = run_autoloop.decide(metrics, None, guards)
@@ -35,6 +37,7 @@ def test_decide_halts_when_guard_fails():
     assert "case_regressions:1>0" in decision["guard_failures"]
     assert "schema_failure_retry_rate:0.2>0.1" in decision["guard_failures"]
     assert "failed_item_count:1>0" in decision["guard_failures"]
+    assert "high_item_attempt_count:2>0" in decision["guard_failures"]
 
 
 def test_compare_metrics_marks_critical_regression():
@@ -45,6 +48,7 @@ def test_compare_metrics_marks_critical_regression():
         "stale_completion_count": 0,
         "retry_or_schema_count": 2,
         "schema_failure_retry_rate": 0.2,
+        "high_item_attempt_count": 0,
         "non_active_prompt_count": 0,
         "non_active_prompt_rate": 0.0,
         "ranked_rows": 10,
@@ -56,6 +60,7 @@ def test_compare_metrics_marks_critical_regression():
         "stale_completion_count": 0,
         "retry_or_schema_count": 1,
         "schema_failure_retry_rate": 0.1,
+        "high_item_attempt_count": 3,
         "non_active_prompt_count": 2,
         "non_active_prompt_rate": 0.2,
         "ranked_rows": 12,
@@ -66,6 +71,7 @@ def test_compare_metrics_marks_critical_regression():
     assert "retry_or_schema_count:2->1" in comparison["improvements"]
     assert "ranked_rows:10->12" in comparison["improvements"]
     assert "critical_failures:0->1" in comparison["critical_regressions"]
+    assert "high_item_attempt_count:0->3" in comparison["critical_regressions"]
     assert "non_active_prompt_rate:0->0.2" in comparison["critical_regressions"]
 
 

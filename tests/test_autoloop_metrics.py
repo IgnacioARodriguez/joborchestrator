@@ -7,6 +7,7 @@ def _row(job_id: int, **overrides):
     row = {
         "job_id": job_id,
         "item_status": "completed",
+        "item_attempts": 1,
         "item_started_at": "2026-07-22T10:00:00",
         "ranking_updated_at": "2026-07-22T10:05:00",
         "title": "Backend Engineer",
@@ -129,6 +130,24 @@ def test_compute_metrics_counts_failed_items():
     assert summary["failed_item_count"] == 1
     assert summary["failed_item_examples"][0]["job_id"] == 2
     assert summary["ranked_rows"] == 1
+
+
+def test_compute_metrics_counts_high_item_attempts_separately_from_schema_retries():
+    rows = [
+        _row(1, item_attempts=4, ranking_validation_attempts=1),
+        _row(2, item_attempts=2, ranking_validation_attempts=2),
+        _row(3, item_attempts=9, ranking_validation_attempts=1),
+    ]
+
+    summary = metrics.compute_metrics(rows)
+
+    assert summary["high_item_attempt_threshold"] == 3
+    assert summary["high_item_attempt_count"] == 2
+    assert summary["max_item_attempts"] == 9
+    assert summary["retry_or_schema_count"] == 1
+    assert summary["high_item_attempt_examples"][0]["job_id"] == 3
+    assert summary["high_item_attempt_examples"][0]["item_attempts"] == 9
+    assert summary["high_item_attempt_examples"][0]["ranking_validation_attempts"] == 1
 
 
 def test_compute_metrics_counts_non_active_prompt_versions(monkeypatch):

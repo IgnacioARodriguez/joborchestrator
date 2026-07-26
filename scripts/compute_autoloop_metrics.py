@@ -35,6 +35,7 @@ def fetch_ranking_rows(*, ranking_job_id: int | None, ranking_version: str) -> l
                     rji.ranking_job_id,
                     rji.job_posting_id AS job_id,
                     rji.status AS item_status,
+                    rji.attempts AS item_attempts,
                     rji.started_at AS item_started_at,
                     rji.finished_at AS item_finished_at,
                     jp.title,
@@ -67,6 +68,7 @@ def fetch_ranking_rows(*, ranking_job_id: int | None, ranking_version: str) -> l
                     NULL AS ranking_job_id,
                     jp.id AS job_id,
                     NULL AS item_status,
+                    NULL AS item_attempts,
                     NULL AS item_started_at,
                     NULL AS item_finished_at,
                     jp.title,
@@ -98,6 +100,8 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ranked = [row for row in rows if row.get("decision") and row_is_current_for_metrics(row)]
     status_counts = Counter(str(row.get("item_status") or "none") for row in rows)
     failed_items = [row for row in rows if row.get("item_status") == "failed"]
+    high_item_attempt_rows = [row for row in rows if int_or_zero(row.get("item_attempts")) > 3]
+    max_item_attempts = max([int_or_zero(row.get("item_attempts")) for row in rows], default=0)
     apply_now = [row for row in ranked if row.get("decision") == "APPLY_NOW"]
     unsafe_apply_now = [row for row in apply_now if is_unsafe_apply_now(row)]
     stale_completed = [row for row in rows if is_stale_completion(row)]
@@ -115,6 +119,9 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "evaluated_rows": len(rows),
         "item_status_counts": dict(sorted(status_counts.items())),
         "failed_item_count": len(failed_items),
+        "high_item_attempt_threshold": 3,
+        "high_item_attempt_count": len(high_item_attempt_rows),
+        "max_item_attempts": max_item_attempts,
         "ranked_rows": len(ranked),
         "decision_counts": dict(sorted(Counter(str(row.get("decision")) for row in ranked).items())),
         "score": stats(scores),
@@ -135,6 +142,7 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "unsafe_apply_now_examples": examples(unsafe_apply_now),
         "stale_completion_examples": examples(stale_completed),
         "failed_item_examples": examples(failed_items),
+        "high_item_attempt_examples": item_attempt_examples(high_item_attempt_rows),
         "non_active_prompt_examples": prompt_version_examples(non_active_prompt_rows),
     }
 
@@ -230,6 +238,19 @@ def prompt_version_examples(rows: list[dict[str, Any]], limit: int = 10) -> list
     for row in rows[:limit]:
         item = examples([row], limit=1)[0]
         item["prompt_version"] = ranking_prompt_version(row)
+        items.append(item)
+    return items
+
+
+def item_attempt_examples(rows: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
+    ordered = sorted(rows, key=lambda row: int_or_zero(row.get("item_attempts")), reverse=True)
+    items = []
+    for row in ordered[:limit]:
+        item = examples([row], limit=1)[0]
+        item["item_attempts"] = int_or_zero(row.get("item_attempts"))
+        item["item_status"] = row.get("item_status")
+        item["ranking_validation_attempts"] = int_or_zero(row.get("ranking_validation_attempts"))
+        item["ranking_validation_errors"] = loads_json(row.get("ranking_validation_errors_json"), [])
         items.append(item)
     return items
 
