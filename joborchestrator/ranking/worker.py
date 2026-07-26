@@ -16,7 +16,7 @@ from joborchestrator.storage import persistence as db
 
 DEFAULT_WORKER_CHUNK_SIZE = int(os.getenv("RANKING_WORKER_CHUNK_SIZE", "25"))
 DEFAULT_POLL_SECONDS = float(os.getenv("RANKING_WORKER_POLL_SECONDS", "5"))
-DEFAULT_STALE_SECONDS = int(os.getenv("RANKING_WORKER_STALE_SECONDS", "60"))
+DEFAULT_STALE_SECONDS = int(os.getenv("RANKING_WORKER_STALE_SECONDS", "3600"))
 LOG_PATH = Path("logs/ranking-worker.log")
 
 logger = logging.getLogger("joborchestrator.ranking.worker")

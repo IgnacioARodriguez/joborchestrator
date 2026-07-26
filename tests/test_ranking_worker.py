@@ -1,3 +1,5 @@
+import importlib
+
 from joborchestrator.ranking import worker
 from joborchestrator.ranking.schemas import RankingEvidence, RankingResult, RankingScores
 from joborchestrator.scanning.models import JobPosting
@@ -41,6 +43,15 @@ def make_ranking(ranking_version: str) -> RankingResult:
         cv_keywords_to_avoid_overclaiming=[],
         ranking_version=ranking_version,
     )
+
+
+def test_ranking_worker_default_stale_window_allows_slow_chunks(monkeypatch):
+    monkeypatch.delenv("RANKING_WORKER_STALE_SECONDS", raising=False)
+    reloaded = importlib.reload(worker)
+    try:
+        assert reloaded.DEFAULT_STALE_SECONDS >= 3600
+    finally:
+        importlib.reload(worker)
 
 
 def test_worker_processes_queued_nvidia_job(tmp_path, monkeypatch):
