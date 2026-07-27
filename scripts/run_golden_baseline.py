@@ -16,6 +16,7 @@ from joborchestrator.evals.semantic import (  # noqa: E402
     evaluate_ats_cv_result,
     evaluate_ranking_result,
 )
+from joborchestrator.intelligence.llm_application_materials import materials_prompt_versions  # noqa: E402
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION  # noqa: E402
 from joborchestrator.storage import persistence as db  # noqa: E402
 from scripts.run_evals_loop import (  # noqa: E402
@@ -114,6 +115,7 @@ def materials_output(job_id: int) -> dict[str, Any]:
     job = db.get_job_posting(job_id)
     if not job:
         raise MissingGoldenOutput(f"job_id={job_id} was not found")
+    require_current_materials_prompt_versions(job, job_id)
     output = {
         "recruiter_message": clean_cell(job.get("recruiter_message")),
         "cover_letter": clean_cell(job.get("cover_letter")),
@@ -129,6 +131,7 @@ def ats_cv_output(job_id: int) -> dict[str, Any]:
     job = db.get_job_posting(job_id)
     if not job:
         raise MissingGoldenOutput(f"job_id={job_id} was not found")
+    require_current_materials_prompt_versions(job, job_id)
     ats_cv_text = clean_cell(job.get("ats_cv_text"))
     if not ats_cv_text.strip():
         raise MissingGoldenOutput(f"no stored ATS CV for job_id={job_id}")
@@ -148,6 +151,7 @@ def record_for_result(
         "case_id": fixture.get("case_id"),
         "artifact_type": artifact_type,
         "job_id": job_id,
+        "prompt_versions": prompt_versions_for_record(args, job_id, artifact_type),
         "review_status": fixture.get("review_status"),
         "critical": bool(fixture.get("critical")),
         "passed": result.passed,
@@ -174,6 +178,18 @@ def record_for_result(
         )
         record["saved_eval_run_id"] = saved["id"]
     return record
+
+
+def prompt_versions_for_record(args: argparse.Namespace, job_id: int, artifact_type: str) -> dict[str, str]:
+    if artifact_type == "ranking":
+        return {"ranking_version": args.ranking_version}
+    if artifact_type in {"application_materials", "ats_cv"}:
+        job = db.get_job_posting(job_id)
+        if not job:
+            return {}
+        stored = loads_json(job.get("materials_prompt_versions_json"), {})
+        return {str(key): str(value) for key, value in stored.items()} if isinstance(stored, dict) else {}
+    return {}
 
 
 def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -220,6 +236,24 @@ def loads_json(value: Any, fallback: Any) -> Any:
         return json.loads(str(value))
     except json.JSONDecodeError:
         return fallback
+
+
+def require_current_materials_prompt_versions(job: dict[str, Any], job_id: int) -> None:
+    stored = loads_json(job.get("materials_prompt_versions_json"), {})
+    expected = materials_prompt_versions()
+    if not isinstance(stored, dict):
+        stored = {}
+    mismatches = []
+    for key, expected_version in sorted(expected.items()):
+        stored_version = stored.get(key)
+        if stored_version != expected_version:
+            actual = stored_version if stored_version is not None else "missing"
+            mismatches.append(f"{key}={actual} (expected {expected_version})")
+    if mismatches:
+        raise MissingGoldenOutput(
+            f"stored application materials for job_id={job_id} use stale prompt versions: "
+            + ", ".join(mismatches)
+        )
 
 
 class MissingGoldenOutput(RuntimeError):
