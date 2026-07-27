@@ -31,7 +31,10 @@
   "expected": {
     "allowed_decisions": ["APPLY_NOW", "APPLY_WITH_TAILORED_CV"],
     "min_score": 75,
-    "required_evidence_terms": ["Python", "backend", "REST APIs"]
+    "required_evidence_terms": ["Python", "backend", "REST APIs"],
+    "keyword_synonyms": {
+      "REST APIs": ["API REST", "REST API"]
+    }
   },
   "human_review_notes": "Reviewed real case: real Spanish backend Python role with central requirements aligned to the profile."
 }

@@ -32,6 +32,12 @@
     "allowed_decisions": ["AVOID", "SKIP"],
     "max_score": 35,
     "required_evidence_terms": ["EPC", "VFD"],
+    "keyword_synonyms": {
+      "EPC": [
+        "Engineering Procurement and Construction",
+        "Engineering, Procurement, and Construction"
+      ]
+    },
     "dealbreaker_terms": ["relocation", "EPC"]
   },
   "human_review_notes": "Reviewed real case: EPC/VFD/STATCOM plant engineering is outside the backend profile. APPLY_NOW 82 was a critical ranking error."

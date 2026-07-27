@@ -148,15 +148,22 @@ def evaluate_ranking_result(case: dict[str, Any], ranking: Any) -> SemanticEvalR
     evidence_text = _ranking_evidence_text(payload)
     normalized_evidence = _normalize(evidence_text)
     required_evidence_terms = expectations.get("required_evidence_terms") or []
+    keyword_synonyms = expectations.get("keyword_synonyms") or {}
     missing_evidence_terms = [
-        term for term in required_evidence_terms if not _contains_phrase(normalized_evidence, term)
+        term
+        for term in required_evidence_terms
+        if not _contains_keyword_or_synonym(normalized_evidence, term, keyword_synonyms)
     ]
     if missing_evidence_terms:
         issues.append(f"missing_evidence_terms:{','.join(missing_evidence_terms)}")
     metrics["missing_evidence_terms"] = missing_evidence_terms
 
     dealbreaker_terms = expectations.get("dealbreaker_terms") or []
-    mentioned_dealbreakers = [term for term in dealbreaker_terms if _contains_phrase(normalized_evidence, term)]
+    mentioned_dealbreakers = [
+        term
+        for term in dealbreaker_terms
+        if _contains_keyword_or_synonym(normalized_evidence, term, keyword_synonyms)
+    ]
     if dealbreaker_terms and decision == "APPLY_NOW":
         issues.append("apply_now_with_expected_dealbreaker")
     if dealbreaker_terms and not mentioned_dealbreakers:

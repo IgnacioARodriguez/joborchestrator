@@ -177,6 +177,37 @@ def test_ranking_eval_accepts_expected_decision_band():
     assert result.score == 100
 
 
+def test_ranking_eval_accepts_evidence_term_synonyms():
+    case = {
+        "ranking_expectations": {
+            "allowed_decisions": ["APPLY_WITH_TAILORED_CV"],
+            "required_evidence_terms": ["REST APIs", "EPC"],
+            "dealbreaker_terms": ["EPC"],
+            "keyword_synonyms": {
+                "REST APIs": ["API REST", "REST API"],
+                "EPC": ["Engineering Procurement and Construction"],
+            },
+        }
+    }
+    ranking = {
+        "final_score": 70,
+        "decision": "APPLY_WITH_TAILORED_CV",
+        "evidence": {
+            "strong_matches": ["Python backend", "API REST delivery"],
+            "missing_requirements": ["Engineering Procurement and Construction domain"],
+            "dealbreakers": [],
+        },
+        "cv_keywords_to_emphasize": [],
+        "cv_keywords_to_avoid_overclaiming": [],
+    }
+
+    result = evaluate_ranking_result(case, ranking)
+
+    assert result.passed is True
+    assert result.metrics["missing_evidence_terms"] == []
+    assert result.metrics["mentioned_dealbreakers"] == ["EPC"]
+
+
 def test_ranking_eval_rejects_apply_now_for_dealbreaker_mismatch():
     case = _cases()["rust-kernel-mismatch"]
     ranking = {
