@@ -68,7 +68,7 @@ Bottom line: the direction is rational. The next ranking step is targeted diagno
 - Latest full rerank job: `#9`, NVIDIA provider, status `completed`, 419 queued, 419 processed, 419 saved, 0 failed.
 - Latest live v6 probe job: `#12`, NVIDIA provider, status `completed`, 50 queued, 50 processed, 50 saved, 0 failed.
 - Active ranking prompt: `ranking/nvidia_response_contract` v9.
-- Active materials prompts: `materials/nvidia_cv_contract` v4 and `materials/nvidia_kit_contract` v4.
+- Active materials prompts: `materials/nvidia_cv_contract` v5 and `materials/nvidia_kit_contract` v5.
 - Active judge prompt: `judge/semantic_rubric` v1.
 - Current trust score in docs: 7.6/10.
 - Current posture: operational draft quality, not blind trust.
@@ -277,12 +277,12 @@ Fix implemented:
 - Generation validation now rejects recruiter messages over 320 characters, matching the golden eval limit.
 - Internal-note validation already exists for ATS CV generation.
 - Complete-CV validation and avoid-overclaiming validation already exist.
-- A 2026-07-27 live NVIDIA materials v3 probe regenerated the 4 raw real-job materials-ready cases in memory and passed 4/4 application-materials evals plus 4/4 ATS CV evals automatically. External qualitative review then found a false positive: the PSS/serverless case avoided the exact phrase `Serverless Architecture` but still claimed AWS Lambda/DynamoDB/API Gateway in generated materials. Materials v4 now treats avoid-overclaiming terms as claim families and validation expands serverless aliases/components across ATS CV and non-CV materials.
+- A 2026-07-27 live NVIDIA materials v3 probe regenerated the 4 raw real-job materials-ready cases in memory and passed 4/4 application-materials evals plus 4/4 ATS CV evals automatically. External qualitative review then found a false positive: the PSS/serverless case avoided the exact phrase `Serverless Architecture` but still claimed AWS Lambda/DynamoDB/API Gateway in generated materials. Materials v4 made validation reject avoid-overclaiming terms as claim families and expanded serverless aliases/components across ATS CV and non-CV materials. A PSS-only v4 rerun failed closed by catching AWS Lambda/DynamoDB claims in generated output. Materials v5 now exposes expanded alias lists directly in the generation payload/NVIDIA contracts, expands slash-separated avoid families such as `Terraform/AWS CDK/CloudFormation`, and uses clearer retry feedback. A PSS-only v5 rerun on 2026-07-27 passed 100/100 for application materials and ATS CV with no forbidden aliases present after validation retry.
 
 Remaining gap:
 
 - Need DB-backed reviewed real cases for materials/ATS, not only synthetic seed fixtures.
-- Need a fresh materials v4 live rerun plus a larger sample before treating automatic pass rates as high-trust coverage.
+- Need a fresh materials v5 live rerun plus a larger sample before treating automatic pass rates as high-trust coverage.
 
 Generated review packet:
 

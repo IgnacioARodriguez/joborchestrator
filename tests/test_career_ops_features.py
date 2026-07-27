@@ -221,10 +221,9 @@ def test_llm_materials_payload_accepts_ranking_dict(monkeypatch):
 
     assert payload["ranking"]["final_score"] == 82
     assert payload["ranking"]["decision"] == "APPLY_NOW"
-    assert payload["ranking_constraints"] == {
-        "avoid_overclaiming_terms": ["Serverless Architecture"],
-        "keywords_to_emphasize": ["Python"],
-    }
+    assert payload["ranking_constraints"]["avoid_overclaiming_terms"] == ["Serverless Architecture"]
+    assert payload["ranking_constraints"]["keywords_to_emphasize"] == ["Python"]
+    assert "AWS Lambda" in payload["ranking_constraints"]["avoid_overclaiming_aliases"]["Serverless Architecture"]
 
 
 def test_application_kit_flattens_nested_recruiter_message():
@@ -545,6 +544,51 @@ def test_nvidia_kit_validation_rejects_serverless_aliases_from_cover_letter():
     assert error is not None
     assert "application_materials contains unsupported ranking avoid-overclaiming terms" in error
     assert "AWS Lambda" in error
+
+
+def test_materials_payload_exposes_avoid_overclaiming_aliases(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(
+        llm_application_materials.db,
+        "get_candidate_profile_payload",
+        lambda: {
+            "base_cv_text": _complete_ats_cv_text() + "\n- Built Python APIs on AWS EC2.",
+            "skills": [{"name": "Python"}, {"name": "AWS"}, {"name": "EC2"}],
+            "experience": [],
+            "education": [],
+        },
+    )
+
+    payload = _materials_payload(
+        {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
+        {"cv_keywords_to_avoid_overclaiming": ["Serverless Architecture"]},
+    )
+
+    aliases = payload["ranking_constraints"]["avoid_overclaiming_aliases"]["Serverless Architecture"]
+    assert "AWS Lambda" in aliases
+    assert "DynamoDB" in aliases
+    assert "API Gateway" in aliases
+
+
+def test_materials_validation_rejects_slash_separated_avoid_aliases():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi PSS, my Python API work maps well to the AWS Backend role.",
+            "cover_letter": "",
+            "autofill_notes": "Mention Terraform as a target-stack gap, not as direct experience.",
+        },
+        {
+            "base_cv": {"text": _complete_ats_cv_text() + "\n- Built Python APIs on AWS EC2."},
+            "candidate_profile": {"skills": [{"name": "Python"}, {"name": "AWS"}, {"name": "EC2"}]},
+            "ranking": {"cv_keywords_to_avoid_overclaiming": ["Terraform/AWS CDK/CloudFormation"]},
+            "job": {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
+        },
+    )
+
+    assert error is not None
+    assert "Terraform/AWS CDK/CloudFormation" in error
+    assert "Terraform" in error
 
 
 def test_ats_cv_validation_allows_ranking_avoid_term_when_source_supports_it():

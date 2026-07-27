@@ -28,7 +28,10 @@ DEFAULT_NVIDIA_MATERIALS_MODEL = (
 )
 NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1"
 DEFAULT_NVIDIA_MATERIALS_TIMEOUT_SECONDS = float(os.getenv("NVIDIA_MATERIALS_TIMEOUT_SECONDS", "300"))
-DEFAULT_MATERIALS_VALIDATION_RETRIES = int(os.getenv("OPENAI_MATERIALS_VALIDATION_RETRIES", "1"))
+DEFAULT_MATERIALS_VALIDATION_RETRIES = int(
+    os.getenv("MATERIALS_VALIDATION_RETRIES")
+    or os.getenv("OPENAI_MATERIALS_VALIDATION_RETRIES", "2")
+)
 logger = logging.getLogger(__name__)
 
 
@@ -146,12 +149,17 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
 
 def _materials_ranking_constraints(ranking: dict[str, Any] | None) -> dict[str, Any]:
     if not ranking:
-        return {"avoid_overclaiming_terms": [], "keywords_to_emphasize": []}
+        return {"avoid_overclaiming_terms": [], "avoid_overclaiming_aliases": {}, "keywords_to_emphasize": []}
+    avoid_terms = _terms_from_maybe_json(
+        ranking.get("cv_keywords_to_avoid_overclaiming")
+        or ranking.get("cv_keywords_to_avoid_overclaiming_json")
+    )
     return {
-        "avoid_overclaiming_terms": _terms_from_maybe_json(
-            ranking.get("cv_keywords_to_avoid_overclaiming")
-            or ranking.get("cv_keywords_to_avoid_overclaiming_json")
-        ),
+        "avoid_overclaiming_terms": avoid_terms,
+        "avoid_overclaiming_aliases": {
+            term: _avoid_overclaiming_aliases(term)
+            for term in avoid_terms
+        },
         "keywords_to_emphasize": _terms_from_maybe_json(
             ranking.get("cv_keywords_to_emphasize") or ranking.get("cv_keywords_to_emphasize_json")
         ),
@@ -932,12 +940,19 @@ def _avoid_overclaiming_problems(
     return [
         f"{field_name} contains unsupported ranking avoid-overclaiming terms: "
         + ", ".join(unsupported_terms[:6])
+        + ". Remove these exact terms and aliases from every generated field, including caveats or gap notes; "
+        + "describe unsupported target-stack gaps generically instead."
     ]
 
 
 def _avoid_overclaiming_aliases(term: str) -> list[str]:
     normalized = _normalize_for_match(term)
     aliases = [str(term or "").strip()]
+    aliases.extend(
+        part.strip()
+        for part in re.split(r"[/,;|]", str(term or ""))
+        if part.strip()
+    )
     if "serverless" in normalized:
         aliases.extend(
             [
@@ -956,6 +971,8 @@ def _avoid_overclaiming_aliases(term: str) -> list[str]:
                 "CDK",
             ]
         )
+    if any(token in normalized for token in ["terraform", "cloudformation", "cdk"]):
+        aliases.extend(["Terraform", "CloudFormation", "AWS CDK", "CDK"])
     if "kubernetes" in normalized:
         aliases.extend(["Kubernetes", "K8s", "EKS", "AKS", "GKE"])
     return _dedupe_strings([alias for alias in aliases if str(alias or "").strip()])
