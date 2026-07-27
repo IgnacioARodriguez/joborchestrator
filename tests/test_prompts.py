@@ -15,10 +15,11 @@ def test_load_prompt_uses_registry_active_version():
     )
     assert active_prompt_version("judge", "semantic_rubric") == "v1"
     assert "calibrated evaluator" in load_prompt("judge", "semantic_rubric")
-    assert active_prompt_version("materials", "nvidia_cv_contract") == "v5"
-    assert active_prompt_version("materials", "nvidia_kit_contract") == "v5"
+    assert active_prompt_version("materials", "nvidia_cv_contract") == "v7"
+    assert active_prompt_version("materials", "nvidia_kit_contract") == "v7"
     assert "forbidden claim family" in load_prompt("materials", "nvidia_cv_contract")
     assert "avoid_overclaiming_aliases" in load_prompt("materials", "nvidia_cv_contract")
+    assert "experience_claim_constraints" in load_prompt("materials", "nvidia_cv_contract")
     assert "AWS Lambda, DynamoDB, and API Gateway" in load_prompt("materials", "nvidia_cv_contract")
 
 

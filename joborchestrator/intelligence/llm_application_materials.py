@@ -33,6 +33,26 @@ DEFAULT_MATERIALS_VALIDATION_RETRIES = int(
     or os.getenv("OPENAI_MATERIALS_VALIDATION_RETRIES", "2")
 )
 logger = logging.getLogger(__name__)
+ROLE_ATTRIBUTION_TECH_TERMS = [
+    "AWS",
+    "AWS Lambda",
+    "API Gateway",
+    "DynamoDB",
+    "Terraform",
+    "CloudFormation",
+    "AWS CDK",
+    "Kubernetes",
+    "FastAPI",
+    "Django",
+    "Flask",
+    "React",
+    "Next.js",
+    "MongoDB",
+    "Redis",
+    "PostgreSQL",
+    "MySQL",
+    "PHP",
+]
 
 
 class LLMMaterialsError(RuntimeError):
@@ -115,6 +135,7 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
         "job": _compact_job(_to_dict(job)),
         "ranking": ranking_payload,
         "ranking_constraints": _materials_ranking_constraints(ranking_payload),
+        "experience_claim_constraints": _materials_experience_claim_constraints(base_cv_text),
         "goal": (
             "Generate truthful, editable application materials and a complete ATS-optimized CV for this specific job. "
             "Optimize for ATS filters and fast application workflow without inventing experience."
@@ -164,6 +185,28 @@ def _materials_ranking_constraints(ranking: dict[str, Any] | None) -> dict[str, 
             ranking.get("cv_keywords_to_emphasize") or ranking.get("cv_keywords_to_emphasize_json")
         ),
     }
+
+
+def _materials_experience_claim_constraints(base_cv_text: str) -> list[dict[str, Any]]:
+    entries = _extract_base_experience_entries(base_cv_text)
+    section = _experience_section(base_cv_text)
+    constraints = []
+    for entry in entries:
+        block = _experience_block_for_entry(section, entry, entries)
+        supported_technologies = [
+            term
+            for term in ROLE_ATTRIBUTION_TECH_TERMS
+            if _contains_phrase_for_materials(block, term)
+        ]
+        constraints.append(
+            {
+                "employer": entry["company"],
+                "title": entry["title"],
+                "supported_role_technologies": supported_technologies,
+                "rule": "Inside this employer's bullets or Technologies line, use only technologies supported by this employer block.",
+            }
+        )
+    return constraints
 
 
 def _kit_from_response(response: dict[str, Any]) -> dict[str, str]:
@@ -806,6 +849,7 @@ def _ats_cv_response_validation_error(
             problems.append(f"{field} must be an array")
     problems.extend(_ats_cv_quality_problems(ats_cv_text))
     problems.extend(_experience_coverage_problems(str(base_cv_text or ""), ats_cv_text))
+    problems.extend(_experience_technology_attribution_problems(str(base_cv_text or ""), ats_cv_text))
     problems.extend(_avoid_overclaiming_problems(ats_cv_text, source_payload, field_name="ats_cv_text"))
     return "; ".join(problems) if problems else None
 
@@ -892,6 +936,58 @@ def _experience_coverage_problems(base_cv_text: str, ats_cv_text: str) -> list[s
     if missing:
         return [f"ats_cv_text omitted base CV experience entries: {', '.join(missing[:6])}"]
     return []
+
+
+def _experience_technology_attribution_problems(base_cv_text: str, ats_cv_text: str) -> list[str]:
+    entries = _extract_base_experience_entries(base_cv_text)
+    if len(entries) < 2:
+        return []
+    source_section = _experience_section(base_cv_text)
+    generated_section = _experience_section(ats_cv_text) or ats_cv_text
+    problems: list[str] = []
+    for entry in entries:
+        source_block = _experience_block_for_entry(source_section, entry, entries)
+        generated_block = _experience_block_for_entry(generated_section, entry, entries)
+        if not source_block or not generated_block:
+            continue
+        unsupported = [
+            term
+            for term in ROLE_ATTRIBUTION_TECH_TERMS
+            if _contains_phrase_for_materials(generated_block, term)
+            and not _contains_phrase_for_materials(source_block, term)
+        ]
+        if unsupported:
+            problems.append(
+                f"{entry['company']} has unsupported role-specific technologies: {', '.join(unsupported[:6])}. "
+                "Remove those technologies from that employer block; if they are globally supported, keep them only "
+                "in Professional Summary or Technical Skills."
+            )
+    return problems[:6]
+
+
+def _experience_block_for_entry(section_text: str, entry: dict[str, Any], entries: list[dict[str, Any]]) -> str:
+    normalized_section = _normalize_for_match(section_text)
+    current = _first_entry_position(normalized_section, entry)
+    if current is None:
+        return ""
+    next_positions = [
+        position
+        for other in entries
+        if other is not entry
+        for position in [_first_entry_position(normalized_section, other)]
+        if position is not None and position > current
+    ]
+    end = min(next_positions) if next_positions else len(normalized_section)
+    return normalized_section[current:end]
+
+
+def _first_entry_position(normalized_section: str, entry: dict[str, Any]) -> int | None:
+    positions = [
+        normalized_section.find(term)
+        for term in entry.get("terms") or []
+        if term and normalized_section.find(term) >= 0
+    ]
+    return min(positions) if positions else None
 
 
 def _materials_non_cv_overclaiming_error(
