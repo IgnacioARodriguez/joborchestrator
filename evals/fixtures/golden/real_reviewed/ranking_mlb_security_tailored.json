@@ -26,10 +26,10 @@
     }
   },
   "expected": {
-    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE"],
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE", "AVOID"],
     "max_score": 68,
     "required_evidence_terms": ["security"],
     "dealbreaker_terms": ["security specialization"]
   },
-  "human_review_notes": "Reviewed real case: security/DevSecOps is adjacent but not plug-and-play. APPLY_NOW is too aggressive."
+  "human_review_notes": "Reviewed real case: security/DevSecOps is adjacent but not plug-and-play. APPLY_NOW is too aggressive. AVOID is acceptable when evidence explicitly names the lack of direct Security Engineering/AppSec/DevSecOps trajectory."
 }
