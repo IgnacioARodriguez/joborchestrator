@@ -23,12 +23,16 @@ Current DB/eval facts:
 - A persisted golden ranking baseline was saved on 2026-07-27 over current stored outputs with notes `post-v6 contract baseline over persisted rankings; no fresh full rerank`.
 - That baseline measured 22 real reviewed ranking cases: 16 passed, 6 failed, 72.7% pass rate, 3 critical failures.
 - Remaining failed cases are jobs 223, 217, 93, 72, 59, and 44. Critical failures are 217, 59, and 44.
+- After adding profile-backed evidence preservation and a stricter onsite/location cap, current deterministic gates were reapplied to job `#9` persisted rankings without new NVIDIA calls.
+- A second persisted golden ranking baseline on 2026-07-27 measured 20 passed, 2 failed, 90.9% pass rate, and 1 critical failure.
+- Remaining failed cases are now job 217 (GitLab Solutions Architect, critical, current output `MAYBE` but fixture expects `APPLY_WITH_TAILORED_CV`) and job 93 (Hire Feed contract AI, current output `SKIP` but fixture expects `APPLY_WITH_TAILORED_CV` or `MAYBE`).
 
 Updated interpretation:
 
 - We are no longer stuck at the old official 5/22 ranking baseline; the formal persisted baseline now matches the prior 16/22 improvement estimate.
-- This is still not high-trust: 3 critical failures remain, and v6 has not been proven by a full rerank.
-- Next ranking work should focus on the six failing reviewed cases and small live probes, not another blind full rerank loop.
+- We are also beyond the 16/22 estimate after deterministic revalidation: the latest persisted measurement is 20/22.
+- This is still not high-trust: 1 critical failure remains, materials/ATS remain under-measured, and v6 has not been proven by a full rerank.
+- Next ranking work should focus on job 217 and the policy/fixture mismatch around job 93, not another blind full rerank loop.
 
 ## Executive Verdict
 
