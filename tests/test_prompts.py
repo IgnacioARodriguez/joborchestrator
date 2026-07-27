@@ -5,10 +5,11 @@ from joborchestrator.prompts import PromptRegistryError, active_prompt_version, 
 
 
 def test_load_prompt_uses_registry_active_version():
-    assert active_prompt_version("ranking", "nvidia_response_contract") == "v6"
+    assert active_prompt_version("ranking", "nvidia_response_contract") == "v7"
     assert "Decision calibration" in load_prompt("ranking", "nvidia_response_contract")
     assert "central_requirement_thresholds" in load_prompt("ranking", "nvidia_response_contract")
     assert "Evidence completeness is mandatory" in load_prompt("ranking", "nvidia_response_contract")
+    assert "RabbitMQ, EPC, VFD, STATCOM" in load_prompt("ranking", "nvidia_response_contract")
     assert "must always be one JSON object with a top-level `rankings` array" in load_prompt(
         "ranking", "nvidia_response_contract"
     )
