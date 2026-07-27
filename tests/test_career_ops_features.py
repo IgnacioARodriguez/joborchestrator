@@ -7,6 +7,7 @@ from joborchestrator.intelligence.ats_autofill import build_autofill_plan
 from joborchestrator.intelligence.llm_application_materials import (
     _call_openai,
     _experience_coverage_problems,
+    _experience_technology_attribution_problems,
     _kit_from_response,
     _kit_validation_error,
     _materials_validation_error,
@@ -571,6 +572,40 @@ def test_materials_payload_exposes_avoid_overclaiming_aliases(monkeypatch):
     assert "API Gateway" in aliases
 
 
+def test_materials_payload_exposes_experience_claim_constraints(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(
+        llm_application_materials.db,
+        "get_candidate_profile_payload",
+        lambda: {
+            "base_cv_text": """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs with Python, REST APIs, SQL, and MongoDB.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+- Built dashboards with Python, Flask, React, SQL, and Docker.
+TECHNICAL SKILLS
+Django
+AWS
+""".strip(),
+            "skills": [{"name": "Python"}, {"name": "Django"}, {"name": "AWS"}],
+            "experience": [],
+            "education": [],
+        },
+    )
+
+    payload = _materials_payload({"title": "Backend Engineer", "company": "Acme"})
+
+    fiction = payload["experience_claim_constraints"][0]
+    assert fiction["employer"] == "Fiction Express Malaga, Spain"
+    assert "MongoDB" in fiction["supported_role_technologies"]
+    assert "Django" not in fiction["supported_role_technologies"]
+    assert "AWS" not in fiction["supported_role_technologies"]
+
+
 def test_materials_validation_rejects_slash_separated_avoid_aliases():
     error = _kit_validation_error(
         {
@@ -692,6 +727,75 @@ Software Engineering.
 """.strip()
 
     assert _experience_coverage_problems(base_cv, complete_cv) == []
+
+
+def test_ats_cv_validation_rejects_role_specific_technology_drift():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs with Python, REST APIs, SQL, and MongoDB.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+- Built dashboards with Python, Flask, React, SQL, and Docker.
+PROJECTS
+AI Automation
+TECHNICAL SKILLS
+Django
+FastAPI
+AWS
+""".strip()
+    ats_cv = """
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs with Python and REST APIs.
+- Technologies: Python, Django, FastAPI, AWS, SQL, MongoDB.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | October 2022 - April 2025
+- Built dashboards with Python, Flask, React, SQL, and Docker.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_technology_attribution_problems(base_cv, ats_cv)
+
+    assert problems
+    assert "Fiction Express" in problems[0]
+    assert "Django" in problems[0]
+    assert "FastAPI" in problems[0]
+    assert "AWS" in problems[0]
+
+
+def test_ats_cv_validation_allows_global_skills_outside_role_blocks():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs with Python, REST APIs, SQL, and MongoDB.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+- Built dashboards with Python, Flask, React, SQL, and Docker.
+PROJECTS
+AI Automation
+TECHNICAL SKILLS
+Django
+FastAPI
+AWS
+""".strip()
+    ats_cv = """
+Professional Summary
+Backend developer with Django, FastAPI, and AWS exposure.
+Technical Skills
+Python, Django, FastAPI, AWS, SQL, MongoDB.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs with Python and REST APIs.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | October 2022 - April 2025
+- Built dashboards with Python, Flask, React, SQL, and Docker.
+Education
+Software Engineering.
+""".strip()
+
+    assert _experience_technology_attribution_problems(base_cv, ats_cv) == []
 
 
 def test_ats_cv_docx_export_returns_document_bytes():
