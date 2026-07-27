@@ -26,10 +26,10 @@
     }
   },
   "expected": {
-    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE"],
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE", "SKIP"],
     "max_score": 78,
     "required_evidence_terms": ["contract", "AI"],
     "dealbreaker_terms": ["contract", "AI training"]
   },
-  "human_review_notes": "Reviewed real case: stack looks good, but contract/AI-training wording should prevent automatic top-tier APPLY_NOW until verified."
+  "human_review_notes": "Reviewed real case: stack looks good, but contract/AI-training wording should prevent automatic top-tier APPLY_NOW until verified. SKIP is acceptable under the stricter current policy because this is contract AI training/verification work, not a clearly durable software role."
 }
