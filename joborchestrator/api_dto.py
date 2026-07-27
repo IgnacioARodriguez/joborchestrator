@@ -101,7 +101,7 @@ def materials_review_dto(job: dict[str, Any], ranking: dict[str, Any]) -> dict[s
     overclaim_terms = [
         term
         for term in ranking.get("cv_keywords_to_avoid_overclaiming") or []
-        if _normalize_for_review(str(term)) and _normalize_for_review(str(term)) in normalized_ats_cv
+        if any(alias in normalized_ats_cv for alias in _avoid_overclaiming_review_aliases(str(term)))
     ]
     if overclaim_terms:
         reasons.append("ats_cv_contains_avoid_overclaiming_terms:" + ",".join(overclaim_terms[:6]))
@@ -123,6 +123,33 @@ def materials_generation_dto(job: dict[str, Any]) -> dict[str, Any]:
         "validation_errors": parse_json_value(job.get("materials_validation_errors_json"), []),
         "candidate_profile_hash": _nullable_string(job.get("materials_candidate_profile_hash")),
     }
+
+
+def _avoid_overclaiming_review_aliases(term: str) -> list[str]:
+    normalized = _normalize_for_review(str(term))
+    aliases = [normalized] if normalized else []
+    if "serverless" in normalized:
+        aliases.extend(
+            _normalize_for_review(alias)
+            for alias in [
+                "Serverless",
+                "Serverless Architecture",
+                "AWS Lambda",
+                "Lambda",
+                "DynamoDB",
+                "API Gateway",
+                "EventBridge",
+                "SQS",
+                "SNS",
+                "Step Functions",
+                "CloudFormation",
+                "AWS CDK",
+                "CDK",
+            ]
+        )
+    if "kubernetes" in normalized:
+        aliases.extend(_normalize_for_review(alias) for alias in ["Kubernetes", "K8s", "EKS", "AKS", "GKE"])
+    return [alias for alias in dict.fromkeys(aliases) if alias]
 
 
 def _hiring_contacts_for_job(job: dict[str, Any]) -> list[dict[str, Any]]:
