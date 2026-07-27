@@ -64,6 +64,7 @@ def build_capture_fixture(
     auto_case = build_auto_eval_case(job, profile)
     case_id = _case_id(job, label)
     output = _current_output(surface, job, ranking_version)
+    ranking_output = output if surface == "ranking" else _current_output("ranking", job, ranking_version)
     return {
         "case_id": case_id,
         "surface": surface,
@@ -82,7 +83,7 @@ def build_capture_fixture(
             "profile": profile,
         },
         "current_output": output,
-        "expected": _expected_proposal(surface, auto_case),
+        "expected": _expected_proposal(surface, auto_case, ranking_output),
         "human_review_instructions": (
             "Review and edit `expected` before treating this fixture as frozen. "
             "Do not promote fixtures with review_status=needs_human_review into gatekeeping evals."
@@ -128,12 +129,52 @@ def _current_output(surface: str, job: dict[str, Any], ranking_version: str) -> 
     }
 
 
-def _expected_proposal(surface: str, auto_case: dict[str, Any]) -> dict[str, Any]:
+def _expected_proposal(surface: str, auto_case: dict[str, Any], ranking_output: dict[str, Any] | None = None) -> dict[str, Any]:
     if surface == "ranking":
         return dict(auto_case.get("ranking_expectations") or {})
     if surface == "ats_cv":
-        return dict(auto_case.get("ats_cv_expectations") or {})
-    return dict(auto_case.get("materials_expectations") or {})
+        return _drop_avoid_overclaiming_expectations(
+            dict(auto_case.get("ats_cv_expectations") or {}),
+            ranking_output,
+            "required_keywords",
+        )
+    return _drop_avoid_overclaiming_expectations(
+        dict(auto_case.get("materials_expectations") or {}),
+        ranking_output,
+        "required_terms",
+    )
+
+
+def _drop_avoid_overclaiming_expectations(
+    expected: dict[str, Any],
+    ranking_output: dict[str, Any] | None,
+    required_key: str,
+) -> dict[str, Any]:
+    avoid_terms = [
+        _normalize_term(term)
+        for term in (ranking_output or {}).get("cv_keywords_to_avoid_overclaiming", [])
+        if str(term or "").strip()
+    ]
+    if not avoid_terms:
+        return expected
+    required_terms = expected.get(required_key)
+    if not isinstance(required_terms, list):
+        return expected
+    expected[required_key] = [
+        term
+        for term in required_terms
+        if not _term_conflicts_with_avoid_overclaiming(str(term), avoid_terms)
+    ]
+    return expected
+
+
+def _term_conflicts_with_avoid_overclaiming(term: str, avoid_terms: list[str]) -> bool:
+    normalized = _normalize_term(term)
+    return any(normalized == avoid or normalized in avoid or avoid in normalized for avoid in avoid_terms)
+
+
+def _normalize_term(term: str) -> str:
+    return re.sub(r"\s+", " ", str(term or "").strip().lower())
 
 
 def _raw_input(job: dict[str, Any]) -> dict[str, Any]:
