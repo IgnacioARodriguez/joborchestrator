@@ -97,6 +97,7 @@ def revalidate_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], l
         ranking = ranking_from_row(row)
         before = result_to_dict(ranking)
         nvidia_ranker._apply_ranking_safety_gate(job_from_row(row), ranking, safety_context)
+        nvidia_ranker._apply_profile_backed_evidence_terms(job_from_row(row), ranking, safety_context)
         nvidia_ranker._apply_evidence_consistency_gate(ranking)
         after = result_to_dict(ranking)
         summary = change_summary(row, before, after)
@@ -237,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(text + "\n", encoding="utf-8")
-    print(text)
+    sys.stdout.buffer.write((text + "\n").encode("utf-8"))
     return 0
 
 

@@ -445,6 +445,7 @@ def _apply_nvidia_batch_result(
                 ranking.evidence.llm_escalation_reasons = reasons
                 ranking.ranking_version = ranking_version
                 _apply_ranking_safety_gate(row, ranking, safety_context)
+                _apply_profile_backed_evidence_terms(row, ranking, safety_context)
                 _apply_evidence_consistency_gate(ranking)
                 db.save_job_ranking(
                     job_id,
@@ -638,6 +639,7 @@ def _active_profile_safety_context() -> dict[str, Any]:
         "preferred_work_modes": _clean_profile_list(profile_payload.get("preferred_work_modes")),
         "profile_text": _normalize_text(_flatten_profile_text(profile_payload)),
         "skill_levels": _profile_skill_levels(profile_payload),
+        "profile_skill_labels": _profile_skill_labels(profile_payload),
         "real_experience_years": profile_payload.get("real_experience_years"),
     }
 
@@ -671,6 +673,45 @@ def _apply_ranking_safety_gate(
     prefix = "Safety gate applied: " + "; ".join(signal.label for signal in signals) + "."
     if not str(ranking.reasoning_summary or "").startswith(prefix):
         ranking.reasoning_summary = f"{prefix} {ranking.reasoning_summary}".strip()
+
+
+def _apply_profile_backed_evidence_terms(
+    job: dict[str, Any],
+    ranking: Any,
+    safety_context: dict[str, Any],
+) -> None:
+    job_text = _normalized_job_text(job)
+    if not job_text:
+        return
+    evidence_text = _normalize_text(
+        " ".join(
+            [
+                *[str(item) for item in ranking.evidence.strong_matches],
+                *[str(item) for item in ranking.evidence.partial_matches],
+                *[str(item) for item in ranking.evidence.central_requirements],
+                *[str(item) for item in ranking.cv_keywords_to_emphasize],
+            ]
+        )
+    )
+    profile_skill_labels = safety_context.get("profile_skill_labels")
+    if not profile_skill_labels:
+        profile_skill_labels = [
+            {"name": label, "level": "strong"} for label in safety_context.get("strong_skill_labels") or []
+        ]
+    for skill in profile_skill_labels:
+        if not isinstance(skill, dict):
+            continue
+        term = str(skill.get("name") or "").strip()
+        if not term:
+            continue
+        if not _contains_skill_marker(job_text, term):
+            continue
+        if _contains_skill_marker(evidence_text, term):
+            continue
+        level = _normalize_skill_level(skill.get("level"))
+        target = ranking.evidence.strong_matches if level == "strong" else ranking.evidence.partial_matches
+        target.append(term)
+        evidence_text = _normalize_text(f"{evidence_text} {term}")
 
 
 def _apply_evidence_consistency_gate(ranking: Any) -> None:
@@ -808,7 +849,7 @@ def _ranking_safety_signals(
             RankingSafetySignal(
                 label=onsite_label,
                 decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
-                max_score=82,
+                max_score=75,
                 risk_penalty=20,
                 reason="safety_cap_location_review",
             )
@@ -891,6 +932,18 @@ def _ranking_safety_signals(
         signals.append(
             RankingSafetySignal(
                 label="industrial automation/electrical domain mismatch",
+                decision_cap=cast(Decision, "AVOID"),
+                max_score=35,
+                risk_penalty=35,
+                reason="hard_override_domain_mismatch",
+                evidence_kind="dealbreaker",
+            )
+        )
+
+    if _power_systems_tnd_mismatch(job_text, profile_text):
+        signals.append(
+            RankingSafetySignal(
+                label="Brazil location and power systems/T&D domain mismatch",
                 decision_cap=cast(Decision, "AVOID"),
                 max_score=35,
                 risk_penalty=35,
@@ -1267,6 +1320,24 @@ def _profile_skill_levels(profile_payload: dict[str, Any]) -> dict[str, str]:
     return levels
 
 
+def _profile_skill_labels(profile_payload: dict[str, Any]) -> list[dict[str, str]]:
+    labels: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for skill in profile_payload.get("skills") or []:
+        if not isinstance(skill, dict):
+            continue
+        name = str(skill.get("name") or "").strip()
+        level = _normalize_skill_level(skill.get("level"))
+        if not name or level not in {"medium", "strong"}:
+            continue
+        normalized = _normalize_text(name)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        labels.append({"name": name, "level": level})
+    return labels
+
+
 def _normalize_skill_level(value: Any) -> str | None:
     normalized = _normalize_text(str(value or ""))
     if normalized in _SKILL_LEVEL_WEIGHT:
@@ -1362,6 +1433,29 @@ def _industrial_automation_mismatch(job_text: str, profile_text: str) -> bool:
     ]
     role_terms = ["automation engineer", "application engineer", "electrical engineer", "control systems"]
     return _contains_any(job_text, industrial_terms) and _contains_any(job_text, role_terms)
+
+
+def _power_systems_tnd_mismatch(job_text: str, profile_text: str) -> bool:
+    profile_negates_power = _contains_any(
+        profile_text,
+        [
+            "no t&d",
+            "no t d",
+            "no grid automation",
+            "no power systems",
+            "no protection relays",
+            "without power systems",
+        ],
+    )
+    if not profile_negates_power and _contains_any(profile_text, ["power systems", "grid automation", "protection relays"]):
+        return False
+    domain_specific = _contains_any(
+        job_text,
+        ["t&d", "transmission and distribution", "grid automation", "protection relays", "power systems"],
+    )
+    if not domain_specific:
+        return False
+    return _contains_any(job_text, ["brazil", "brasil", "florianopolis", "florianópolis"])
 
 
 def _required_language_gap_label(job_text: str, profile_text: str) -> str | None:

@@ -128,6 +128,52 @@ def test_rank_jobs_with_nvidia_saves_each_ranking(monkeypatch):
     assert saved_metadata[1]["ranking_candidate_profile_snapshot"]
 
 
+def test_nvidia_ranking_adds_profile_backed_strong_skill_evidence(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Desarrollador de Python",
+                "company": "Tech",
+                "location": "Hibrido",
+                "description_text": "Python, FastAPI, Django, PostgreSQL y APIs REST.",
+            }
+        ]
+    )
+    saved = {}
+
+    def rich_profile_payload():
+        payload = profile_payload()
+        payload["skills"] = [
+            {"name": "Python", "category": "Programming", "level": "strong"},
+            {"name": "FastAPI", "category": "Framework", "level": "medium"},
+            {"name": "Django", "category": "Framework", "level": "strong"},
+            {"name": "PostgreSQL", "category": "Database", "level": "strong"},
+        ]
+        return payload
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 85, "APPLY_WITH_TAILORED_CV")
+        payload["evidence"]["strong_matches"] = ["Django"]
+        payload["cv_keywords_to_emphasize"] = []
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", rich_profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["saved"] == 1
+    strong_matches = saved[1].evidence.strong_matches
+    assert "Python" in strong_matches
+    assert "Django" in strong_matches
+    assert "PostgreSQL" in strong_matches
+    assert "FastAPI" in saved[1].evidence.partial_matches
+    assert "FastAPI" not in strong_matches
+
+
 def test_rank_jobs_with_nvidia_caps_unsupported_strong_skill_claim(monkeypatch):
     jobs = pd.DataFrame(
         [
@@ -253,9 +299,49 @@ def test_rank_jobs_with_nvidia_caps_onsite_outside_preferred_location(monkeypatc
     assert summary["APPLY_NOW"] == 0
     assert summary["APPLY_WITH_TAILORED_CV"] == 1
     assert ranking.decision == "APPLY_WITH_TAILORED_CV"
+    assert ranking.final_score == 75
     assert ranking.evidence.requires_llm_review is True
     assert any("onsite/hybrid" in item for item in ranking.evidence.red_flags)
     assert "safety_cap_location_review" in ranking.evidence.llm_escalation_reasons
+
+
+def test_nvidia_ranking_flags_brazil_power_systems_tnd_gap(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Software Consulting Engineer - T&D",
+                "company": "GE Vernova",
+                "location": "Flexible / Remote, Florianopolis, Brazil",
+                "description_text": "Transmission and Distribution configuration systems, grid automation, protection relays, digital substation systems and power systems in Florianopolis Brazil.",
+            }
+        ]
+    )
+    saved = {}
+
+    def profile_without_power_systems():
+        payload = profile_payload()
+        payload["dealbreakers"] = [
+            *payload["dealbreakers"],
+            "No T&D, grid automation, power systems, protection relays, or Brazil residency background.",
+        ]
+        return payload
+
+    async def fake_call(batch, **kwargs):
+        return {"rankings": [_ranking_payload(1, 88, "APPLY_NOW")]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_without_power_systems)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["AVOID"] == 1
+    assert saved[1].decision == "AVOID"
+    assert saved[1].final_score == 35
+    assert "Brazil location and power systems/T&D domain mismatch" in saved[1].evidence.dealbreakers
+    assert "hard_override_domain_mismatch" in saved[1].evidence.llm_escalation_reasons
 
 
 def test_rank_jobs_with_nvidia_async_runs_batches_concurrently(monkeypatch):
