@@ -121,6 +121,7 @@ Done when:
 - At least 30 reviewed cases exist.
 - Cases cover ranking decisions, dealbreakers, weak-fit jobs, strong-fit jobs, materials, and ATS CV.
 - Each case has expected behavior and critical-failure markers.
+- Ranking fixtures should not accept more than two adjacent decision tiers in `allowed_decisions` without written justification in `human_review_notes`; a fourth widening pattern should trigger review of guardrail/prompt calibration instead of another fixture edit.
 - No protected fixtures are modified without explicit human approval.
 
 Current progress:

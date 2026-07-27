@@ -17,6 +17,16 @@ def test_load_prompt_uses_registry_active_version():
     assert "calibrated evaluator" in load_prompt("judge", "semantic_rubric")
 
 
+def test_ranking_contract_requires_unlisted_central_terms_generically():
+    contract = load_prompt("ranking", "nvidia_response_contract")
+
+    assert "central technologies, protocols, platforms, domain acronyms, or domain terms" in contract
+    assert "even when the candidate does not support them" in contract
+    assert "RabbitMQ, EPC, VFD, STATCOM" in contract
+    assert "Terraform" not in contract
+    assert "Snowflake" not in contract
+
+
 def test_prompt_registry_reports_missing_key(tmp_path, monkeypatch):
     registry = tmp_path / "registry.json"
     registry.write_text(json.dumps({"active_environment": "default", "environments": {"default": {}}}), encoding="utf-8")
