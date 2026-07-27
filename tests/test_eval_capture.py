@@ -80,6 +80,33 @@ def test_capture_fixture_drops_ranking_avoid_terms_from_materials_expectations(m
     assert "Serverless" not in fixture["expected"]["required_keywords"]
 
 
+def test_capture_fixture_falls_back_to_yaml_profile(monkeypatch):
+    monkeypatch.setattr(capture.db, "get_job_posting", lambda job_id: _job())
+    monkeypatch.setattr(capture.db, "get_candidate_profile_payload", lambda: None)
+    monkeypatch.setattr(capture.db, "get_rankings_for_job_ids", lambda ranking_version, job_ids: _empty_rows())
+    monkeypatch.setenv(
+        "CANDIDATE_PROFILE_YAML",
+        """
+strong_skills:
+  - Python
+  - FastAPI
+medium_skills:
+  - PostgreSQL
+notes: Backend engineer, igrodriguez.ar@gmail.com
+""",
+    )
+
+    fixture = capture.build_capture_fixture(
+        job_id=105,
+        artifact="ats_cv",
+        label="yaml-profile",
+    )
+
+    assert fixture["candidate_profile_snapshot"]["source"] == "candidate_profile.yml"
+    assert fixture["candidate_profile_snapshot"]["profile"]["notes"] == "Backend engineer, [redacted-email]"
+    assert {"Python", "FastAPI", "PostgreSQL"}.issubset(set(fixture["expected"]["required_keywords"]))
+
+
 def test_capture_fixture_writes_under_surface_directory(tmp_path):
     fixture = {
         "case_id": "linkedin-acme-backend-ats-cv-internal-notes",

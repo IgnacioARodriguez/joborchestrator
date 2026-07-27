@@ -298,6 +298,63 @@ def test_auto_eval_case_uses_job_and_profile_terms():
     assert "Fiction Express" in case["candidate"]["required_experience_terms"]
 
 
+def test_auto_eval_case_limits_required_terms_for_skip_jobs():
+    case = build_auto_eval_case(
+        {
+            "id": 93,
+            "title": "Python Django Backend Engineer",
+            "company": "GridOps",
+            "description_text": (
+                "Required skills: Python, Django, and PostgreSQL. "
+                "Nice to have exposure to EC2, Monitoring, and Code Review."
+            ),
+        },
+        {
+            "base_cv_text": (
+                "Experience\nPython Django PostgreSQL APIs. "
+                "Some EC2 Monitoring and Code Review collaboration."
+            ),
+            "skills": [
+                {"name": "Python", "level": "strong"},
+                {"name": "Django", "level": "strong"},
+                {"name": "PostgreSQL", "level": "strong"},
+                {"name": "EC2", "level": "strong"},
+                {"name": "Monitoring", "level": "medium"},
+                {"name": "Code Review", "level": "medium"},
+            ],
+        },
+        {
+            "decision": "SKIP",
+            "final_score": 45,
+            "cv_keywords_to_emphasize": ["Python", "Django", "PostgreSQL"],
+            "cv_keywords_to_avoid_overclaiming": [],
+        },
+    )
+
+    assert case["materials_expectations"]["required_terms"] == ["Python", "Django", "PostgreSQL"]
+    assert case["ats_cv_expectations"]["required_keywords"] == ["Python", "Django", "PostgreSQL"]
+
+
+def test_auto_eval_case_accepts_ranker_profile_skill_groups():
+    case = build_auto_eval_case(
+        {
+            "id": 80,
+            "title": "Backend Engineer",
+            "company": "Acme Labs",
+            "description_text": "Required skills: Python, FastAPI, and PostgreSQL.",
+        },
+        {
+            "strong_skills": ["Python", "FastAPI"],
+            "medium_skills": ["PostgreSQL"],
+            "weak_skills": ["React"],
+            "notes": "Backend engineer focused on Python APIs.",
+        },
+        {"decision": "APPLY_NOW", "final_score": 88},
+    )
+
+    assert case["materials_expectations"]["required_terms"] == ["Python", "FastAPI", "PostgreSQL"]
+
+
 def test_auto_eval_case_rejects_profile_derived_unsupported_claims():
     case = build_auto_eval_case(
         {

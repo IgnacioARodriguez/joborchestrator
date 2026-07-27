@@ -4,6 +4,7 @@ import argparse
 import json
 import re
 import sys
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from joborchestrator.evals.semantic import build_auto_eval_case  # noqa: E402
+from joborchestrator.ranking.profile import load_candidate_profile  # noqa: E402
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION  # noqa: E402
 from joborchestrator.storage import persistence as db  # noqa: E402
 
@@ -60,11 +62,11 @@ def build_capture_fixture(
     job = db.get_job_posting(int(job_id))
     if not job:
         raise SystemExit(f"Job id {job_id} was not found.")
-    profile = _redact_candidate_pii(db.get_candidate_profile_payload() or {})
-    auto_case = build_auto_eval_case(job, profile)
+    profile, profile_source = _candidate_profile_snapshot()
     case_id = _case_id(job, label)
     output = _redact_candidate_pii(_current_output(surface, job, ranking_version))
     ranking_output = output if surface == "ranking" else _current_output("ranking", job, ranking_version)
+    auto_case = build_auto_eval_case(job, profile, ranking_output)
     return {
         "case_id": case_id,
         "surface": surface,
@@ -79,7 +81,7 @@ def build_capture_fixture(
         },
         "raw_input": _raw_input(job),
         "candidate_profile_snapshot": {
-            "source": "db.current_candidate_profile",
+            "source": profile_source,
             "profile": profile,
         },
         "current_output": output,
@@ -89,6 +91,19 @@ def build_capture_fixture(
             "Do not promote fixtures with review_status=needs_human_review into gatekeeping evals."
         ),
     }
+
+
+def _candidate_profile_snapshot() -> tuple[dict[str, Any], str]:
+    db_profile = db.get_candidate_profile_payload() or {}
+    if db_profile:
+        return _redact_candidate_pii(db_profile), "db.current_candidate_profile"
+    try:
+        yaml_profile = asdict(load_candidate_profile())
+    except Exception:
+        return {}, "db.current_candidate_profile"
+    if any(yaml_profile.get(key) for key in ["strong_skills", "medium_skills", "weak_skills", "notes"]):
+        return _redact_candidate_pii(yaml_profile), "candidate_profile.yml"
+    return {}, "db.current_candidate_profile"
 
 
 def write_fixture(fixture: dict[str, Any], output_root: Path, *, overwrite: bool = False) -> Path:
