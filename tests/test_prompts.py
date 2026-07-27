@@ -5,7 +5,7 @@ from joborchestrator.prompts import PromptRegistryError, active_prompt_version, 
 
 
 def test_load_prompt_uses_registry_active_version():
-    assert active_prompt_version("ranking", "nvidia_response_contract") == "v8"
+    assert active_prompt_version("ranking", "nvidia_response_contract") == "v9"
     assert "Decision calibration" in load_prompt("ranking", "nvidia_response_contract")
     assert "central_requirement_thresholds" in load_prompt("ranking", "nvidia_response_contract")
     assert "Evidence completeness is mandatory" in load_prompt("ranking", "nvidia_response_contract")
@@ -25,6 +25,15 @@ def test_ranking_contract_requires_unlisted_central_terms_generically():
     assert "RabbitMQ, EPC, VFD, STATCOM" in contract
     assert "Terraform" not in contract
     assert "Snowflake" not in contract
+
+
+def test_ranking_contract_distinguishes_skip_from_avoid():
+    contract = load_prompt("ranking", "nvidia_response_contract")
+
+    assert "Use SKIP for low hiring probability in an adjacent software/domain role" in contract
+    assert "Use AVOID only for hard blockers" in contract
+    assert "security/AppSec/DevSecOps" in contract
+    assert "normally not AVOID" in contract
 
 
 def test_prompt_registry_reports_missing_key(tmp_path, monkeypatch):

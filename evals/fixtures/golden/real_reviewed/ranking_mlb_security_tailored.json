@@ -26,10 +26,10 @@
     }
   },
   "expected": {
-    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE", "AVOID"],
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE", "SKIP"],
     "max_score": 68,
     "required_evidence_terms": ["security"],
     "dealbreaker_terms": ["security specialization"]
   },
-  "human_review_notes": "Reviewed real case: security/DevSecOps is adjacent but not plug-and-play. APPLY_NOW is too aggressive. AVOID is acceptable when evidence explicitly names the lack of direct Security Engineering/AppSec/DevSecOps trajectory."
+  "human_review_notes": "Reviewed real case: security/DevSecOps is adjacent but not plug-and-play. APPLY_NOW is too aggressive. Under the SKIP vs AVOID policy, SKIP is acceptable when evidence explicitly names the lack of direct Security Engineering/AppSec/DevSecOps trajectory; AVOID should be reserved for hard blockers, unsafe/untruthful application risk, explicit ineligibility, or non-recoverable domain mismatch."
 }

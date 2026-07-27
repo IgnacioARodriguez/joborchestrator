@@ -1,6 +1,6 @@
 # LLM Trust Compliance Matrix
 
-Last assessed: 2026-07-27
+Last assessed: 2026-07-28
 
 This matrix tracks HuntPilot against the trust bar defined in `docs/LLM_TRUST_DEFINITION_OF_DONE.md`.
 
@@ -14,11 +14,11 @@ Status values:
 
 Current trust posture: Yellow, approximately 7.7/10.
 
-HuntPilot is currently suitable as an operational copilot for job discovery, ranking review, and draft generation. It is not suitable for near-blind trust yet. The active ranking prompt moved to v7 after a 50-job live v6 probe completed with 50/50 saved, 0 failed items, and 0 schema retries but exposed 4 reviewed-case quality failures. Those failures were triaged: one evaluator synonym issue, one security expectation alignment, and two explicit central-term prompt omissions. A targeted v7 rerank of jobs 40 and 358 completed 2/2 saved with 0 retries, and the reviewed ranking baseline now measures 22/22 with 0 critical failures. Materials/ATS CV still need measured quality work.
+HuntPilot is currently suitable as an operational copilot for job discovery, ranking review, and draft generation. It is not suitable for near-blind trust yet. Ranking now uses prompt v9 after the v6/v7/v8 probes exposed evidence omissions and SKIP-vs-AVOID calibration ambiguity. The reviewed ranking baseline now measures 22/22 with 0 critical failures after central-term evidence validation and explicit SKIP/AVOID policy alignment. Materials/ATS CV still need measured quality work.
 
 ## Current Evidence Snapshot
 
-- Active ranking prompt: `ranking/nvidia_response_contract` v7.
+- Active ranking prompt: `ranking/nvidia_response_contract` v9.
 - Active materials CV prompt: `materials/nvidia_cv_contract` v3.
 - Active materials kit prompt: `materials/nvidia_kit_contract` v3.
 - Active judge prompt: `judge/semantic_rubric` v1.
@@ -27,7 +27,7 @@ HuntPilot is currently suitable as an operational copilot for job discovery, ran
 - Latest completed recovery ranking job: `#6`, 30/30 saved, 0 failed.
 - Latest completed re-ranking job: `#8`, 419 queued, 419 processed, 419 saved, 0 failed.
 - Latest ranking jobs: `#9` completed 419/419 saved on 2026-07-26 04:10:31, `#10` completed 8/8 saved, and `#11` completed 4/4 saved, all with 0 failed items.
-- Current persisted ranking prompt-version trace includes at least 50 rows with prompt trace v6 and 2 targeted rows with prompt trace v7; no full 419-job v7 production rerank has been completed yet.
+- Current persisted ranking prompt-version trace includes the historical full v4/v5/v6 rows plus targeted v7/v8 rows; no full 419-job v9 production rerank has been completed yet.
 - Local offline trust gate: `npm run trust:gate` passed on 2026-07-19; `npm run verify` now runs typecheck, lint, build, and the trust gate.
 - Latest Vercel backend smoke: passed against Turso on 2026-07-19; warning only for 27 recent historical scan errors, while latest scan completed with 0 errors. Error sample points to `themuse`/`remotive` API timeouts from 2026-07-15.
 - Latest Vercel UI smoke: passed on 2026-07-19; dashboard rendered 419 visible jobs across Today/Review/Applications/Profile/Automations/Insights with no console errors or failed requests.
@@ -40,6 +40,7 @@ HuntPilot is currently suitable as an operational copilot for job discovery, ran
 - Ranking schema follow-up: v6 removes the single-job bare-object escape hatch from the NVIDIA prompt contract and the validator now gives explicit feedback when `rankings` is missing for `Context.jobs`.
 - Live v6 probe follow-up: ranking job `#12` completed a 50-job representative sample including all 22 real reviewed ranking fixtures. Results: 50/50 processed, 50 saved, 0 failed, 0 high item attempts, max item attempts 1, 50/50 prompt trace v6, `schema_failure_retry_rate` 0.0, `non_active_prompt_rate` 0.0, `unsafe_apply_now_count` 0. Reviewed-fixture baseline over these fresh v6 outputs measured 18/22 passing, 81.8% pass rate, and 4 critical failures. Failures were jobs 80 (`REST APIs` evidence wording), 358 (`EPC` evidence wording), 40 (`RabbitMQ` evidence omission), and 222 (`AVOID` stricter than expected `APPLY_WITH_TAILORED_CV`/`MAYBE`).
 - Post-Claude checkpoint follow-up: ranking evidence-term evaluation now supports reviewed synonyms, job 222 now accepts conservative `AVOID` when evidence names the direct Security/AppSec/DevSecOps gap, and active ranking prompt v7 requires exact central job terms such as RabbitMQ/EPC/VFD/STATCOM in evidence. Targeted v7 rerank job `#13` processed jobs 40 and 358 only: 2/2 saved, 0 failed, 0 schema retries, prompt trace v7 for both rows. Ranking golden baseline saved on 2026-07-27 measured 22/22 passing, 100% pass rate, and 0 critical failures.
+- Ranking v8/v9 closure follow-up: v8 added `central_terms_to_reconcile` plus validator feedback/retry for missing central evidence. Targeted reranks corrected Lemon.io (#188), CrowdStrike (#212), and MLB Security (#222) evidence gaps, with retries triggered when central terms were omitted. v9 defines `SKIP` as low hiring probability for adjacent-but-truthful software/domain roles and reserves `AVOID` for hard blockers, explicit ineligibility, unsafe/untruthful application risk, or non-recoverable domain mismatch. The MLB Security fixture now accepts `SKIP` and no longer treats `AVOID` as the normal expectation for that adjacent security role. Ranking golden baseline saved on 2026-07-28 measured 22/22 passing, 100% pass rate, and 0 critical failures.
 - Autoloop hardening follow-up: prompt freshness, case regressions, failed item count, schema retry rate, runtime limits, halt reports, checkpoint tags, and non-active prompt requeue tooling are implemented and covered by tests. A halt no longer overwrites the accepted baseline with rejected metrics.
 - Materials follow-up: application kit validation now rejects recruiter messages over the same 320-character limit used by golden evals. Persisted golden baseline currently evaluates 0 materials/ATS cases because the reviewed seed fixtures are synthetic and not DB-backed.
 - Reviewed golden fixtures: 34 cases under `evals/fixtures/golden` (12 synthetic seed cases plus 22 human-reviewed real ranking cases).
@@ -59,9 +60,9 @@ HuntPilot is currently suitable as an operational copilot for job discovery, ran
 
 | Area | DoD Target | Current Status | Evidence | Gap |
 | --- | --- | --- | --- | --- |
-| Prompt registry | Active prompt versions are explicit and shared | Green | Registry points ranking to v7, materials to v3, and judge to v1 | Need a full v7 production rerank and fresh materials v3 generation proof before stored outputs match the active registry |
+| Prompt registry | Active prompt versions are explicit and shared | Green | Registry points ranking to v9, materials to v3, and judge to v1 | Need a full v9 production rerank and fresh materials v3 generation proof before stored outputs match the active registry |
 | Ranking schema | Output validates against structured contract | Green | Live v6 50-job probe had 50/50 saved, 0 failed items, 0 validation retries, and `schema_failure_retry_rate` 0.0 | Continue monitoring on larger runs |
-| Ranking quality | >= 90% pass rate, 0 critical failures | Green-Yellow | Reviewed ranking baseline now passes 22/22 after evaluator synonym support, security expectation alignment, and targeted v7 rerank of jobs 40/358 | Need a broader v7 proof set before raising ranking to near-blind trust |
+| Ranking quality | >= 90% pass rate, 0 critical failures | Green-Yellow | Reviewed ranking baseline now passes 22/22 after evaluator synonym support, central-term validation, targeted v7/v8 reranks, and SKIP/AVOID policy alignment | Need a broader v9 proof set before raising ranking to near-blind trust |
 | Materials quality | >= 90% pass rate, 0 critical failures | Red | Stored evals show 0/3 passing; generation validation now enforces the 320-character recruiter-message limit, and active v3 receives ranking-derived overclaiming constraints | Need fresh v3 generation proof and DB-backed reviewed materials fixtures |
 | ATS CV quality | >= 95% pass rate, 0 critical failures | Red-Yellow | Internal-note validation exists, complete-CV validation preserves base experience, and active v3 receives ranking-derived overclaiming constraints | Need current ATS CV v3 generation proof and DB-backed reviewed ATS CV cases |
 | Golden set | 30-50 reviewed cases | Green-Yellow | 34 reviewed fixtures exist across ranking/materials/ATS CV, including 22 human-reviewed real ranking cases; local trust gate requires at least 3 cases per surface | Need more real materials/ATS CV cases to balance beyond synthetic coverage |
