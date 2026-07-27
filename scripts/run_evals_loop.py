@@ -606,7 +606,10 @@ def regenerate_golden_fixture(args: argparse.Namespace, fixture: dict[str, Any])
 def golden_fixture_case(fixture: dict[str, Any]) -> dict[str, Any]:
     job = golden_fixture_job(fixture)
     profile = ((fixture.get("candidate_profile_snapshot") or {}).get("profile") or {})
-    case = build_auto_eval_case(job, profile)
+    source = fixture.get("source") or {}
+    job_id = int(source.get("job_id") or 0)
+    ranking = ranking_payload_for_job(job_id, NVIDIA_RANKING_VERSION) if job_id else None
+    case = build_auto_eval_case(job, profile, ranking)
     case["id"] = fixture.get("case_id") or case["id"]
     case["review_status"] = fixture.get("review_status")
     expected = fixture.get("expected") or {}
@@ -691,8 +694,8 @@ def regenerate_record(args: argparse.Namespace, record: dict[str, Any]) -> dict[
     if not job:
         raise RuntimeError(f"Job not found: {job_id}")
     profile = db.get_candidate_profile_payload() or {}
-    case = build_auto_eval_case(job, profile)
     ranking = ranking_payload_for_job(job_id, args.ranking_version)
+    case = build_auto_eval_case(job, profile, ranking)
     artifact_type = str(record["artifact_type"])
 
     if artifact_type == "application_materials":
