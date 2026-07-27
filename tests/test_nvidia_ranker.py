@@ -72,6 +72,47 @@ def test_build_nvidia_ranking_payload_compacts_jobs(monkeypatch):
     assert any("role_aliases" in rule for rule in payload["rules"])
 
 
+def test_build_nvidia_ranking_payload_adds_central_terms_to_reconcile(monkeypatch):
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+
+    payload = build_nvidia_ranking_payload(
+        [
+            {
+                "id": 7,
+                "title": "Senior Data Engineer",
+                "company": "Acme",
+                "description_text": "Requirements: Terraform, Snowflake, and Python. Must have production pipelines.",
+            }
+        ]
+    )
+
+    assert payload["jobs"][0]["central_terms_to_reconcile"] == [
+        "Senior Data Engineer",
+        "Senior Data",
+        "Data Engineer",
+        "Python",
+        "Snowflake",
+        "Terraform",
+    ]
+
+
+def test_central_terms_ignore_non_central_alternative_stack_block():
+    terms = nvidia_ranker._central_terms_to_reconcile(
+        {
+            "id": 188,
+            "title": "Senior AI Engineer",
+            "description_text": (
+                "Requirements: Python, Vector Databases, LangChain, LLMs, RAG. "
+                "NOT YOUR TECH STACK? We also have projects in React & Rust."
+            ),
+        }
+    )
+
+    assert "LangChain" in terms
+    assert "Vector Databases" in terms
+    assert "Rust" not in terms
+
+
 def test_build_nvidia_ranking_payload_requires_profile(monkeypatch):
     monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", lambda: None)
 
@@ -722,11 +763,25 @@ def test_nvidia_ranking_caps_specialized_adjacent_roles(monkeypatch):
     saved = {}
 
     async def fake_call(batch, **kwargs):
+        security = _ranking_payload(1, 82, "APPLY_NOW")
+        security["evidence"]["central_requirements"] = [
+            "Senior Security Engineer",
+            "Senior Security",
+            "Security Engineer",
+            "AppSec",
+        ]
+        security["evidence"]["red_flags"] = ["Security Engineer role pivot", "AppSec specialization"]
+        solutions = _ranking_payload(2, 92, "APPLY_NOW")
+        solutions["evidence"]["central_requirements"] = ["Solutions Architect", "DevSecOps"]
+        solutions["evidence"]["red_flags"] = ["Solutions Architect/presales pivot", "DevSecOps platform"]
+        infra = _ranking_payload(3, 86, "APPLY_NOW")
+        infra["evidence"]["central_requirements"] = ["Infrastructure Engineer", "Kubernetes"]
+        infra["evidence"]["red_flags"] = ["Infrastructure Engineer specialization", "Kubernetes platform focus"]
         return {
             "rankings": [
-                _ranking_payload(1, 82, "APPLY_NOW"),
-                _ranking_payload(2, 92, "APPLY_NOW"),
-                _ranking_payload(3, 86, "APPLY_NOW"),
+                security,
+                solutions,
+                infra,
             ]
         }
 
@@ -890,6 +945,13 @@ def test_nvidia_ranking_caps_apply_now_when_model_reports_risky_evidence(monkeyp
 
     async def fake_call(batch, **kwargs):
         payload = _ranking_payload(1, 88, "APPLY_NOW")
+        payload["evidence"]["central_requirements"] = [
+            "Senior AI Engineer",
+            "Senior AI",
+            "AI Engineer",
+            "RAG",
+            "Vector Databases",
+        ]
         payload["evidence"]["missing_requirements"] = ["production RAG systems", "vector databases"]
         payload["evidence"]["central_requirement_coverage"] = 0.65
         payload["scores"]["central_requirement_coverage"] = 65
@@ -1124,6 +1186,55 @@ def test_nvidia_batch_validation_rejects_missing_contract_fields():
     assert "job_id 1 missing" in error
     assert "scores.opportunity_quality" in error
     assert "evidence.requires_llm_review" in error
+
+
+def test_nvidia_batch_validation_rejects_missing_central_term_evidence():
+    payload = _ranking_payload(1, 70, "APPLY_WITH_TAILORED_CV")
+    payload["evidence"]["central_requirements"] = ["Python"]
+    payload["evidence"]["partial_matches"] = ["Python"]
+
+    error = nvidia_ranker._nvidia_batch_validation_error(
+        {"rankings": [payload]},
+        [
+            {
+                "id": 1,
+                "title": "Senior Data Engineer",
+                "description_text": "Requirements: Python, Terraform, and Snowflake.",
+            }
+        ],
+    )
+
+    assert error is not None
+    assert "central term evidence errors" in error
+    assert "Terraform" in error
+    assert "Snowflake" in error
+
+
+def test_nvidia_batch_validation_accepts_reconciled_central_terms():
+    payload = _ranking_payload(1, 70, "APPLY_WITH_TAILORED_CV")
+    payload["evidence"]["central_requirements"] = [
+        "Senior Data Engineer",
+        "Senior Data",
+        "Data Engineer",
+        "Python",
+        "Terraform",
+        "Snowflake",
+    ]
+    payload["evidence"]["partial_matches"] = ["Python"]
+    payload["evidence"]["missing_requirements"] = ["Terraform", "Snowflake"]
+
+    error = nvidia_ranker._nvidia_batch_validation_error(
+        {"rankings": [payload]},
+        [
+            {
+                "id": 1,
+                "title": "Senior Data Engineer",
+                "description_text": "Requirements: Python, Terraform, and Snowflake.",
+            }
+        ],
+    )
+
+    assert error is None
 
 
 def test_rank_jobs_with_nvidia_skips_inconsistent_partial_result(monkeypatch):

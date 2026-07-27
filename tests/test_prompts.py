@@ -5,7 +5,7 @@ from joborchestrator.prompts import PromptRegistryError, active_prompt_version, 
 
 
 def test_load_prompt_uses_registry_active_version():
-    assert active_prompt_version("ranking", "nvidia_response_contract") == "v7"
+    assert active_prompt_version("ranking", "nvidia_response_contract") == "v8"
     assert "Decision calibration" in load_prompt("ranking", "nvidia_response_contract")
     assert "central_requirement_thresholds" in load_prompt("ranking", "nvidia_response_contract")
     assert "Evidence completeness is mandatory" in load_prompt("ranking", "nvidia_response_contract")

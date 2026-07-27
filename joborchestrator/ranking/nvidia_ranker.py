@@ -78,6 +78,95 @@ REQUIRED_EVIDENCE_FIELDS = {
 
 _SKILL_LEVEL_WEIGHT = {"weak": 1, "medium": 2, "strong": 3}
 
+_CENTRAL_TERM_LIMIT = 14
+_CENTRAL_TECH_TERMS = [
+    "AppSec",
+    "Alertmanager",
+    "Django",
+    "DevSecOps",
+    "Docker",
+    "EPC",
+    "FastAPI",
+    "Flask",
+    "GCP",
+    "Golang",
+    "Grafana",
+    "Kubernetes",
+    "LangChain",
+    "LLM",
+    "MLOps",
+    "OpenAI",
+    "PLC/SCADA",
+    "Pinecone",
+    "PostgreSQL",
+    "Prometheus",
+    "Python",
+    "RabbitMQ",
+    "RAG",
+    "React",
+    "REST API",
+    "REST APIs",
+    "Rust",
+    "SAP",
+    "Snowflake",
+    "STATCOM",
+    "Terraform",
+    "Thanos",
+    "TypeScript",
+    "Vector Databases",
+    "VFD",
+    "vLLM",
+    "Weaviate",
+]
+_CENTRAL_DOMAIN_TERMS = [
+    "AI Engineer",
+    "Application Engineer",
+    "Application Security",
+    "Cloud Security",
+    "cybersecurity",
+    "Data Scientist",
+    "industrial automation",
+    "Infrastructure Engineer",
+    "Machine Learning",
+    "Platform Engineering",
+    "Security Engineer",
+    "Senior AI",
+    "Senior AI Engineer",
+    "Senior Data Scientist",
+    "Senior Infrastructure",
+    "Senior Security Engineer",
+    "Site Reliability Engineering",
+]
+_CENTRAL_REQUIREMENT_CONTEXT_MARKERS = [
+    "requirements",
+    "required",
+    "mandatory",
+    "must",
+    "must have",
+    "minimum qualifications",
+    "qualifications",
+    "experience with",
+    "experience in",
+    "proficient in",
+    "solid understanding",
+    "you have",
+    "we need",
+    "looking for",
+    "expected to",
+]
+_NON_CENTRAL_STACK_MARKERS = [
+    "not your tech stack",
+    "other tech stacks",
+    "we have a variety of projects",
+]
+_ROLE_TERM_PATTERN = re.compile(
+    r"\b(?:(senior|sr\.?|staff|principal)\s+)?"
+    r"(ai|security|infrastructure|platform|data|"
+    r"machine learning|ml|devops|mlops|application|solutions)\s+"
+    r"(engineer|developer|architect|scientist|consultant)\b",
+    flags=re.IGNORECASE,
+)
+
 _PROFILE_AUDIT_MARKERS = {
     "java": {
         "label": "Java",
@@ -447,6 +536,9 @@ def _apply_nvidia_batch_result(
                 _apply_ranking_safety_gate(row, ranking, safety_context)
                 _apply_profile_backed_evidence_terms(row, ranking, safety_context)
                 _apply_evidence_consistency_gate(ranking)
+                missing_central_terms = _missing_central_terms_in_ranking(ranking, row)
+                if missing_central_terms:
+                    raise ValueError(f"central term evidence errors: missing {missing_central_terms[:5]}")
                 db.save_job_ranking(
                     job_id,
                     ranking,
@@ -568,7 +660,87 @@ def _nvidia_batch_validation_error(result: dict[str, Any], jobs: list[dict[str, 
         problems.append(f"decision/score mismatch for job_id values {inconsistent_decisions}")
     if contract_errors:
         problems.append("contract shape errors: " + "; ".join(contract_errors))
+    central_term_errors = _nvidia_central_term_evidence_errors(rankings, jobs)
+    if central_term_errors:
+        problems.append("central term evidence errors: " + "; ".join(central_term_errors))
     return "; ".join(problems) if problems else None
+
+
+def _nvidia_central_term_evidence_errors(rankings: list[Any], jobs: list[dict[str, Any]]) -> list[str]:
+    jobs_by_id = {int(row.get("id") or row.get("job_id")): row for row in jobs if row.get("id") or row.get("job_id")}
+    errors = []
+    for index, item in enumerate(rankings):
+        if not isinstance(item, dict) or item.get("job_id") is None:
+            continue
+        job_id = int(item["job_id"])
+        job = jobs_by_id.get(job_id)
+        if not job:
+            continue
+        missing = _missing_central_terms_in_evidence(item, job)
+        if missing:
+            errors.append(f"{_ranking_item_label(item, index)} missing central term evidence {missing[:5]}")
+    return errors
+
+
+def _missing_central_terms_in_evidence(item: dict[str, Any], job: dict[str, Any]) -> list[str]:
+    terms = _central_terms_to_reconcile(job)
+    if not terms:
+        return []
+    evidence_text = _ranking_item_evidence_text(item)
+    return [term for term in terms if not _contains_term_variant(evidence_text, term)]
+
+
+def _missing_central_terms_in_ranking(ranking: Any, job: dict[str, Any]) -> list[str]:
+    terms = _central_terms_to_reconcile(job)
+    if not terms:
+        return []
+    evidence = ranking.evidence
+    parts = [
+        *[str(item) for item in evidence.strong_matches],
+        *[str(item) for item in evidence.partial_matches],
+        *[str(item) for item in evidence.missing_requirements],
+        *[str(item) for item in evidence.nice_to_have_matches],
+        *[str(item) for item in evidence.dealbreakers],
+        *[str(item) for item in evidence.red_flags],
+        *[str(item) for item in evidence.central_requirements],
+        *[str(item) for item in evidence.llm_escalation_reasons],
+        *[str(item) for item in ranking.cv_keywords_to_emphasize],
+        *[str(item) for item in ranking.cv_keywords_to_avoid_overclaiming],
+    ]
+    evidence_text = _normalize_text(" ".join(parts))
+    return [term for term in terms if not _contains_term_variant(evidence_text, term)]
+
+
+def _ranking_item_evidence_text(item: dict[str, Any]) -> str:
+    evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+    parts: list[str] = []
+    for key in [
+        "strong_matches",
+        "partial_matches",
+        "missing_requirements",
+        "nice_to_have_matches",
+        "dealbreakers",
+        "red_flags",
+        "central_requirements",
+        "llm_escalation_reasons",
+    ]:
+        parts.extend(_flatten_evidence_values(evidence.get(key)))
+    parts.extend(_flatten_evidence_values(item.get("cv_keywords_to_emphasize")))
+    parts.extend(_flatten_evidence_values(item.get("cv_keywords_to_avoid_overclaiming")))
+    return _normalize_text(" ".join(parts))
+
+
+def _flatten_evidence_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [str(item) for item in value.values() if item not in (None, "")]
+    if isinstance(value, list):
+        out: list[str] = []
+        for item in value:
+            out.extend(_flatten_evidence_values(item))
+        return out
+    return [str(value)]
 
 
 def _nvidia_contract_errors(rankings: list[Any]) -> list[str]:
@@ -1636,6 +1808,115 @@ def _exception_summary(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc!r}"
 
 
+def _central_terms_to_reconcile(job: dict[str, Any], *, limit: int = _CENTRAL_TERM_LIMIT) -> list[str]:
+    title = str(job.get("title") or "")
+    scoped_text = _central_requirement_scope(job)
+    terms: list[str] = []
+    terms.extend(_title_role_terms(title))
+
+    for term in [*_CENTRAL_DOMAIN_TERMS, *_CENTRAL_TECH_TERMS]:
+        if not _contains_term_variant(scoped_text, term):
+            continue
+        if not (_contains_term_variant(title, term) or _term_has_requirement_context(scoped_text, term)):
+            continue
+        terms.append(term)
+
+    return _dedupe_terms(terms)[:limit]
+
+
+def _central_requirement_scope(job: dict[str, Any]) -> str:
+    title = str(job.get("title") or "")
+    parts = [
+        title,
+        job.get("company"),
+        job.get("location"),
+        job.get("workplace_type"),
+        job.get("description_text"),
+    ]
+    text = " ".join(str(part) for part in parts if part)
+    lowered = text.lower()
+    cut_points = [lowered.find(marker) for marker in _NON_CENTRAL_STACK_MARKERS if marker in lowered]
+    if cut_points:
+        text = text[: min(cut_points)]
+    return text
+
+
+def _title_role_terms(title: str) -> list[str]:
+    terms = []
+    for match in _ROLE_TERM_PATTERN.finditer(title):
+        seniority = match.group(1)
+        domain = _canonical_role_domain(match.group(2))
+        noun = _canonical_role_noun(match.group(3))
+        role = f"{domain} {noun}".strip()
+        if seniority and _normalize_text(seniority) in {"senior", "sr"}:
+            terms.append(f"Senior {role}")
+            terms.append(f"Senior {domain}")
+        terms.append(role)
+    return terms
+
+
+def _canonical_role_domain(value: str) -> str:
+    normalized = _normalize_text(value)
+    mapping = {
+        "ai": "AI",
+        "ml": "Machine Learning",
+        "devops": "DevOps",
+        "mlops": "MLOps",
+        "back end": "Backend",
+        "frontend": "Frontend",
+        "front end": "Frontend",
+        "fullstack": "Full Stack",
+        "full stack": "Full Stack",
+    }
+    return mapping.get(normalized, " ".join(part.capitalize() for part in normalized.split()))
+
+
+def _canonical_role_noun(value: str) -> str:
+    normalized = _normalize_text(value)
+    mapping = {"scientist": "Scientist"}
+    return mapping.get(normalized, normalized.capitalize())
+
+
+def _term_has_requirement_context(text: str, term: str) -> bool:
+    normalized = _normalize_text(text)
+    normalized_term = _normalize_text(term)
+    if not normalized or not normalized_term:
+        return False
+    for match in re.finditer(re.escape(normalized_term), normalized):
+        window = normalized[max(0, match.start() - 140) : match.end() + 140]
+        if any(marker in window for marker in _CENTRAL_REQUIREMENT_CONTEXT_MARKERS):
+            return True
+    return False
+
+
+def _contains_term_variant(text: str, term: str) -> bool:
+    normalized = _normalize_text(str(text or ""))
+    normalized_term = _normalize_text(term)
+    if not normalized or not normalized_term:
+        return False
+    variants = {normalized_term}
+    if normalized_term.endswith("s"):
+        variants.add(normalized_term[:-1])
+    else:
+        variants.add(f"{normalized_term}s")
+    if normalized_term.endswith("y"):
+        variants.add(f"{normalized_term[:-1]}ies")
+    return any(_contains_skill_marker(normalized, variant) for variant in variants if variant)
+
+
+def _dedupe_terms(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out = []
+    for value in values:
+        term = str(value or "").strip()
+        key = _normalize_text(term)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(term)
+    return out
+
+
 def _compact_job(job: dict[str, Any], max_description_chars: int = 6000) -> dict[str, Any]:
     keys = [
         "id",
@@ -1662,4 +1943,7 @@ def _compact_job(job: dict[str, Any], max_description_chars: int = 6000) -> dict
     description = str(compact.get("description_text") or "")
     if len(description) > max_description_chars:
         compact["description_text"] = description[:max_description_chars] + "\n[truncated]"
+    central_terms = _central_terms_to_reconcile(compact)
+    if central_terms:
+        compact["central_terms_to_reconcile"] = central_terms
     return compact
