@@ -8,6 +8,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     _call_openai,
     _experience_coverage_problems,
     _kit_from_response,
+    _kit_validation_error,
     _materials_validation_error,
     _materials_payload,
     _openai_materials_messages,
@@ -498,6 +499,52 @@ def test_ats_cv_validation_rejects_ranking_avoid_overclaiming_terms_without_sour
 
     assert error is not None
     assert "avoid-overclaiming terms: Kubernetes" in error
+
+
+def test_materials_validation_rejects_serverless_aliases_from_avoid_overclaiming_terms():
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi PSS, my Python API work maps well to the AWS Backend role.",
+            "cover_letter": "My experience with API Gateway, AWS Lambda, and DynamoDB fits this role.",
+            "ats_cv_text": _complete_ats_cv_text()
+            + "\nTechnical Skills\nAWS (EC2, Lambda, API Gateway, S3)",
+            "autofill_notes": "Lead with Python APIs and AWS-adjacent backend experience.",
+            "risk_flags": [],
+            "keywords_used": ["Python", "AWS"],
+        },
+        source_payload={
+            "base_cv": {"text": _complete_ats_cv_text() + "\n- Built Python APIs on AWS EC2."},
+            "candidate_profile": {"skills": [{"name": "Python"}, {"name": "AWS"}, {"name": "EC2"}]},
+            "ranking": {"cv_keywords_to_avoid_overclaiming": ["Serverless Architecture"]},
+            "job": {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
+        },
+    )
+
+    assert error is not None
+    assert "application_materials contains unsupported ranking avoid-overclaiming terms" in error
+    assert "ats_cv_text contains unsupported ranking avoid-overclaiming terms" in error
+    assert "AWS Lambda" in error
+    assert "DynamoDB" in error
+
+
+def test_nvidia_kit_validation_rejects_serverless_aliases_from_cover_letter():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi PSS, my Python API work maps well to the AWS Backend role.",
+            "cover_letter": "My experience with API Gateway, AWS Lambda, and DynamoDB fits this role.",
+            "autofill_notes": "Use the Python API angle.",
+        },
+        {
+            "base_cv": {"text": _complete_ats_cv_text() + "\n- Built Python APIs on AWS EC2."},
+            "candidate_profile": {"skills": [{"name": "Python"}, {"name": "AWS"}, {"name": "EC2"}]},
+            "ranking": {"cv_keywords_to_avoid_overclaiming": ["Serverless Architecture"]},
+            "job": {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
+        },
+    )
+
+    assert error is not None
+    assert "application_materials contains unsupported ranking avoid-overclaiming terms" in error
+    assert "AWS Lambda" in error
 
 
 def test_ats_cv_validation_allows_ranking_avoid_term_when_source_supports_it():

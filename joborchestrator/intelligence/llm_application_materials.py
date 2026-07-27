@@ -122,7 +122,7 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "Keep the base CV's overall section structure when possible, but rewrite wording and ordering for ATS fit against this job.",
             "If base_cv is empty, produce the best complete CV draft possible from the candidate profile and mark missing source limitations in risk_flags.",
             "Use job requirements as keywords only when the candidate can truthfully claim or position adjacent experience.",
-            "Treat ranking_constraints.avoid_overclaiming_terms as forbidden exact phrases unless base_cv or candidate_profile explicitly supports them; do not include unsupported avoid terms in ats_cv_text.",
+            "Treat ranking_constraints.avoid_overclaiming_terms as forbidden claim families unless base_cv or candidate_profile explicitly supports the term or specific related technology; do not include unsupported avoid terms or aliases in generated materials.",
             "Recruiter_message must be a short LinkedIn connection note to a recruiter or hiring contact, not a cover letter and not multiple variants.",
             "Recruiter_message must fit a LinkedIn invite: under 300 characters when possible, one paragraph, no formal letter salutation, no cover-letter body.",
             "Recruiter_message should say why this specific role matches the CV and that the candidate would like to send/share the CV.",
@@ -445,7 +445,7 @@ def _call_nvidia_kit(payload: dict[str, Any], api_key: str, model: str, timeout:
             timeout,
             validation_feedback,
         )
-        validation_feedback = _kit_response_validation_error(parsed, payload)
+        validation_feedback = _kit_validation_error(parsed, payload)
         if not validation_feedback:
             parsed["_generation_metadata"] = {
                 "validation_attempts": attempt + 1,
@@ -689,6 +689,9 @@ def _materials_validation_error(
         problems.append(kit_error)
     if cv_error:
         problems.append(cv_error)
+    non_cv_error = _materials_non_cv_overclaiming_error(payload, source_payload)
+    if non_cv_error:
+        problems.append(non_cv_error)
     return "; ".join(problems) if problems else None
 
 
@@ -795,7 +798,21 @@ def _ats_cv_response_validation_error(
             problems.append(f"{field} must be an array")
     problems.extend(_ats_cv_quality_problems(ats_cv_text))
     problems.extend(_experience_coverage_problems(str(base_cv_text or ""), ats_cv_text))
-    problems.extend(_ats_cv_overclaiming_problems(ats_cv_text, source_payload))
+    problems.extend(_avoid_overclaiming_problems(ats_cv_text, source_payload, field_name="ats_cv_text"))
+    return "; ".join(problems) if problems else None
+
+
+def _kit_validation_error(
+    payload: dict[str, Any],
+    source_payload: dict[str, Any] | None = None,
+) -> str | None:
+    problems = []
+    kit_error = _kit_response_validation_error(payload, source_payload)
+    overclaiming_error = _materials_non_cv_overclaiming_error(payload, source_payload)
+    if kit_error:
+        problems.append(kit_error)
+    if overclaiming_error:
+        problems.append(overclaiming_error)
     return "; ".join(problems) if problems else None
 
 
@@ -869,7 +886,24 @@ def _experience_coverage_problems(base_cv_text: str, ats_cv_text: str) -> list[s
     return []
 
 
-def _ats_cv_overclaiming_problems(text: str, source_payload: dict[str, Any] | None) -> list[str]:
+def _materials_non_cv_overclaiming_error(
+    payload: dict[str, Any],
+    source_payload: dict[str, Any] | None,
+) -> str | None:
+    text = "\n".join(
+        str(payload.get(field) or "")
+        for field in ["recruiter_message", "cover_letter", "autofill_notes"]
+    )
+    problems = _avoid_overclaiming_problems(text, source_payload, field_name="application_materials")
+    return "; ".join(problems) if problems else None
+
+
+def _avoid_overclaiming_problems(
+    text: str,
+    source_payload: dict[str, Any] | None,
+    *,
+    field_name: str,
+) -> list[str]:
     if not source_payload:
         return []
     ranking = source_payload.get("ranking") if isinstance(source_payload.get("ranking"), dict) else {}
@@ -883,18 +917,48 @@ def _ats_cv_overclaiming_problems(text: str, source_payload: dict[str, Any] | No
 
     normalized_cv = _normalize_for_match(text)
     supported_source = _normalize_for_match(_supported_materials_source_text(source_payload))
-    unsupported_terms = [
-        term
-        for term in avoid_terms
-        if _contains_phrase_for_materials(normalized_cv, term)
-        and not _contains_phrase_for_materials(supported_source, term)
-    ]
+    unsupported_terms = []
+    for term in avoid_terms:
+        matched_aliases = [
+            alias
+            for alias in _avoid_overclaiming_aliases(term)
+            if _contains_phrase_for_materials(normalized_cv, alias)
+            and not _contains_phrase_for_materials(supported_source, alias)
+        ]
+        if matched_aliases:
+            unsupported_terms.append(f"{term} ({', '.join(matched_aliases[:4])})")
     if not unsupported_terms:
         return []
     return [
-        "ats_cv_text contains unsupported ranking avoid-overclaiming terms: "
+        f"{field_name} contains unsupported ranking avoid-overclaiming terms: "
         + ", ".join(unsupported_terms[:6])
     ]
+
+
+def _avoid_overclaiming_aliases(term: str) -> list[str]:
+    normalized = _normalize_for_match(term)
+    aliases = [str(term or "").strip()]
+    if "serverless" in normalized:
+        aliases.extend(
+            [
+                "Serverless",
+                "Serverless Architecture",
+                "AWS Lambda",
+                "Lambda",
+                "DynamoDB",
+                "API Gateway",
+                "EventBridge",
+                "SQS",
+                "SNS",
+                "Step Functions",
+                "CloudFormation",
+                "AWS CDK",
+                "CDK",
+            ]
+        )
+    if "kubernetes" in normalized:
+        aliases.extend(["Kubernetes", "K8s", "EKS", "AKS", "GKE"])
+    return _dedupe_strings([alias for alias in aliases if str(alias or "").strip()])
 
 
 def _supported_materials_source_text(source_payload: dict[str, Any]) -> str:
