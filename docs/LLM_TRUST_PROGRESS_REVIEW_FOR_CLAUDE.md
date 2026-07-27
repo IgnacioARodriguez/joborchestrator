@@ -290,11 +290,12 @@ Fix implemented:
 - Generation validation now rejects recruiter messages over 320 characters, matching the golden eval limit.
 - Internal-note validation already exists for ATS CV generation.
 - Complete-CV validation and avoid-overclaiming validation already exist.
+- A 2026-07-27 live NVIDIA materials v3 probe regenerated the 4 raw real-job materials-ready cases in memory and passed 4/4 application-materials evals plus 4/4 ATS CV evals. The PSS/serverless case produced an initial invalid ATS CV containing `Serverless Architecture`; validation retried and the final output passed.
 
 Remaining gap:
 
-- Need fresh generation proof for materials and ATS CV.
 - Need DB-backed reviewed real cases for materials/ATS, not only synthetic seed fixtures.
+- Need a larger fresh sample before treating the 4-case live probe as high-trust coverage.
 
 Generated review packet:
 
