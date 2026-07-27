@@ -60,10 +60,10 @@ def build_capture_fixture(
     job = db.get_job_posting(int(job_id))
     if not job:
         raise SystemExit(f"Job id {job_id} was not found.")
-    profile = db.get_candidate_profile_payload() or {}
+    profile = _redact_candidate_pii(db.get_candidate_profile_payload() or {})
     auto_case = build_auto_eval_case(job, profile)
     case_id = _case_id(job, label)
-    output = _current_output(surface, job, ranking_version)
+    output = _redact_candidate_pii(_current_output(surface, job, ranking_version))
     ranking_output = output if surface == "ranking" else _current_output("ranking", job, ranking_version)
     return {
         "case_id": case_id,
@@ -189,6 +189,24 @@ def _raw_input(job: dict[str, Any]) -> dict[str, Any]:
         "easy_apply": _bool_or_none(job.get("easy_apply")),
         "raw_payload": _loads_json(job.get("raw_payload_json"), job.get("raw_payload") or {}),
     }
+
+
+def _redact_candidate_pii(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _redact_candidate_pii(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_candidate_pii(item) for item in value]
+    if not isinstance(value, str):
+        return value
+    redacted = re.sub(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", "[redacted-email]", value)
+    redacted = re.sub(r"\+?\d[\d\s().-]{7,}\d", "[redacted-phone]", redacted)
+    redacted = re.sub(
+        r"(?:https?://)?(?:www\.)?linkedin\.com/in/[A-Za-z0-9_-]+/?",
+        "[redacted-linkedin]",
+        redacted,
+        flags=re.IGNORECASE,
+    )
+    return redacted
 
 
 def _case_id(job: dict[str, Any], label: str) -> str:
