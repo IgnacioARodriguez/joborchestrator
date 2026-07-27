@@ -210,11 +210,20 @@ def test_llm_materials_payload_accepts_ranking_dict(monkeypatch):
 
     payload = _materials_payload(
         {"title": "Backend Engineer", "company": "Acme"},
-        {"final_score": 82, "decision": "APPLY_NOW"},
+        {
+            "final_score": 82,
+            "decision": "APPLY_NOW",
+            "cv_keywords_to_emphasize": ["Python"],
+            "cv_keywords_to_avoid_overclaiming": ["Serverless Architecture"],
+        },
     )
 
     assert payload["ranking"]["final_score"] == 82
     assert payload["ranking"]["decision"] == "APPLY_NOW"
+    assert payload["ranking_constraints"] == {
+        "avoid_overclaiming_terms": ["Serverless Architecture"],
+        "keywords_to_emphasize": ["Python"],
+    }
 
 
 def test_application_kit_flattens_nested_recruiter_message():

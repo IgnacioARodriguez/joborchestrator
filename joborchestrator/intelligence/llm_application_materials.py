@@ -102,6 +102,7 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
         raise LLMMaterialsError("No candidate profile configured. Upload a CV in Profile before generating materials.")
     profile = CandidateProfile(**profile_payload_to_candidate_profile(profile_payload))
     base_cv_text = str(profile_payload.get("base_cv_text") or "").strip()
+    ranking_payload = _ranking_payload(ranking)
     return {
         "candidate_profile": asdict(profile),
         "base_cv": {
@@ -109,7 +110,8 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "text": base_cv_text[:24000],
         },
         "job": _compact_job(_to_dict(job)),
-        "ranking": _ranking_payload(ranking),
+        "ranking": ranking_payload,
+        "ranking_constraints": _materials_ranking_constraints(ranking_payload),
         "goal": (
             "Generate truthful, editable application materials and a complete ATS-optimized CV for this specific job. "
             "Optimize for ATS filters and fast application workflow without inventing experience."
@@ -120,6 +122,7 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "Keep the base CV's overall section structure when possible, but rewrite wording and ordering for ATS fit against this job.",
             "If base_cv is empty, produce the best complete CV draft possible from the candidate profile and mark missing source limitations in risk_flags.",
             "Use job requirements as keywords only when the candidate can truthfully claim or position adjacent experience.",
+            "Treat ranking_constraints.avoid_overclaiming_terms as forbidden exact phrases unless base_cv or candidate_profile explicitly supports them; do not include unsupported avoid terms in ats_cv_text.",
             "Recruiter_message must be a short LinkedIn connection note to a recruiter or hiring contact, not a cover letter and not multiple variants.",
             "Recruiter_message must fit a LinkedIn invite: under 300 characters when possible, one paragraph, no formal letter salutation, no cover-letter body.",
             "Recruiter_message should say why this specific role matches the CV and that the candidate would like to send/share the CV.",
@@ -138,6 +141,20 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "risk_flags": ["unsupported or review-needed claims"],
             "keywords_used": ["truthful job keywords included"],
         },
+    }
+
+
+def _materials_ranking_constraints(ranking: dict[str, Any] | None) -> dict[str, Any]:
+    if not ranking:
+        return {"avoid_overclaiming_terms": [], "keywords_to_emphasize": []}
+    return {
+        "avoid_overclaiming_terms": _terms_from_maybe_json(
+            ranking.get("cv_keywords_to_avoid_overclaiming")
+            or ranking.get("cv_keywords_to_avoid_overclaiming_json")
+        ),
+        "keywords_to_emphasize": _terms_from_maybe_json(
+            ranking.get("cv_keywords_to_emphasize") or ranking.get("cv_keywords_to_emphasize_json")
+        ),
     }
 
 
