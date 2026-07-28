@@ -18,7 +18,14 @@ from joborchestrator.storage import persistence as db
 
 Progress = Callable[[str], None]
 
-CHALLENGE_MARKERS = ("captcha", "challenge", "checkpoint", "verify you are human", "security check")
+CHALLENGE_MARKERS = (
+    "checkpoint",
+    "verify you are human",
+    "security check",
+    "human verification",
+    "cloudflare challenge",
+    "please complete the captcha",
+)
 LOGIN_MARKERS = ("sign in", "log in", "login", "create account", "register to apply")
 APPLY_TEXT_RE = re.compile(
     r"\b(apply|apply now|start application|continue application|submit application|aplicar|solicitar|postular|postularme|enviar candidatura)\b",
@@ -358,6 +365,12 @@ async def run_application_execution(
 
 def _looks_blocked(url: str, html: str) -> bool:
     text = f"{url}\n{html[:5000]}".lower()
+    has_application_form = 'id="application_form"' in text or "id='application_form'" in text
+    if has_application_form:
+        return any(
+            marker in text
+            for marker in ("checkpoint", "verify you are human", "security check", "human verification", "cloudflare challenge")
+        )
     return any(marker in text for marker in CHALLENGE_MARKERS)
 
 

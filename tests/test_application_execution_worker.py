@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from joborchestrator import worker
-from joborchestrator.automation.executor import run_application_execution
+from joborchestrator.automation.executor import _looks_blocked, run_application_execution
 from joborchestrator.automation import local_browser_agent
 from joborchestrator.storage import persistence as db
 from test_api_endpoints import make_job
@@ -40,6 +40,26 @@ def test_worker_processes_application_execution_operation(tmp_path, monkeypatch)
     operation = db.get_operation(operation_id)
     assert operation["status"] == "completed"
     assert db.get_application_session(session["id"])["state"] == "needs_user_input"
+
+
+def test_application_challenge_copy_is_not_human_verification() -> None:
+    html = """
+    <form id="application_form">
+      <label>Application Challenge: Security Code</label>
+      <input name="challenge_answer">
+    </form>
+    """
+
+    assert _looks_blocked("https://job-boards.greenhouse.io/warp/jobs/1", html) is False
+    assert _looks_blocked(
+        "https://job-boards.greenhouse.io/warp/jobs/1",
+        '<form id="application_form"><script src="/recaptcha.js"></script><input name="email"></form>',
+    ) is False
+    assert _looks_blocked(
+        "https://job-boards.greenhouse.io/warp/jobs/1",
+        '<script src="https://www.gstatic.com/recaptcha/releases/x/recaptcha__es.js"></script>',
+    ) is False
+    assert _looks_blocked("https://example.test", "<h1>Verify you are human</h1>") is True
 
 
 def test_application_execution_starts_local_browser_handoff(tmp_path, monkeypatch) -> None:
