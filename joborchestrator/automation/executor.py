@@ -232,8 +232,12 @@ async def run_application_execution(
                 timeout_ms=timeout_ms,
                 progress=progress,
             )
-            html = await live_page.content()
-            url = live_page.url
+            try:
+                html = await live_page.content()
+                url = live_page.url
+            except Exception:
+                if auto_submit_result.get("status") != "submitted":
+                    raise
     finally:
         cleanup_path = resume_upload.get("cleanup_path")
         if cleanup_path:
