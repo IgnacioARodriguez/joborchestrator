@@ -248,15 +248,16 @@ async def run_application_execution(
         schema = initial_step.schema
         mapping = initial_step.mapping
         journey_step = initial_step.to_dict()
+        browser_surface = initial_step.browser_surface
         if capabilities.can_fill_text_fields or capabilities.can_fill_selects or capabilities.can_fill_radios or capabilities.can_fill_checkboxes:
             _progress(
                 progress,
                 f"Filling safe {adapter.provider} fields in dry-run mode." if dry_run else f"Filling safe {adapter.provider} fields.",
             )
-            live_fill = await fill_safe_fields_on_page(live_page, mapping, dry_run=dry_run)
+            live_fill = await fill_safe_fields_on_page(browser_surface, mapping, dry_run=dry_run)
         if capabilities.can_upload_resume:
             resume_upload = await upload_resume_on_page(
-                live_page,
+                browser_surface,
                 schema,
                 resolve_resume_upload_file(job_id, job),
             )
@@ -265,7 +266,7 @@ async def run_application_execution(
                 live_fill.setdefault("filled_fields", []).append(str(resume_upload.get("field_name") or "resume"))
                 _remove_resolved_file_unknowns(mapping)
         if capabilities.can_detect_fields:
-            forbidden_submit_controls = await detect_forbidden_submit_controls(live_page)
+            forbidden_submit_controls = await detect_forbidden_submit_controls(browser_surface)
             auto_submit_result = await maybe_auto_submit_application(
                 live_page,
                 session=existing_session,

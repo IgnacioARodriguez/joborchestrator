@@ -101,6 +101,37 @@ def test_journey_engine_prepares_initial_generic_step() -> None:
     assert serialized["action_plan"]["form_fingerprint"]
 
 
+def test_journey_engine_selects_accessible_frame_surface() -> None:
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <h1>Job details</h1>
+        <iframe srcdoc='
+          <form id="application">
+            <label for="name">Full name *</label>
+            <input id="name" name="name" required>
+            <label for="email">Email *</label>
+            <input id="email" name="email" type="email" required>
+            <label for="resume">Resume *</label>
+            <input id="resume" name="resume" type="file" required>
+            <button type="submit">Submit application</button>
+          </form>
+        '></iframe>
+      </body>
+    </html>
+    """
+    step = asyncio.run(_prepare_step(html))
+    serialized = step.to_dict()
+
+    assert serialized["surface"]["kind"] == "frame"
+    assert serialized["surface"]["surface_id"].startswith("frame:")
+    assert [field["name"] for field in serialized["schema"]["fields"]] == ["name", "email", "resume"]
+    assert all(field["surface_id"] == serialized["surface"]["surface_id"] for field in serialized["schema"]["fields"])
+    assert serialized["schema"]["fields"][0]["control_handle"]["surface_id"] == serialized["surface"]["surface_id"]
+    assert serialized["action_plan"]["actions"][0]["surface_id"] == serialized["surface"]["surface_id"]
+
+
 async def _prepare_step(html: str):
     adapter = GenericFormAdapter()
     async with async_playwright() as p:
