@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from urllib.parse import quote
 
@@ -131,3 +132,22 @@ def test_audit_application_coverage_runs_dry_run_on_local_fixture(tmp_path: Path
     assert result["coverage_score"] == "ready_no_human_input"
     assert result["resume_upload_status"] == "uploaded"
     assert result["submit_controls_count"] == 1
+
+
+def test_audit_application_coverage_restores_environment(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("JOB_ORCHESTRATOR_SKIP_ENV_FILE", raising=False)
+    html = Path("tests/fixtures/generic_application.html").read_text(encoding="utf-8")
+
+    asyncio.run(
+        audit_application_coverage(
+            [f"data:text/html,{quote(html)}"],
+            db_path=tmp_path / "coverage.db",
+            provider="generic_form",
+            answers_file=None,
+            headful=False,
+            timeout_ms=10_000,
+            keep_db=False,
+        )
+    )
+
+    assert "JOB_ORCHESTRATOR_SKIP_ENV_FILE" not in os.environ

@@ -23,6 +23,17 @@ SYNTHETIC_PROFILE = {
     "portfolio_url": "https://example.test",
 }
 
+AUDIT_ENV_KEYS = (
+    "JOB_ORCHESTRATOR_SKIP_ENV_FILE",
+    "TURSO_DATABASE_URL",
+    "TURSO_AUTH_TOKEN",
+    "JOB_ORCHESTRATOR_DB_PATH",
+    "ENABLE_AUTO_SUBMIT_APPROVED",
+    "APPLICATION_BROWSER_HEADLESS",
+    "APPLICATION_BROWSER_HANDOFF",
+    "APPLICATION_BROWSER_TIMEOUT_MS",
+)
+
 
 def _prepare_environment(db_path: Path, *, headful: bool, timeout_ms: int) -> None:
     os.environ["JOB_ORCHESTRATOR_SKIP_ENV_FILE"] = "1"
@@ -192,36 +203,43 @@ async def audit_application_coverage(
     timeout_ms: int,
     keep_db: bool,
 ) -> dict[str, object]:
+    original_env = {key: os.environ.get(key) for key in AUDIT_ENV_KEYS}
     _remove_db(db_path)
     _prepare_environment(db_path, headful=headful, timeout_ms=timeout_ms)
+    try:
+        from joborchestrator.storage import db_connection
+        from joborchestrator.storage import persistence as db
 
-    from joborchestrator.storage import db_connection
-    from joborchestrator.storage import persistence as db
+        db.init_db()
+        db.save_candidate_profile_payload(SYNTHETIC_PROFILE)
+        if answers_file:
+            for answer in json.loads(answers_file.read_text(encoding="utf-8")):
+                if isinstance(answer, dict):
+                    db.upsert_answer_definition(answer)
 
-    db.init_db()
-    db.save_candidate_profile_payload(SYNTHETIC_PROFILE)
-    if answers_file:
-        for answer in json.loads(answers_file.read_text(encoding="utf-8")):
-            if isinstance(answer, dict):
-                db.upsert_answer_definition(answer)
+        results: list[dict[str, object]] = []
+        for index, url in enumerate(urls, start=1):
+            results.append(await audit_application_url(url, provider=provider, index=index))
 
-    results: list[dict[str, object]] = []
-    for index, url in enumerate(urls, start=1):
-        results.append(await audit_application_url(url, provider=provider, index=index))
-
-    summary = summarize_results(results)
-    report = {
-        "db_mode": db_connection.connection_mode(),
-        "db_path": str(db_path),
-        "dry_run": True,
-        "auto_submit_enabled": False,
-        "urls_requested": len(urls),
-        "summary": summary,
-        "results": results,
-    }
-    if not keep_db:
-        _remove_db(db_path)
-    return report
+        summary = summarize_results(results)
+        report = {
+            "db_mode": db_connection.connection_mode(),
+            "db_path": str(db_path),
+            "dry_run": True,
+            "auto_submit_enabled": False,
+            "urls_requested": len(urls),
+            "summary": summary,
+            "results": results,
+        }
+        if not keep_db:
+            _remove_db(db_path)
+        return report
+    finally:
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def summarize_results(results: list[dict[str, object]]) -> dict[str, object]:
