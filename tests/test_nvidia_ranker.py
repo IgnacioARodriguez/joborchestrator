@@ -90,9 +90,9 @@ def test_build_nvidia_ranking_payload_adds_central_terms_to_reconcile(monkeypatc
         "Senior Data Engineer",
         "Senior Data",
         "Data Engineer",
-        "Python",
-        "Snowflake",
         "Terraform",
+        "Snowflake",
+        "Python",
     ]
 
 
@@ -111,6 +111,24 @@ def test_central_terms_ignore_non_central_alternative_stack_block():
     assert "LangChain" in terms
     assert "Vector Databases" in terms
     assert "Rust" not in terms
+
+
+def test_central_terms_ignore_nice_to_have_context():
+    terms = nvidia_ranker._central_terms_to_reconcile(
+        {
+            "id": 2,
+            "title": "Backend Engineer",
+            "description_text": (
+                "Requirements: Python and FastAPI. "
+                "Nice to have: Kubernetes, experience with Terraform a plus."
+            ),
+        }
+    )
+
+    assert "Python" in terms
+    assert "FastAPI" in terms
+    assert "Kubernetes" not in terms
+    assert "Terraform" not in terms
 
 
 def test_build_nvidia_ranking_payload_requires_profile(monkeypatch):

@@ -18,3 +18,21 @@ def test_requirements_extractor_uses_db_skill_catalog(tmp_path, monkeypatch):
 
     assert "Contract Review" in requirements.tech_stack
     assert "Contract Review" in requirements.hard_requirements
+
+
+def test_db_skill_catalog_extends_default_catalog(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.add_skill_catalog_item("Legal", "Contract Review")
+
+    requirements = extract_requirements(
+        {
+            "title": "Legal Operations Specialist",
+            "company": "Acme",
+            "location": "Remote",
+            "description_text": "Requirements: Python and Contract Review.",
+        }
+    )
+
+    assert "Contract Review" in requirements.tech_stack
+    assert "Python" in requirements.tech_stack

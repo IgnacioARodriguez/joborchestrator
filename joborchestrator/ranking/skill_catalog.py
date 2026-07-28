@@ -14,16 +14,17 @@ def find_skills(text: str) -> list[str]:
 
 
 def _skill_terms() -> list[str]:
+    defaults = [skill for skills in DEFAULT_SKILL_CATALOG.values() for skill in skills]
     try:
         from joborchestrator.storage import persistence as db
 
         rows = db.list_skill_catalog()
         terms = [str(row["name"]) for row in rows if row.get("name")]
         if terms:
-            return terms
+            return _dedupe([*terms, *defaults])
     except Exception:
         pass
-    return [skill for skills in DEFAULT_SKILL_CATALOG.values() for skill in skills]
+    return defaults
 
 
 def _dedupe(values: list[str]) -> list[str]:

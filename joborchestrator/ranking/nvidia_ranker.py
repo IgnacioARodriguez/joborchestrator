@@ -16,7 +16,9 @@ from joborchestrator.prompts import active_prompt_version, load_prompt
 from joborchestrator.intelligence.profile_trace import profile_trace
 from joborchestrator.ranking.llm_ranker import _ranking_from_payload
 from joborchestrator.ranking.ranking_rules import NVIDIA_EXTRA_RULES, RANKING_GOAL, RANKING_RULES, SCORING_RUBRIC
+from joborchestrator.ranking.requirements_extractor import HARD_MARKERS, NICE_MARKERS, extract_requirements
 from joborchestrator.ranking.schemas import CandidateProfile, Decision, VALID_DECISIONS
+from joborchestrator.ranking.skill_catalog import find_skills
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.storage import persistence as db
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
@@ -79,64 +81,6 @@ REQUIRED_EVIDENCE_FIELDS = {
 _SKILL_LEVEL_WEIGHT = {"weak": 1, "medium": 2, "strong": 3}
 
 _CENTRAL_TERM_LIMIT = 14
-_CENTRAL_TECH_TERMS = [
-    "AppSec",
-    "Alertmanager",
-    "Django",
-    "DevSecOps",
-    "Docker",
-    "EPC",
-    "FastAPI",
-    "Flask",
-    "GCP",
-    "Golang",
-    "Grafana",
-    "Kubernetes",
-    "LangChain",
-    "LLM",
-    "MLOps",
-    "OpenAI",
-    "PLC/SCADA",
-    "Pinecone",
-    "PostgreSQL",
-    "Prometheus",
-    "Python",
-    "RabbitMQ",
-    "RAG",
-    "React",
-    "REST API",
-    "REST APIs",
-    "Rust",
-    "SAP",
-    "Snowflake",
-    "STATCOM",
-    "Terraform",
-    "Thanos",
-    "TypeScript",
-    "Vector Databases",
-    "VFD",
-    "vLLM",
-    "Weaviate",
-]
-_CENTRAL_DOMAIN_TERMS = [
-    "AI Engineer",
-    "Application Engineer",
-    "Application Security",
-    "Cloud Security",
-    "cybersecurity",
-    "Data Scientist",
-    "industrial automation",
-    "Infrastructure Engineer",
-    "Machine Learning",
-    "Platform Engineering",
-    "Security Engineer",
-    "Senior AI",
-    "Senior AI Engineer",
-    "Senior Data Scientist",
-    "Senior Infrastructure",
-    "Senior Security Engineer",
-    "Site Reliability Engineering",
-]
 _CENTRAL_REQUIREMENT_CONTEXT_MARKERS = [
     "requirements",
     "required",
@@ -154,11 +98,46 @@ _CENTRAL_REQUIREMENT_CONTEXT_MARKERS = [
     "looking for",
     "expected to",
 ]
+_OPTIONAL_REQUIREMENT_MARKERS = [
+    *NICE_MARKERS,
+    "nice-to-have",
+    "bonus",
+    "bonus points",
+    "a plus",
+    "plus",
+    "preferred",
+    "desirable",
+]
+_CENTRAL_SECTION_MARKERS = [
+    *HARD_MARKERS,
+    "what you'll need",
+    "what you will need",
+    "what you need",
+    "required skills",
+    "required qualifications",
+]
 _NON_CENTRAL_STACK_MARKERS = [
     "not your tech stack",
     "other tech stacks",
     "we have a variety of projects",
 ]
+_NON_REQUIREMENT_SECTION_MARKERS = [
+    "benefits",
+    "benefits of working",
+    "equal employment",
+    "does not discriminate",
+    "accommodation",
+    "rights as an applicant",
+    "affirmative action",
+    "privacy notice",
+]
+_CENTRAL_TERM_EXCLUDES = {
+    "C#",
+    "CSS",
+    "Go",
+    "Prioritization",
+    "Training",
+}
 _ROLE_TERM_PATTERN = re.compile(
     r"\b(?:(senior|sr\.?|staff|principal)\s+)?"
     r"(ai|security|infrastructure|platform|data|"
@@ -166,6 +145,24 @@ _ROLE_TERM_PATTERN = re.compile(
     r"(engineer|developer|architect|scientist|consultant)\b",
     flags=re.IGNORECASE,
 )
+_REQUIREMENT_CHUNK_STOPWORDS = {
+    "ability",
+    "adaptability",
+    "bonus",
+    "clear",
+    "communication",
+    "experience",
+    "good",
+    "knowledge",
+    "minimum",
+    "preferred",
+    "requirements",
+    "responsibilities",
+    "skills",
+    "solid",
+    "strong",
+    "understanding",
+}
 
 _PROFILE_AUDIT_MARKERS = {
     "java": {
@@ -1811,13 +1808,26 @@ def _exception_summary(exc: Exception) -> str:
 def _central_terms_to_reconcile(job: dict[str, Any], *, limit: int = _CENTRAL_TERM_LIMIT) -> list[str]:
     title = str(job.get("title") or "")
     scoped_text = _central_requirement_scope(job)
+    scoped_job = {**job, "description_text": scoped_text}
+    requirements = extract_requirements(scoped_job)
+    requirement_texts = _central_requirement_texts(scoped_job, scoped_text)
     terms: list[str] = []
     terms.extend(_title_role_terms(title))
 
-    for term in [*_CENTRAL_DOMAIN_TERMS, *_CENTRAL_TECH_TERMS]:
+    for text in requirement_texts:
+        terms.extend(find_skills(text))
+        terms.extend(_explicit_requirement_terms(text))
+
+    for term in [*requirements.hard_requirements, *requirements.tech_stack]:
         if not _contains_term_variant(scoped_text, term):
             continue
-        if not (_contains_term_variant(title, term) or _term_has_requirement_context(scoped_text, term)):
+        if _term_has_optional_context(scoped_text, term):
+            continue
+        if not (
+            _contains_term_variant(title, term)
+            or _term_has_requirement_context(scoped_text, term)
+            or _term_in_requirement_texts(term, requirement_texts)
+        ):
             continue
         terms.append(term)
 
@@ -1839,6 +1849,111 @@ def _central_requirement_scope(job: dict[str, Any]) -> str:
     if cut_points:
         text = text[: min(cut_points)]
     return text
+
+
+def _central_requirement_texts(job: dict[str, Any], scoped_text: str) -> list[str]:
+    description = str(job.get("description_text") or "")
+    segments = _description_requirement_segments(description)
+    texts = []
+    active_hard_section = False
+    for segment in segments:
+        normalized = _normalize_text(segment)
+        if any(marker in normalized for marker in _NON_REQUIREMENT_SECTION_MARKERS):
+            active_hard_section = False
+            continue
+        if any(marker in normalized for marker in _OPTIONAL_REQUIREMENT_MARKERS):
+            active_hard_section = False
+            continue
+        if _segment_starts_hard_requirement(normalized):
+            active_hard_section = True
+            texts.append(segment)
+            continue
+        if active_hard_section:
+            texts.append(segment)
+    return texts
+
+
+def _description_requirement_segments(description: str) -> list[str]:
+    normalized_breaks = str(description or "")
+    for marker in [
+        "What You'll Do:",
+        "What You'll Need:",
+        "What You Will Need:",
+        "Requirements:",
+        "Required Qualifications:",
+        "Minimum Qualifications:",
+        "Bonus Points:",
+        "Nice to have:",
+        "Benefits of Working",
+        "Benefits:",
+    ]:
+        normalized_breaks = normalized_breaks.replace(marker, f"\n{marker}")
+    normalized_breaks = re.sub(r"(?<=[.!?])\s+", "\n", normalized_breaks)
+    segments = []
+    for line in normalized_breaks.splitlines():
+        stripped = line.strip(" -*\u2022\t")
+        if not stripped:
+            continue
+        parts = [part.strip(" -*\u2022\t") for part in re.split(r"\s{2,}|<br\s*/?>", stripped) if part.strip()]
+        segments.extend(parts)
+    return segments
+
+
+def _segment_starts_hard_requirement(normalized_segment: str) -> bool:
+    return any(
+        normalized_segment.startswith(marker)
+        or normalized_segment.startswith(f"{marker}:")
+        or f"{marker}:" in normalized_segment[:80]
+        for marker in _CENTRAL_SECTION_MARKERS
+    )
+
+
+def _explicit_requirement_terms(text: str) -> list[str]:
+    terms: list[str] = []
+    for chunk in re.split(r",|;|\bor\b|\band\b|/|\(|\)", text):
+        cleaned = _clean_requirement_chunk(chunk)
+        if not cleaned:
+            continue
+        if cleaned in _CENTRAL_TERM_EXCLUDES:
+            continue
+        if _looks_like_explicit_requirement_term(cleaned):
+            terms.append(cleaned)
+    return _dedupe_terms(terms)
+
+
+def _clean_requirement_chunk(chunk: str) -> str:
+    cleaned = re.sub(
+        r"(?i)\b(requirements?|required|mandatory|must have|must|experience with|experience in|"
+        r"proficient in|solid understanding of|you have|we need|looking for)\b",
+        "",
+        str(chunk or ""),
+    )
+    cleaned = re.sub(r"(?i)\b\d+\+?\s*years?\s*(?:of)?\b", "", cleaned)
+    cleaned = cleaned.strip(" .:-\t")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned
+
+
+def _looks_like_explicit_requirement_term(value: str) -> bool:
+    normalized = _normalize_text(value)
+    if not normalized or normalized in _REQUIREMENT_CHUNK_STOPWORDS:
+        return False
+    if value in _CENTRAL_TERM_EXCLUDES:
+        return False
+    if len(value.split()) > 4:
+        return False
+    if any(marker in normalized for marker in _OPTIONAL_REQUIREMENT_MARKERS):
+        return False
+    if any(not re.search(r"[A-Z0-9+#./]", word) for word in value.split()):
+        return False
+    return bool(
+        re.search(r"[A-Z]{2,}|[A-Z][a-z]+(?:[A-Z][a-z0-9]+)+|[+#./]", value)
+        or all(part[:1].isupper() for part in value.split() if part)
+    )
+
+
+def _term_in_requirement_texts(term: str, requirement_texts: list[str]) -> bool:
+    return any(_contains_term_variant(text, term) for text in requirement_texts)
 
 
 def _title_role_terms(title: str) -> list[str]:
@@ -1882,11 +1997,35 @@ def _term_has_requirement_context(text: str, term: str) -> bool:
     normalized_term = _normalize_text(term)
     if not normalized or not normalized_term:
         return False
-    for match in re.finditer(re.escape(normalized_term), normalized):
+    for match in _term_variant_matches(normalized, normalized_term):
+        if _term_match_has_optional_context(normalized, match.start(), match.end()):
+            continue
         window = normalized[max(0, match.start() - 140) : match.end() + 140]
         if any(marker in window for marker in _CENTRAL_REQUIREMENT_CONTEXT_MARKERS):
             return True
     return False
+
+
+def _term_has_optional_context(text: str, term: str) -> bool:
+    normalized = _normalize_text(text)
+    normalized_term = _normalize_text(term)
+    if not normalized or not normalized_term:
+        return False
+    matches = list(_term_variant_matches(normalized, normalized_term))
+    return bool(matches) and all(
+        _term_match_has_optional_context(normalized, match.start(), match.end()) for match in matches
+    )
+
+
+def _term_match_has_optional_context(normalized_text: str, start: int, end: int) -> bool:
+    prefix = normalized_text[max(0, start - 140) : start]
+    suffix = normalized_text[end : min(len(normalized_text), end + 80)]
+    suffix_same_segment = re.split(r"[.!?]", suffix, maxsplit=1)[0]
+    last_optional = max([prefix.rfind(marker) for marker in _OPTIONAL_REQUIREMENT_MARKERS], default=-1)
+    last_required = max([prefix.rfind(marker) for marker in HARD_MARKERS], default=-1)
+    if last_optional > last_required:
+        return True
+    return any(marker in suffix_same_segment for marker in ["a plus", "is a plus", "bonus", "preferred", "desirable"])
 
 
 def _contains_term_variant(text: str, term: str) -> bool:
@@ -1904,13 +2043,29 @@ def _contains_term_variant(text: str, term: str) -> bool:
     return any(_contains_skill_marker(normalized, variant) for variant in variants if variant)
 
 
+def _term_variant_matches(normalized_text: str, normalized_term: str) -> list[re.Match[str]]:
+    variants = {normalized_term}
+    if normalized_term.endswith("s"):
+        variants.add(normalized_term[:-1])
+    else:
+        variants.add(f"{normalized_term}s")
+    if normalized_term.endswith("y"):
+        variants.add(f"{normalized_term[:-1]}ies")
+    matches: list[re.Match[str]] = []
+    for variant in variants:
+        if not variant:
+            continue
+        matches.extend(re.finditer(rf"(?<![a-z0-9]){re.escape(variant)}(?![a-z0-9])", normalized_text))
+    return matches
+
+
 def _dedupe_terms(values: list[str]) -> list[str]:
     seen: set[str] = set()
     out = []
     for value in values:
         term = str(value or "").strip()
         key = _normalize_text(term)
-        if not key or key in seen:
+        if not key or key in seen or term in _CENTRAL_TERM_EXCLUDES:
             continue
         seen.add(key)
         out.append(term)
