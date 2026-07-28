@@ -165,7 +165,7 @@ def test_llm_application_kit_uses_structured_payload(monkeypatch):
         },
     )
 
-    def fake_call(payload, api_key, model, timeout):
+    def fake_call(payload, api_key, model, timeout, **kwargs):
         assert payload["candidate_profile"]
         assert "Ignacio Rodriguez" in payload["base_cv"]["text"]
         assert payload["job"]["title"] == "Backend Engineer"
@@ -506,6 +506,43 @@ def test_materials_validation_retry_limit_scales_for_constrained_cases(monkeypat
     assert retry_limit == 6
 
 
+def test_openai_materials_call_allows_explicit_validation_retry_limit(monkeypatch):
+    calls = []
+
+    def fake_call_once(payload, api_key, model, timeout, validation_feedback=None):
+        calls.append(validation_feedback)
+        return {
+            "recruiter_message": "",
+            "cover_letter": "",
+            "ats_cv_text": "Tiny",
+            "autofill_notes": "",
+            "risk_flags": [],
+            "keywords_used": [],
+        }
+
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(llm_application_materials, "DEFAULT_MATERIALS_VALIDATION_RETRIES", 6)
+    monkeypatch.setattr(llm_application_materials, "_call_openai_once", fake_call_once)
+
+    try:
+        _call_openai(
+            {"job": {"title": "Backend Engineer", "company": "Acme Labs"}, "base_cv": {"text": _complete_ats_cv_text()}},
+            "test-key",
+            "test-model",
+            1.0,
+            validation_retry_limit=0,
+        )
+    except LLMMaterialsError as exc:
+        metadata = exc.generation_metadata
+    else:
+        raise AssertionError("Expected LLMMaterialsError")
+
+    assert len(calls) == 1
+    assert metadata["validation_attempts"] == 1
+    assert metadata["validation_errors"]
+
+
 def test_nvidia_kit_failure_reports_validation_metadata(monkeypatch):
     calls = []
 
@@ -539,7 +576,7 @@ def test_nvidia_kit_failure_reports_validation_metadata(monkeypatch):
     }
 
     try:
-        _call_nvidia_kit(payload, "test-key", "test-model", 1.0)
+        _call_nvidia_kit(payload, "test-key", "test-model", 1.0, validation_retry_limit=1)
     except LLMMaterialsError as exc:
         metadata = exc.generation_metadata
     else:
@@ -563,7 +600,7 @@ def test_nvidia_application_kit_failure_combines_partial_generation_metadata(mon
     monkeypatch.setattr(
         llm_application_materials,
         "_call_nvidia_cv",
-        lambda payload, api_key, model, timeout: {
+        lambda payload, api_key, model, timeout, **kwargs: {
             "ats_cv_text": _complete_ats_cv_text(),
             "_generation_metadata": {
                 "validation_attempts": 2,
@@ -572,7 +609,7 @@ def test_nvidia_application_kit_failure_combines_partial_generation_metadata(mon
         },
     )
 
-    def fail_kit(payload, api_key, model, timeout):
+    def fail_kit(payload, api_key, model, timeout, **kwargs):
         raise LLMMaterialsError(
             "NVIDIA kit response was incomplete: application materials use overconfident tone",
             generation_metadata={
