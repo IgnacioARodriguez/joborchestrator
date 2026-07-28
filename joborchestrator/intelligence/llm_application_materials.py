@@ -449,6 +449,16 @@ def _validation_failure_metadata(attempt: int, validation_errors: list[str], val
     }
 
 
+def _request_failure_metadata(attempt: int, validation_errors: list[str], exc: Exception) -> dict[str, Any]:
+    return {
+        "validation_attempts": attempt + 1,
+        "validation_errors": [
+            *validation_errors,
+            f"request failed during validation attempt {attempt + 1}: {exc}",
+        ],
+    }
+
+
 def _clean_recruiter_message(text: str) -> str:
     message = re.sub(r"\n{3,}", "\n\n", str(text or "")).strip()
     if not message:
@@ -638,7 +648,13 @@ def _call_openai(
     validation_errors: list[str] = []
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
-        parsed = _call_openai_once(payload, api_key, model, timeout, validation_feedback)
+        try:
+            parsed = _call_openai_once(payload, api_key, model, timeout, validation_feedback)
+        except LLMMaterialsError as exc:
+            raise LLMMaterialsError(
+                str(exc),
+                generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
+            ) from exc
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
         if not validation_feedback:
             parsed["_generation_metadata"] = {
@@ -669,7 +685,13 @@ def _call_nvidia(
     validation_errors: list[str] = []
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
-        parsed = _call_nvidia_once(payload, api_key, model, timeout, validation_feedback)
+        try:
+            parsed = _call_nvidia_once(payload, api_key, model, timeout, validation_feedback)
+        except LLMMaterialsError as exc:
+            raise LLMMaterialsError(
+                str(exc),
+                generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
+            ) from exc
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
         if not validation_feedback:
             parsed["_generation_metadata"] = {
@@ -700,14 +722,20 @@ def _call_nvidia_cv(
     validation_errors: list[str] = []
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
-        parsed = _call_nvidia_contract_once(
-            _nvidia_cv_contract(),
-            payload,
-            api_key,
-            model,
-            timeout,
-            validation_feedback,
-        )
+        try:
+            parsed = _call_nvidia_contract_once(
+                _nvidia_cv_contract(),
+                payload,
+                api_key,
+                model,
+                timeout,
+                validation_feedback,
+            )
+        except LLMMaterialsError as exc:
+            raise LLMMaterialsError(
+                str(exc),
+                generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
+            ) from exc
         validation_feedback = _ats_cv_response_validation_error(parsed, _base_cv_text(payload), payload)
         if not validation_feedback:
             parsed["_generation_metadata"] = {
@@ -742,14 +770,20 @@ def _call_nvidia_kit(
     validation_errors: list[str] = []
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
-        parsed = _call_nvidia_contract_once(
-            _nvidia_kit_contract(),
-            payload,
-            api_key,
-            model,
-            timeout,
-            validation_feedback,
-        )
+        try:
+            parsed = _call_nvidia_contract_once(
+                _nvidia_kit_contract(),
+                payload,
+                api_key,
+                model,
+                timeout,
+                validation_feedback,
+            )
+        except LLMMaterialsError as exc:
+            raise LLMMaterialsError(
+                str(exc),
+                generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
+            ) from exc
         validation_feedback = _kit_validation_error(parsed, payload)
         if not validation_feedback:
             parsed["_generation_metadata"] = {

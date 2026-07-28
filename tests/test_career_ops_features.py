@@ -589,6 +589,45 @@ def test_nvidia_kit_failure_reports_validation_metadata(monkeypatch):
     assert "overconfident tone" in metadata["validation_errors"][-1]
 
 
+def test_nvidia_cv_request_failure_preserves_prior_validation_metadata(monkeypatch):
+    calls = []
+
+    def fake_contract_once(contract, payload, api_key, model, timeout, validation_feedback=None):
+        calls.append(validation_feedback)
+        if validation_feedback:
+            raise LLMMaterialsError("NVIDIA materials request failed: ReadTimeout")
+        return {
+            "ats_cv_text": "Tiny",
+            "risk_flags": [],
+            "keywords_used": [],
+        }
+
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(llm_application_materials, "_call_nvidia_contract_once", fake_contract_once)
+
+    try:
+        llm_application_materials._call_nvidia_cv(
+            {"job": {"title": "AWS Backend / Cloud Developer", "company": "PSS"}, "base_cv": {"text": _complete_ats_cv_text()}},
+            "test-key",
+            "test-model",
+            1.0,
+            validation_retry_limit=1,
+        )
+    except LLMMaterialsError as exc:
+        metadata = exc.generation_metadata
+    else:
+        raise AssertionError("Expected LLMMaterialsError")
+
+    assert calls[0] is None
+    assert calls[1]
+    assert metadata["validation_attempts"] == 2
+    assert len(metadata["validation_errors"]) == 2
+    assert "ats_cv_text is too short" in metadata["validation_errors"][0]
+    assert "request failed during validation attempt 2" in metadata["validation_errors"][1]
+    assert "ReadTimeout" in metadata["validation_errors"][1]
+
+
 def test_nvidia_application_kit_failure_combines_partial_generation_metadata(monkeypatch):
     from joborchestrator.intelligence import llm_application_materials
 
