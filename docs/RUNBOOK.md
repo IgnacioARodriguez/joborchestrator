@@ -102,6 +102,12 @@ npm run rehearse:application -- "https://boards.greenhouse.io/company/jobs/123"
 npm run rehearse:application -- "https://boards.greenhouse.io/company/jobs/123" --headful
 ```
 
+For the Warp Software Engineer rehearsal, `--warp-answers` seeds the confirmed personal answers: not based in US/Canada, no permanent work authorization and sponsorship required.
+
+```bash
+npm run rehearse:application -- "https://job-boards.greenhouse.io/warp/jobs/4324888004" --warp-answers
+```
+
 For login/account pages, set:
 
 ```bash

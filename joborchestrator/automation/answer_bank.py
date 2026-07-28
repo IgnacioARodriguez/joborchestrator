@@ -75,13 +75,15 @@ def map_answers(schema: dict[str, Any], profile: dict[str, Any], answer_bank: li
         source = "confirmed_profile" if value else None
         match_strategy = "profile" if value else "unresolved"
         answer = _match_answer_definition(label, canonical, usable_answers)
-        if answer and answer.get("sensitivity") != "sensitive":
+        if answer:
             value = str(answer.get("value") or "")
             canonical = str(answer.get("canonical_key") or canonical or "")
-            classification = "safe" if classification == "unknown" else classification
+            sensitivity = str(answer.get("sensitivity") or "public")
+            if classification == "unknown":
+                classification = "sensitive" if sensitivity == "sensitive" else "safe"
             source = "approved_answer"
             match_strategy = str(answer.get("_match_strategy") or "answer_bank")
-        requires_confirmation = classification == "sensitive" or not value
+        requires_confirmation = not value or (classification == "sensitive" and source != "approved_answer")
         result = FieldAnswer(
             field_name=str(field.get("name") or field.get("id") or label),
             canonical_key=canonical,
@@ -108,8 +110,6 @@ def _answer_is_usable(answer: dict[str, Any]) -> bool:
     if answer.get("source") != "approved":
         return False
     if answer.get("requires_confirmation"):
-        return False
-    if answer.get("sensitivity") == "sensitive":
         return False
     expires_at = answer.get("expires_at")
     if expires_at:

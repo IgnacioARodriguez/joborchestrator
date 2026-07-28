@@ -672,7 +672,15 @@ def safe_fill_plan(mapping: dict[str, Any]) -> list[dict[str, str]]:
         canonical = str(answer.get("canonical_key") or "").strip()
         if not value or not field_name:
             continue
-        if canonical not in {"full_name", "email", "phone", "linkedin", "portfolio", "preferred_location", "talent_pool"}:
+        if answer.get("source") != "approved_answer" and canonical not in {
+            "full_name",
+            "email",
+            "phone",
+            "linkedin",
+            "portfolio",
+            "preferred_location",
+            "talent_pool",
+        }:
             continue
         field_type = str(answer.get("field_type") or "text")
         options = list(answer.get("options") or [])

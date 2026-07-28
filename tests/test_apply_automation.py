@@ -75,6 +75,49 @@ def test_answer_bank_marks_sensitive_fields_unknown_without_approved_answer() ->
     assert mapping["unknown_fields"][0]["name"] == "salary"
 
 
+def test_answer_bank_uses_explicitly_approved_sensitive_answers() -> None:
+    mapping = map_answers(
+        {
+            "fields": [
+                {
+                    "name": "work_authorization",
+                    "label": "Do you have permanent authorization to work for Warp in the U.S. or Canada?",
+                    "type": "select",
+                    "required": True,
+                    "options": [{"value": "no", "label": "No"}, {"value": "yes", "label": "Yes"}],
+                }
+            ]
+        },
+        {},
+        [
+            {
+                "canonical_key": "work_authorization",
+                "question_patterns": ["Do you have permanent authorization to work for Warp in the U.S. or Canada?"],
+                "answer_type": "select",
+                "value": "No",
+                "source": "approved",
+                "status": "approved",
+                "sensitivity": "sensitive",
+                "requires_confirmation": False,
+            }
+        ],
+    )
+
+    answer = mapping["answers"][0]
+    assert answer["classification"] == "sensitive"
+    assert answer["requires_confirmation"] is False
+    assert answer["source"] == "approved_answer"
+    assert mapping["unknown_fields"] == []
+    assert safe_fill_plan(mapping) == [
+        {
+            "field_name": "work_authorization",
+            "value": "no",
+            "canonical_key": "work_authorization",
+            "action_type": "select_option",
+        }
+    ]
+
+
 def test_answer_bank_uses_question_patterns_for_unknown_safe_fields() -> None:
     mapping = map_answers(
         {"fields": [{"name": "remote_pref", "label": "Where would you prefer to work from?", "required": True}]},
