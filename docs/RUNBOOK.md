@@ -108,6 +108,8 @@ For the Warp Software Engineer rehearsal, `--warp-answers` seeds the confirmed p
 npm run rehearse:application -- "https://job-boards.greenhouse.io/warp/jobs/4324888004" --warp-answers
 ```
 
+The rehearsal command writes the exact uploaded PDF to `logs/application-rehearsal-resume.pdf` and prints `resume_preview_lines`. This file is synthetic by design. Do not run real auto-submit until the job has a reviewed ATS CV generated from the candidate's actual profile/materials.
+
 For login/account pages, set:
 
 ```bash

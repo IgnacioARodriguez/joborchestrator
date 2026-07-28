@@ -71,6 +71,7 @@ async def rehearse_application_url(
     url: str,
     *,
     db_path: Path,
+    resume_out: Path,
     provider: str,
     headful: bool,
     keep_db: bool,
@@ -119,13 +120,9 @@ async def rehearse_application_url(
     job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
     db.update_job_application_materials(
         job_id,
-        ats_cv_text=(
-            "Professional Summary\nSynthetic backend engineer for automation rehearsal.\n\n"
-            "Technical Skills\nPython, FastAPI, Playwright.\n\n"
-            "Professional Experience\nBuilt reliable APIs and automation checks.\n\n"
-            "Education\nSynthetic degree."
-        ),
+        ats_cv_text=_rehearsal_cv_text(),
     )
+    _write_resume_preview(resume_out, db.get_job_posting(job_id), _rehearsal_cv_text())
     session = db.create_application_session({"job_id": job_id, "provider": provider, "mode": "review_before_submit"})
     execution = await run_application_execution(
         session_id=int(session["id"]),
@@ -154,6 +151,8 @@ async def rehearse_application_url(
         "reason": execution.get("reason"),
         "last_error": updated.get("last_error") if updated else None,
         "resume_upload": execution.get("resume_upload"),
+        "resume_preview_path": str(resume_out),
+        "resume_preview_lines": [line for line in _rehearsal_cv_text().splitlines() if line.strip()][:8],
         "forbidden_submit_controls": execution.get("forbidden_submit_controls"),
         "auto_submit": execution.get("auto_submit"),
         "final_url": (artifacts or {}).get("final_url"),
@@ -168,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("url", help="Application URL to rehearse. No final submit is clicked.")
     parser.add_argument("--provider", default="greenhouse")
     parser.add_argument("--db-path", type=Path, default=PROJECT_ROOT / "logs" / "application-rehearsal.db")
+    parser.add_argument("--resume-out", type=Path, default=PROJECT_ROOT / "logs" / "application-rehearsal-resume.pdf")
     parser.add_argument("--headful", action="store_true", help="Show Chromium while the rehearsal runs.")
     parser.add_argument("--keep-db", action="store_true")
     parser.add_argument("--warp-answers", action="store_true", help="Seed the confirmed Warp work authorization answers.")
@@ -178,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
         rehearse_application_url(
             args.url,
             db_path=args.db_path,
+            resume_out=args.resume_out,
             provider=args.provider,
             headful=args.headful,
             keep_db=args.keep_db,
@@ -186,6 +187,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
+
+
+def _rehearsal_cv_text() -> str:
+    return (
+        "Professional Summary\nSynthetic backend engineer for automation rehearsal.\n\n"
+        "Technical Skills\nPython, FastAPI, Playwright.\n\n"
+        "Professional Experience\nBuilt reliable APIs and automation checks.\n\n"
+        "Education\nSynthetic degree."
+    )
+
+
+def _write_resume_preview(path: Path, job: dict | None, ats_cv_text: str) -> None:
+    from joborchestrator.intelligence.llm_application_materials import export_ats_cv_pdf_bytes
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = export_ats_cv_pdf_bytes(job or {"company": "Rehearsal Company", "title": "Rehearsal Role"}, ats_cv_text)
+    path.write_bytes(content)
 
 
 if __name__ == "__main__":

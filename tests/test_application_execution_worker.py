@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from joborchestrator import worker
-from joborchestrator.automation.executor import _looks_blocked, run_application_execution
+from joborchestrator.automation.executor import _looks_blocked, auto_submit_blockers, run_application_execution
 from joborchestrator.automation import local_browser_agent
 from joborchestrator.storage import persistence as db
 from test_api_endpoints import make_job
@@ -60,6 +60,40 @@ def test_application_challenge_copy_is_not_human_verification() -> None:
         '<script src="https://www.gstatic.com/recaptcha/releases/x/recaptcha__es.js"></script>',
     ) is False
     assert _looks_blocked("https://example.test", "<h1>Verify you are human</h1>") is True
+
+
+def test_auto_submit_blocks_placeholder_resume_on_real_url(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_AUTO_SUBMIT_APPROVED", "1")
+    blockers = auto_submit_blockers(
+        session={"mode": "auto_submit_approved"},
+        provider="greenhouse",
+        apply_url="https://job-boards.greenhouse.io/warp/jobs/4324888004",
+        job={"ats_cv_text": "Professional Summary\nSynthetic backend engineer for automation rehearsal."},
+        schema={"fields": []},
+        mapping={"unknown_fields": []},
+        resume_upload={"status": "not_applicable"},
+        forbidden_submit_controls=[{"text": "Submit application"}],
+        dry_run=False,
+    )
+
+    assert blockers == ["placeholder_resume_for_real_url"]
+
+
+def test_auto_submit_allows_placeholder_resume_for_local_fixture(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_AUTO_SUBMIT_APPROVED", "1")
+    blockers = auto_submit_blockers(
+        session={"mode": "auto_submit_approved"},
+        provider="greenhouse",
+        apply_url="data:text/html,<form></form>",
+        job={"ats_cv_text": "Professional Summary\nSynthetic backend engineer for automation rehearsal."},
+        schema={"fields": []},
+        mapping={"unknown_fields": []},
+        resume_upload={"status": "not_applicable"},
+        forbidden_submit_controls=[{"text": "Submit application"}],
+        dry_run=False,
+    )
+
+    assert blockers == []
 
 
 def test_application_execution_starts_local_browser_handoff(tmp_path, monkeypatch) -> None:

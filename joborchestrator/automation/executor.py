@@ -231,6 +231,8 @@ async def run_application_execution(
                 live_page,
                 session=existing_session,
                 provider=adapter.provider,
+                apply_url=apply_url,
+                job=job,
                 schema=schema,
                 mapping=mapping,
                 resume_upload=resume_upload,
@@ -565,6 +567,8 @@ async def maybe_auto_submit_application(
     *,
     session: dict[str, Any],
     provider: str,
+    apply_url: str,
+    job: dict[str, Any],
     schema: dict[str, Any],
     mapping: dict[str, Any],
     resume_upload: dict[str, Any],
@@ -576,6 +580,8 @@ async def maybe_auto_submit_application(
     blockers = auto_submit_blockers(
         session=session,
         provider=provider,
+        apply_url=apply_url,
+        job=job,
         schema=schema,
         mapping=mapping,
         resume_upload=resume_upload,
@@ -594,6 +600,8 @@ def auto_submit_blockers(
     *,
     session: dict[str, Any],
     provider: str,
+    apply_url: str,
+    job: dict[str, Any],
     schema: dict[str, Any],
     mapping: dict[str, Any],
     resume_upload: dict[str, Any],
@@ -609,6 +617,8 @@ def auto_submit_blockers(
         blockers.append("provider_not_supported")
     if dry_run:
         blockers.append("dry_run_enabled")
+    if _looks_placeholder_resume_for_real_url(apply_url, job):
+        blockers.append("placeholder_resume_for_real_url")
     unknown_required = [
         field for field in mapping.get("unknown_fields") or []
         if field.get("required") or field.get("sensitive")
@@ -620,6 +630,20 @@ def auto_submit_blockers(
     if len(forbidden_submit_controls) != 1:
         blockers.append("ambiguous_submit_control" if forbidden_submit_controls else "missing_submit_control")
     return blockers
+
+
+def _looks_placeholder_resume_for_real_url(apply_url: str, job: dict[str, Any]) -> bool:
+    if str(apply_url or "").lower().startswith("data:"):
+        return False
+    text = str(job.get("ats_cv_text") or "").lower()
+    markers = (
+        "synthetic",
+        "rehearsal",
+        "placeholder",
+        "this should never be submitted",
+        "automation rehearsal",
+    )
+    return any(marker in text for marker in markers)
 
 
 async def click_approved_submit_control(page: Page, *, timeout_ms: int) -> dict[str, Any]:
