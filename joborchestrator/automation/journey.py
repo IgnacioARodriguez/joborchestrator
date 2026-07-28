@@ -138,7 +138,31 @@ class ApplicationJourneyEngine:
         schema = selected["schema"]
         browser_surface = selected["browser_surface"]
         surfaces = [candidate["surface"] for candidate in candidates]
+        return await self.inspect_surface(
+            adapter=adapter,
+            capabilities=capabilities,
+            surface=surface,
+            browser_surface=browser_surface,
+            html=html,
+            profile=profile,
+            answer_bank=answer_bank,
+            surfaces=surfaces,
+        )
+
+    async def inspect_surface(
+        self,
+        *,
+        adapter: Any,
+        capabilities: Any,
+        surface: InteractionSurface,
+        browser_surface: Any,
+        html: str,
+        profile: dict[str, Any],
+        answer_bank: list[dict[str, Any]],
+        surfaces: list[InteractionSurface] | None = None,
+    ) -> JourneyStep:
         if capabilities.can_detect_fields:
+            schema = await adapter.extract_form_schema_page(browser_surface)
             schema = _with_control_handles(schema, surface.surface_id)
         else:
             schema = adapter.extract_form_schema_html(html)
@@ -166,7 +190,7 @@ class ApplicationJourneyEngine:
             mapping=mapping,
             action_plan=action_plan,
             browser_surface=browser_surface,
-            surfaces=surfaces,
+            surfaces=surfaces or [surface],
         )
 
     async def _discover_candidate_schemas(

@@ -114,6 +114,8 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
         artifacts = updated.get("artifacts_json") or {}
         review = artifacts.get("review") or {}
         validation = artifacts.get("validation") or {}
+        automation_metrics = artifacts.get("automation_metrics") or {}
+        repair = artifacts.get("repair") or {}
         validation_issues = [
             issue for issue in validation.get("issues") or []
             if isinstance(issue, dict)
@@ -154,6 +156,9 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "validation_status": validation.get("status"),
             "validation_issue_count": len(validation_issues),
             "validation_issue_types": sorted({str(issue.get("issue_type") or "") for issue in validation_issues if issue.get("issue_type")}),
+            "verified_action_success_rate": automation_metrics.get("verified_action_success_rate"),
+            "dynamic_required_count": repair.get("dynamic_required_count"),
+            "submit_only_ready": automation_metrics.get("submit_only_ready"),
             "blocked": bool(execution.get("blocked")),
             "reason": reason or None,
             "last_error": updated.get("last_error"),
@@ -178,6 +183,9 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "validation_status": None,
             "validation_issue_count": 0,
             "validation_issue_types": [],
+            "verified_action_success_rate": None,
+            "dynamic_required_count": 0,
+            "submit_only_ready": False,
             "blocked": True,
             "reason": exc.__class__.__name__,
             "last_error": str(exc),
@@ -297,6 +305,9 @@ def write_csv_report(path: Path, results: list[dict[str, object]]) -> None:
         "validation_status",
         "validation_issue_count",
         "validation_issue_types",
+        "verified_action_success_rate",
+        "dynamic_required_count",
+        "submit_only_ready",
         "reason",
         "last_error",
         "final_url",
@@ -350,6 +361,12 @@ def write_markdown_report(path: Path, report: dict[str, object]) -> None:
                 f"  - Validation: `{result.get('validation_status')}` / "
                 f"`{result.get('validation_issue_count') or 0}` issues / "
                 f"`{json.dumps(result.get('validation_issue_types') or [])}`"
+            )
+        if result.get("verified_action_success_rate") is not None:
+            lines.append(
+                f"  - Automation: verified rate `{result.get('verified_action_success_rate')}` / "
+                f"dynamic required `{result.get('dynamic_required_count') or 0}` / "
+                f"submit-only `{result.get('submit_only_ready')}`"
             )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

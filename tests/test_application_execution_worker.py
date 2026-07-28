@@ -477,6 +477,68 @@ def test_application_execution_blocks_ready_when_validation_fails(tmp_path, monk
     assert any(issue["issue_type"] == "aria_invalid" for issue in updated["artifacts_json"]["validation"]["issues"])
 
 
+def test_application_execution_detects_dynamic_required_fields_after_autofill(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate"})
+    apply_url = "https://careers.example.test/apply"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="dynamic-required-job",
+            source="company_page",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Build APIs with Python and FastAPI.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Build APIs with Python and FastAPI.", apply_url),
+            raw_payload={"id": "dynamic-required-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application">
+          <label for="name">Full name *</label>
+          <input id="name" name="name" required oninput="document.getElementById('dynamic').style.display = 'block'">
+          <div id="dynamic" style="display:none">
+            <label for="portfolio">Portfolio URL *</label>
+            <input id="portfolio" name="portfolio" required>
+          </div>
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    artifacts = updated["artifacts_json"]
+
+    assert result["fields_autofilled"] == 1
+    assert result["unknown_fields"] == 1
+    assert updated["state"] == "needs_user_input"
+    assert artifacts["validation"]["status"] == "validation_clean"
+    assert artifacts["repair"]["dynamic_required_count"] == 1
+    assert artifacts["repair"]["dynamic_required_fields"][0]["name"] == "portfolio"
+    assert artifacts["automation_metrics"]["dynamic_required_count"] == 1
+    assert artifacts["automation_metrics"]["submit_only_ready"] is False
+
+
 def test_application_execution_opens_generic_apply_cta_before_form_fill(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
     monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")

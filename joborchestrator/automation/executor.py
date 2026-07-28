@@ -238,14 +238,19 @@ async def run_application_execution(
     auto_submit_result: dict[str, Any] = {"status": "disabled"}
     journey_step: dict[str, Any] = {}
     validation_report: dict[str, Any] = {"status": "not_attempted"}
+    repair_report: dict[str, Any] = {"status": "not_attempted"}
+    automation_metrics: dict[str, Any] = {}
     try:
-        initial_step = await ApplicationJourneyEngine().prepare_initial_step(
+        journey_engine = ApplicationJourneyEngine()
+        profile = db.get_candidate_profile_payload() or {}
+        answer_bank = db.list_answer_definitions()
+        initial_step = await journey_engine.prepare_initial_step(
             page=live_page,
             adapter=adapter,
             capabilities=capabilities,
             html=html,
-            profile=db.get_candidate_profile_payload() or {},
-            answer_bank=db.list_answer_definitions(),
+            profile=profile,
+            answer_bank=answer_bank,
         )
         schema = initial_step.schema
         mapping = initial_step.mapping
@@ -282,6 +287,40 @@ async def run_application_execution(
                         "issues": validation_report.get("issues") or [],
                     }
                 )
+            rescanned_step = await journey_engine.inspect_surface(
+                adapter=adapter,
+                capabilities=capabilities,
+                surface=initial_step.surface,
+                browser_surface=browser_surface,
+                html=html,
+                profile=profile,
+                answer_bank=answer_bank,
+                surfaces=initial_step.surfaces,
+            )
+            dynamic_required_fields = _append_dynamic_required_unknowns(
+                mapping,
+                previous_schema=schema,
+                rescanned_schema=rescanned_step.schema,
+            )
+            repair_report = _build_repair_report(
+                previous_action_plan=journey_step.get("action_plan") or {},
+                rescanned_action_plan=rescanned_step.to_dict().get("action_plan") or {},
+                dynamic_required_fields=dynamic_required_fields,
+            )
+            if dynamic_required_fields:
+                schema = rescanned_step.schema
+                journey_step = {
+                    **journey_step,
+                    "repair_rescan": rescanned_step.to_dict(),
+                }
+            automation_metrics = _build_application_automation_metrics(
+                action_plan=journey_step.get("action_plan") or {},
+                validation_report=validation_report,
+                fill_result=live_fill,
+                resume_upload=resume_upload,
+                repair_report=repair_report,
+                mapping=mapping,
+            )
         if capabilities.can_detect_fields:
             forbidden_submit_controls = await detect_forbidden_submit_controls(browser_surface)
             auto_submit_result = await maybe_auto_submit_application(
@@ -355,6 +394,8 @@ async def run_application_execution(
                 "journey": journey_step,
                 "action_plan": journey_step.get("action_plan") or {},
                 "validation": validation_report,
+                "repair": repair_report,
+                "automation_metrics": automation_metrics,
             },
         },
     )
@@ -382,6 +423,8 @@ async def run_application_execution(
         "journey": journey_step,
         "action_plan": journey_step.get("action_plan") or {},
         "validation": validation_report,
+        "repair": repair_report,
+        "automation_metrics": automation_metrics,
     }
     if next_state == "submitted":
         db.transition_application_session(
@@ -856,6 +899,116 @@ def _match_option(value: str, options: list[Any]) -> dict[str, str] | None:
 
 def _normalized(value: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s]+", " ", value.lower())).strip()
+
+
+def _append_dynamic_required_unknowns(
+    mapping: dict[str, Any],
+    *,
+    previous_schema: dict[str, Any],
+    rescanned_schema: dict[str, Any],
+) -> list[dict[str, Any]]:
+    previous_keys = {_field_identity(field) for field in previous_schema.get("fields") or [] if isinstance(field, dict)}
+    answered_keys = {
+        str(answer.get("field_name") or "").strip()
+        for answer in mapping.get("answers") or []
+        if isinstance(answer, dict) and str(answer.get("value") or "").strip()
+    }
+    unknown_keys = {
+        str(field.get("name") or "").strip()
+        for field in mapping.get("unknown_fields") or []
+        if isinstance(field, dict)
+    }
+    dynamic: list[dict[str, Any]] = []
+    for field in rescanned_schema.get("fields") or []:
+        if not isinstance(field, dict) or not bool(field.get("required")):
+            continue
+        field_key = _field_identity(field)
+        field_name = str(field.get("name") or field.get("id") or field.get("label") or "").strip()
+        if not field_key or field_key in previous_keys or field_name in answered_keys or field_name in unknown_keys:
+            continue
+        unknown = {
+            "name": field_name,
+            "label": str(field.get("label") or field_name),
+            "type": str(field.get("type") or "unknown"),
+            "required": True,
+            "sensitive": bool(field.get("sensitive")),
+            "classification": str(field.get("classification") or "unknown"),
+            "reason": "dynamic_required_after_autofill",
+        }
+        mapping.setdefault("unknown_fields", []).append(unknown)
+        unknown_keys.add(field_name)
+        dynamic.append(unknown)
+    return dynamic
+
+
+def _field_identity(field: dict[str, Any]) -> str:
+    return str(field.get("name") or field.get("id") or field.get("label") or "").strip()
+
+
+def _build_repair_report(
+    *,
+    previous_action_plan: dict[str, Any],
+    rescanned_action_plan: dict[str, Any],
+    dynamic_required_fields: list[dict[str, Any]],
+) -> dict[str, Any]:
+    previous_fingerprint = str(previous_action_plan.get("form_fingerprint") or "")
+    rescanned_fingerprint = str(rescanned_action_plan.get("form_fingerprint") or "")
+    return {
+        "status": "needs_user_input" if dynamic_required_fields else "no_repair_needed",
+        "rescans": 1,
+        "form_fingerprint_changed": bool(previous_fingerprint and rescanned_fingerprint and previous_fingerprint != rescanned_fingerprint),
+        "dynamic_required_fields": dynamic_required_fields,
+        "dynamic_required_count": len(dynamic_required_fields),
+        "previous_form_fingerprint": previous_fingerprint,
+        "rescanned_form_fingerprint": rescanned_fingerprint,
+    }
+
+
+def _build_application_automation_metrics(
+    *,
+    action_plan: dict[str, Any],
+    validation_report: dict[str, Any],
+    fill_result: dict[str, Any] | None,
+    resume_upload: dict[str, Any],
+    repair_report: dict[str, Any],
+    mapping: dict[str, Any],
+) -> dict[str, Any]:
+    actions = [action for action in action_plan.get("actions") or [] if isinstance(action, dict)]
+    planned = len(actions)
+    executed_fields = {
+        str(field_name)
+        for field_name in (fill_result or {}).get("filled_fields") or []
+        if str(field_name).strip()
+    }
+    executed = len(executed_fields)
+    upload_planned = any(str(action.get("action_type") or "") == "upload_file" for action in actions)
+    upload_verified = upload_planned and resume_upload.get("status") == "uploaded"
+    checked_postconditions = int(validation_report.get("checked_postconditions") or 0)
+    satisfied_postconditions = int(validation_report.get("satisfied_postconditions") or 0)
+    verifiable = checked_postconditions + (1 if upload_planned else 0)
+    verified = satisfied_postconditions + (1 if upload_verified else 0)
+    unresolved_count = len(mapping.get("unknown_fields") or [])
+    return {
+        "planned_action_count": planned,
+        "executed_action_count": executed,
+        "verified_action_count": verified,
+        "action_success_rate": _ratio(executed, planned),
+        "verified_action_success_rate": _ratio(verified, verifiable),
+        "validation_clean": validation_report.get("status") == "validation_clean",
+        "validation_issue_count": int((validation_report.get("summary") or {}).get("issues") or len(validation_report.get("issues") or [])),
+        "unresolved_required_count": unresolved_count,
+        "dynamic_required_count": int(repair_report.get("dynamic_required_count") or 0),
+        "repair_rescans": int(repair_report.get("rescans") or 0),
+        "submit_only_ready": (
+            validation_report.get("status") == "validation_clean"
+            and unresolved_count == 0
+            and int(repair_report.get("dynamic_required_count") or 0) == 0
+        ),
+    }
+
+
+def _ratio(numerator: int, denominator: int) -> float:
+    return round(numerator / denominator, 3) if denominator else 0.0
 
 
 async def try_saved_login(

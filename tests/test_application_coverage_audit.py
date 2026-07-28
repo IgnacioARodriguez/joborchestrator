@@ -105,6 +105,12 @@ def test_report_writers_create_json_csv_and_markdown(tmp_path: Path) -> None:
                 "unknown_fields": 0,
                 "resume_upload_status": "uploaded",
                 "submit_controls_count": 1,
+                "validation_status": "validation_clean",
+                "validation_issue_count": 0,
+                "validation_issue_types": [],
+                "verified_action_success_rate": 1.0,
+                "dynamic_required_count": 0,
+                "submit_only_ready": True,
                 "reason": None,
                 "last_error": None,
                 "final_url": "https://example.test/apply",
@@ -144,6 +150,9 @@ def test_audit_application_coverage_runs_dry_run_on_local_fixture(tmp_path: Path
     assert result["coverage_score"] == "ready_no_human_input"
     assert result["resume_upload_status"] == "uploaded"
     assert result["submit_controls_count"] == 1
+    assert result["verified_action_success_rate"] == 1.0
+    assert result["dynamic_required_count"] == 0
+    assert result["submit_only_ready"] is True
 
 
 def test_audit_application_coverage_restores_environment(tmp_path: Path, monkeypatch) -> None:
