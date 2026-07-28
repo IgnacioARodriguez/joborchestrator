@@ -1,6 +1,6 @@
 # LLM Trust Compliance Matrix
 
-Last assessed: 2026-07-27
+Last assessed: 2026-07-28
 
 This matrix tracks HuntPilot against the trust bar defined in `docs/LLM_TRUST_DEFINITION_OF_DONE.md`.
 
@@ -14,13 +14,13 @@ Status values:
 
 Current trust posture: Yellow, approximately 7.6/10.
 
-HuntPilot is currently suitable as an operational copilot for job discovery, ranking review, and draft generation. It is not suitable for near-blind trust yet. The active ranking prompt moved to v6 and now forces the NVIDIA path to return a top-level `rankings` array even for single-job batches. A 50-job live v6 probe completed with 50/50 saved, 0 failed items, and 0 schema retries, which is a strong reliability signal. However, the 22 reviewed ranking cases inside that live v6 probe evaluated at 18/22 with 4 critical failures, while the earlier 22/22 result applies to persisted/revalidated outputs. Materials/ATS CV still need measured quality work.
+HuntPilot is currently suitable as an operational copilot for job discovery, ranking review, and draft generation. It is not suitable for near-blind trust yet. The active ranking prompt moved to v6 and now forces the NVIDIA path to return a top-level `rankings` array even for single-job batches. A 50-job live v6 probe completed with 50/50 saved, 0 failed items, and 0 schema retries, which is a strong reliability signal. However, the 22 reviewed ranking cases inside that live v6 probe evaluated at 18/22 with 4 critical failures, while the earlier 22/22 result applies to persisted/revalidated outputs. Materials/ATS CV have stronger v12 guardrails but still need measured DB-backed quality work.
 
 ## Current Evidence Snapshot
 
 - Active ranking prompt: `ranking/nvidia_response_contract` v9.
-- Active materials CV prompt: `materials/nvidia_cv_contract` v10.
-- Active materials kit prompt: `materials/nvidia_kit_contract` v10.
+- Active materials CV prompt: `materials/nvidia_cv_contract` v12.
+- Active materials kit prompt: `materials/nvidia_kit_contract` v12.
 - Active judge prompt: `judge/semantic_rubric` v1.
 - Production jobs in Turso: 419.
 - Production rankings in Turso: 419 saved historically; latest full reranking job `#9` completed 419/419 saved under the then-active v4 prompt.
@@ -40,7 +40,7 @@ HuntPilot is currently suitable as an operational copilot for job discovery, ran
 - Ranking schema follow-up: v6 removes the single-job bare-object escape hatch from the NVIDIA prompt contract and the validator now gives explicit feedback when `rankings` is missing for `Context.jobs`.
 - Live v6 probe follow-up: ranking job `#12` completed a 50-job representative sample including all 22 real reviewed ranking fixtures. Results: 50/50 processed, 50 saved, 0 failed, 0 high item attempts, max item attempts 1, 50/50 prompt trace v6, `schema_failure_retry_rate` 0.0, `non_active_prompt_rate` 0.0, `unsafe_apply_now_count` 0. Reviewed-fixture baseline over these fresh v6 outputs measured 18/22 passing, 81.8% pass rate, and 4 critical failures. Failures were jobs 80 (`REST APIs` evidence wording), 358 (`EPC` evidence wording), 40 (`RabbitMQ` evidence omission), and 222 (`AVOID` stricter than expected `APPLY_WITH_TAILORED_CV`/`MAYBE`).
 - Autoloop hardening follow-up: prompt freshness, case regressions, failed item count, schema retry rate, runtime limits, halt reports, checkpoint tags, and non-active prompt requeue tooling are implemented and covered by tests. A halt no longer overwrites the accepted baseline with rejected metrics.
-- Materials follow-up: application kit validation now rejects recruiter messages over the same 320-character limit used by golden evals and now requires substantive cover letters. A live NVIDIA materials v3 probe on 2026-07-27 regenerated 4 raw real-job cases in memory and passed 4/4 application-materials evals plus 4/4 ATS CV evals automatically, but external qualitative review found a false positive: the PSS/serverless case avoided the exact phrase `Serverless Architecture` while still claiming AWS Lambda/DynamoDB/API Gateway. Materials v4 made validation reject avoid-overclaiming entries as claim families and expands serverless aliases/components across ATS CV and non-CV materials; a PSS-only v4 rerun failed closed on AWS Lambda/DynamoDB. Materials v5 exposed those alias lists to the generation contracts as explicit constraints and expanded slash-separated families such as `Terraform/AWS CDK/CloudFormation`. Materials v7 added per-employer supported technology constraints and role-specific technology attribution validation. Materials v10 adds ranking-derived tone constraints, rejects overconfident SKIP/risky-role language, rejects internal evaluator language and ATS-opaque hedges, and includes constructive retry repair feedback. A consolidated 4-case v10 live probe passed 4/4 materials, 4/4 ATS CV, 4/4 substantive cover letters, 4/4 forbidden-alias-free, 4/4 drift-free, 4/4 hedge-free, and 4/4 internal-note-free. Persisted golden baseline still evaluates 0 materials/ATS cases because the reviewed seed fixtures are synthetic and not DB-backed.
+- Materials follow-up: application kit validation now rejects recruiter messages over the same 320-character limit used by golden evals and now requires substantive cover letters. A live NVIDIA materials v3 probe on 2026-07-27 regenerated 4 raw real-job cases in memory and passed 4/4 application-materials evals plus 4/4 ATS CV evals automatically, but external qualitative review found a false positive: the PSS/serverless case avoided the exact phrase `Serverless Architecture` while still claiming AWS Lambda/DynamoDB/API Gateway. Materials v4 made validation reject avoid-overclaiming entries as claim families and expands serverless aliases/components across ATS CV and non-CV materials; a PSS-only v4 rerun failed closed on AWS Lambda/DynamoDB. Materials v5 exposed those alias lists to the generation contracts as explicit constraints and expanded slash-separated families such as `Terraform/AWS CDK/CloudFormation`. Materials v7 added per-employer supported technology constraints and role-specific technology attribution validation. Materials v10 adds ranking-derived tone constraints, rejects overconfident SKIP/risky-role language, rejects internal evaluator language and ATS-opaque hedges, and includes constructive retry repair feedback. A consolidated 4-case v10 live probe passed 4/4 materials, 4/4 ATS CV, 4/4 substantive cover letters, 4/4 forbidden-alias-free, 4/4 drift-free, 4/4 hedge-free, and 4/4 internal-note-free. Materials v11 adds canonical employer technology preservation and fixes list-shaped harness checks. Materials v12 adds explicit ATS fit analysis, stricter exploratory-review tone contracts, adaptive retry budgets for constrained cases, and validation metadata on fail-closed materials errors. Persisted golden baseline still evaluates 0 materials/ATS cases because the reviewed seed fixtures are synthetic and not DB-backed; no post-v12 live job-105 rerun is counted yet.
 - Reviewed golden fixtures: 34 cases under `evals/fixtures/golden` (12 synthetic seed cases plus 22 human-reviewed real ranking cases).
 - Known recurring eval issues:
   - `missing_evidence_terms`
@@ -58,7 +58,7 @@ HuntPilot is currently suitable as an operational copilot for job discovery, ran
 
 | Area | DoD Target | Current Status | Evidence | Gap |
 | --- | --- | --- | --- | --- |
-| Prompt registry | Active prompt versions are explicit and shared | Green | Registry points ranking to v6, materials to v10, and judge to v1; v10 exposes avoid-overclaiming alias families, per-employer technology constraints, and ranking-derived tone constraints | Need a full v6 production rerank and DB-backed reviewed materials/ATS fixtures before stored outputs match the active registry |
+| Prompt registry | Active prompt versions are explicit and shared | Green | Registry points ranking to v6, materials to v12, and judge to v1; v12 exposes avoid-overclaiming alias families, per-employer canonical technology constraints, ATS fit analysis, and ranking-derived tone constraints | Need a full v6 production rerank and DB-backed reviewed materials/ATS fixtures before stored outputs match the active registry |
 | Ranking schema | Output validates against structured contract | Green | Live v6 50-job probe had 50/50 saved, 0 failed items, 0 validation retries, and `schema_failure_retry_rate` 0.0 | Continue monitoring on larger runs |
 | Ranking quality | >= 90% pass rate, 0 critical failures | Yellow-Red | Persisted/revalidated baseline passed 22/22, but fresh live v6 outputs for the same reviewed set measured 18/22, 81.8% pass rate, and 4 critical failures | Triage the 4 live-v6 reviewed failures before raising ranking above review-assist trust |
 | Materials quality | >= 90% pass rate, 0 critical failures | Yellow-Red | Historical stored evals show 0/3 passing; a 4-case live NVIDIA materials v3 probe passed automatically but qualitative review found 1 unsafe overclaiming false positive in cover letter/materials | Rerun materials v4, add DB-backed reviewed materials fixtures, and expand sample before raising trust |
@@ -78,8 +78,8 @@ HuntPilot is currently suitable as an operational copilot for job discovery, ran
 | Surface | Score | Rationale |
 | --- | ---: | --- |
 | Ranking | 7.6 | Productive flow works, traceability is present, job `#9` completed 419/419 saved, deterministic guardrails moved the persisted/revalidated baseline to 22/22, and v6 solved the observed schema retry issue in a 50-job live probe. Fresh v6 quality over the reviewed set is 18/22, so rankings are strong review inputs, not blindly trusted decisions. |
-| Application materials | 7.1 | Prompt v10 receives ranking-derived overclaiming constraints, per-employer technology constraints, and tone constraints; validation rejects blank/degenerate cover letters, internal evaluator language, unsupported hedges, and overconfident SKIP/risky-role language; the consolidated 4-case v10 live probe passed all added gates. |
-| ATS CV | 6.9 | Internal notes, incomplete CVs, omitted base experiences, unsupported avoid-overclaiming aliases, employer-specific technology drift, and ATS-opaque hedges now have deterministic gates and prompt-level constraints; the consolidated 4-case v10 live probe passed drift-free and hedge-free. |
+| Application materials | 7.1 | Prompt v12 receives ranking-derived overclaiming constraints, per-employer technology constraints, ATS fit analysis, and stricter exploratory-review tone constraints; validation rejects blank/degenerate cover letters, internal evaluator language, unsupported hedges, overconfident SKIP/risky-role language, and preserves validation metadata on fail-closed errors. |
+| ATS CV | 6.9 | Internal notes, incomplete CVs, omitted base experiences, unsupported avoid-overclaiming aliases, employer-specific technology drift, canonical technology omissions, and ATS-opaque hedges now have deterministic gates and prompt-level constraints; v12 adds a pre-generation ATS fit map to separate supported, adjacent/review, and avoid keywords. |
 | Judge/evals | 7.8 | Strong framework, offline trust gate, feedback records, saved ranking eval runs, summary analytics, autoloop dry-run orchestration, halt reports, checkpoints, prompt freshness guards, and stale prompt requeue tooling are available; dataset is still small outside ranking and judge calibration remains limited. |
 | Production operations | 7.8 | Vercel/Turso/smokes are healthy; `npm run verify` is repeatable, materials/ranking outputs are traceable for new writes, retry/profile metadata is stored, ranking/material review status is visible, and user feedback can be captured/summarized; remaining risk is quality gating rather than uptime. |
 
@@ -88,7 +88,7 @@ Overall: 7.6/10.
 ## Immediate Blockers To High Trust
 
 1. Ranking improved from the stale 5/22 baseline to 22/22 on persisted/revalidated outputs, but the fresh v6 live probe measured 18/22 on the same reviewed cases.
-2. Materials and ATS CV v3 had a small fresh automatic generation proof, but qualitative review found a serverless overclaiming false positive; v10 now has a consolidated 4-case live rerun, but still needs DB-backed reviewed fixtures.
+2. Materials and ATS CV v3 had a small fresh automatic generation proof, but qualitative review found a serverless overclaiming false positive; v10 later had a consolidated 4-case live rerun, while v12 has stronger local guardrails but still needs a fresh live sample and DB-backed reviewed fixtures.
 3. Golden coverage is above the minimum count, but real materials/ATS CV coverage is still thin.
 4. Ranking live-v6 failures need triage: two may be evidence wording strictness, one is missing RabbitMQ evidence, and one is a stricter security-role downgrade than the fixture expectation.
 5. Review gates need to catch or downgrade the remaining unsafe positive recommendations before ranking can be treated as high trust.
@@ -136,8 +136,8 @@ Goal: measure active prompts, not stale historical outputs.
 Done when:
 
 - Ranking baseline is run. Current measured result over persisted/revalidated outputs: passed, 22/22 passed, 0 critical failures. Current measured result over fresh v6 probe outputs: failed, 18/22 passed, 4 critical failures. Triage is required before calling active-v6 ranking quality done.
-- Materials v10 baseline is run.
-- ATS CV v10 baseline is run.
+- Materials v12 baseline is run.
+- ATS CV v12 baseline is run.
 - Results are compared to prior summaries.
 - Critical failures are listed separately from ordinary misses.
 - `npm run verify` passes before and after prompt changes.

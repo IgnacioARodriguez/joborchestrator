@@ -5,15 +5,19 @@ from joborchestrator.intelligence.cover_letter_generator import (
 )
 from joborchestrator.intelligence.ats_autofill import build_autofill_plan
 from joborchestrator.intelligence.llm_application_materials import (
+    LLMMaterialsError,
     _call_openai,
+    _call_nvidia_kit,
     _experience_coverage_problems,
     _experience_technology_attribution_problems,
     _kit_from_response,
     _kit_validation_error,
     _materials_validation_error,
     _materials_payload,
+    _materials_validation_retry_limit,
     _openai_materials_messages,
     build_application_kit_with_llm,
+    build_application_kit_with_nvidia,
     estimate_materials_cost,
     export_ats_cv_docx_bytes,
     export_ats_cv_pdf_bytes,
@@ -478,6 +482,129 @@ def test_openai_materials_call_reports_validation_retry_metadata(monkeypatch):
     assert response["_generation_metadata"]["validation_errors"]
 
 
+def test_materials_validation_retry_limit_scales_for_constrained_cases(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(llm_application_materials, "DEFAULT_MATERIALS_VALIDATION_RETRIES", 3)
+    monkeypatch.setattr(llm_application_materials, "MAX_MATERIALS_VALIDATION_RETRIES", 6)
+
+    retry_limit = _materials_validation_retry_limit(
+        {
+            "ranking_constraints": {
+                "avoid_overclaiming_terms": [
+                    "Serverless Architecture",
+                    "Terraform/AWS CDK/CloudFormation",
+                ]
+            },
+            "application_tone_constraints": {"tone": "cautious_review"},
+            "experience_claim_constraints": [
+                {"canonical_role_technologies": ["Python", "PHP", "JavaScript", "SQL", "APIs"]}
+            ],
+        }
+    )
+
+    assert retry_limit == 6
+
+
+def test_nvidia_kit_failure_reports_validation_metadata(monkeypatch):
+    calls = []
+
+    def fake_contract_once(contract, payload, api_key, model, timeout, validation_feedback=None):
+        calls.append(validation_feedback)
+        return {
+            "recruiter_message": "Hi PSS, I would treat this as an exploratory conversation about fit.",
+            "cover_letter": (
+                "Dear hiring team,\n\n"
+                "I am excited about this backend opportunity and eager to discuss how my Python API experience "
+                "could support the team while we review the exact cloud scope together."
+            ),
+            "autofill_notes": "I am excited to discuss the role.",
+        }
+
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(llm_application_materials, "DEFAULT_MATERIALS_VALIDATION_RETRIES", 1)
+    monkeypatch.setattr(llm_application_materials, "MAX_MATERIALS_VALIDATION_RETRIES", 1)
+    monkeypatch.setattr(llm_application_materials, "_call_nvidia_contract_once", fake_contract_once)
+
+    payload = {
+        "job": {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
+        "base_cv": {"text": _complete_ats_cv_text()},
+        "ranking": {"decision": "APPLY_WITH_TAILORED_CV"},
+        "application_tone_constraints": {
+            "ranking_decision": "APPLY_WITH_TAILORED_CV",
+            "tone": "cautious_review",
+            "forbidden_phrases": ["excited about", "excited to", "eager to"],
+        },
+    }
+
+    try:
+        _call_nvidia_kit(payload, "test-key", "test-model", 1.0)
+    except LLMMaterialsError as exc:
+        metadata = exc.generation_metadata
+    else:
+        raise AssertionError("Expected LLMMaterialsError")
+
+    assert calls[0] is None
+    assert calls[1]
+    assert metadata["validation_attempts"] == 2
+    assert len(metadata["validation_errors"]) == 2
+    assert "overconfident tone" in metadata["validation_errors"][-1]
+
+
+def test_nvidia_application_kit_failure_combines_partial_generation_metadata(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(
+        llm_application_materials,
+        "_materials_payload",
+        lambda job, ranking: {"job": {"title": "AWS Backend / Cloud Developer", "company": "PSS"}},
+    )
+    monkeypatch.setattr(
+        llm_application_materials,
+        "_call_nvidia_cv",
+        lambda payload, api_key, model, timeout: {
+            "ats_cv_text": _complete_ats_cv_text(),
+            "_generation_metadata": {
+                "validation_attempts": 2,
+                "validation_errors": ["ats_cv_text initially missed canonical technologies"],
+            },
+        },
+    )
+
+    def fail_kit(payload, api_key, model, timeout):
+        raise LLMMaterialsError(
+            "NVIDIA kit response was incomplete: application materials use overconfident tone",
+            generation_metadata={
+                "validation_attempts": 2,
+                "validation_errors": [
+                    "application materials use overconfident tone",
+                    "application materials use overconfident tone",
+                ],
+            },
+        )
+
+    monkeypatch.setattr(llm_application_materials, "_call_nvidia_kit", fail_kit)
+
+    try:
+        build_application_kit_with_nvidia(
+            {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
+            {"decision": "APPLY_WITH_TAILORED_CV"},
+            api_key="test-key",
+        )
+    except LLMMaterialsError as exc:
+        metadata = exc.generation_metadata
+    else:
+        raise AssertionError("Expected LLMMaterialsError")
+
+    assert metadata["validation_attempts"] == 4
+    assert metadata["validation_errors"] == [
+        "ats_cv_text initially missed canonical technologies",
+        "application materials use overconfident tone",
+        "application materials use overconfident tone",
+    ]
+
+
 def test_ats_cv_validation_rejects_ranking_avoid_overclaiming_terms_without_source_support():
     ats_cv_text = _complete_ats_cv_text() + "\n- Kubernetes platform ownership for production clusters."
 
@@ -603,6 +730,7 @@ AWS
     fiction = payload["experience_claim_constraints"][0]
     assert fiction["employer"] == "Fiction Express Malaga, Spain"
     assert "MongoDB" in fiction["supported_role_technologies"]
+    assert fiction["canonical_role_technologies"] == []
     assert "Django" not in fiction["supported_role_technologies"]
     assert "AWS" not in fiction["supported_role_technologies"]
 
@@ -632,6 +760,42 @@ def test_materials_payload_exposes_cautious_tone_constraints(monkeypatch):
     assert payload["application_tone_constraints"]["ranking_decision"] == "SKIP"
     assert payload["application_tone_constraints"]["tone"] == "cautious_review"
     assert "immediate impact" in payload["application_tone_constraints"]["forbidden_phrases"]
+    assert "worth discussing if the contract context fits" in payload["application_tone_constraints"]["allowed_phrases"]
+    assert payload["application_tone_constraints"]["rewrite_strategy"].startswith("exploratory_review")
+
+
+def test_materials_payload_exposes_ats_fit_analysis(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(
+        llm_application_materials.db,
+        "get_candidate_profile_payload",
+        lambda: {
+            "base_cv_text": _complete_ats_cv_text(),
+            "skills": [{"name": "Python"}, {"name": "FastAPI"}, {"name": "AWS"}],
+            "experience": [],
+            "education": [],
+        },
+    )
+
+    payload = _materials_payload(
+        {
+            "title": "AWS Backend / Cloud Developer",
+            "company": "PSS",
+            "description_text": "Build Python and FastAPI services with Kubernetes and Terraform.",
+        },
+        {
+            "cv_keywords_to_emphasize": ["Python", "FastAPI", "Kubernetes"],
+            "cv_keywords_to_avoid_overclaiming": ["Terraform/AWS CDK/CloudFormation"],
+        },
+    )
+
+    analysis = payload["ats_fit_analysis"]
+    assert "Python" in analysis["supported_keywords"]
+    assert "FastAPI" in analysis["supported_keywords"]
+    assert "Terraform" in analysis["avoid_keywords"]
+    assert "Kubernetes" in analysis["adjacent_or_review_keywords"]
+    assert analysis["rules"]
 
 
 def test_kit_validation_rejects_empty_or_degenerate_cover_letter():
@@ -900,6 +1064,38 @@ Software Engineering.
 """.strip()
 
     assert _experience_technology_attribution_problems(base_cv, ats_cv) == []
+
+
+def test_ats_cv_validation_rejects_missing_canonical_role_technologies():
+    base_cv = """
+EXPERIENCE
+Full Stack Developer November 2021 - August 2022
+Balloon Group Buenos Aires, Argentina
+- Developed web applications and backend services for international clients.
+- Technologies: Python, PHP, JavaScript, SQL, APIs.
+Backend Developer August 2022 - October 2022
+Globant Client: Tigo LATAM Buenos Aires, Argentina
+- Technologies: Python, AWS, REST APIs.
+""".strip()
+    ats_cv = """
+Professional Experience
+Full Stack Developer | Balloon Group | November 2021 - August 2022
+- Developed web applications and backend services for international clients.
+- Technologies: PHP.
+Backend Developer | Globant (Client: Tigo LATAM) | August 2022 - October 2022
+- Technologies: Python, AWS, REST APIs.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_technology_attribution_problems(base_cv, ats_cv)
+
+    assert problems
+    assert "Balloon Group" in problems[0]
+    assert "missing canonical role technologies" in problems[0]
+    assert "Python" in problems[0]
+    assert "JavaScript" in problems[0]
+    assert "SQL" in problems[0]
 
 
 def test_ats_cv_docx_export_returns_document_bytes():

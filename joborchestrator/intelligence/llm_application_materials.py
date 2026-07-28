@@ -32,8 +32,15 @@ DEFAULT_MATERIALS_VALIDATION_RETRIES = int(
     os.getenv("MATERIALS_VALIDATION_RETRIES")
     or os.getenv("OPENAI_MATERIALS_VALIDATION_RETRIES", "3")
 )
+MAX_MATERIALS_VALIDATION_RETRIES = int(os.getenv("MAX_MATERIALS_VALIDATION_RETRIES", "6"))
 logger = logging.getLogger(__name__)
 ROLE_ATTRIBUTION_TECH_TERMS = [
+    "Python",
+    "JavaScript",
+    "TypeScript",
+    "SQL",
+    "REST APIs",
+    "APIs",
     "AWS",
     "EC2",
     "AWS Lambda",
@@ -53,11 +60,23 @@ ROLE_ATTRIBUTION_TECH_TERMS = [
     "PostgreSQL",
     "MySQL",
     "PHP",
+    "Docker",
+    "Git",
 ]
 
 
 class LLMMaterialsError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        generation_metadata: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.generation_metadata = generation_metadata or {
+            "validation_attempts": 0,
+            "validation_errors": [],
+        }
 
 
 def estimate_materials_cost(
@@ -112,7 +131,16 @@ def build_application_kit_with_nvidia(
     payload = _materials_payload(job, ranking)
     selected_model = model or DEFAULT_NVIDIA_MATERIALS_MODEL
     cv_response = _call_nvidia_cv(payload, key, selected_model, timeout)
-    kit_response = _call_nvidia_kit(payload, key, selected_model, timeout)
+    try:
+        kit_response = _call_nvidia_kit(payload, key, selected_model, timeout)
+    except LLMMaterialsError as exc:
+        metadata = _combined_generation_metadata(
+            [
+                cv_response,
+                {"_generation_metadata": exc.generation_metadata},
+            ]
+        )
+        raise LLMMaterialsError(str(exc), generation_metadata=metadata) from exc
     response = {**kit_response, **cv_response}
     response["_generation_metadata"] = _combined_generation_metadata([cv_response, kit_response])
     kit = _kit_from_response(response)
@@ -127,17 +155,20 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
     profile = CandidateProfile(**profile_payload_to_candidate_profile(profile_payload))
     base_cv_text = str(profile_payload.get("base_cv_text") or "").strip()
     ranking_payload = _ranking_payload(ranking)
+    compact_job = _compact_job(_to_dict(job))
+    candidate_profile = asdict(profile)
     return {
-        "candidate_profile": asdict(profile),
+        "candidate_profile": candidate_profile,
         "base_cv": {
             "filename": profile_payload.get("base_cv_filename") or "",
             "text": base_cv_text[:24000],
         },
-        "job": _compact_job(_to_dict(job)),
+        "job": compact_job,
         "ranking": ranking_payload,
         "ranking_constraints": _materials_ranking_constraints(ranking_payload),
         "application_tone_constraints": _materials_tone_constraints(ranking_payload),
         "experience_claim_constraints": _materials_experience_claim_constraints(base_cv_text),
+        "ats_fit_analysis": _build_ats_fit_analysis(compact_job, candidate_profile, base_cv_text, ranking_payload),
         "goal": (
             "Generate truthful, editable application materials and a complete ATS-optimized CV for this specific job. "
             "Optimize for ATS filters and fast application workflow without inventing experience."
@@ -150,6 +181,7 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "Use job requirements as keywords only when the candidate can truthfully claim or position adjacent experience.",
             "Treat ranking_constraints.avoid_overclaiming_terms as forbidden claim families unless base_cv or candidate_profile explicitly supports the term or specific related technology; do not include unsupported avoid terms or aliases in generated materials.",
             "Use application_tone_constraints to calibrate confidence; risky or skip decisions must be cautious and must not sound like an automatic strong fit.",
+            "Use ats_fit_analysis as the ATS keyword map: emphasize supported_keywords, frame adjacent_or_review_keywords cautiously, and never claim avoid_keywords as direct experience.",
             "Recruiter_message must be a short LinkedIn connection note to a recruiter or hiring contact, not a cover letter and not multiple variants.",
             "Recruiter_message must fit a LinkedIn invite: under 300 characters when possible, one paragraph, no formal letter salutation, no cover-letter body.",
             "Recruiter_message should say why this specific role matches the CV and that the candidate would like to send/share the CV.",
@@ -197,6 +229,8 @@ def _materials_tone_constraints(ranking: dict[str, Any] | None) -> dict[str, Any
             "risk_terms": [],
             "tone": "standard",
             "forbidden_phrases": [],
+            "allowed_phrases": [],
+            "rewrite_strategy": "",
         }
     evidence = ranking.get("evidence") if isinstance(ranking.get("evidence"), dict) else {}
     risk_terms = _dedupe_strings(
@@ -213,7 +247,101 @@ def _materials_tone_constraints(ranking: dict[str, Any] | None) -> dict[str, Any
         "risk_terms": risk_terms,
         "tone": "cautious_review" if cautious else "standard",
         "forbidden_phrases": _cautious_tone_forbidden_phrases() if cautious else [],
+        "allowed_phrases": _cautious_tone_allowed_phrases() if cautious else [],
+        "rewrite_strategy": (
+            "exploratory_review: describe supported background as worth reviewing, ask to discuss fit/scope, "
+            "and avoid enthusiasm or strong-match sales language."
+            if cautious
+            else "standard_application"
+        ),
     }
+
+
+def _build_ats_fit_analysis(
+    job: dict[str, Any],
+    candidate_profile: dict[str, Any],
+    base_cv_text: str,
+    ranking: dict[str, Any] | None,
+) -> dict[str, Any]:
+    ranking = ranking or {}
+    source_text = _normalize_for_match(
+        "\n".join(
+            [
+                base_cv_text,
+                json.dumps(candidate_profile, ensure_ascii=False),
+            ]
+        )
+    )
+    job_terms = _ats_candidate_terms(job, ranking)
+    avoid_terms = _terms_from_maybe_json(
+        ranking.get("cv_keywords_to_avoid_overclaiming")
+        or ranking.get("cv_keywords_to_avoid_overclaiming_json")
+    )
+    avoid_aliases = {
+        term: _avoid_overclaiming_aliases(term)
+        for term in avoid_terms
+    }
+
+    supported: list[str] = []
+    adjacent_or_review: list[str] = []
+    avoid: list[str] = []
+    for term in job_terms:
+        if _term_matches_any_avoid_alias(term, avoid_aliases):
+            avoid.append(term)
+        elif _contains_phrase_for_materials(source_text, term):
+            supported.append(term)
+        else:
+            adjacent_or_review.append(term)
+
+    return {
+        "supported_keywords": supported[:30],
+        "adjacent_or_review_keywords": adjacent_or_review[:20],
+        "avoid_keywords": avoid[:20],
+        "rules": [
+            "Use supported_keywords in Summary, Technical Skills, or matching Experience bullets when truthful.",
+            "Do not list adjacent_or_review_keywords as direct skills; mention only as review-needed context if useful.",
+            "Do not include avoid_keywords or their aliases unless directly supported by base_cv/candidate_profile.",
+        ],
+    }
+
+
+def _ats_candidate_terms(job: dict[str, Any], ranking: dict[str, Any]) -> list[str]:
+    description = "\n".join(
+        str(job.get(key) or "")
+        for key in ["title", "description_text"]
+    )
+    normalized_description = _normalize_for_match(description)
+    terms: list[str] = []
+    terms.extend(
+        term
+        for term in ROLE_ATTRIBUTION_TECH_TERMS
+        if _contains_phrase_for_materials(normalized_description, term)
+    )
+    terms.extend(
+        _terms_from_maybe_json(
+            ranking.get("cv_keywords_to_emphasize")
+            or ranking.get("cv_keywords_to_emphasize_json")
+        )
+    )
+    terms.extend(
+        _terms_from_maybe_json(
+            ranking.get("cv_keywords_to_avoid_overclaiming")
+            or ranking.get("cv_keywords_to_avoid_overclaiming_json")
+        )
+    )
+    return _dedupe_strings(terms)
+
+
+def _term_matches_any_avoid_alias(term: str, avoid_aliases: dict[str, list[str]]) -> bool:
+    normalized_term = _normalize_for_match(term)
+    for aliases in avoid_aliases.values():
+        if any(
+            _contains_phrase_for_materials(normalized_term, alias)
+            or _contains_phrase_for_materials(_normalize_for_match(alias), term)
+            for alias in aliases
+        ):
+            return True
+    return False
 
 
 def _materials_experience_claim_constraints(base_cv_text: str) -> list[dict[str, Any]]:
@@ -227,12 +355,14 @@ def _materials_experience_claim_constraints(base_cv_text: str) -> list[dict[str,
             for term in ROLE_ATTRIBUTION_TECH_TERMS
             if _contains_phrase_for_materials(block, term)
         ]
+        canonical_technologies = _canonical_role_technologies(block)
         constraints.append(
             {
                 "employer": entry["company"],
                 "title": entry["title"],
                 "supported_role_technologies": supported_technologies,
-                "rule": "Inside this employer's bullets or Technologies line, use only technologies supported by this employer block.",
+                "canonical_role_technologies": canonical_technologies,
+                "rule": "Inside this employer's bullets or Technologies line, use only technologies supported by this employer block; preserve canonical_role_technologies when present.",
             }
         )
     return constraints
@@ -263,6 +393,34 @@ def _combined_generation_metadata(responses: list[dict[str, Any]]) -> dict[str, 
         attempts += int(metadata.get("validation_attempts") or 0)
         errors.extend(str(error) for error in metadata.get("validation_errors") or [])
     return {"validation_attempts": attempts or 1, "validation_errors": errors}
+
+
+def _materials_validation_retry_limit(payload: dict[str, Any]) -> int:
+    retries = DEFAULT_MATERIALS_VALIDATION_RETRIES
+    ranking_constraints = payload.get("ranking_constraints") if isinstance(payload.get("ranking_constraints"), dict) else {}
+    avoid_terms = ranking_constraints.get("avoid_overclaiming_terms") or []
+    if avoid_terms:
+        retries += min(2, len(avoid_terms))
+
+    tone = payload.get("application_tone_constraints") if isinstance(payload.get("application_tone_constraints"), dict) else {}
+    if tone.get("tone") == "cautious_review":
+        retries += 1
+
+    experience_constraints = payload.get("experience_claim_constraints")
+    if isinstance(experience_constraints, list) and any(
+        constraint.get("canonical_role_technologies")
+        for constraint in experience_constraints
+        if isinstance(constraint, dict)
+    ):
+        retries += 1
+    return min(retries, MAX_MATERIALS_VALIDATION_RETRIES)
+
+
+def _validation_failure_metadata(attempt: int, validation_errors: list[str], validation_feedback: str) -> dict[str, Any]:
+    return {
+        "validation_attempts": attempt + 1,
+        "validation_errors": [*validation_errors, validation_feedback],
+    }
 
 
 def _clean_recruiter_message(text: str) -> str:
@@ -445,7 +603,8 @@ def _wrap_pdf_line(line: str, max_chars: int) -> list[str]:
 def _call_openai(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
     validation_feedback: str | None = None
     validation_errors: list[str] = []
-    for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
+    retry_limit = _materials_validation_retry_limit(payload)
+    for attempt in range(retry_limit + 1):
         parsed = _call_openai_once(payload, api_key, model, timeout, validation_feedback)
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
         if not validation_feedback:
@@ -454,18 +613,22 @@ def _call_openai(payload: dict[str, Any], api_key: str, model: str, timeout: flo
                 "validation_errors": validation_errors,
             }
             return parsed
-        if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
+        if attempt < retry_limit:
             validation_errors.append(validation_feedback)
             logger.warning("Retrying OpenAI materials generation after invalid response: %s", validation_feedback)
             continue
-        raise LLMMaterialsError(f"OpenAI materials response was incomplete: {validation_feedback}")
+        raise LLMMaterialsError(
+            f"OpenAI materials response was incomplete: {validation_feedback}",
+            generation_metadata=_validation_failure_metadata(attempt, validation_errors, validation_feedback),
+        )
     raise LLMMaterialsError("OpenAI materials response did not produce a usable application kit.")
 
 
 def _call_nvidia(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
     validation_feedback: str | None = None
     validation_errors: list[str] = []
-    for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
+    retry_limit = _materials_validation_retry_limit(payload)
+    for attempt in range(retry_limit + 1):
         parsed = _call_nvidia_once(payload, api_key, model, timeout, validation_feedback)
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
         if not validation_feedback:
@@ -474,18 +637,22 @@ def _call_nvidia(payload: dict[str, Any], api_key: str, model: str, timeout: flo
                 "validation_errors": validation_errors,
             }
             return parsed
-        if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
+        if attempt < retry_limit:
             validation_errors.append(validation_feedback)
             logger.warning("Retrying NVIDIA materials generation after invalid response: %s", validation_feedback)
             continue
-        raise LLMMaterialsError(f"NVIDIA materials response was incomplete: {validation_feedback}")
+        raise LLMMaterialsError(
+            f"NVIDIA materials response was incomplete: {validation_feedback}",
+            generation_metadata=_validation_failure_metadata(attempt, validation_errors, validation_feedback),
+        )
     raise LLMMaterialsError("NVIDIA materials response did not produce a usable application kit.")
 
 
 def _call_nvidia_cv(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
     validation_feedback: str | None = None
     validation_errors: list[str] = []
-    for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
+    retry_limit = _materials_validation_retry_limit(payload)
+    for attempt in range(retry_limit + 1):
         parsed = _call_nvidia_contract_once(
             _nvidia_cv_contract(),
             payload,
@@ -501,7 +668,7 @@ def _call_nvidia_cv(payload: dict[str, Any], api_key: str, model: str, timeout: 
                 "validation_errors": validation_errors,
             }
             return parsed
-        if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
+        if attempt < retry_limit:
             validation_errors.append(validation_feedback)
             logger.warning(
                 "Retrying NVIDIA ATS CV generation after invalid response: %s received_keys=%s",
@@ -509,14 +676,18 @@ def _call_nvidia_cv(payload: dict[str, Any], api_key: str, model: str, timeout: 
                 sorted(parsed.keys()),
             )
             continue
-        raise LLMMaterialsError(f"NVIDIA ATS CV response was incomplete: {validation_feedback}")
+        raise LLMMaterialsError(
+            f"NVIDIA ATS CV response was incomplete: {validation_feedback}",
+            generation_metadata=_validation_failure_metadata(attempt, validation_errors, validation_feedback),
+        )
     raise LLMMaterialsError("NVIDIA ATS CV response did not produce a usable CV.")
 
 
 def _call_nvidia_kit(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
     validation_feedback: str | None = None
     validation_errors: list[str] = []
-    for attempt in range(DEFAULT_MATERIALS_VALIDATION_RETRIES + 1):
+    retry_limit = _materials_validation_retry_limit(payload)
+    for attempt in range(retry_limit + 1):
         parsed = _call_nvidia_contract_once(
             _nvidia_kit_contract(),
             payload,
@@ -532,7 +703,7 @@ def _call_nvidia_kit(payload: dict[str, Any], api_key: str, model: str, timeout:
                 "validation_errors": validation_errors,
             }
             return parsed
-        if attempt < DEFAULT_MATERIALS_VALIDATION_RETRIES:
+        if attempt < retry_limit:
             validation_errors.append(validation_feedback)
             logger.warning(
                 "Retrying NVIDIA kit generation after invalid response: %s received_keys=%s",
@@ -540,7 +711,10 @@ def _call_nvidia_kit(payload: dict[str, Any], api_key: str, model: str, timeout:
                 sorted(parsed.keys()),
             )
             continue
-        raise LLMMaterialsError(f"NVIDIA kit response was incomplete: {validation_feedback}")
+        raise LLMMaterialsError(
+            f"NVIDIA kit response was incomplete: {validation_feedback}",
+            generation_metadata=_validation_failure_metadata(attempt, validation_errors, validation_feedback),
+        )
     raise LLMMaterialsError("NVIDIA kit response did not produce usable materials.")
 
 
@@ -694,9 +868,11 @@ def _materials_repair_instruction(validation_feedback: str) -> str:
     instructions = ["Fix only the rejected fields while preserving all required JSON keys."]
     if "overconfident tone" in normalized:
         instructions.append(
-            "For cautious/review rankings, rewrite with neutral language: 'may be relevant to review', "
-            "'supported Python/API background', and 'worth discussing if the contract context fits'. "
-            "Do not use confident, excited, eager, strong fit, ideal fit, perfect fit, or immediate impact."
+            "For cautious/review rankings, fully rewrite recruiter_message, cover_letter, and autofill_notes in "
+            "exploratory-review mode. Use only neutral phrases such as 'may be relevant to review', "
+            "'supported Python/API background', 'worth discussing if the contract context fits', and "
+            "'I would treat this as exploratory'. Remove the exact words confident, excited, eager, strong fit, "
+            "ideal fit, perfect fit, excellent fit, and immediate impact."
         )
     if "hedge language" in normalized:
         instructions.append(
@@ -707,6 +883,12 @@ def _materials_repair_instruction(validation_feedback: str) -> str:
         instructions.append(
             "Remove internal evaluator terms such as ranking, dealbreaker, safety gate, system, validation, "
             "or avoid-overclaiming. Use applicant-facing caveats only."
+        )
+    if "missing canonical role technologies" in normalized:
+        instructions.append(
+            "For each employer named in the error, restore the canonical_role_technologies from "
+            "Context.experience_claim_constraints in that employer's Professional Experience block, preferably in "
+            "a stable Technologies line."
         )
     if "avoid-overclaiming terms" in normalized:
         instructions.append(
@@ -1020,13 +1202,41 @@ def _experience_technology_attribution_problems(base_cv_text: str, ats_cv_text: 
             if _contains_phrase_for_materials(generated_block, term)
             and not _contains_phrase_for_materials(source_block, term)
         ]
+        canonical_terms = _canonical_role_technologies(source_block)
+        missing_canonical = [
+            term
+            for term in canonical_terms
+            if not _contains_phrase_for_materials(generated_block, term)
+        ]
         if unsupported:
             problems.append(
                 f"{entry['company']} has unsupported role-specific technologies: {', '.join(unsupported[:6])}. "
                 "Remove those technologies from that employer block; if they are globally supported, keep them only "
                 "in Professional Summary or Technical Skills."
             )
+        if missing_canonical:
+            problems.append(
+                f"{entry['company']} is missing canonical role technologies: {', '.join(missing_canonical[:6])}. "
+                "Preserve the employer's canonical Technologies set from the base CV to keep historical stack "
+                "attribution stable across target jobs."
+            )
     return problems[:6]
+
+
+def _canonical_role_technologies(normalized_or_raw_block: str) -> list[str]:
+    tech_lines = [
+        line
+        for line in str(normalized_or_raw_block or "").splitlines()
+        if "technolog" in _normalize_for_match(line)
+    ]
+    if not tech_lines:
+        return []
+    text = "\n".join(tech_lines)
+    return [
+        term
+        for term in ROLE_ATTRIBUTION_TECH_TERMS
+        if _contains_phrase_for_materials(text, term)
+    ]
 
 
 def _unsupported_hedge_problems(text: str) -> list[str]:
@@ -1113,6 +1323,16 @@ def _cautious_tone_forbidden_phrases() -> list[str]:
         "eager to contribute",
         "highly confident",
         "excellent fit",
+    ]
+
+
+def _cautious_tone_allowed_phrases() -> list[str]:
+    return [
+        "may be relevant to review",
+        "supported Python/API background",
+        "worth discussing if the contract context fits",
+        "I would treat this as exploratory",
+        "review whether the scope aligns",
     ]
 
 
