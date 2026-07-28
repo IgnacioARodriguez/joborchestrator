@@ -16,9 +16,9 @@ from joborchestrator.prompts import active_prompt_version, load_prompt
 from joborchestrator.intelligence.profile_trace import profile_trace
 from joborchestrator.ranking.llm_ranker import _ranking_from_payload
 from joborchestrator.ranking.ranking_rules import NVIDIA_EXTRA_RULES, RANKING_GOAL, RANKING_RULES, SCORING_RUBRIC
+from joborchestrator.profile_skill_catalog import DEFAULT_SKILL_CATALOG
 from joborchestrator.ranking.requirements_extractor import HARD_MARKERS, NICE_MARKERS, extract_requirements
 from joborchestrator.ranking.schemas import CandidateProfile, Decision, VALID_DECISIONS
-from joborchestrator.ranking.skill_catalog import find_skills
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.storage import persistence as db
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
@@ -109,7 +109,10 @@ _OPTIONAL_REQUIREMENT_MARKERS = [
     "desirable",
 ]
 _CENTRAL_SECTION_MARKERS = [
-    *HARD_MARKERS,
+    "must have",
+    "requirements",
+    "qualifications",
+    "minimum qualifications",
     "what you'll need",
     "what you will need",
     "what you need",
@@ -124,6 +127,19 @@ _NON_CENTRAL_STACK_MARKERS = [
 _NON_REQUIREMENT_SECTION_MARKERS = [
     "benefits",
     "benefits of working",
+    "what success looks like",
+    "what makes this role exciting",
+    "what you'll do",
+    "what you will do",
+    "responsibilities",
+    "language requirements",
+    "our hiring process",
+    "hiring process",
+    "interview process",
+    "talent experts",
+    "technical round",
+    "about us",
+    "equal opportunity",
     "equal employment",
     "does not discriminate",
     "accommodation",
@@ -131,12 +147,38 @@ _NON_REQUIREMENT_SECTION_MARKERS = [
     "affirmative action",
     "privacy notice",
 ]
+_CENTRAL_SKILL_CATEGORY_ALLOWLIST = {
+    "Programming",
+    "Backend",
+    "Frontend",
+    "Database",
+    "Cloud",
+    "DevOps",
+    "Data & Analytics",
+    "Specialized Domains",
+}
 _CENTRAL_TERM_EXCLUDES = {
+    "Accessibility",
+    "Analytics",
     "C#",
+    "Code Review",
     "CSS",
+    "Dashboards",
+    "Design Systems",
+    "Documentation",
+    "English",
+    "French",
+    "German",
     "Go",
+    "Mentoring",
     "Prioritization",
+    "Reporting",
+    "Spanish",
     "Training",
+    "Writing",
+}
+_CENTRAL_TERM_ALIASES = {
+    "REST API": "REST APIs",
 }
 _ROLE_TERM_PATTERN = re.compile(
     r"\b(?:(senior|sr\.?|staff|principal)\s+)?"
@@ -145,25 +187,6 @@ _ROLE_TERM_PATTERN = re.compile(
     r"(engineer|developer|architect|scientist|consultant)\b",
     flags=re.IGNORECASE,
 )
-_REQUIREMENT_CHUNK_STOPWORDS = {
-    "ability",
-    "adaptability",
-    "bonus",
-    "clear",
-    "communication",
-    "experience",
-    "good",
-    "knowledge",
-    "minimum",
-    "preferred",
-    "requirements",
-    "responsibilities",
-    "skills",
-    "solid",
-    "strong",
-    "understanding",
-}
-
 _PROFILE_AUDIT_MARKERS = {
     "java": {
         "label": "Java",
@@ -1811,17 +1834,27 @@ def _central_terms_to_reconcile(job: dict[str, Any], *, limit: int = _CENTRAL_TE
     scoped_job = {**job, "description_text": scoped_text}
     requirements = extract_requirements(scoped_job)
     requirement_texts = _central_requirement_texts(scoped_job, scoped_text)
+    central_skill_terms = _central_skill_terms()
+    central_skill_keys = {_normalize_text(term) for term in central_skill_terms}
     terms: list[str] = []
     terms.extend(_title_role_terms(title))
 
     for text in requirement_texts:
-        terms.extend(find_skills(text))
-        terms.extend(_explicit_requirement_terms(text))
+        for term in _central_skill_matches(text, central_skill_terms):
+            if _term_has_optional_context(scoped_text, term):
+                continue
+            if _term_has_noncentral_list_context(scoped_text, term):
+                continue
+            terms.append(term)
 
     for term in [*requirements.hard_requirements, *requirements.tech_stack]:
+        if not _is_central_skill_term(term, central_skill_keys):
+            continue
         if not _contains_term_variant(scoped_text, term):
             continue
         if _term_has_optional_context(scoped_text, term):
+            continue
+        if _term_has_noncentral_list_context(scoped_text, term):
             continue
         if not (
             _contains_term_variant(title, term)
@@ -1882,6 +1915,17 @@ def _description_requirement_segments(description: str) -> list[str]:
         "Requirements:",
         "Required Qualifications:",
         "Minimum Qualifications:",
+        "Must have:",
+        "Language requirements:",
+        "What Success Looks Like",
+        "What makes this role exciting",
+        "What You'll Do:",
+        "What You Will Do:",
+        "Responsibilities:",
+        "Our hiring process",
+        "Hiring process",
+        "Interview process",
+        "About us",
         "Bonus Points:",
         "Nice to have:",
         "Benefits of Working",
@@ -1908,48 +1952,36 @@ def _segment_starts_hard_requirement(normalized_segment: str) -> bool:
     )
 
 
-def _explicit_requirement_terms(text: str) -> list[str]:
+def _central_skill_matches(text: str, terms: list[str]) -> list[str]:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return []
+    ordered_terms = sorted(terms, key=len, reverse=True)
+    return _dedupe_terms([term for term in ordered_terms if _contains_term_variant(normalized, term)])
+
+
+def _central_skill_terms() -> list[str]:
     terms: list[str] = []
-    for chunk in re.split(r",|;|\bor\b|\band\b|/|\(|\)", text):
-        cleaned = _clean_requirement_chunk(chunk)
-        if not cleaned:
-            continue
-        if cleaned in _CENTRAL_TERM_EXCLUDES:
-            continue
-        if _looks_like_explicit_requirement_term(cleaned):
-            terms.append(cleaned)
+    for category, skills in DEFAULT_SKILL_CATALOG.items():
+        if category in _CENTRAL_SKILL_CATEGORY_ALLOWLIST:
+            terms.extend(str(skill) for skill in skills)
+    try:
+        for row in db.list_skill_catalog():
+            term = str(row.get("name") or "").strip()
+            category = str(row.get("category") or "").strip()
+            if not term:
+                continue
+            if category and category not in _CENTRAL_SKILL_CATEGORY_ALLOWLIST:
+                continue
+            terms.append(term)
+    except Exception:
+        pass
     return _dedupe_terms(terms)
 
 
-def _clean_requirement_chunk(chunk: str) -> str:
-    cleaned = re.sub(
-        r"(?i)\b(requirements?|required|mandatory|must have|must|experience with|experience in|"
-        r"proficient in|solid understanding of|you have|we need|looking for)\b",
-        "",
-        str(chunk or ""),
-    )
-    cleaned = re.sub(r"(?i)\b\d+\+?\s*years?\s*(?:of)?\b", "", cleaned)
-    cleaned = cleaned.strip(" .:-\t")
-    cleaned = re.sub(r"\s+", " ", cleaned)
-    return cleaned
-
-
-def _looks_like_explicit_requirement_term(value: str) -> bool:
-    normalized = _normalize_text(value)
-    if not normalized or normalized in _REQUIREMENT_CHUNK_STOPWORDS:
-        return False
-    if value in _CENTRAL_TERM_EXCLUDES:
-        return False
-    if len(value.split()) > 4:
-        return False
-    if any(marker in normalized for marker in _OPTIONAL_REQUIREMENT_MARKERS):
-        return False
-    if any(not re.search(r"[A-Z0-9+#./]", word) for word in value.split()):
-        return False
-    return bool(
-        re.search(r"[A-Z]{2,}|[A-Z][a-z]+(?:[A-Z][a-z0-9]+)+|[+#./]", value)
-        or all(part[:1].isupper() for part in value.split() if part)
-    )
+def _is_central_skill_term(term: str, central_skill_keys: set[str]) -> bool:
+    key = _normalize_text(term)
+    return bool(key) and key in central_skill_keys
 
 
 def _term_in_requirement_texts(term: str, requirement_texts: list[str]) -> bool:
@@ -2017,15 +2049,53 @@ def _term_has_optional_context(text: str, term: str) -> bool:
     )
 
 
+def _term_has_noncentral_list_context(text: str, term: str) -> bool:
+    normalized = _normalize_text(text)
+    normalized_term = _normalize_text(term)
+    if not normalized or not normalized_term:
+        return False
+    matches = list(_term_variant_matches(normalized, normalized_term))
+    return bool(matches) and all(
+        _term_match_has_noncentral_list_context(normalized, normalized_term, match.start(), match.end())
+        for match in matches
+    )
+
+
 def _term_match_has_optional_context(normalized_text: str, start: int, end: int) -> bool:
     prefix = normalized_text[max(0, start - 140) : start]
-    suffix = normalized_text[end : min(len(normalized_text), end + 80)]
-    suffix_same_segment = re.split(r"[.!?]", suffix, maxsplit=1)[0]
+    suffix = normalized_text[end : min(len(normalized_text), end + 180)]
+    suffix_same_segment = re.split(r"[.!?;]", suffix, maxsplit=1)[0]
     last_optional = max([prefix.rfind(marker) for marker in _OPTIONAL_REQUIREMENT_MARKERS], default=-1)
     last_required = max([prefix.rfind(marker) for marker in HARD_MARKERS], default=-1)
     if last_optional > last_required:
         return True
     return any(marker in suffix_same_segment for marker in ["a plus", "is a plus", "bonus", "preferred", "desirable"])
+
+
+def _term_match_has_noncentral_list_context(normalized_text: str, normalized_term: str, start: int, end: int) -> bool:
+    sentence_start = max(normalized_text.rfind(".", 0, start), normalized_text.rfind("?", 0, start), normalized_text.rfind("!", 0, start))
+    sentence_end_candidates = [
+        index for index in [
+            normalized_text.find(".", end),
+            normalized_text.find("?", end),
+            normalized_text.find("!", end),
+        ]
+        if index >= 0
+    ]
+    sentence_start = 0 if sentence_start < 0 else sentence_start + 1
+    sentence_end = min(sentence_end_candidates) if sentence_end_candidates else len(normalized_text)
+    sentence = normalized_text[sentence_start:sentence_end]
+    if " or " not in sentence:
+        return "and/or" in sentence
+    if "or similar" in sentence and any(marker in sentence for marker in ["one or more", "including", "such as"]):
+        return True
+    if "and/or" in sentence:
+        return True
+    if normalized_term in {"aws", "gcp", "azure"} and "cloud technologies" in sentence:
+        return any(marker in sentence for marker in ["such as", "including", "include", "e.g", "for example"])
+    if normalized_term in {"microservice", "microservices"} and "service oriented or microservice" in sentence:
+        return True
+    return False
 
 
 def _contains_term_variant(text: str, term: str) -> bool:
@@ -2063,13 +2133,17 @@ def _dedupe_terms(values: list[str]) -> list[str]:
     seen: set[str] = set()
     out = []
     for value in values:
-        term = str(value or "").strip()
+        term = _canonical_central_term(str(value or "").strip())
         key = _normalize_text(term)
         if not key or key in seen or term in _CENTRAL_TERM_EXCLUDES:
             continue
         seen.add(key)
         out.append(term)
     return out
+
+
+def _canonical_central_term(term: str) -> str:
+    return _CENTRAL_TERM_ALIASES.get(term, term)
 
 
 def _compact_job(job: dict[str, Any], max_description_chars: int = 6000) -> dict[str, Any]:

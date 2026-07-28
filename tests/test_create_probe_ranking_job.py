@@ -4,6 +4,13 @@ import json
 from scripts import create_probe_ranking_job as creator
 
 
+def test_parse_args_defaults_to_probe_ranking_version():
+    args = creator.parse_args([])
+
+    assert args.ranking_version == creator.DEFAULT_PROBE_RANKING_VERSION
+    assert args.ranking_version.endswith("-probe")
+
+
 def test_selected_job_ids_filters_categories_and_dedupes():
     probe = {
         "cases": [

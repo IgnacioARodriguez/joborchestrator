@@ -15,12 +15,13 @@ from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION  # noqa: E40
 from joborchestrator.storage import persistence as db  # noqa: E402
 
 DEFAULT_PROBE_PATH = Path("logs/autoloop_probe_cases.json")
+DEFAULT_PROBE_RANKING_VERSION = f"{NVIDIA_RANKING_VERSION}-probe"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create a small NVIDIA ranking job from selected autoloop probe cases.")
     parser.add_argument("--probe", type=Path, default=DEFAULT_PROBE_PATH)
-    parser.add_argument("--ranking-version", default=NVIDIA_RANKING_VERSION)
+    parser.add_argument("--ranking-version", default=DEFAULT_PROBE_RANKING_VERSION)
     parser.add_argument("--model", default=DEFAULT_NVIDIA_MODEL)
     parser.add_argument("--category", action="append", default=[], help="Include only cases with this category. Repeatable.")
     parser.add_argument("--limit", type=int, default=8)

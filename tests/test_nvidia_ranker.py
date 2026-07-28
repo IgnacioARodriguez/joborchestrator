@@ -90,8 +90,8 @@ def test_build_nvidia_ranking_payload_adds_central_terms_to_reconcile(monkeypatc
         "Senior Data Engineer",
         "Senior Data",
         "Data Engineer",
-        "Terraform",
         "Snowflake",
+        "Terraform",
         "Python",
     ]
 
@@ -129,6 +129,93 @@ def test_central_terms_ignore_nice_to_have_context():
     assert "FastAPI" in terms
     assert "Kubernetes" not in terms
     assert "Terraform" not in terms
+
+
+def test_central_terms_ignore_responsibility_and_success_sections():
+    terms = nvidia_ranker._central_terms_to_reconcile(
+        {
+            "id": 3,
+            "title": "Staff Product Engineer",
+            "description_text": (
+                "You have a hand in the full lifecycle and shape product outcomes. "
+                "What Success Looks Like: Dashboards improve and documentation is easy to find. "
+                "Requirements: TypeScript and GitHub Actions in production."
+            ),
+        }
+    )
+
+    assert "TypeScript" in terms
+    assert "GitHub Actions" in terms
+    assert "Dashboards" not in terms
+    assert "Documentation" not in terms
+    assert "What Success Looks Like" not in terms
+
+
+def test_central_terms_stop_before_hiring_process_and_language_sections():
+    terms = nvidia_ranker._central_terms_to_reconcile(
+        {
+            "id": 4,
+            "title": "Data Engineer",
+            "description_text": (
+                "Must have: Python and SQL for production data pipelines. "
+                "Language requirements: English fluent. "
+                "Our hiring process: Technical round with writing samples and portfolios."
+            ),
+        }
+    )
+
+    assert "Data Engineer" in terms
+    assert "Python" in terms
+    assert "SQL" in terms
+    assert "English" not in terms
+    assert "Writing" not in terms
+
+
+def test_central_terms_do_not_force_every_alternative_in_stack_lists():
+    terms = nvidia_ranker._central_terms_to_reconcile(
+        {
+            "id": 5,
+            "title": "Senior Backend Engineer (TypeScript, Node.js)",
+            "description_text": (
+                "You are confident working with TypeScript, Node.js, REST APIs, "
+                "and service-oriented or microservice architectures. "
+                "You have experience with cloud technologies such as AWS, GCP, or Azure. "
+                "Experience with GraphQL or Docker is a plus."
+            ),
+        }
+    )
+
+    assert "TypeScript" in terms
+    assert "Node.js" in terms
+    assert "AWS" not in terms
+    assert "GCP" not in terms
+    assert "Azure" not in terms
+    assert "GraphQL" not in terms
+
+
+def test_central_terms_ignore_one_of_or_similar_requirement_lists():
+    terms = nvidia_ranker._central_terms_to_reconcile(
+        {
+            "id": 6,
+            "title": "Senior Security Engineer",
+            "description_text": (
+                "Requirements: 4+ years in DevSecOps, security engineering, and cloud security. "
+                "Proficiency in one or more programming languages such as Java, Go, Python, or similar. "
+                "Experience with REST and/or GraphQL APIs. "
+                "Hands-on experience with infrastructure tools including Kubernetes, Terraform, GitHub Actions, "
+                "or similar platforms. "
+                "Experience integrating security controls into CI/CD and cloud workflows."
+            ),
+        }
+    )
+
+    assert "Senior Security Engineer" in terms
+    assert "DevSecOps" in terms
+    assert "Cloud Security" in terms
+    assert "CI/CD" in terms
+    assert "Java" not in terms
+    assert "GraphQL" not in terms
+    assert "GitHub Actions" not in terms
 
 
 def test_build_nvidia_ranking_payload_requires_profile(monkeypatch):
