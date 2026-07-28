@@ -6,11 +6,25 @@ Automation is safe-by-default.
 - `dry_run` defaults to true for form filling.
 - Auto-submit is disabled unless `ENABLE_AUTO_SUBMIT_APPROVED=1`.
 - Unknown or sensitive fields stop the session in `needs_user_input`.
+- Provider support is exposed through `GET /api/automation/provider-capabilities`.
+- The UI shows provider capabilities separately from provider detection.
+- Real submissions are recorded through `submitted_manually`, `submitted`, or later `submission_verified`.
 
 Adapters:
 
 - `GenericAssistedAdapter`: works for unsupported providers by preparing copyable answers and a review payload.
-- `GreenhouseAdapter`: detects Greenhouse HTML, extracts labels/fields, maps safe answers, simulates fill in dry-run and creates a review summary.
+- `GreenhouseAdapter`: detects Greenhouse pages, extracts labels/fields from the Playwright DOM when available, maps safe answers, fills safe compatible fields and creates a review summary.
+
+Current provider capability matrix:
+
+| Provider | Open | Redirects | Detect fields | Fill text | Selects | Radios | Checkboxes | Resume upload | Browser resume | Auto-submit |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Greenhouse | yes | yes | yes | yes | yes | yes | yes | yes | yes | env-gated |
+| Generic forms | yes | yes | no | no | no | no | no | no | no | no |
+| Lever | yes | yes | no | no | no | no | no | no | no | no |
+| Ashby | yes | yes | no | no | no | no | no | no | no | no |
+| Workday | yes | yes | no | no | no | no | no | no | no | no |
+| LinkedIn Easy Apply | yes | no | no | no | no | no | no | no | no | no |
 
 External apply flow:
 
@@ -18,12 +32,51 @@ External apply flow:
 2. `Prepare application` creates an `application_sessions` row.
 3. If no HTML is provided, the v0/API queues `application_execution` in Turso.
 4. The local worker opens the external URL with Playwright, captures HTML, detects the adapter and updates the session in Turso.
-5. The session ends at `ready_for_review` or `needs_user_input`; never submitted automatically.
+5. Greenhouse browser execution uses Playwright DOM inspection for fields and can fill safe text/select/radio/checkbox controls when the answer is confirmed and non-sensitive.
+6. Greenhouse can export the generated ATS CV as a temporary local PDF and upload it to a local/browser file input with `set_input_files`.
+7. Final submit-like controls are classified as `forbidden` by default and recorded in session artifacts.
+8. If `APPLICATION_BROWSER_HANDOFF=1`, the worker keeps the local Chromium page alive and stores only an opaque `local-browser://session/<uuid>` reference.
+9. Sensitive or unknown fields remain unfilled and are reported for review.
+10. By default, the session ends at `ready_for_review` or `needs_user_input`.
+11. After the user submits manually on the company site, they can record `submitted_manually`.
+12. A later confirmation can move the session to `submission_verified`.
+
+Personal auto-submit mode:
+
+- Set `ENABLE_AUTO_SUBMIT_APPROVED=1`.
+- Create the session with `"mode": "auto_submit_approved"`.
+- The worker queues that mode with `dry_run=false`.
+- Currently only Greenhouse is allowed.
+- The worker submits only when there are no unknown required or sensitive fields, any required resume file was uploaded, and exactly one final submit control is detected.
+- Blocked attempts stay in `ready_for_review` or `needs_user_input` and write `artifacts_json.auto_submit.reasons`.
+- Successful attempts transition through `ready_for_review -> approved -> submitting -> submitted` and store the clicked control text in `artifacts_json.auto_submit`.
+
+Answer bank:
+
+- Answers have explicit `status`: `proposed`, `approved`, `rejected`, `expired`, or `requires_confirmation`.
+- `generated` answers default to `proposed` and are never used for autofill until approved by the user.
+- Deterministic matching runs before any semantic/AI path: canonical key, normalized exact question pattern, then `re:` regex patterns.
+- Normalization lowercases, removes accents, removes non-significant punctuation, and collapses whitespace.
+- Sensitive, expired, rejected, proposed, or confirmation-required answers are not autofilled.
 
 When a session stops at `needs_user_input`, the UI can queue `Continue after manual step`.
 For login or account pages, use `APPLICATION_BROWSER_HEADLESS=0` plus
 `APPLICATION_BROWSER_PROFILE_DIR` so the local worker can reuse the browser
 session after you resolve the manual step.
+
+Local browser handoff:
+
+```bash
+APPLICATION_BROWSER_HANDOFF=1
+APPLICATION_BROWSER_HEADLESS=0
+APPLICATION_BROWSER_HANDOFF_TIMEOUT_SECONDS=3600
+APPLICATION_BROWSER_PROFILE_DIR=data/application_browser_profile
+```
+
+The database stores only `browser_session_ref` values such as
+`local-browser://session/<uuid>`. Cookies, tokens, passwords, browser storage,
+and complete HTML stay in the local browser process/profile and are not stored
+in Turso/SQLite session artifacts.
 
 Site account tracking:
 
@@ -38,6 +91,7 @@ Persistent sessions live in `application_sessions` and can be resumed via:
 GET /api/application-sessions?job_id=123
 GET /api/application-sessions/{session_id}
 POST /api/application-sessions/{session_id}/transition
+POST /api/application-sessions/{session_id}/submitted-manually
 ```
 
 Create a Greenhouse dry-run session:

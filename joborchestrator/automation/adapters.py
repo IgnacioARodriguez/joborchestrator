@@ -1,10 +1,36 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from typing import Any, Protocol
+from dataclasses import asdict, dataclass
+from typing import Any, Protocol, TYPE_CHECKING
 
-from joborchestrator.automation.answer_bank import map_answers as map_schema_answers
+from joborchestrator.automation.answer_bank import classify_field, map_answers as map_schema_answers
+
+if TYPE_CHECKING:
+    from playwright.async_api import Page
+
+
+@dataclass(frozen=True)
+class ProviderCapabilities:
+    provider: str
+    can_open_application: bool
+    can_follow_apply_redirects: bool
+    can_detect_fields: bool
+    can_fill_text_fields: bool
+    can_fill_selects: bool
+    can_fill_radios: bool
+    can_fill_checkboxes: bool
+    can_upload_resume: bool
+    can_prepare_custom_answers: bool
+    can_handle_multistep: bool
+    can_resume_browser_session: bool
+    requires_login: bool
+    requires_final_review: bool
+    can_observe_submission: bool
+    can_submit: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -17,7 +43,10 @@ class AdapterResult:
 class ApplicationAdapter(Protocol):
     provider: str
 
+    def capabilities(self) -> ProviderCapabilities: ...
     def detect_html(self, html: str, job: dict[str, Any] | None = None) -> bool: ...
+    async def detect_page(self, page: "Page", job: dict[str, Any] | None = None) -> bool: ...
+    async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]: ...
     def extract_form_schema_html(self, html: str) -> dict[str, Any]: ...
     def map_answers(self, schema: dict[str, Any], profile: dict[str, Any], answer_bank: list[dict[str, Any]]) -> dict[str, Any]: ...
     def fill_fields_html(self, html: str, mapping: dict[str, Any], *, dry_run: bool = True) -> AdapterResult: ...
@@ -27,8 +56,34 @@ class ApplicationAdapter(Protocol):
 class GenericAssistedAdapter:
     provider = "generic"
 
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            provider=self.provider,
+            can_open_application=True,
+            can_follow_apply_redirects=True,
+            can_detect_fields=False,
+            can_fill_text_fields=False,
+            can_fill_selects=False,
+            can_fill_radios=False,
+            can_fill_checkboxes=False,
+            can_upload_resume=False,
+            can_prepare_custom_answers=True,
+            can_handle_multistep=False,
+            can_resume_browser_session=False,
+            requires_login=False,
+            requires_final_review=True,
+            can_observe_submission=False,
+            can_submit=False,
+        )
+
     def detect_html(self, html: str, job: dict[str, Any] | None = None) -> bool:
         return True
+
+    async def detect_page(self, page: "Page", job: dict[str, Any] | None = None) -> bool:
+        return self.detect_html(await page.content(), job)
+
+    async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]:
+        return self.extract_form_schema_html(await page.content())
 
     def extract_form_schema_html(self, html: str) -> dict[str, Any]:
         return {"provider": self.provider, "fields": []}
@@ -52,9 +107,40 @@ class GenericAssistedAdapter:
 class GreenhouseAdapter(GenericAssistedAdapter):
     provider = "greenhouse"
 
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            provider=self.provider,
+            can_open_application=True,
+            can_follow_apply_redirects=True,
+            can_detect_fields=True,
+            can_fill_text_fields=True,
+            can_fill_selects=True,
+            can_fill_radios=True,
+            can_fill_checkboxes=True,
+            can_upload_resume=True,
+            can_prepare_custom_answers=True,
+            can_handle_multistep=False,
+            can_resume_browser_session=True,
+            requires_login=False,
+            requires_final_review=True,
+            can_observe_submission=False,
+            can_submit=False,
+        )
+
     def detect_html(self, html: str, job: dict[str, Any] | None = None) -> bool:
         url = str((job or {}).get("apply_url") or (job or {}).get("url") or "").lower()
         return "greenhouse.io" in url or "grnh.se" in url or "boards.greenhouse.io" in html.lower() or 'id="application_form"' in html
+
+    async def detect_page(self, page: "Page", job: dict[str, Any] | None = None) -> bool:
+        url = page.url.lower()
+        if "greenhouse.io" in url or "grnh.se" in url:
+            return True
+        return await page.locator("#application_form, form[action*='greenhouse' i]").count() > 0
+
+    async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]:
+        fields = await page.locator("#application_form, form").first.evaluate(_GREENHOUSE_FORM_DISCOVERY_JS)
+        normalized = [_normalize_dom_field(field) for field in fields]
+        return {"provider": self.provider, "fields": normalized}
 
     def extract_form_schema_html(self, html: str) -> dict[str, Any]:
         fields: list[dict[str, Any]] = []
@@ -102,12 +188,66 @@ class GreenhouseAdapter(GenericAssistedAdapter):
 class AdapterRegistry:
     def __init__(self) -> None:
         self._adapters: list[ApplicationAdapter] = [GreenhouseAdapter(), GenericAssistedAdapter()]
+        self._declared: dict[str, ProviderCapabilities] = {
+            adapter.provider: adapter.capabilities() for adapter in self._adapters
+        }
+        self._declared.update(
+            {
+                "lever": _recognition_only_capabilities("lever"),
+                "ashby": _recognition_only_capabilities("ashby"),
+                "workday": _recognition_only_capabilities("workday", requires_login=True),
+                "linkedin_easy_apply": ProviderCapabilities(
+                    provider="linkedin_easy_apply",
+                    can_open_application=True,
+                    can_follow_apply_redirects=False,
+                    can_detect_fields=False,
+                    can_fill_text_fields=False,
+                    can_fill_selects=False,
+                    can_fill_radios=False,
+                    can_fill_checkboxes=False,
+                    can_upload_resume=False,
+                    can_prepare_custom_answers=False,
+                    can_handle_multistep=False,
+                    can_resume_browser_session=False,
+                    requires_login=True,
+                    requires_final_review=True,
+                    can_observe_submission=False,
+                    can_submit=False,
+                ),
+            }
+        )
 
     def detect(self, html: str, job: dict[str, Any] | None = None) -> ApplicationAdapter:
         for adapter in self._adapters:
             if adapter.detect_html(html, job):
                 return adapter
         return self._adapters[-1]
+
+    def capabilities(self, provider: str | None = None) -> list[ProviderCapabilities] | ProviderCapabilities:
+        if provider:
+            return self._declared.get(provider, self._declared["generic"])
+        return [self._declared[key] for key in sorted(self._declared)]
+
+
+def _recognition_only_capabilities(provider: str, *, requires_login: bool = False) -> ProviderCapabilities:
+    return ProviderCapabilities(
+        provider=provider,
+        can_open_application=True,
+        can_follow_apply_redirects=True,
+        can_detect_fields=False,
+        can_fill_text_fields=False,
+        can_fill_selects=False,
+        can_fill_radios=False,
+        can_fill_checkboxes=False,
+        can_upload_resume=False,
+        can_prepare_custom_answers=False,
+        can_handle_multistep=False,
+        can_resume_browser_session=False,
+        requires_login=requires_login,
+        requires_final_review=True,
+        can_observe_submission=False,
+        can_submit=False,
+    )
 
 
 def _attr(tag: str, name: str) -> str | None:
@@ -118,3 +258,144 @@ def _attr(tag: str, name: str) -> str | None:
 def _clean_html(value: str) -> str:
     text = re.sub(r"<[^>]+>", " ", value)
     return re.sub(r"\s+", " ", text).strip().rstrip("*").strip()
+
+
+def _normalize_dom_field(field: dict[str, Any]) -> dict[str, Any]:
+    label = str(field.get("label") or field.get("name") or field.get("id") or "").strip()
+    raw_type = str(field.get("type") or "text").lower()
+    field_type = {
+        "text": "text",
+        "email": "email",
+        "tel": "tel",
+        "url": "url",
+        "textarea": "textarea",
+        "select-one": "select",
+        "select-multiple": "select",
+        "radio": "radio",
+        "checkbox": "checkbox",
+        "file": "file",
+    }.get(raw_type, raw_type)
+    canonical, classification = classify_field(label, field_type)
+    confidence = {
+        "label_for": 0.98,
+        "wrapping_label": 0.95,
+        "aria_label": 0.9,
+        "aria_labelledby": 0.88,
+        "nearby_text": 0.72,
+        "name": 0.62,
+        "id": 0.58,
+        "placeholder": 0.45,
+    }.get(str(field.get("locator_strategy") or ""), 0.5)
+    return {
+        "id": str(field.get("id") or field.get("name") or label),
+        "key": canonical or _safe_key(label or str(field.get("name") or field.get("id") or "field")),
+        "name": str(field.get("name") or field.get("id") or label),
+        "label": label,
+        "type": field_type,
+        "required": bool(field.get("required")),
+        "sensitive": classification == "sensitive",
+        "confidence": confidence,
+        "locator_strategy": str(field.get("locator_strategy") or "unknown"),
+        "options": field.get("options") or [],
+    }
+
+
+def _safe_key(value: str) -> str:
+    key = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    return key or "field"
+
+
+_GREENHOUSE_FORM_DISCOVERY_JS = """
+form => {
+  const TECHNICAL_RE = /(^_|csrf|token|utf8|captcha|g-recaptcha|h-captcha|honeypot|bot-field|website_url)/i;
+  const controls = Array.from(form.querySelectorAll('input, textarea, select'));
+  const byNameRadio = new Map();
+  const fields = [];
+
+  function text(value) {
+    return String(value || '').replace(/\\s+/g, ' ').trim().replace(/\\s*\\*\\s*$/, '').trim();
+  }
+
+  function isHidden(element) {
+    const inputType = String(element.getAttribute('type') || '').toLowerCase();
+    const style = window.getComputedStyle(element);
+    return inputType === 'hidden'
+      || element.hidden
+      || style.display === 'none'
+      || style.visibility === 'hidden'
+      || element.getAttribute('aria-hidden') === 'true';
+  }
+
+  function labelFor(element) {
+    const id = element.id;
+    if (id) {
+      const explicit = form.querySelector(`label[for="${CSS.escape(id)}"]`) || document.querySelector(`label[for="${CSS.escape(id)}"]`);
+      if (explicit) return { label: text(explicit.innerText || explicit.textContent), strategy: 'label_for' };
+    }
+    const wrapping = element.closest('label');
+    if (wrapping) return { label: text(wrapping.innerText || wrapping.textContent), strategy: 'wrapping_label' };
+    const aria = element.getAttribute('aria-label');
+    if (aria) return { label: text(aria), strategy: 'aria_label' };
+    const labelledBy = element.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      const label = labelledBy.split(/\\s+/).map(part => document.getElementById(part)?.innerText || document.getElementById(part)?.textContent || '').join(' ');
+      if (text(label)) return { label: text(label), strategy: 'aria_labelledby' };
+    }
+    const container = element.closest('.field, .field-group, .application-field, .question, div, li');
+    if (container) {
+      const clone = container.cloneNode(true);
+      clone.querySelectorAll('input, textarea, select, option, script, style').forEach(node => node.remove());
+      const nearby = text(clone.innerText || clone.textContent);
+      if (nearby) return { label: nearby, strategy: 'nearby_text' };
+    }
+    const name = element.getAttribute('name');
+    if (name) return { label: text(name.replace(/[_.-]+/g, ' ')), strategy: 'name' };
+    if (id) return { label: text(id.replace(/[_.-]+/g, ' ')), strategy: 'id' };
+    return { label: text(element.getAttribute('placeholder')), strategy: 'placeholder' };
+  }
+
+  function baseField(element) {
+    const labelled = labelFor(element);
+    const tag = element.tagName.toLowerCase();
+    const type = tag === 'textarea' ? 'textarea' : tag === 'select' ? 'select' : String(element.getAttribute('type') || 'text').toLowerCase();
+    return {
+      id: element.id || element.getAttribute('name') || labelled.label,
+      name: element.getAttribute('name') || element.id || labelled.label,
+      label: labelled.label,
+      type,
+      required: element.required || element.getAttribute('aria-required') === 'true' || /\\*/.test(element.closest('label')?.textContent || ''),
+      locator_strategy: labelled.strategy,
+      options: [],
+    };
+  }
+
+  for (const element of controls) {
+    const name = element.getAttribute('name') || '';
+    const id = element.id || '';
+    if (element.disabled || isHidden(element) || TECHNICAL_RE.test(name) || TECHNICAL_RE.test(id)) continue;
+    const field = baseField(element);
+    if (!field.label && !field.name) continue;
+    if (field.type === 'radio') {
+      const groupKey = name || id || field.label;
+      const legend = text(element.closest('fieldset')?.querySelector('legend')?.innerText || element.closest('fieldset')?.querySelector('legend')?.textContent);
+      if (!byNameRadio.has(groupKey)) {
+        byNameRadio.set(groupKey, { ...field, id: groupKey, name: groupKey, label: legend || field.label, options: [] });
+      }
+      const optionLabel = labelFor(element).label || element.value;
+      byNameRadio.get(groupKey).options.push({ value: element.value || optionLabel, label: optionLabel });
+      continue;
+    }
+    if (field.type === 'checkbox') {
+      field.options = [{ value: element.value || 'checked', label: field.label }];
+    }
+    if (field.type === 'select') {
+      field.options = Array.from(element.options)
+        .filter(option => option.value || text(option.innerText || option.textContent))
+        .map(option => ({ value: option.value, label: text(option.innerText || option.textContent) }));
+    }
+    fields.push(field);
+  }
+  fields.push(...Array.from(byNameRadio.values()));
+  return fields;
+}
+"""

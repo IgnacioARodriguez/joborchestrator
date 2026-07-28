@@ -120,12 +120,12 @@ export function DashboardScreen({
           description="Imported and ranked opportunities."
         />
         <KpiCard
-          label="Apply now"
+          label="Prepare next"
           value={kpis.applyCandidates}
           icon={Send}
           tone="primary"
           hint="ready"
-          description="Strong matches worth action."
+          description="Strong matches worth preparing."
         />
         <KpiCard
           label="Applied"

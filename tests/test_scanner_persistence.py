@@ -283,11 +283,36 @@ def test_answer_contacts_and_followups_are_persisted(tmp_path, monkeypatch):
 
     assert answer["question_patterns"] == ["Are you authorized to work?"]
     assert answer["requires_confirmation"] is True
+    assert answer["status"] == "requires_confirmation"
     assert db.list_answer_definitions()[0]["canonical_key"] == "work_authorization"
     assert contact["name"] == "Jane Recruiter"
     assert db.list_contacts()[0]["company"] == "Acme"
     assert follow_up["note"] == "Ping recruiter"
     assert db.list_follow_ups()[0]["application_id"] == application["id"]
+
+
+def test_generated_answer_definition_defaults_to_proposed(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+
+    answer = db.upsert_answer_definition(
+        {
+            "canonical_key": "custom_project",
+            "question_patterns": ["Tell us about a project"],
+            "answer_type": "text",
+            "value": "Draft answer",
+            "source": "generated",
+            "sensitivity": "public",
+            "confidence": 0.72,
+            "language": "en",
+            "profile_version": "profile-v1",
+        }
+    )
+
+    assert answer["status"] == "proposed"
+    assert answer["confidence"] == 0.72
+    assert answer["language"] == "en"
+    assert answer["profile_version"] == "profile-v1"
 
 
 def test_generated_resume_variant_links_to_application(tmp_path, monkeypatch):

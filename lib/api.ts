@@ -21,6 +21,7 @@ import type {
   SkillCatalogItem,
   ApplicationSession,
   ApplicationSessionResponse,
+  ProviderCapabilities,
   LLMFeedbackAction,
   LLMFeedbackArtifact,
   LLMFeedbackSummary,
@@ -145,6 +146,16 @@ export const api = {
     return request<{ accounts: AutomationAccount[] }>("/api/automation/accounts", { fresh: true })
   },
 
+  async getProviderCapabilities(provider?: string) {
+    if (provider) {
+      return request<{ provider: ProviderCapabilities }>(
+        `/api/automation/provider-capabilities/${encodeURIComponent(provider)}`,
+        { fresh: true },
+      )
+    }
+    return request<{ providers: ProviderCapabilities[] }>("/api/automation/provider-capabilities", { fresh: true })
+  },
+
   async setPipelineStatus(id: string, status: PipelineStatus) {
     return request<{ ok: boolean }>(`/api/jobs/${id}/pipeline`, {
       method: "POST",
@@ -216,6 +227,13 @@ export const api = {
     return request<{ session: ApplicationSession }>(`/api/application-sessions/${id}/transition`, {
       method: "POST",
       body: JSON.stringify({ state, payload }),
+    })
+  },
+
+  async markApplicationSubmittedManually(id: number) {
+    return request<{ session: ApplicationSession }>(`/api/application-sessions/${id}/submitted-manually`, {
+      method: "POST",
+      body: JSON.stringify({}),
     })
   },
 

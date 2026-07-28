@@ -18,6 +18,13 @@ ReadSqlQuery = Callable[
 
 APPLICATION_STATUSES = {
     "preparing",
+    "materials_ready",
+    "opened",
+    "prefilled",
+    "needs_user_input",
+    "ready_for_review",
+    "submitted_manually",
+    "submission_verified",
     "submitted",
     "recruiter_screen",
     "interview",
@@ -30,6 +37,8 @@ APPLICATION_CHANNELS = {"portal", "easy_apply", "referral", "direct_contact"}
 APPLICATION_EVENTS = {
     "opened",
     "answer_saved",
+    "submitted_manually",
+    "submission_verified",
     "submitted",
     "recruiter_reply",
     "rejection",
@@ -38,6 +47,7 @@ APPLICATION_EVENTS = {
 }
 ANSWER_SOURCES = {"approved", "generated"}
 ANSWER_SENSITIVITIES = {"public", "preference", "sensitive"}
+ANSWER_STATUSES = {"proposed", "approved", "rejected", "expired", "requires_confirmation"}
 CONTACT_SOURCES = {"linkedin_scraper", "manual"}
 ACCOUNT_STATUSES = {"unknown", "needs_login", "ready", "failed", "blocked"}
 
@@ -271,14 +281,17 @@ def upsert_answer_definition(connect: ConnectionFactory, payload: dict) -> dict:
     now = _now()
     source = _validated(payload.get("source") or "approved", ANSWER_SOURCES, "source")
     sensitivity = _validated(payload.get("sensitivity") or "public", ANSWER_SENSITIVITIES, "sensitivity")
+    status = _validated(payload.get("status") or _default_answer_status(payload, source), ANSWER_STATUSES, "status")
     patterns = payload.get("question_patterns") or []
     conn = connect()
     try:
+        _ensure_answer_definition_columns(conn)
         conn.execute(
             """INSERT INTO answer_definitions (
                    canonical_key, question_patterns, answer_type, value, source,
-                   sensitivity, requires_confirmation, last_confirmed_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   sensitivity, requires_confirmation, status, language, confidence,
+                   expires_at, profile_version, last_confirmed_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(canonical_key) DO UPDATE SET
                    question_patterns = excluded.question_patterns,
                    answer_type = excluded.answer_type,
@@ -286,6 +299,11 @@ def upsert_answer_definition(connect: ConnectionFactory, payload: dict) -> dict:
                    source = excluded.source,
                    sensitivity = excluded.sensitivity,
                    requires_confirmation = excluded.requires_confirmation,
+                   status = excluded.status,
+                   language = excluded.language,
+                   confidence = excluded.confidence,
+                   expires_at = excluded.expires_at,
+                   profile_version = excluded.profile_version,
                    last_confirmed_at = excluded.last_confirmed_at,
                    updated_at = excluded.updated_at""",
             (
@@ -296,6 +314,11 @@ def upsert_answer_definition(connect: ConnectionFactory, payload: dict) -> dict:
                 source,
                 sensitivity,
                 int(bool(payload.get("requires_confirmation", False))),
+                status,
+                payload.get("language"),
+                payload.get("confidence"),
+                payload.get("expires_at"),
+                payload.get("profile_version"),
                 payload.get("last_confirmed_at"),
                 now,
             ),
@@ -307,6 +330,12 @@ def upsert_answer_definition(connect: ConnectionFactory, payload: dict) -> dict:
 
 
 def list_answer_definitions(connect: ConnectionFactory, read_sql_query: ReadSqlQuery) -> list[dict]:
+    conn = connect()
+    try:
+        _ensure_answer_definition_columns(conn)
+        conn.commit()
+    finally:
+        conn.close()
     items = _list_table(connect, read_sql_query, "answer_definitions", "canonical_key ASC")
     for item in items:
         item["question_patterns"] = json.loads(item.get("question_patterns") or "[]")
@@ -473,7 +502,7 @@ def transition_application_session(connect: ConnectionFactory, session_id: int, 
         if not transition.idempotent:
             updates = ["state = ?", "updated_at = ?"]
             values: list[object] = [state, now]
-            if state == "submitted":
+            if state in {"submitted", "submitted_manually"}:
                 updates.append("completed_at = ?")
                 values.append(now)
             for column in [
@@ -508,10 +537,11 @@ def transition_application_session(connect: ConnectionFactory, session_id: int, 
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 (session_id, current, state, now, payload.get("note"), dumps(payload)),
             )
-            if state == "submitted" and row["application_id"]:
+            if state in {"submitted", "submitted_manually", "submission_verified"} and row["application_id"]:
+                application_status = "submission_verified" if state == "submission_verified" else state
                 conn.execute(
-                    "UPDATE applications SET status = 'submitted', submitted_at = COALESCE(submitted_at, ?), updated_at = ? WHERE id = ?",
-                    (now, now, row["application_id"]),
+                    "UPDATE applications SET status = ?, submitted_at = COALESCE(submitted_at, ?), updated_at = ? WHERE id = ?",
+                    (application_status, now, now, row["application_id"]),
                 )
             conn.commit()
         return _session_row(conn, session_id)
@@ -611,10 +641,36 @@ def _list_table(connect: ConnectionFactory, read_sql_query: ReadSqlQuery, table:
 
 
 def _answer_row(conn: sqlite3.Connection | db_connection.LibsqlConnection, key: str) -> dict:
+    _ensure_answer_definition_columns(conn)
     row = dict(conn.execute("SELECT * FROM answer_definitions WHERE canonical_key = ?", (key,)).fetchone())
     row["question_patterns"] = json.loads(row.get("question_patterns") or "[]")
     row["requires_confirmation"] = bool(row.get("requires_confirmation"))
     return row
+
+
+def _default_answer_status(payload: dict, source: str) -> str:
+    if payload.get("requires_confirmation"):
+        return "requires_confirmation"
+    if source == "generated":
+        return "proposed"
+    return "approved"
+
+
+def _ensure_answer_definition_columns(conn: sqlite3.Connection | db_connection.LibsqlConnection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(answer_definitions)").fetchall()}
+    for column, column_type in {
+        "status": "TEXT",
+        "language": "TEXT",
+        "confidence": "REAL",
+        "expires_at": "TEXT",
+        "profile_version": "TEXT",
+    }.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE answer_definitions ADD COLUMN {column} {column_type}")
+            columns.add(column)
+    conn.execute("UPDATE answer_definitions SET status = 'proposed' WHERE status IS NULL AND source = 'generated'")
+    conn.execute("UPDATE answer_definitions SET status = 'requires_confirmation' WHERE status IS NULL AND requires_confirmation = 1")
+    conn.execute("UPDATE answer_definitions SET status = 'approved' WHERE status IS NULL")
 
 
 def _session_row(conn: sqlite3.Connection | db_connection.LibsqlConnection, session_id: int) -> dict:

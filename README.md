@@ -148,6 +148,10 @@ joborchestrator/
 - Track pipeline state: new, opened, shortlisted, applied, discarded.
 - Generate application kits: recruiter message, cover letter, ATS CV notes, and
   autofill notes.
+- Prepare application sessions in review-before-submit mode, with provider
+  capabilities shown explicitly and manual submission recorded separately.
+- Enable personal Greenhouse auto-submit with `ENABLE_AUTO_SUBMIT_APPROVED=1`
+  and `auto_submit_approved` sessions when all required fields are resolved.
 
 ## Useful Commands
 

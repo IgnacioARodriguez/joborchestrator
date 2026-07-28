@@ -49,7 +49,7 @@ import {
   rankingSummaryText,
   salaryLabel,
 } from "@/lib/job-ui"
-import type { ApplicationSession, JobContact, JobPosting } from "@/lib/types"
+import type { ApplicationSession, JobContact, JobPosting, ProviderCapabilities } from "@/lib/types"
 import type { LLMFeedbackAction, LLMFeedbackArtifact } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -363,22 +363,63 @@ function detectProvider(job: JobPosting) {
 function primaryActionLabel(session: ApplicationSession | null, job: JobPosting) {
   if (!session) return job.materials.ats_cv_notes ? "Prepare application" : "Prepare materials"
   if (session.state === "needs_user_input") return `Resolve ${session.unknown_fields_json.length || "missing"} fields`
-  if (session.state === "ready_for_review") return "Review and apply"
-  if (["created", "preflight", "preparing_materials", "ready_to_fill", "filling"].includes(session.state)) {
-    return "Continue application"
+  if (session.state === "ready_for_review") return "Ready for final review"
+  if (["created", "preparing", "preflight", "preparing_materials", "materials_ready", "opened", "ready_to_fill", "filling", "prefilled"].includes(session.state)) {
+    return "Continue preparation"
   }
-  if (session.state === "submitted") return "Verify submission"
-  return "Continue application"
+  if (session.state === "submitted_manually") return "Verify confirmation"
+  if (session.state === "submission_verified") return "Submission verified"
+  if (session.state === "submitted") return "Verify confirmation"
+  return "Continue preparation"
+}
+
+const CAPABILITY_LABELS: Array<[keyof ProviderCapabilities, string]> = [
+  ["can_open_application", "Open application"],
+  ["can_follow_apply_redirects", "Follow apply redirects"],
+  ["can_detect_fields", "Detect fields"],
+  ["can_fill_text_fields", "Fill text fields"],
+  ["can_fill_selects", "Fill selects"],
+  ["can_fill_radios", "Fill radios"],
+  ["can_fill_checkboxes", "Fill checkboxes"],
+  ["can_upload_resume", "Upload resume"],
+  ["can_prepare_custom_answers", "Prepare custom answers"],
+  ["can_resume_browser_session", "Resume browser session"],
+  ["can_submit", "Automatic submit"],
+]
+
+function ProviderCapabilityList({ capabilities }: { capabilities: ProviderCapabilities | null }) {
+  if (!capabilities) return null
+  return (
+    <div className="grid grid-cols-1 gap-1.5 text-xs sm:grid-cols-2">
+      {CAPABILITY_LABELS.map(([key, label]) => {
+        const supported = Boolean(capabilities[key])
+        return (
+          <div key={key} className="flex items-center gap-1.5 rounded-md border border-border bg-background/70 px-2 py-1">
+            {supported ? (
+              <CheckCircle2 className="size-3.5 text-success" />
+            ) : (
+              <CircleX className="size-3.5 text-muted-foreground" />
+            )}
+            <span className={supported ? "text-foreground" : "text-muted-foreground"}>{label}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 function SessionReview({
   session,
   onContinue,
+  onMarkSubmitted,
   busy,
+  capabilities,
 }: {
   session: ApplicationSession
   onContinue: () => void
+  onMarkSubmitted: () => void
   busy: boolean
+  capabilities: ProviderCapabilities | null
 }) {
   const unknown = session.unknown_fields_json ?? []
   const answers = Array.isArray(session.mapped_answers_json?.answers)
@@ -407,6 +448,7 @@ function SessionReview({
           <span className="font-semibold text-foreground">{session.user_clicks}</span>
         </div>
       </div>
+      <ProviderCapabilityList capabilities={capabilities} />
       {unknown.length > 0 ? (
         <div className="flex flex-col gap-1.5">
           <p className="text-xs font-semibold text-foreground">Needs input</p>
@@ -443,6 +485,17 @@ function SessionReview({
           </Button>
         </div>
       ) : null}
+      {["ready_for_review", "needs_user_input"].includes(session.state) ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-background/70 p-2">
+          <p className="text-xs text-muted-foreground">
+            Review the company page yourself. The app records the outcome only after you confirm it.
+          </p>
+          <Button size="sm" variant="outline" disabled={busy} onClick={onMarkSubmitted}>
+            <ClipboardCheck data-icon="inline-start" />
+            Mark submitted manually
+          </Button>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -459,6 +512,7 @@ function DetailBody({
   const [applicationOperationId, setApplicationOperationId] = useState<number | null>(null)
   const [contacts, setContacts] = useState<JobContact[]>([])
   const [sessions, setSessions] = useState<ApplicationSession[]>([])
+  const [providerCapabilities, setProviderCapabilities] = useState<ProviderCapabilities | null>(null)
   const [sessionBusy, setSessionBusy] = useState(false)
   const [dryRunHtml, setDryRunHtml] = useState("")
   const [showDryRunInput, setShowDryRunInput] = useState(false)
@@ -607,6 +661,22 @@ function DetailBody({
 
   useEffect(() => {
     let cancelled = false
+    async function loadCapabilities() {
+      try {
+        const response = await api.getProviderCapabilities(provider) as { provider: ProviderCapabilities }
+        if (!cancelled) setProviderCapabilities(response.provider)
+      } catch {
+        if (!cancelled) setProviderCapabilities(null)
+      }
+    }
+    void loadCapabilities()
+    return () => {
+      cancelled = true
+    }
+  }, [provider])
+
+  useEffect(() => {
+    let cancelled = false
     async function loadSessions() {
       try {
         const response = await api.getApplicationSessions(job.id)
@@ -675,6 +745,23 @@ function DetailBody({
       setSessions((prev) => [response.session, ...prev.filter((item) => item.id !== response.session.id)])
     } catch (e) {
       toast.error("Could not continue session", {
+        description: e instanceof Error ? e.message : "Backend request failed.",
+      })
+    } finally {
+      setSessionBusy(false)
+    }
+  }
+
+  async function markSubmittedManually() {
+    if (!latestSession) return
+    setSessionBusy(true)
+    try {
+      const response = await api.markApplicationSubmittedManually(latestSession.id)
+      setSessions((prev) => [response.session, ...prev.filter((item) => item.id !== response.session.id)])
+      await refresh()
+      toast.success("Manual submission recorded", { description: job.title })
+    } catch (e) {
+      toast.error("Could not record manual submission", {
         description: e instanceof Error ? e.message : "Backend request failed.",
       })
     } finally {
@@ -764,7 +851,7 @@ function DetailBody({
             <div>
               <p className="text-xs font-semibold text-foreground">{primaryActionLabel(latestSession, job)}</p>
               <p className="text-xs text-muted-foreground">
-                {provider === "greenhouse" ? "Greenhouse dry-run supported." : "Assisted mode for this provider."}
+                {provider === "greenhouse" ? "Greenhouse review-before-submit support." : "Assisted preparation for this provider."}
               </p>
             </div>
             <Button size="sm" disabled={sessionBusy} onClick={() => void prepareApplication()}>
@@ -772,6 +859,7 @@ function DetailBody({
               {primaryActionLabel(latestSession, job)}
             </Button>
           </div>
+          <ProviderCapabilityList capabilities={providerCapabilities} />
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => openExternal(job.url)}>
               <ExternalLink data-icon="inline-start" />
@@ -810,7 +898,9 @@ function DetailBody({
           <SessionReview
             session={latestSession}
             busy={sessionBusy}
+            capabilities={providerCapabilities}
             onContinue={() => void continueApplicationSession()}
+            onMarkSubmitted={() => void markSubmittedManually()}
           />
         ) : null}
 

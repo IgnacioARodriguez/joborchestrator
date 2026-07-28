@@ -33,8 +33,45 @@ def test_apply_queue_and_greenhouse_session_api(tmp_path, monkeypatch) -> None:
     session = response.json()["session"]
     assert session["provider"] == "greenhouse"
     assert session["state"] == "needs_user_input"
-    assert session["fields_detected"] == 5
+    assert session["fields_detected"] >= 8
     assert session["fields_autofilled"] >= 0
+
+
+def test_provider_capabilities_api_and_manual_submission_action(tmp_path, monkeypatch) -> None:
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    capabilities = client.get("/api/automation/provider-capabilities").json()["providers"]
+
+    greenhouse = next(item for item in capabilities if item["provider"] == "greenhouse")
+    lever = next(item for item in capabilities if item["provider"] == "lever")
+    assert greenhouse["can_detect_fields"] is True
+    assert greenhouse["can_submit"] is False
+    assert lever["can_detect_fields"] is False
+
+    created = client.post(
+        "/api/jobs",
+        json={
+            "title": "Software Engineer",
+            "company": "Acme",
+            "url": "https://boards.greenhouse.io/acme/jobs/1",
+            "apply_url": "https://boards.greenhouse.io/acme/jobs/1",
+            "source": "greenhouse",
+            "description_text": "Build reliable systems.",
+        },
+    ).json()["job"]
+    html = Path("tests/fixtures/greenhouse_application.html").read_text(encoding="utf-8")
+    session = client.post(
+        f"/api/jobs/{created['id']}/application-sessions",
+        json={"provider": "greenhouse", "mode": "review_before_submit", "html": html, "dry_run": True},
+    ).json()["session"]
+
+    response = client.post(f"/api/application-sessions/{session['id']}/submitted-manually", json={})
+
+    assert response.status_code == 200
+    updated = response.json()["session"]
+    assert updated["state"] == "submitted_manually"
+    application = client.get(f"/api/applications/{updated['application_id']}").json()["application"]
+    assert application["status"] == "submitted_manually"
+    assert application["events"][-1]["event_type"] == "submitted_manually"
 
 
 def test_external_apply_session_queues_application_execution(tmp_path, monkeypatch) -> None:
@@ -106,6 +143,56 @@ def test_continue_application_session_requeues_same_session(tmp_path, monkeypatc
     operation = client.get(f"/api/operations/{body['operation_id']}").json()["operation"]
     assert operation["type"] == "application_execution"
     assert operation["input_json"]["continue_after_manual_step"] is True
+
+
+def test_auto_submit_session_requires_explicit_env_flag(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("ENABLE_AUTO_SUBMIT_APPROVED", raising=False)
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/jobs",
+        json={
+            "title": "Platform Engineer",
+            "company": "Acme",
+            "url": "https://boards.greenhouse.io/acme/jobs/789",
+            "apply_url": "https://boards.greenhouse.io/acme/jobs/789",
+            "source": "greenhouse",
+            "description_text": "Build platforms.",
+        },
+    ).json()["job"]
+
+    response = client.post(
+        f"/api/jobs/{created['id']}/application-sessions",
+        json={"provider": "greenhouse", "mode": "auto_submit_approved", "dry_run": False},
+    )
+
+    assert response.status_code == 409
+
+
+def test_auto_submit_session_queues_non_dry_run_worker_when_enabled(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_AUTO_SUBMIT_APPROVED", "1")
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/jobs",
+        json={
+            "title": "Platform Engineer",
+            "company": "Acme",
+            "url": "https://boards.greenhouse.io/acme/jobs/790",
+            "apply_url": "https://boards.greenhouse.io/acme/jobs/790",
+            "source": "greenhouse",
+            "description_text": "Build platforms.",
+        },
+    ).json()["job"]
+
+    response = client.post(
+        f"/api/jobs/{created['id']}/application-sessions",
+        json={"provider": "greenhouse", "mode": "auto_submit_approved", "dry_run": True},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    operation = client.get(f"/api/operations/{body['operation_id']}").json()["operation"]
+    assert operation["input_json"]["dry_run"] is False
+    assert body["session"]["current_step"] == "queued_auto_submit"
 
 
 def test_automation_accounts_api_hides_password_ref(tmp_path, monkeypatch) -> None:

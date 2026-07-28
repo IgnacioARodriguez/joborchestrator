@@ -330,7 +330,8 @@ def _process_application_execution(operation: dict[str, Any]) -> None:
             progress=progress,
         )
     )
-    db.complete_operation(operation_id, output, "Application dry-run completed.")
+    message = "Application execution completed." if not dry_run else "Application dry-run completed."
+    db.complete_operation(operation_id, output, message)
     logger.info("Completed application execution operation=%s output=%s", operation_id, output)
 
 

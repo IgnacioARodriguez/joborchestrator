@@ -76,18 +76,28 @@ API health: `http://127.0.0.1:8000/api/health`
 6. Click `Prepare application`.
 7. The API creates a persistent session and queues `application_execution`.
 8. Keep `npm run workers` running locally.
-9. The worker opens the external apply URL locally with Playwright, detects the provider, extracts the form, runs dry-run mapping and updates the session.
-10. Resolve unknown fields, review, then manually confirm any real submission.
-11. Record submitted applications only after verification.
+9. The worker opens the external apply URL locally with Playwright, detects the provider, extracts the form, runs mapping/fill and updates the session.
+10. In `review_before_submit`, resolve unknown fields, review, then manually confirm any real submission.
+11. Click `Mark submitted manually` only after you submit on the company site yourself.
+12. Use verification follow-up separately when a confirmation page or email is available.
+
+For personal Greenhouse auto-submit:
+
+```bash
+ENABLE_AUTO_SUBMIT_APPROVED=1
+```
+
+Then create the session with `"mode": "auto_submit_approved"`. The worker submits only when required fields are resolved, the resume upload succeeds, and exactly one final submit control is detected. If it blocks, inspect `application_sessions.artifacts_json.auto_submit.reasons`.
 
 For login/account pages, set:
 
 ```bash
+APPLICATION_BROWSER_HANDOFF=1
 APPLICATION_BROWSER_HEADLESS=0
 APPLICATION_BROWSER_PROFILE_DIR=data/application_browser_profile
 ```
 
-Then resolve the login/check manually in the visible browser and click `Continue after manual step` in the session panel.
+Then resolve the login/check manually in the visible browser and click `Continue after manual step` in the session panel. The session stores only an opaque `local-browser://session/<uuid>` reference.
 
 For fixture/debug Greenhouse dry-run, paste form HTML in the job drawer or call:
 
@@ -110,4 +120,4 @@ POST /api/jobs/{job_id}/application-sessions
 
 ## Manual Steps
 
-LinkedIn login, CAPTCHA, security checks, sensitive answers and real submission approval remain human actions.
+LinkedIn login, CAPTCHA, security checks and unresolved sensitive answers remain human actions.
