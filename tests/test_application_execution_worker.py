@@ -301,6 +301,98 @@ def test_application_execution_handles_generic_form_review_before_submit(tmp_pat
     assert updated["state"] == "ready_for_review"
 
 
+def test_application_execution_opens_generic_apply_cta_before_form_fill(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate", "email": "candidate@example.test"})
+    apply_url = "https://careers.example.test/jobs/backend"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="generic-landing-job",
+            source="company_page",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Build APIs with Python and FastAPI.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Build APIs with Python and FastAPI.", apply_url),
+            raw_payload={"id": "generic-landing-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    db.update_job_application_materials(
+        job_id,
+        ats_cv_text=(
+            "Professional Summary\nSynthetic backend engineer.\n\n"
+            "Technical Skills\nPython, FastAPI.\n\n"
+            "Professional Experience\nBuilt reliable APIs.\n\n"
+            "Education\nSynthetic degree."
+        ),
+    )
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = Path("tests/fixtures/generic_apply_landing.html").read_text(encoding="utf-8")
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+
+    assert result["provider"] == "generic_form"
+    assert result["fields_detected"] == 3
+    assert result["resume_upload"]["status"] == "uploaded"
+    assert result["unknown_fields"] == 0
+
+
+def test_application_execution_blocks_when_generic_form_fields_are_not_detected(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    apply_url = "https://careers.example.test/jobs/backend"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="generic-empty-job",
+            source="company_page",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Build APIs with Python and FastAPI.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Build APIs with Python and FastAPI.", apply_url),
+            raw_payload={"id": "generic-empty-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = "<html><body><button type='button'>I'm interested</button></body></html>"
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+
+    assert result["provider"] == "generic_form"
+    assert result["fields_detected"] == 0
+    assert result["unknown_fields"] == 1
+    assert updated["state"] == "needs_user_input"
+    assert updated["unknown_fields_json"][0]["label"] == "No application form fields were detected."
+
+
 def test_application_execution_auto_submits_when_preconditions_pass(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
     monkeypatch.setenv("ENABLE_AUTO_SUBMIT_APPROVED", "1")
