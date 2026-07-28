@@ -1143,6 +1143,96 @@ Software Engineering.
     assert "Talan" in problems[-1]
 
 
+def test_ats_cv_validation_counts_real_cv_unicode_bullets():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+• Built analytics APIs for product workflows.
+• Developed reporting pipelines for student activity.
+• Improved SQL and MongoDB queries for product metrics.
+• Collaborated with product managers on backend requirements.
+• Documented backend processes and runbooks.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+• Built dashboards for finance teams.
+• Developed reporting tools for market data.
+• Automated manual reporting workflows.
+• Designed SQL queries and backend integrations.
+• Connected internal data sources and dashboards.
+PROJECTS
+AI Automation
+""".strip()
+    compressed_cv = """
+Professional Summary
+Backend developer focused on Python APIs and dashboards.
+Technical Skills
+Python, SQL, MongoDB, AWS.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | October 2022 - April 2025
+- Built dashboards.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, compressed_cv)
+
+    assert problems
+    assert "Fiction Express" in problems[-1]
+    assert "Talan" in problems[-1]
+
+
+def test_ats_cv_density_parser_handles_common_experience_headings_and_dates():
+    base_cv = """
+Work Experience
+Backend Developer Apr 2025 - Mar 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+Full Stack Developer 2022 - 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+- Built dashboards for finance teams.
+- Developed reporting tools for market data.
+- Automated manual reporting workflows.
+Education
+Software Engineering.
+""".strip()
+    compressed_cv = """
+Professional Summary
+Backend developer.
+Technical Skills
+Python, SQL.
+Professional Experience
+Backend Developer | Fiction Express | Apr 2025 - Mar 2026
+- Built analytics APIs.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | 2022 - 2025
+- Built dashboards.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, compressed_cv)
+
+    assert problems
+    assert "density validation was not applied" not in problems[0]
+    assert "overcompressed" in problems[-1]
+
+
+def test_ats_cv_density_warns_when_long_base_experience_cannot_be_parsed():
+    base_cv = "EXPERIENCE\n" + "\n".join(
+        f"Long unparseable role detail line {index} with backend APIs, reporting, data pipelines, dashboards, and operations."
+        for index in range(30)
+    )
+
+    problems = _experience_density_problems(base_cv, "Professional Experience\n- Short generated CV.")
+
+    assert problems
+    assert "density validation was not applied" in problems[0]
+
+
 def test_ats_cv_validation_accepts_reasonable_experience_compression():
     base_cv = """
 EXPERIENCE
@@ -1173,9 +1263,11 @@ Backend Developer | Fiction Express | April 2025 - March 2026
 - Built analytics APIs for product workflows.
 - Developed reporting pipelines for student activity.
 - Improved SQL and MongoDB queries for product metrics.
+- Collaborated with product managers on backend requirements.
 Full Stack Developer | Talan Consulting (Client: Cepsa) | October 2022 - April 2025
 - Built dashboards for finance teams.
 - Developed reporting tools for market data.
+- Automated manual reporting workflows.
 Education
 Software Engineering.
 """.strip()
@@ -1292,6 +1384,23 @@ def test_ats_cv_docx_export_returns_document_bytes():
 
     assert content.startswith(b"PK")
     assert len(content) > 1000
+
+
+def test_ats_cv_docx_export_keeps_parseable_text():
+    content = export_ats_cv_docx_bytes(
+        {"title": "Backend Engineer", "company": "Acme"},
+        _complete_ats_cv_text(),
+    )
+
+    from docx import Document
+    from io import BytesIO
+
+    document = Document(BytesIO(content))
+    text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert "PROFESSIONAL SUMMARY" in text
+    assert "Fiction Express" in text
+    assert "PROFESSIONAL EXPERIENCE" in text
+    assert "EDUCATION" in text
 
 
 def test_ats_cv_pdf_export_returns_document_bytes():
