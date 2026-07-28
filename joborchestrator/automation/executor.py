@@ -32,7 +32,7 @@ CHALLENGE_MARKERS = (
 )
 LOGIN_MARKERS = ("sign in", "log in", "login", "create account", "register to apply")
 APPLY_TEXT_RE = re.compile(
-    r"\b(apply|apply now|start application|continue application|submit application|aplicar|solicitar|postular|postularme|enviar candidatura)\b",
+    r"\b(apply|apply now|i'?m interested|start application|continue application|submit application|aplicar|solicitar|postular|postularme|enviar candidatura)\b",
     re.IGNORECASE,
 )
 FORBIDDEN_SUBMIT_TEXT_RE = re.compile(
@@ -515,6 +515,7 @@ async def _click_apply_control(page: Page, *, timeout_ms: int) -> str | None:
     labels = [
         "Apply now",
         "Apply",
+        "I'm interested",
         "Start application",
         "Continue application",
         "Aplicar",

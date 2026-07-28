@@ -316,6 +316,7 @@ def test_external_apply_intermediate_links_are_detected() -> None:
         <a href="/jobs/123">Job details</a>
         <a href="/jobs/123/apply">Apply now</a>
         <a href="https://boards.greenhouse.io/acme/jobs/123" aria-label="Apply for this role">Continue</a>
+        <a href="https://jobs.smartrecruiters.com/oneclick-ui/company/acme/publication/abc">I'm interested</a>
       </body>
     </html>
     """
@@ -325,6 +326,7 @@ def test_external_apply_intermediate_links_are_detected() -> None:
     assert links == [
         {"url": "https://careers.example.com/jobs/123/apply", "text": "Apply now"},
         {"url": "https://boards.greenhouse.io/acme/jobs/123", "text": "Continue Apply for this role"},
+        {"url": "https://jobs.smartrecruiters.com/oneclick-ui/company/acme/publication/abc", "text": "I'm interested"},
     ]
 
 
