@@ -1,6 +1,6 @@
 # LLM Trust Progress Review For Claude
 
-Last updated: 2026-07-27
+Last updated: 2026-07-28
 
 Purpose: give Claude or another external reviewer enough context to decide whether the HuntPilot/joborchestrator LLM trust work is converging or looping.
 
@@ -36,7 +36,7 @@ Updated interpretation:
 - We are no longer stuck at the old official 5/22 ranking baseline; persisted/revalidated ranking outputs now pass 22/22.
 - Fresh active-v6 generation is reliable at the transport/schema level in the 50-job probe: no failed items, no high-attempt items, no schema retries, and no unsafe `APPLY_NOW`.
 - Fresh active-v6 quality is not done: 18/22 on reviewed cases means the next ranking work is a focused triage of the 4 failures, not a claim of blind trust.
-- Materials/ATS remain under-measured and should be the next main surface after documenting this ranking checkpoint.
+- Materials/ATS remain under-measured and should be the next main surface after documenting this ranking checkpoint. Current local materials work has moved to v12 with canonical employer technology preservation, an explicit ATS fit analysis payload, cautious-tone repair hardening, adaptive validation retry budgets, and fail-closed validation metadata.
 
 ## Executive Verdict
 
@@ -68,7 +68,7 @@ Bottom line: the direction is rational. The next ranking step is targeted diagno
 - Latest full rerank job: `#9`, NVIDIA provider, status `completed`, 419 queued, 419 processed, 419 saved, 0 failed.
 - Latest live v6 probe job: `#12`, NVIDIA provider, status `completed`, 50 queued, 50 processed, 50 saved, 0 failed.
 - Active ranking prompt: `ranking/nvidia_response_contract` v9.
-- Active materials prompts: `materials/nvidia_cv_contract` v10 and `materials/nvidia_kit_contract` v10.
+- Active materials prompts: `materials/nvidia_cv_contract` v12 and `materials/nvidia_kit_contract` v12.
 - Active judge prompt: `judge/semantic_rubric` v1.
 - Current trust score in docs: 7.6/10.
 - Current posture: operational draft quality, not blind trust.
@@ -277,12 +277,12 @@ Fix implemented:
 - Generation validation now rejects recruiter messages over 320 characters, matching the golden eval limit.
 - Internal-note validation already exists for ATS CV generation.
 - Complete-CV validation and avoid-overclaiming validation already exist.
-- A 2026-07-27 live NVIDIA materials v3 probe regenerated the 4 raw real-job materials-ready cases in memory and passed 4/4 application-materials evals plus 4/4 ATS CV evals automatically. External qualitative review then found a false positive: the PSS/serverless case avoided the exact phrase `Serverless Architecture` but still claimed AWS Lambda/DynamoDB/API Gateway in generated materials. Materials v4 made validation reject avoid-overclaiming terms as claim families and expanded serverless aliases/components across ATS CV and non-CV materials. A PSS-only v4 rerun failed closed by catching AWS Lambda/DynamoDB claims in generated output. Materials v5 exposed expanded alias lists directly in the generation payload/NVIDIA contracts, expanded slash-separated avoid families such as `Terraform/AWS CDK/CloudFormation`, and used clearer retry feedback. A follow-up qualitative pass found employer-specific technology drift, so materials v7 exposed per-employer supported technologies and validates role-specific technology attribution. External review of v7 then found a blank-cover-letter false positive and weak SKIP tone calibration. Materials v10 now requires substantive cover letters, passes ranking-derived tone constraints into materials, rejects overconfident SKIP/risky-role language, rejects internal evaluator language in user-facing materials, rejects ATS-opaque hedges such as `implied through experience`, and adds constructive repair feedback. A consolidated 4-case v10 live probe on 2026-07-28 passed 4/4 application materials, 4/4 ATS CV, 4/4 substantive cover letters, 4/4 forbidden-alias-free, 4/4 drift-free, 4/4 hedge-free, and 4/4 internal-note-free.
+- A 2026-07-27 live NVIDIA materials v3 probe regenerated the 4 raw real-job materials-ready cases in memory and passed 4/4 application-materials evals plus 4/4 ATS CV evals automatically. External qualitative review then found a false positive: the PSS/serverless case avoided the exact phrase `Serverless Architecture` but still claimed AWS Lambda/DynamoDB/API Gateway in generated materials. Materials v4 made validation reject avoid-overclaiming terms as claim families and expanded serverless aliases/components across ATS CV and non-CV materials. A PSS-only v4 rerun failed closed by catching AWS Lambda/DynamoDB claims in generated output. Materials v5 exposed expanded alias lists directly in the generation payload/NVIDIA contracts, expanded slash-separated avoid families such as `Terraform/AWS CDK/CloudFormation`, and used clearer retry feedback. A follow-up qualitative pass found employer-specific technology drift, so materials v7 exposed per-employer supported technologies and validates role-specific technology attribution. External review of v7 then found a blank-cover-letter false positive and weak SKIP tone calibration. Materials v10 requires substantive cover letters, passes ranking-derived tone constraints into materials, rejects overconfident SKIP/risky-role language, rejects internal evaluator language in user-facing materials, rejects ATS-opaque hedges such as `implied through experience`, and adds constructive repair feedback. A consolidated 4-case v10 live probe on 2026-07-28 passed 4/4 application materials, 4/4 ATS CV, 4/4 substantive cover letters, 4/4 forbidden-alias-free, 4/4 drift-free, 4/4 hedge-free, and 4/4 internal-note-free. External review of v10 found two harness/quality gaps: list checks could become `None` in a consolidated failure path, and historical employer technologies could still drift across target jobs. Materials v11 closes those with canonical employer technology preservation and list-shaped harness checks. A v11 full probe then failed closed on job 105 because NVIDIA kept using overconfident tone for a cautious `APPLY_WITH_TAILORED_CV` case. Materials v12 adds explicit ATS fit analysis (`supported_keywords`, `adjacent_or_review_keywords`, `avoid_keywords`), stricter exploratory-review tone instructions, adaptive retry budgeting for constrained cases, and validation metadata on fail-closed errors. No new live job-105 rerun is counted after v12; current verification is local test-based.
 
 Remaining gap:
 
 - Need DB-backed reviewed real cases for materials/ATS, not only synthetic seed fixtures.
-- Need a larger materials v10 sample and DB-backed reviewed fixtures before treating automatic pass rates as high-trust coverage.
+- Need a larger materials v12 sample and DB-backed reviewed fixtures before treating automatic pass rates as high-trust coverage.
 
 Generated review packet:
 
