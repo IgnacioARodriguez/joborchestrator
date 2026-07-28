@@ -303,7 +303,7 @@ def test_recruiter_message_validation_accepts_company_or_role_specific_message()
     error = _materials_validation_error(
         {
             "recruiter_message": "Hi Acme Labs, my Python API work maps well to the Backend Engineer role.",
-            "cover_letter": "",
+            "cover_letter": "Dear Acme Labs team,\n\nMy Python API background maps well to the Backend Engineer role, with practical experience building backend services, collaborating with product teams, and delivering reliable application workflows.",
             "ats_cv_text": _complete_ats_cv_text(),
             "autofill_notes": "Use tailored answers.",
             "risk_flags": [],
@@ -366,6 +366,7 @@ def test_llm_application_kit_validation_rejects_empty_required_sections():
 
     assert error is not None
     assert "recruiter_message is required" in error
+    assert "cover_letter is required" in error
     assert "autofill_notes is required" in error
     assert "risk_flags must be an array" in error
     assert "ats_cv_text is too short" in error
@@ -425,7 +426,7 @@ Computer Science coursework and continuing professional development in backend e
     error = _materials_validation_error(
         {
             "recruiter_message": "Hi team",
-            "cover_letter": "",
+            "cover_letter": "Dear hiring team,\n\nMy backend engineering background maps well to this role through Python API work, database collaboration, and reliable product delivery across cross-functional teams.",
             "ats_cv_text": ats_cv_text,
             "autofill_notes": "Paste the recruiter note.",
             "risk_flags": [],
@@ -444,7 +445,7 @@ def test_openai_materials_call_reports_validation_retry_metadata(monkeypatch):
         if validation_feedback:
             return {
                 "recruiter_message": "Hi Acme Labs, my backend API work maps well to the Backend Engineer role.",
-                "cover_letter": "",
+                "cover_letter": "Dear Acme Labs team,\n\nMy backend API experience maps well to the Backend Engineer role through Python services, product collaboration, and reliable delivery practices.",
                 "ats_cv_text": _complete_ats_cv_text(),
                 "autofill_notes": "Paste the recruiter note.",
                 "risk_flags": [],
@@ -606,6 +607,109 @@ AWS
     assert "AWS" not in fiction["supported_role_technologies"]
 
 
+def test_materials_payload_exposes_cautious_tone_constraints(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(
+        llm_application_materials.db,
+        "get_candidate_profile_payload",
+        lambda: {
+            "base_cv_text": _complete_ats_cv_text(),
+            "skills": [{"name": "Python"}],
+            "experience": [],
+            "education": [],
+        },
+    )
+
+    payload = _materials_payload(
+        {"title": "Python Developer", "company": "Hire Feed"},
+        {
+            "decision": "SKIP",
+            "evidence": {"dealbreakers": ["contract AI training/verification work"], "red_flags": []},
+        },
+    )
+
+    assert payload["application_tone_constraints"]["ranking_decision"] == "SKIP"
+    assert payload["application_tone_constraints"]["tone"] == "cautious_review"
+    assert "immediate impact" in payload["application_tone_constraints"]["forbidden_phrases"]
+
+
+def test_kit_validation_rejects_empty_or_degenerate_cover_letter():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Acme Labs, my Python API work maps well to the Backend Engineer role.",
+            "cover_letter": "",
+            "autofill_notes": "Use the Python API angle.",
+        },
+        {"job": {"title": "Backend Engineer", "company": "Acme Labs"}},
+    )
+
+    assert error is not None
+    assert "cover_letter is required" in error
+
+
+def test_kit_validation_rejects_overconfident_tone_for_skip_ranking():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Hire Feed, my Python work may be relevant to review for the Python Developer role.",
+            "cover_letter": (
+                "Dear Hire Feed team,\n\nI'm confident my skills will make an immediate impact on the role, "
+                "and I am eager to enhance next-generation AI systems through this work."
+            ),
+            "autofill_notes": "Position as a strong fit with immediate impact.",
+        },
+        {
+            "job": {"title": "Python Developer", "company": "Hire Feed"},
+            "ranking": {
+                "decision": "SKIP",
+                "evidence": {"dealbreakers": ["contract AI training/verification work"]},
+            },
+        },
+    )
+
+    assert error is not None
+    assert "overconfident tone for SKIP ranking" in error
+    assert "immediate impact" in error
+
+
+def test_kit_validation_rejects_internal_review_language():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Hire Feed, my Python backend work may be relevant to review for the role.",
+            "cover_letter": (
+                "Dear Hire Feed team,\n\nMy Python backend background may be relevant to review for this role, "
+                "although I understand the safety gate concern highlighted in your system."
+            ),
+            "autofill_notes": "Mention the dealbreaker only if asked.",
+        },
+        {"job": {"title": "Python Developer", "company": "Hire Feed"}},
+    )
+
+    assert error is not None
+    assert "internal review/evaluation language" in error
+    assert "safety gate" in error
+
+
+def test_materials_validation_rejects_ats_opaque_implied_hedges():
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi Hire Feed, my Python backend work may be relevant to review for the role.",
+            "cover_letter": (
+                "Dear Hire Feed team,\n\nMy Python backend background may be relevant to review for this role, "
+                "with supported experience around APIs, data workflows, and practical automation."
+            ),
+            "ats_cv_text": _complete_ats_cv_text() + "\nTechnical Skills\nAWS (EC2, implied through experience)",
+            "autofill_notes": "If asked about Next.js, adaptability can be implied from React experience.",
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        },
+        source_payload={"job": {"title": "Python Developer", "company": "Hire Feed"}},
+    )
+
+    assert error is not None
+    assert "ATS-opaque unsupported hedge language" in error
+
+
 def test_materials_validation_rejects_slash_separated_avoid_aliases():
     error = _kit_validation_error(
         {
@@ -633,7 +737,7 @@ def test_ats_cv_validation_allows_ranking_avoid_term_when_source_supports_it():
     error = _materials_validation_error(
         {
             "recruiter_message": "Hi Acme Labs, my backend API work maps well to the Backend Engineer role.",
-            "cover_letter": "",
+            "cover_letter": "Dear Acme Labs team,\n\nMy backend API background maps well to this Backend Engineer role through Python delivery, Kubernetes-adjacent deployment support, and reliable collaboration.",
             "ats_cv_text": ats_cv_text,
             "autofill_notes": "Paste the recruiter note.",
             "risk_flags": [],

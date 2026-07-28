@@ -30,11 +30,12 @@ NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.
 DEFAULT_NVIDIA_MATERIALS_TIMEOUT_SECONDS = float(os.getenv("NVIDIA_MATERIALS_TIMEOUT_SECONDS", "300"))
 DEFAULT_MATERIALS_VALIDATION_RETRIES = int(
     os.getenv("MATERIALS_VALIDATION_RETRIES")
-    or os.getenv("OPENAI_MATERIALS_VALIDATION_RETRIES", "2")
+    or os.getenv("OPENAI_MATERIALS_VALIDATION_RETRIES", "3")
 )
 logger = logging.getLogger(__name__)
 ROLE_ATTRIBUTION_TECH_TERMS = [
     "AWS",
+    "EC2",
     "AWS Lambda",
     "API Gateway",
     "DynamoDB",
@@ -135,6 +136,7 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
         "job": _compact_job(_to_dict(job)),
         "ranking": ranking_payload,
         "ranking_constraints": _materials_ranking_constraints(ranking_payload),
+        "application_tone_constraints": _materials_tone_constraints(ranking_payload),
         "experience_claim_constraints": _materials_experience_claim_constraints(base_cv_text),
         "goal": (
             "Generate truthful, editable application materials and a complete ATS-optimized CV for this specific job. "
@@ -147,6 +149,7 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "If base_cv is empty, produce the best complete CV draft possible from the candidate profile and mark missing source limitations in risk_flags.",
             "Use job requirements as keywords only when the candidate can truthfully claim or position adjacent experience.",
             "Treat ranking_constraints.avoid_overclaiming_terms as forbidden claim families unless base_cv or candidate_profile explicitly supports the term or specific related technology; do not include unsupported avoid terms or aliases in generated materials.",
+            "Use application_tone_constraints to calibrate confidence; risky or skip decisions must be cautious and must not sound like an automatic strong fit.",
             "Recruiter_message must be a short LinkedIn connection note to a recruiter or hiring contact, not a cover letter and not multiple variants.",
             "Recruiter_message must fit a LinkedIn invite: under 300 characters when possible, one paragraph, no formal letter salutation, no cover-letter body.",
             "Recruiter_message should say why this specific role matches the CV and that the candidate would like to send/share the CV.",
@@ -184,6 +187,32 @@ def _materials_ranking_constraints(ranking: dict[str, Any] | None) -> dict[str, 
         "keywords_to_emphasize": _terms_from_maybe_json(
             ranking.get("cv_keywords_to_emphasize") or ranking.get("cv_keywords_to_emphasize_json")
         ),
+    }
+
+
+def _materials_tone_constraints(ranking: dict[str, Any] | None) -> dict[str, Any]:
+    if not ranking:
+        return {
+            "ranking_decision": "",
+            "risk_terms": [],
+            "tone": "standard",
+            "forbidden_phrases": [],
+        }
+    evidence = ranking.get("evidence") if isinstance(ranking.get("evidence"), dict) else {}
+    risk_terms = _dedupe_strings(
+        [
+            *[str(item) for item in evidence.get("dealbreakers") or []],
+            *[str(item) for item in evidence.get("red_flags") or []],
+            *[str(item) for item in evidence.get("missing_requirements") or []],
+        ]
+    )
+    decision = str(ranking.get("decision") or "").strip().upper()
+    cautious = decision in {"SKIP", "AVOID"} or bool(risk_terms)
+    return {
+        "ranking_decision": decision,
+        "risk_terms": risk_terms,
+        "tone": "cautious_review" if cautious else "standard",
+        "forbidden_phrases": _cautious_tone_forbidden_phrases() if cautious else [],
     }
 
 
@@ -630,9 +659,10 @@ def _nvidia_contract_messages(
 ) -> list[dict[str, Any]]:
     user_content = contract + "\n\nContext:\n" + json.dumps(payload, ensure_ascii=False)
     if validation_feedback:
+        repair_instruction = _materials_repair_instruction(validation_feedback)
         user_content += (
             "\n\nYour previous response was rejected because: "
-            f"{validation_feedback}\nReturn a corrected complete JSON object only."
+            f"{validation_feedback}\n{repair_instruction}\nReturn a corrected complete JSON object only."
         )
     return [
         {
@@ -657,6 +687,32 @@ def _nvidia_materials_messages(user_payload: dict[str, Any]) -> list[dict[str, A
         },
         {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
     ]
+
+
+def _materials_repair_instruction(validation_feedback: str) -> str:
+    normalized = _normalize_for_match(validation_feedback)
+    instructions = ["Fix only the rejected fields while preserving all required JSON keys."]
+    if "overconfident tone" in normalized:
+        instructions.append(
+            "For cautious/review rankings, rewrite with neutral language: 'may be relevant to review', "
+            "'supported Python/API background', and 'worth discussing if the contract context fits'. "
+            "Do not use confident, excited, eager, strong fit, ideal fit, perfect fit, or immediate impact."
+        )
+    if "hedge language" in normalized:
+        instructions.append(
+            "Remove parenthetical hedges such as 'SQL expertise' or 'implied'. Use broader supported terms "
+            "like SQL/databases, or omit the unsupported specific keyword."
+        )
+    if "internal review/evaluation language" in normalized:
+        instructions.append(
+            "Remove internal evaluator terms such as ranking, dealbreaker, safety gate, system, validation, "
+            "or avoid-overclaiming. Use applicant-facing caveats only."
+        )
+    if "avoid-overclaiming terms" in normalized:
+        instructions.append(
+            "Remove every forbidden alias from every field, including caveats; describe gaps generically."
+        )
+    return " ".join(instructions)
 
 
 def _openai_materials_messages(user_payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -751,14 +807,21 @@ def _kit_response_validation_error(
     source_payload: dict[str, Any] | None = None,
 ) -> str | None:
     problems = []
-    for field in ["recruiter_message", "autofill_notes"]:
+    for field in ["recruiter_message", "cover_letter", "autofill_notes"]:
         if not str(payload.get(field) or "").strip():
             problems.append(f"{field} is required")
     recruiter_message = str(payload.get("recruiter_message") or "")
+    cover_letter = str(payload.get("cover_letter") or "").strip()
     if len(recruiter_message) > 320:
         problems.append("recruiter_message is too long")
+    if cover_letter and len(cover_letter) < 120:
+        problems.append("cover_letter is too short to be substantive")
     problems.extend(_recruiter_message_quality_problems(recruiter_message))
     problems.extend(_recruiter_message_specificity_problems(recruiter_message, source_payload))
+    kit_text = "\n".join(str(payload.get(field) or "") for field in ["recruiter_message", "cover_letter", "autofill_notes"])
+    problems.extend(_unsupported_hedge_problems(kit_text))
+    problems.extend(_materials_internal_note_problems(kit_text))
+    problems.extend(_application_tone_problems(payload, source_payload))
     return "; ".join(problems) if problems else None
 
 
@@ -912,6 +975,7 @@ def _ats_cv_quality_problems(text: str) -> list[str]:
     found_markers = [marker for marker in forbidden_markers if marker in raw_normalized]
     if found_markers:
         problems.append(f"ats_cv_text contains internal/non-CV notes: {', '.join(found_markers[:3])}")
+    problems.extend(_unsupported_hedge_problems(text))
     return problems
 
 
@@ -963,6 +1027,93 @@ def _experience_technology_attribution_problems(base_cv_text: str, ats_cv_text: 
                 "in Professional Summary or Technical Skills."
             )
     return problems[:6]
+
+
+def _unsupported_hedge_problems(text: str) -> list[str]:
+    normalized = _normalize_for_match(text)
+    markers = [
+        "implied through experience",
+        "implied through",
+        "implied by",
+        "can be implied",
+        "adaptability can be implied",
+        "sql expertise",
+        "react proficiency",
+    ]
+    found = [marker for marker in markers if marker in normalized]
+    if not found:
+        return []
+    return [
+        "generated materials contain ATS-opaque unsupported hedge language: "
+        + ", ".join(found[:4])
+        + ". State only directly supported skills or use a plain risk flag/caveat."
+    ]
+
+
+def _materials_internal_note_problems(text: str) -> list[str]:
+    normalized = _normalize_for_match(text)
+    markers = [
+        "safety gate",
+        "highlighted in your system",
+        "system concern",
+        "ranking decision",
+        "ranking says",
+        "dealbreaker",
+        "avoid-overclaiming",
+        "validation error",
+    ]
+    found = [marker for marker in markers if marker in normalized]
+    if not found:
+        return []
+    return [
+        "application materials expose internal review/evaluation language: "
+        + ", ".join(found[:4])
+    ]
+
+
+def _application_tone_problems(
+    payload: dict[str, Any],
+    source_payload: dict[str, Any] | None,
+) -> list[str]:
+    if not source_payload:
+        return []
+    tone = source_payload.get("application_tone_constraints")
+    if not isinstance(tone, dict):
+        tone = _materials_tone_constraints(
+            source_payload.get("ranking") if isinstance(source_payload.get("ranking"), dict) else None
+        )
+    if tone.get("tone") != "cautious_review":
+        return []
+    text = _normalize_for_match(
+        "\n".join(str(payload.get(field) or "") for field in ["recruiter_message", "cover_letter", "autofill_notes"])
+    )
+    found = [phrase for phrase in _cautious_tone_forbidden_phrases() if phrase in text]
+    if not found:
+        return []
+    decision = tone.get("ranking_decision") or "risky"
+    return [
+        f"application materials use overconfident tone for {decision} ranking: "
+        + ", ".join(found[:4])
+    ]
+
+
+def _cautious_tone_forbidden_phrases() -> list[str]:
+    return [
+        "confident my skills",
+        "i am confident",
+        "immediate impact",
+        "strong fit",
+        "ideal fit",
+        "perfect fit",
+        "excited about",
+        "excited to",
+        "excited to enhance",
+        "eager to",
+        "eager to enhance",
+        "eager to contribute",
+        "highly confident",
+        "excellent fit",
+    ]
 
 
 def _experience_block_for_entry(section_text: str, entry: dict[str, Any], entries: list[dict[str, Any]]) -> str:
