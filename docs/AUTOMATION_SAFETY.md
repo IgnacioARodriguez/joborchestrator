@@ -3,12 +3,13 @@
 Rules enforced by design:
 
 - No real application is submitted during tests.
-- Greenhouse automation tests use local fixtures only.
+- Greenhouse and Lever automation tests use local fixtures only.
 - Sensitive fields are never invented or silently persisted.
 - Salary, work authorization, sponsorship, availability, address, disability, gender, ethnicity, background checks, years of experience and certifications require confirmation.
 - CAPTCHA bypass and anti-bot evasion are out of scope.
 - Auto-submit is disabled by default and requires `ENABLE_AUTO_SUBMIT_APPROVED=1` plus a session in `auto_submit_approved` mode.
 - Auto-submit currently supports only Greenhouse and is blocked by dry-run mode, unknown required/sensitive fields, missing required resume upload, or ambiguous final submit controls.
+- Lever can fill safe fields, upload a resume PDF and detect final submit controls in `review_before_submit`, but real auto-submit remains blocked until it has broader live coverage.
 - Automation capabilities are declared per provider and exposed by API/UI.
 - Submit-like controls such as `Submit application`, `Send application`, `Finish`, `Submit`, and `Enviar candidatura` are classified as forbidden browser actions.
 - In `auto_submit_approved` mode, exactly one classified submit control may be clicked after all preconditions pass.

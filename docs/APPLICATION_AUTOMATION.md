@@ -14,14 +14,15 @@ Adapters:
 
 - `GenericAssistedAdapter`: works for unsupported providers by preparing copyable answers and a review payload.
 - `GreenhouseAdapter`: detects Greenhouse pages, extracts labels/fields from the Playwright DOM when available, maps safe answers, fills safe compatible fields and creates a review summary.
+- `LeverAdapter`: detects Lever pages, opens the apply form when needed, extracts labels/fields from the Playwright DOM, maps safe answers, fills safe compatible fields, uploads a generated resume PDF and creates a review summary.
 
 Current provider capability matrix:
 
 | Provider | Open | Redirects | Detect fields | Fill text | Selects | Radios | Checkboxes | Resume upload | Browser resume | Auto-submit |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Greenhouse | yes | yes | yes | yes | yes | yes | yes | yes | yes | env-gated |
+| Lever | yes | yes | yes | yes | yes | yes | yes | yes | yes | no |
 | Generic forms | yes | yes | no | no | no | no | no | no | no | no |
-| Lever | yes | yes | no | no | no | no | no | no | no | no |
 | Ashby | yes | yes | no | no | no | no | no | no | no | no |
 | Workday | yes | yes | no | no | no | no | no | no | no | no |
 | LinkedIn Easy Apply | yes | no | no | no | no | no | no | no | no | no |
@@ -32,8 +33,8 @@ External apply flow:
 2. `Prepare application` creates an `application_sessions` row.
 3. If no HTML is provided, the v0/API queues `application_execution` in Turso.
 4. The local worker opens the external URL with Playwright, captures HTML, detects the adapter and updates the session in Turso.
-5. Greenhouse browser execution uses Playwright DOM inspection for fields and can fill safe text/select/radio/checkbox controls when the answer is confirmed and non-sensitive.
-6. Greenhouse can export the generated ATS CV as a temporary local PDF and upload it to a local/browser file input with `set_input_files`.
+5. Greenhouse and Lever browser execution use Playwright DOM inspection for fields and can fill safe text/select/radio/checkbox controls when the answer is confirmed and non-sensitive.
+6. Greenhouse and Lever can export the generated ATS CV as a temporary local PDF and upload it to a local/browser file input with `set_input_files`.
 7. Final submit-like controls are classified as `forbidden` by default and recorded in session artifacts.
 8. If `APPLICATION_BROWSER_HANDOFF=1`, the worker keeps the local Chromium page alive and stores only an opaque `local-browser://session/<uuid>` reference.
 9. Sensitive or unknown fields remain unfilled and are reported for review.
