@@ -104,13 +104,20 @@ def build_application_kit_with_llm(
     model: str | None = None,
     api_key: str | None = None,
     timeout: float = 60.0,
+    validation_retry_limit: int | None = None,
 ) -> dict[str, str]:
     key = api_key or os.getenv("OPENAI_API_KEY")
     if not key:
         raise LLMMaterialsError("OPENAI_API_KEY is required to generate materials with API.")
 
     payload = _materials_payload(job, ranking)
-    kit_response = _call_openai(payload, key, model or DEFAULT_MATERIALS_MODEL, timeout)
+    kit_response = _call_openai(
+        payload,
+        key,
+        model or DEFAULT_MATERIALS_MODEL,
+        timeout,
+        validation_retry_limit=validation_retry_limit,
+    )
     kit = _kit_from_response(kit_response)
     _attach_generation_metadata(kit, kit_response)
     return kit
@@ -123,6 +130,7 @@ def build_application_kit_with_nvidia(
     model: str | None = None,
     api_key: str | None = None,
     timeout: float = DEFAULT_NVIDIA_MATERIALS_TIMEOUT_SECONDS,
+    validation_retry_limit: int | None = None,
 ) -> dict[str, str]:
     key = api_key or os.getenv("NVIDIA_API_KEY") or os.getenv("NIM_API_KEY")
     if not key:
@@ -130,9 +138,21 @@ def build_application_kit_with_nvidia(
 
     payload = _materials_payload(job, ranking)
     selected_model = model or DEFAULT_NVIDIA_MATERIALS_MODEL
-    cv_response = _call_nvidia_cv(payload, key, selected_model, timeout)
+    cv_response = _call_nvidia_cv(
+        payload,
+        key,
+        selected_model,
+        timeout,
+        validation_retry_limit=validation_retry_limit,
+    )
     try:
-        kit_response = _call_nvidia_kit(payload, key, selected_model, timeout)
+        kit_response = _call_nvidia_kit(
+            payload,
+            key,
+            selected_model,
+            timeout,
+            validation_retry_limit=validation_retry_limit,
+        )
     except LLMMaterialsError as exc:
         metadata = _combined_generation_metadata(
             [
@@ -416,6 +436,12 @@ def _materials_validation_retry_limit(payload: dict[str, Any]) -> int:
     return min(retries, MAX_MATERIALS_VALIDATION_RETRIES)
 
 
+def _coerce_validation_retry_limit(validation_retry_limit: int | None, payload: dict[str, Any]) -> int:
+    if validation_retry_limit is None:
+        return _materials_validation_retry_limit(payload)
+    return max(0, int(validation_retry_limit))
+
+
 def _validation_failure_metadata(attempt: int, validation_errors: list[str], validation_feedback: str) -> dict[str, Any]:
     return {
         "validation_attempts": attempt + 1,
@@ -600,10 +626,17 @@ def _wrap_pdf_line(line: str, max_chars: int) -> list[str]:
     return lines
 
 
-def _call_openai(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
+def _call_openai(
+    payload: dict[str, Any],
+    api_key: str,
+    model: str,
+    timeout: float,
+    *,
+    validation_retry_limit: int | None = None,
+) -> dict[str, Any]:
     validation_feedback: str | None = None
     validation_errors: list[str] = []
-    retry_limit = _materials_validation_retry_limit(payload)
+    retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
         parsed = _call_openai_once(payload, api_key, model, timeout, validation_feedback)
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
@@ -624,10 +657,17 @@ def _call_openai(payload: dict[str, Any], api_key: str, model: str, timeout: flo
     raise LLMMaterialsError("OpenAI materials response did not produce a usable application kit.")
 
 
-def _call_nvidia(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
+def _call_nvidia(
+    payload: dict[str, Any],
+    api_key: str,
+    model: str,
+    timeout: float,
+    *,
+    validation_retry_limit: int | None = None,
+) -> dict[str, Any]:
     validation_feedback: str | None = None
     validation_errors: list[str] = []
-    retry_limit = _materials_validation_retry_limit(payload)
+    retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
         parsed = _call_nvidia_once(payload, api_key, model, timeout, validation_feedback)
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
@@ -648,10 +688,17 @@ def _call_nvidia(payload: dict[str, Any], api_key: str, model: str, timeout: flo
     raise LLMMaterialsError("NVIDIA materials response did not produce a usable application kit.")
 
 
-def _call_nvidia_cv(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
+def _call_nvidia_cv(
+    payload: dict[str, Any],
+    api_key: str,
+    model: str,
+    timeout: float,
+    *,
+    validation_retry_limit: int | None = None,
+) -> dict[str, Any]:
     validation_feedback: str | None = None
     validation_errors: list[str] = []
-    retry_limit = _materials_validation_retry_limit(payload)
+    retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
         parsed = _call_nvidia_contract_once(
             _nvidia_cv_contract(),
@@ -683,10 +730,17 @@ def _call_nvidia_cv(payload: dict[str, Any], api_key: str, model: str, timeout: 
     raise LLMMaterialsError("NVIDIA ATS CV response did not produce a usable CV.")
 
 
-def _call_nvidia_kit(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
+def _call_nvidia_kit(
+    payload: dict[str, Any],
+    api_key: str,
+    model: str,
+    timeout: float,
+    *,
+    validation_retry_limit: int | None = None,
+) -> dict[str, Any]:
     validation_feedback: str | None = None
     validation_errors: list[str] = []
-    retry_limit = _materials_validation_retry_limit(payload)
+    retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
         parsed = _call_nvidia_contract_once(
             _nvidia_kit_contract(),
