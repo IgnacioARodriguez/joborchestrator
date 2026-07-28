@@ -5,7 +5,13 @@ from pathlib import Path
 from urllib.parse import quote
 
 from joborchestrator import worker
-from joborchestrator.automation.executor import _looks_blocked, auto_submit_blockers, run_application_execution
+from joborchestrator.automation.executor import (
+    _detect_page_access_issue,
+    _looks_blocked,
+    _looks_posting_unavailable,
+    auto_submit_blockers,
+    run_application_execution,
+)
 from joborchestrator.automation import local_browser_agent
 from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.normalization import compute_content_hash
@@ -62,6 +68,30 @@ def test_application_challenge_copy_is_not_human_verification() -> None:
         '<script src="https://www.gstatic.com/recaptcha/releases/x/recaptcha__es.js"></script>',
     ) is False
     assert _looks_blocked("https://example.test", "<h1>Verify you are human</h1>") is True
+    assert _looks_blocked(
+        "https://jobs.smartrecruiters.com/oneclick-ui",
+        '<script src="https://ct.captcha-delivery.com/c.js"></script>',
+    ) is True
+
+
+def test_posting_unavailable_copy_is_detected() -> None:
+    html = """
+    <h1>Sorry, we couldn't find anything here</h1>
+    <p>The job posting you're looking for might have closed, or it has been removed. (404 error).</p>
+    """
+
+    assert _looks_posting_unavailable("https://jobs.lever.co/acme/closed/apply", html) is True
+
+
+def test_access_issue_detection_checks_captcha_frames() -> None:
+    html = """
+    <!doctype html>
+    <html><body>
+      <iframe srcdoc="<h1>Please complete the CAPTCHA</h1>"></iframe>
+    </body></html>
+    """
+
+    assert asyncio.run(_detect_access_issue_for_html(html)) == "challenge_detected"
 
 
 def test_auto_submit_blocks_placeholder_resume_on_real_url(monkeypatch) -> None:
@@ -393,6 +423,53 @@ def test_application_execution_blocks_when_generic_form_fields_are_not_detected(
     assert updated["unknown_fields_json"][0]["label"] == "No application form fields were detected."
 
 
+def test_application_execution_marks_closed_posting_unavailable(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    apply_url = "https://jobs.lever.co/acme/closed/apply"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="closed-lever-job",
+            source="lever",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Closed job.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Closed job.", apply_url),
+            raw_payload={"id": "closed-lever-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "lever", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html><body>
+      <h1>Sorry, we couldn't find anything here</h1>
+      <p>The job posting you're looking for might have closed, or it has been removed. (404 error).</p>
+    </body></html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="lever",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+
+    assert result["reason"] == "posting_unavailable"
+    assert result["blocked"] is False
+    assert updated["state"] == "needs_user_input"
+    assert updated["last_error"] == "Posting unavailable."
+
+
 def test_application_execution_auto_submits_when_preconditions_pass(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
     monkeypatch.setenv("ENABLE_AUTO_SUBMIT_APPROVED", "1")
@@ -499,6 +576,20 @@ async def _run_handoff_once(session_id: int, job_id: int, html: str) -> dict:
         return result
     finally:
         await local_browser_agent.close_session(ref)
+
+
+async def _detect_access_issue_for_html(html: str) -> str | None:
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(html)
+            await page.wait_for_timeout(500)
+            return await _detect_page_access_issue(page, page.url, await page.content())
+        finally:
+            await browser.close()
 
 
 async def _run_handoff_twice(session_id: int, job_id: int, html: str) -> dict:

@@ -122,8 +122,10 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
         fields_detected = int(execution.get("fields_detected") or 0)
         unknown_count = int(execution.get("unknown_fields") or len(unknown_fields))
         state = str(updated.get("state") or "")
+        reason = str(execution.get("reason") or "")
         score = coverage_score(
             state=state,
+            reason=reason,
             fields_detected=fields_detected,
             fields_autofilled=int(execution.get("fields_autofilled") or 0),
             unknown_fields=unknown_count,
@@ -145,7 +147,7 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "submit_control_texts": [str(control.get("text") or "") for control in submit_controls if isinstance(control, dict)],
             "auto_submit_status": (execution.get("auto_submit") or {}).get("status"),
             "blocked": bool(execution.get("blocked")),
-            "reason": execution.get("reason"),
+            "reason": reason or None,
             "last_error": updated.get("last_error"),
             "final_url": artifacts.get("final_url"),
             "duration_seconds": round(time.monotonic() - started, 2),
@@ -176,12 +178,15 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
 def coverage_score(
     *,
     state: str,
+    reason: str = "",
     fields_detected: int,
     fields_autofilled: int,
     unknown_fields: int,
     submit_controls_count: int,
     blocked: bool,
 ) -> str:
+    if reason == "posting_unavailable":
+        return "posting_unavailable"
     if blocked or state == "failed":
         return "blocked"
     if fields_detected == 0:
