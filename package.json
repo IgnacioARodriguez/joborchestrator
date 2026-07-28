@@ -16,6 +16,7 @@
     "evals:loop": "python scripts/run_evals_loop.py",
     "trust:gate": ".venv\\Scripts\\python.exe scripts/run_trust_gate.py",
     "smoke:auto-submit": ".venv\\Scripts\\python.exe scripts/smoke_auto_submit.py",
+    "rehearse:application": ".venv\\Scripts\\python.exe scripts/rehearse_application_url.py",
     "build": "next build",
     "start": "next start",
     "lint": "eslint app components lib --max-warnings=0",

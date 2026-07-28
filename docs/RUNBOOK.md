@@ -95,6 +95,13 @@ Before testing against a real company page, run the isolated local smoke. It for
 npm run smoke:auto-submit
 ```
 
+To rehearse a real application page without submitting, use a URL-specific dry run. Add `-- --headful` to watch Chromium:
+
+```bash
+npm run rehearse:application -- "https://boards.greenhouse.io/company/jobs/123"
+npm run rehearse:application -- "https://boards.greenhouse.io/company/jobs/123" --headful
+```
+
 For login/account pages, set:
 
 ```bash
