@@ -1233,6 +1233,141 @@ def test_ats_cv_density_warns_when_long_base_experience_cannot_be_parsed():
     assert "density validation was not applied" in problems[0]
 
 
+def test_ats_cv_density_warns_when_experience_heading_is_unknown():
+    base_cv = "Career Journey\n" + "\n".join(
+        f"Backend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API, reporting, data, and dashboard workflows for team {index}."
+        for index in range(16)
+    )
+
+    problems = _experience_density_problems(base_cv, "Professional Experience\n- Short generated CV.")
+
+    assert problems
+    assert "density validation was not applied" in problems[0]
+
+
+def test_ats_cv_density_does_not_require_more_bullets_than_source():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+Education
+Software Engineering.
+""".strip()
+    generated_cv = """
+Professional Summary
+Backend developer focused on Python APIs, reporting, and product data workflows.
+Technical Skills
+Python, SQL, MongoDB, APIs, dashboards, documentation.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+Education
+Software Engineering.
+""".strip()
+
+    assert _experience_density_problems(base_cv, generated_cv) == []
+
+
+def test_ats_cv_density_validates_single_experience_role():
+    base_cv = """
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+- Collaborated with product managers on backend requirements.
+Education
+Software Engineering.
+""".strip()
+    generated_cv = """
+Professional Summary
+Backend developer.
+Technical Skills
+Python, SQL.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, generated_cv)
+
+    assert problems
+    assert "Fiction Express" in problems[-1]
+
+
+def test_ats_cv_density_requires_at_least_one_bullet_for_short_source_role():
+    base_cv = """
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+Education
+Software Engineering.
+""".strip()
+    generated_cv = """
+Professional Summary
+Backend developer focused on API delivery.
+Technical Skills
+Python, SQL.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+Backend services and analytics workflows.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, generated_cv)
+
+    assert problems
+    assert "expected at least 1" in problems[-1]
+
+
+def test_nvidia_cv_density_parse_failure_does_not_retry(monkeypatch):
+    calls = []
+    base_cv = "Career Journey\n" + "\n".join(
+        f"Backend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API, reporting, data, and dashboard workflows for team {index}."
+        for index in range(16)
+    )
+
+    def fake_contract_once(contract, payload, api_key, model, timeout, validation_feedback=None):
+        calls.append(validation_feedback)
+        return {
+            "ats_cv_text": _complete_ats_cv_text(),
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        }
+
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(llm_application_materials, "_call_nvidia_contract_once", fake_contract_once)
+
+    try:
+        llm_application_materials._call_nvidia_cv(
+            {"job": {"title": "Backend Engineer", "company": "Acme"}, "base_cv": {"text": base_cv}},
+            "test-key",
+            "test-model",
+            1.0,
+            validation_retry_limit=3,
+        )
+    except LLMMaterialsError as exc:
+        metadata = exc.generation_metadata
+    else:
+        raise AssertionError("Expected LLMMaterialsError")
+
+    assert calls == [None]
+    assert metadata["validation_attempts"] == 1
+    assert metadata["human_review_required"] is True
+    assert "density validation was not applied" in metadata["validation_errors"][0]
+
+
 def test_ats_cv_validation_accepts_reasonable_experience_compression():
     base_cv = """
 EXPERIENCE

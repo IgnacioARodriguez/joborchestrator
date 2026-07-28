@@ -8,7 +8,7 @@ Purpose: give Claude or another external reviewer enough context to decide wheth
 
 New code-state facts since the original review:
 
-- Active ranking prompt is now `ranking/nvidia_response_contract` v6.
+- At the 2026-07-27 checkpoint, the active ranking prompt was `ranking/nvidia_response_contract` v6; the current active ranking prompt is v9.
 - v6 removes the prompt ambiguity that allowed a single bare ranking object. The NVIDIA ranking path always sends `Context.jobs`, even for one job, so the contract now always requires one top-level `rankings` array.
 - The NVIDIA batch validator now returns explicit feedback when `rankings` is missing for `Context.jobs`, and this is covered by tests.
 - Commits pushed to `main` include the stale-item recovery fix, ranking stale-timeout config documentation, high item-attempt autoloop flagging, v5 evidence-contract tightening, v6 `rankings` array contract, and the validator-feedback test.
