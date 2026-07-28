@@ -258,6 +258,8 @@ def test_application_execution_handles_lever_review_before_submit(tmp_path, monk
         {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
     ]
     assert updated["state"] == "ready_for_review"
+    assert updated["artifacts_json"]["action_plan"]["provider"] == "lever"
+    assert updated["artifacts_json"]["action_plan"]["summary"]["actions"] >= 4
 
 
 def test_application_execution_handles_generic_form_review_before_submit(tmp_path, monkeypatch) -> None:
@@ -329,6 +331,9 @@ def test_application_execution_handles_generic_form_review_before_submit(tmp_pat
         {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
     ]
     assert updated["state"] == "ready_for_review"
+    assert updated["artifacts_json"]["journey"]["phase"] == "actions_planned"
+    assert updated["artifacts_json"]["action_plan"]["provider"] == "generic_form"
+    assert updated["artifacts_json"]["action_plan"]["summary"]["actions"] >= 3
 
 
 def test_application_execution_opens_generic_apply_cta_before_form_fill(tmp_path, monkeypatch) -> None:

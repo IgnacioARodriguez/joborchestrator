@@ -13,6 +13,7 @@ from playwright.async_api import Browser, BrowserContext, Page, TimeoutError as 
 from joborchestrator.automation.adapters import AdapterRegistry
 from joborchestrator.automation.accounts import load_password, site_identity_from_url
 from joborchestrator.automation import local_browser_agent
+from joborchestrator.automation.journey import ApplicationJourneyEngine
 from joborchestrator.intelligence.llm_application_materials import export_ats_cv_pdf_bytes
 from joborchestrator.storage import persistence as db
 
@@ -234,23 +235,19 @@ async def run_application_execution(
     forbidden_submit_controls: list[dict[str, str]] = []
     handoff: dict[str, Any] = {"status": "disabled"}
     auto_submit_result: dict[str, Any] = {"status": "disabled"}
+    journey_step: dict[str, Any] = {}
     try:
-        if capabilities.can_detect_fields:
-            schema = await adapter.extract_form_schema_page(live_page)
-        else:
-            schema = adapter.extract_form_schema_html(html)
-        mapping = adapter.map_answers(schema, db.get_candidate_profile_payload() or {}, db.list_answer_definitions())
-        if capabilities.can_detect_fields and not (schema.get("fields") or []):
-            mapping.setdefault("unknown_fields", []).append(
-                {
-                    "name": "form_detection",
-                    "label": "No application form fields were detected.",
-                    "type": "unknown",
-                    "required": True,
-                    "sensitive": False,
-                    "classification": "unknown",
-                }
-            )
+        initial_step = await ApplicationJourneyEngine().prepare_initial_step(
+            page=live_page,
+            adapter=adapter,
+            capabilities=capabilities,
+            html=html,
+            profile=db.get_candidate_profile_payload() or {},
+            answer_bank=db.list_answer_definitions(),
+        )
+        schema = initial_step.schema
+        mapping = initial_step.mapping
+        journey_step = initial_step.to_dict()
         if capabilities.can_fill_text_fields or capabilities.can_fill_selects or capabilities.can_fill_radios or capabilities.can_fill_checkboxes:
             _progress(
                 progress,
@@ -337,6 +334,8 @@ async def run_application_execution(
                 "forbidden_submit_controls": forbidden_submit_controls,
                 "browser_handoff": handoff,
                 "auto_submit": auto_submit_result,
+                "journey": journey_step,
+                "action_plan": journey_step.get("action_plan") or {},
             },
         },
     )
@@ -361,6 +360,8 @@ async def run_application_execution(
         "forbidden_submit_controls": forbidden_submit_controls,
         "browser_handoff": handoff,
         "auto_submit": auto_submit_result,
+        "journey": journey_step,
+        "action_plan": journey_step.get("action_plan") or {},
     }
     if next_state == "submitted":
         db.transition_application_session(
