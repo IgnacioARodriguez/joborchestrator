@@ -25,7 +25,10 @@ def test_material_eval_accepts_truthful_tailored_materials():
             "Hi Acme Labs team, Ignacio's Python/FastAPI backend work maps well to your Backend Engineer role. "
             "Happy to share his CV."
         ),
-        "cover_letter": "Acme Labs needs Python APIs, FastAPI delivery, and PostgreSQL ownership.",
+        "cover_letter": (
+            "Dear Acme Labs team,\n\nIgnacio's Python API, FastAPI, and PostgreSQL background maps well to "
+            "the Backend Engineer role, with practical experience building reliable backend services for product teams."
+        ),
         "ats_cv_text": """
 Ignacio Rodriguez
 
@@ -62,7 +65,7 @@ def test_material_eval_rejects_hallucinated_claims_and_omissions():
     case = _cases()["backend-fastapi-strong-fit"]
     materials = {
         "recruiter_message": "Dear Hiring Manager, I am writing to express interest in the Backend Engineer role.",
-        "cover_letter": "Ignacio is Kubernetes Certified and has a PhD.",
+        "cover_letter": "Ignacio is Kubernetes Certified and has a PhD from a top university, with extensive platform leadership beyond the source CV.",
         "ats_cv_text": "Professional Summary\nPython engineer\nProfessional Experience\nFiction Express\nEducation\nCoursework",
         "autofill_notes": "Mention Kubernetes Certified.",
     }
@@ -79,7 +82,7 @@ def test_material_eval_rejects_internal_cv_notes():
     case = _cases()["backend-fastapi-strong-fit"]
     materials = {
         "recruiter_message": "Hi Acme Labs, Python/FastAPI backend fit for the Backend Engineer role.",
-        "cover_letter": "Acme Labs backend role.",
+        "cover_letter": "Dear Acme Labs team,\n\nIgnacio's backend experience maps well to the role through Python APIs, delivery ownership, and pragmatic product collaboration.",
         "ats_cv_text": (
             "Ignacio Rodriguez\nProfessional Summary\nPython FastAPI PostgreSQL\n"
             "Target role: Backend Engineer\nATS keywords to emphasize truthfully: Python\n"
@@ -93,6 +96,106 @@ def test_material_eval_rejects_internal_cv_notes():
 
     assert result.passed is False
     assert any(issue.startswith("ats_cv_contains_internal_notes:") for issue in result.issues)
+
+
+def test_material_eval_rejects_empty_cover_letter():
+    case = _cases()["backend-fastapi-strong-fit"]
+    materials = {
+        "recruiter_message": "Hi Acme Labs, Python/FastAPI backend fit for the Backend Engineer role.",
+        "cover_letter": "",
+        "ats_cv_text": """
+Professional Summary
+Python backend engineer.
+Technical Skills
+Python, FastAPI, PostgreSQL.
+Professional Experience
+Fiction Express
+Talan Consulting
+Globant
+Balloon Group
+Education
+Software engineering coursework.
+""",
+        "autofill_notes": "Use Acme Labs backend angle.",
+    }
+
+    result = evaluate_application_materials(case, materials)
+
+    assert result.passed is False
+    assert "missing_required_fields:cover_letter" in result.issues
+
+
+def test_material_eval_rejects_overconfident_tone_for_skip_ranking():
+    case = build_auto_eval_case(
+        {"title": "Python Developer", "company": "Hire Feed"},
+        {"base_cv_text": "EXPERIENCE\nFiction Express\nTalan Consulting\nGlobant\nBalloon Group"},
+        {
+            "decision": "SKIP",
+            "evidence": {"dealbreakers": ["contract AI training/verification work"]},
+        },
+    )
+    materials = {
+        "recruiter_message": "Hi Hire Feed, Python backend experience may be relevant to review for the role.",
+        "cover_letter": (
+            "Dear Hire Feed team,\n\nI am confident my skills will make an immediate impact, and I am "
+            "excited to enhance your AI systems through this Python Developer role."
+        ),
+        "ats_cv_text": """
+Professional Summary
+Python backend engineer.
+Technical Skills
+Python, Django, APIs.
+Professional Experience
+Fiction Express
+Talan Consulting
+Globant
+Balloon Group
+Education
+Software engineering coursework.
+""",
+        "autofill_notes": "Position as a strong fit with immediate impact.",
+    }
+
+    result = evaluate_application_materials(case, materials)
+
+    assert result.passed is False
+    assert any(issue.startswith("application_materials_overconfident_for_risky_ranking:") for issue in result.issues)
+
+
+def test_material_eval_ignores_generation_metadata_text():
+    case = _cases()["backend-fastapi-strong-fit"]
+    materials = {
+        "recruiter_message": "Hi Acme Labs, Python/FastAPI backend fit for the Backend Engineer role.",
+        "cover_letter": (
+            "Dear Acme Labs team,\n\nIgnacio's Python API and FastAPI background maps well to the Backend "
+            "Engineer role, with practical delivery experience across backend services and product collaboration."
+        ),
+        "ats_cv_text": """
+Professional Summary
+Python backend engineer.
+Technical Skills
+Python, FastAPI, PostgreSQL.
+Professional Experience
+Fiction Express
+Talan Consulting
+Globant
+Balloon Group
+Education
+Software engineering coursework.
+""",
+        "autofill_notes": "Use Acme Labs backend angle.",
+        "_generation_metadata": {
+            "validation_errors": [
+                "application_materials contains unsupported ranking avoid-overclaiming terms",
+                "application materials use overconfident tone: eager to",
+            ]
+        },
+    }
+
+    result = evaluate_application_materials(case, materials)
+
+    assert result.passed is True
+    assert result.issues == []
 
 
 def test_ats_cv_eval_accepts_complete_truthful_parseable_cv():

@@ -49,6 +49,8 @@ def build_auto_eval_case(
                 if str(term or "").strip()
             ],
             "max_recruiter_message_chars": 320,
+            "ranking_decision": ranking_payload.get("decision") or "",
+            "risk_terms": _ranking_risk_terms(ranking_payload),
         },
         "ats_cv_expectations": {
             "required_keywords": required_terms,
@@ -66,10 +68,21 @@ def evaluate_application_materials(case: dict[str, Any], materials: Any) -> Sema
     issues: list[str] = []
     metrics: dict[str, Any] = {}
 
-    required_fields = expectations.get("required_fields") or ["recruiter_message", "ats_cv_text", "autofill_notes"]
+    required_fields = expectations.get("required_fields") or [
+        "recruiter_message",
+        "cover_letter",
+        "ats_cv_text",
+        "autofill_notes",
+    ]
     missing_fields = [field for field in required_fields if not str(payload.get(field) or "").strip()]
     if missing_fields:
         issues.append(f"missing_required_fields:{','.join(missing_fields)}")
+
+    cover_letter = str(payload.get("cover_letter") or "").strip()
+    min_cover_letter_chars = int(expectations.get("min_cover_letter_chars") or 120)
+    metrics["cover_letter_chars"] = len(cover_letter)
+    if "cover_letter" in required_fields and cover_letter and len(cover_letter) < min_cover_letter_chars:
+        issues.append(f"cover_letter_too_short:{len(cover_letter)}<{min_cover_letter_chars}")
 
     full_text = _joined_text(payload)
     normalized_full_text = _normalize(full_text)
@@ -114,6 +127,16 @@ def evaluate_application_materials(case: dict[str, Any], materials: Any) -> Sema
     if specificity_terms and not matched_specificity:
         issues.append("missing_job_specificity")
     metrics["matched_specificity_terms"] = matched_specificity
+
+    internal_material_markers = _internal_material_markers(full_text)
+    if internal_material_markers:
+        issues.append(f"application_materials_contains_internal_notes:{','.join(internal_material_markers)}")
+    metrics["application_material_internal_markers"] = internal_material_markers
+
+    overconfident_markers = _overconfident_material_markers(full_text, expectations)
+    if overconfident_markers:
+        issues.append(f"application_materials_overconfident_for_risky_ranking:{','.join(overconfident_markers)}")
+    metrics["application_material_overconfident_markers"] = overconfident_markers
 
     return _result(issues, metrics)
 
@@ -616,6 +639,52 @@ def _internal_cv_markers(text: str) -> list[str]:
     return [marker for marker in markers if marker in normalized]
 
 
+def _ranking_risk_terms(ranking_payload: dict[str, Any]) -> list[str]:
+    evidence = ranking_payload.get("evidence") if isinstance(ranking_payload.get("evidence"), dict) else {}
+    terms = []
+    for key in ["dealbreakers", "red_flags", "missing_requirements"]:
+        terms.extend(str(item).strip() for item in evidence.get(key) or [] if str(item).strip())
+    return terms
+
+
+def _internal_material_markers(text: str) -> list[str]:
+    normalized = _normalize(text)
+    markers = [
+        "safety gate",
+        "highlighted in your system",
+        "ranking decision",
+        "ranking says",
+        "dealbreaker",
+        "avoid-overclaiming",
+        "validation error",
+    ]
+    return [marker for marker in markers if marker in normalized]
+
+
+def _overconfident_material_markers(text: str, expectations: dict[str, Any]) -> list[str]:
+    decision = str(expectations.get("ranking_decision") or "").upper()
+    risk_terms = expectations.get("risk_terms") or []
+    if decision not in {"SKIP", "AVOID"} and not risk_terms:
+        return []
+    normalized = _normalize(text)
+    markers = [
+        "confident my skills",
+        "i am confident",
+        "immediate impact",
+        "strong fit",
+        "ideal fit",
+        "perfect fit",
+        "excited about",
+        "excited to",
+        "eager to",
+        "eager to enhance",
+        "eager to contribute",
+        "highly confident",
+        "excellent fit",
+    ]
+    return [marker for marker in markers if marker in normalized]
+
+
 def _contains_keyword_or_synonym(
     normalized_text: str,
     keyword: str,
@@ -672,7 +741,11 @@ def _string_values(values: list[Any]) -> list[str]:
 
 
 def _joined_text(payload: dict[str, Any]) -> str:
-    return "\n".join(str(value) for value in payload.values() if value is not None)
+    return "\n".join(
+        str(value)
+        for key, value in payload.items()
+        if value is not None and not str(key).startswith("_")
+    )
 
 
 def _ranking_evidence_text(payload: dict[str, Any]) -> str:
