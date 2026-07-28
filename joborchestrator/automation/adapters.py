@@ -250,8 +250,8 @@ class GenericFormAdapter(BrowserFormAdapter):
         )
 
     async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]:
-        form = page.locator(self.form_selector).first
-        if await form.count() == 0:
+        schema = await super().extract_form_schema_page(page)
+        if not schema.get("fields"):
             cta = page.locator("a, button").filter(
                 has_text=re.compile(
                     r"\b(apply|apply now|i'?m interested|start application|aplicar|solicitar)\b",
@@ -265,7 +265,8 @@ class GenericFormAdapter(BrowserFormAdapter):
                     await page.wait_for_timeout(1000)
             except Exception:
                 pass
-        return await super().extract_form_schema_page(page)
+            schema = await super().extract_form_schema_page(page)
+        return schema
 
 
 class AdapterRegistry:
@@ -463,6 +464,7 @@ form => {
     const style = window.getComputedStyle(element);
     return inputType === 'hidden'
       || element.hidden
+      || !element.getClientRects().length
       || style.display === 'none'
       || style.visibility === 'hidden'
       || element.getAttribute('aria-hidden') === 'true';

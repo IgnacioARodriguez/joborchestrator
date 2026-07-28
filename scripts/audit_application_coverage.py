@@ -113,6 +113,11 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
         updated = db.get_application_session(int(session["id"])) or {}
         artifacts = updated.get("artifacts_json") or {}
         review = artifacts.get("review") or {}
+        validation = artifacts.get("validation") or {}
+        validation_issues = [
+            issue for issue in validation.get("issues") or []
+            if isinstance(issue, dict)
+        ]
         unknown_fields = [
             str(field.get("label") or field.get("name") or "").strip()
             for field in review.get("unknown_fields") or []
@@ -146,6 +151,9 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "submit_controls_count": len(submit_controls),
             "submit_control_texts": [str(control.get("text") or "") for control in submit_controls if isinstance(control, dict)],
             "auto_submit_status": (execution.get("auto_submit") or {}).get("status"),
+            "validation_status": validation.get("status"),
+            "validation_issue_count": len(validation_issues),
+            "validation_issue_types": sorted({str(issue.get("issue_type") or "") for issue in validation_issues if issue.get("issue_type")}),
             "blocked": bool(execution.get("blocked")),
             "reason": reason or None,
             "last_error": updated.get("last_error"),
@@ -167,6 +175,9 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "submit_controls_count": 0,
             "submit_control_texts": [],
             "auto_submit_status": None,
+            "validation_status": None,
+            "validation_issue_count": 0,
+            "validation_issue_types": [],
             "blocked": True,
             "reason": exc.__class__.__name__,
             "last_error": str(exc),
@@ -283,6 +294,9 @@ def write_csv_report(path: Path, results: list[dict[str, object]]) -> None:
         "unknown_fields",
         "resume_upload_status",
         "submit_controls_count",
+        "validation_status",
+        "validation_issue_count",
+        "validation_issue_types",
         "reason",
         "last_error",
         "final_url",
@@ -331,6 +345,12 @@ def write_markdown_report(path: Path, report: dict[str, object]) -> None:
             )
             + " |"
         )
+        if result.get("validation_status"):
+            lines.append(
+                f"  - Validation: `{result.get('validation_status')}` / "
+                f"`{result.get('validation_issue_count') or 0}` issues / "
+                f"`{json.dumps(result.get('validation_issue_types') or [])}`"
+            )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

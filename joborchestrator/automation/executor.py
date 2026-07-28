@@ -14,6 +14,7 @@ from joborchestrator.automation.adapters import AdapterRegistry
 from joborchestrator.automation.accounts import load_password, site_identity_from_url
 from joborchestrator.automation import local_browser_agent
 from joborchestrator.automation.journey import ApplicationJourneyEngine
+from joborchestrator.automation.validation import validate_application_surface
 from joborchestrator.intelligence.llm_application_materials import export_ats_cv_pdf_bytes
 from joborchestrator.storage import persistence as db
 
@@ -236,6 +237,7 @@ async def run_application_execution(
     handoff: dict[str, Any] = {"status": "disabled"}
     auto_submit_result: dict[str, Any] = {"status": "disabled"}
     journey_step: dict[str, Any] = {}
+    validation_report: dict[str, Any] = {"status": "not_attempted"}
     try:
         initial_step = await ApplicationJourneyEngine().prepare_initial_step(
             page=live_page,
@@ -265,6 +267,21 @@ async def run_application_execution(
                 live_fill["fields_autofilled"] = int(live_fill.get("fields_autofilled") or 0) + 1
                 live_fill.setdefault("filled_fields", []).append(str(resume_upload.get("field_name") or "resume"))
                 _remove_resolved_file_unknowns(mapping)
+        if capabilities.can_detect_fields:
+            validation = await validate_application_surface(browser_surface, journey_step.get("action_plan") or {})
+            validation_report = validation.to_dict()
+            if validation.status == "validation_failed":
+                mapping.setdefault("unknown_fields", []).append(
+                    {
+                        "name": "validation",
+                        "label": "Validation errors or failed postconditions were detected after autofill.",
+                        "type": "validation",
+                        "required": True,
+                        "sensitive": False,
+                        "classification": "unknown",
+                        "issues": validation_report.get("issues") or [],
+                    }
+                )
         if capabilities.can_detect_fields:
             forbidden_submit_controls = await detect_forbidden_submit_controls(browser_surface)
             auto_submit_result = await maybe_auto_submit_application(
@@ -337,6 +354,7 @@ async def run_application_execution(
                 "auto_submit": auto_submit_result,
                 "journey": journey_step,
                 "action_plan": journey_step.get("action_plan") or {},
+                "validation": validation_report,
             },
         },
     )
@@ -363,6 +381,7 @@ async def run_application_execution(
         "auto_submit": auto_submit_result,
         "journey": journey_step,
         "action_plan": journey_step.get("action_plan") or {},
+        "validation": validation_report,
     }
     if next_state == "submitted":
         db.transition_application_session(
