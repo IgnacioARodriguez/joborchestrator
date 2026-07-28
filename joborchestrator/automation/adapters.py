@@ -104,8 +104,9 @@ class GenericAssistedAdapter:
         }
 
 
-class GreenhouseAdapter(GenericAssistedAdapter):
-    provider = "greenhouse"
+class BrowserFormAdapter(GenericAssistedAdapter):
+    provider = "generic_form"
+    form_selector = "form"
 
     def capabilities(self) -> ProviderCapabilities:
         return ProviderCapabilities(
@@ -128,17 +129,15 @@ class GreenhouseAdapter(GenericAssistedAdapter):
         )
 
     def detect_html(self, html: str, job: dict[str, Any] | None = None) -> bool:
-        url = str((job or {}).get("apply_url") or (job or {}).get("url") or "").lower()
-        return "greenhouse.io" in url or "grnh.se" in url or "boards.greenhouse.io" in html.lower() or 'id="application_form"' in html
+        normalized = html.lower()
+        return "<form" in normalized and any(marker in normalized for marker in ("<input", "<textarea", "<select"))
 
     async def detect_page(self, page: "Page", job: dict[str, Any] | None = None) -> bool:
-        url = page.url.lower()
-        if "greenhouse.io" in url or "grnh.se" in url:
-            return True
-        return await page.locator("#application_form, form[action*='greenhouse' i]").count() > 0
+        return await page.locator(self.form_selector).count() > 0
 
     async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]:
-        fields = await page.locator("#application_form, form").first.evaluate(_GREENHOUSE_FORM_DISCOVERY_JS)
+        form = page.locator(self.form_selector).first
+        fields = await form.evaluate(_APPLICATION_FORM_DISCOVERY_JS) if await form.count() > 0 else []
         normalized = [_normalize_dom_field(field) for field in fields]
         return {"provider": self.provider, "fields": normalized}
 
@@ -185,15 +184,69 @@ class GreenhouseAdapter(GenericAssistedAdapter):
         )
 
 
+class GreenhouseAdapter(BrowserFormAdapter):
+    provider = "greenhouse"
+    form_selector = "#application_form, form"
+
+    def detect_html(self, html: str, job: dict[str, Any] | None = None) -> bool:
+        url = str((job or {}).get("apply_url") or (job or {}).get("url") or "").lower()
+        return "greenhouse.io" in url or "grnh.se" in url or "boards.greenhouse.io" in html.lower() or 'id="application_form"' in html
+
+    async def detect_page(self, page: "Page", job: dict[str, Any] | None = None) -> bool:
+        url = page.url.lower()
+        if "greenhouse.io" in url or "grnh.se" in url:
+            return True
+        return await page.locator("#application_form, form[action*='greenhouse' i]").count() > 0
+
+
+class LeverAdapter(BrowserFormAdapter):
+    provider = "lever"
+
+    def detect_html(self, html: str, job: dict[str, Any] | None = None) -> bool:
+        url = str((job or {}).get("apply_url") or (job or {}).get("url") or "").lower()
+        normalized_html = html.lower()
+        return (
+            "jobs.lever.co" in url
+            or "lever.co" in url
+            or "jobs.lever.co" in normalized_html
+            or 'data-qa="btn-apply"' in normalized_html
+            or "lever-application-form" in normalized_html
+        )
+
+    async def detect_page(self, page: "Page", job: dict[str, Any] | None = None) -> bool:
+        url = page.url.lower()
+        if "jobs.lever.co" in url or "lever.co" in url:
+            return True
+        return await page.locator('[data-qa="btn-apply"], .lever-application-form').count() > 0
+
+    async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]:
+        form = page.locator("form").first
+        if await form.count() == 0:
+            apply_button = page.locator('[data-qa="btn-apply"], a[href$="/apply"], a:has-text("Apply")').first
+            try:
+                if await apply_button.count() > 0 and await apply_button.is_visible(timeout=1000):
+                    await apply_button.click(timeout=3000)
+                    await page.wait_for_load_state("domcontentloaded", timeout=3000)
+            except Exception:
+                pass
+            form = page.locator("form").first
+        fields = await form.evaluate(_APPLICATION_FORM_DISCOVERY_JS) if await form.count() > 0 else []
+        normalized = [_normalize_dom_field(field) for field in fields]
+        return {"provider": self.provider, "fields": normalized}
+
+
+class GenericFormAdapter(BrowserFormAdapter):
+    provider = "generic_form"
+
+
 class AdapterRegistry:
     def __init__(self) -> None:
-        self._adapters: list[ApplicationAdapter] = [GreenhouseAdapter(), GenericAssistedAdapter()]
+        self._adapters: list[ApplicationAdapter] = [GreenhouseAdapter(), LeverAdapter(), GenericFormAdapter(), GenericAssistedAdapter()]
         self._declared: dict[str, ProviderCapabilities] = {
             adapter.provider: adapter.capabilities() for adapter in self._adapters
         }
         self._declared.update(
             {
-                "lever": _recognition_only_capabilities("lever"),
                 "ashby": _recognition_only_capabilities("ashby"),
                 "workday": _recognition_only_capabilities("workday", requires_login=True),
                 "linkedin_easy_apply": ProviderCapabilities(
@@ -281,6 +334,7 @@ def _normalize_dom_field(field: dict[str, Any]) -> dict[str, Any]:
         "wrapping_label": 0.95,
         "aria_label": 0.9,
         "aria_labelledby": 0.88,
+        "question_container": 0.86,
         "nearby_text": 0.72,
         "name": 0.62,
         "id": 0.58,
@@ -305,7 +359,7 @@ def _safe_key(value: str) -> str:
     return key or "field"
 
 
-_GREENHOUSE_FORM_DISCOVERY_JS = """
+_APPLICATION_FORM_DISCOVERY_JS = """
 form => {
   const TECHNICAL_RE = /(^_|csrf|token|utf8|captcha|g-recaptcha|h-captcha|honeypot|bot-field|website_url)/i;
   const controls = Array.from(form.querySelectorAll('input, textarea, select'));
@@ -327,6 +381,14 @@ form => {
   }
 
   function labelFor(element) {
+    function questionText() {
+      const question = element.closest('.application-question, .custom-question, .posting-field, .field-group');
+      if (!question) return '';
+      const clone = question.cloneNode(true);
+      clone.querySelectorAll('input, textarea, select, option, script, style, label').forEach(node => node.remove());
+      return text(clone.innerText || clone.textContent);
+    }
+
     const id = element.id;
     if (id) {
       const explicit = form.querySelector(`label[for="${CSS.escape(id)}"]`) || document.querySelector(`label[for="${CSS.escape(id)}"]`);
@@ -348,6 +410,8 @@ form => {
       const nearby = text(clone.innerText || clone.textContent);
       if (nearby) return { label: nearby, strategy: 'nearby_text' };
     }
+    const question = questionText();
+    if (question) return { label: question, strategy: 'question_container' };
     const name = element.getAttribute('name');
     if (name) return { label: text(name.replace(/[_.-]+/g, ' ')), strategy: 'name' };
     if (id) return { label: text(id.replace(/[_.-]+/g, ' ')), strategy: 'id' };
@@ -363,7 +427,7 @@ form => {
       name: element.getAttribute('name') || element.id || labelled.label,
       label: labelled.label,
       type,
-      required: element.required || element.getAttribute('aria-required') === 'true' || /\\*/.test(element.closest('label')?.textContent || ''),
+      required: element.required || element.getAttribute('aria-required') === 'true' || /[\\*✱]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
       locator_strategy: labelled.strategy,
       options: [],
     };
@@ -378,8 +442,9 @@ form => {
     if (field.type === 'radio') {
       const groupKey = name || id || field.label;
       const legend = text(element.closest('fieldset')?.querySelector('legend')?.innerText || element.closest('fieldset')?.querySelector('legend')?.textContent);
+      const question = labelFor(element.closest('.application-question, .custom-question') || element).label;
       if (!byNameRadio.has(groupKey)) {
-        byNameRadio.set(groupKey, { ...field, id: groupKey, name: groupKey, label: legend || field.label, options: [] });
+        byNameRadio.set(groupKey, { ...field, id: groupKey, name: groupKey, label: legend || question || field.label, options: [] });
       }
       const optionLabel = labelFor(element).label || element.value;
       byNameRadio.get(groupKey).options.push({ value: element.value || optionLabel, label: optionLabel });
@@ -399,3 +464,5 @@ form => {
   return fields;
 }
 """
+
+_GREENHOUSE_FORM_DISCOVERY_JS = _APPLICATION_FORM_DISCOVERY_JS

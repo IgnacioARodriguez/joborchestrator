@@ -43,9 +43,15 @@ def test_provider_capabilities_api_and_manual_submission_action(tmp_path, monkey
 
     greenhouse = next(item for item in capabilities if item["provider"] == "greenhouse")
     lever = next(item for item in capabilities if item["provider"] == "lever")
+    generic_form = next(item for item in capabilities if item["provider"] == "generic_form")
     assert greenhouse["can_detect_fields"] is True
     assert greenhouse["can_submit"] is False
-    assert lever["can_detect_fields"] is False
+    assert lever["can_detect_fields"] is True
+    assert lever["can_upload_resume"] is True
+    assert lever["can_submit"] is False
+    assert generic_form["can_detect_fields"] is True
+    assert generic_form["can_upload_resume"] is True
+    assert generic_form["can_submit"] is False
 
     created = client.post(
         "/api/jobs",

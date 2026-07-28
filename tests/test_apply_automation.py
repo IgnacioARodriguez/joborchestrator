@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from joborchestrator.application_sessions import validate_transition
-from joborchestrator.automation.adapters import AdapterRegistry, GreenhouseAdapter
+from joborchestrator.automation.adapters import AdapterRegistry, GenericFormAdapter, GreenhouseAdapter, LeverAdapter
 from joborchestrator.automation.answer_bank import classify_field, map_answers, normalize_question
 from joborchestrator.automation.executor import find_apply_links, safe_fill_plan
 from joborchestrator.priority import compute_priority
@@ -201,10 +201,25 @@ def test_adapter_registry_prefers_greenhouse() -> None:
     assert AdapterRegistry().detect(html).provider == "greenhouse"
 
 
+def test_adapter_registry_detects_lever() -> None:
+    html = Path("tests/fixtures/lever_application.html").read_text(encoding="utf-8")
+
+    assert LeverAdapter().detect_html(html, {"apply_url": "https://jobs.lever.co/acme/backend/apply"})
+    assert AdapterRegistry().detect(html, {"apply_url": "https://jobs.lever.co/acme/backend/apply"}).provider == "lever"
+
+
+def test_adapter_registry_uses_generic_form_before_assisted_fallback() -> None:
+    html = Path("tests/fixtures/generic_application.html").read_text(encoding="utf-8")
+
+    assert GenericFormAdapter().detect_html(html)
+    assert AdapterRegistry().detect(html, {"apply_url": "https://careers.example.test/apply"}).provider == "generic_form"
+
+
 def test_provider_capabilities_are_explicit_and_do_not_claim_submit() -> None:
     registry = AdapterRegistry()
     greenhouse = registry.capabilities("greenhouse")
     lever = registry.capabilities("lever")
+    generic_form = registry.capabilities("generic_form")
     linkedin = registry.capabilities("linkedin_easy_apply")
 
     assert not isinstance(greenhouse, list)
@@ -218,7 +233,19 @@ def test_provider_capabilities_are_explicit_and_do_not_claim_submit() -> None:
     assert greenhouse.can_resume_browser_session is True
     assert greenhouse.can_submit is False
     assert not isinstance(lever, list)
-    assert lever.can_detect_fields is False
+    assert lever.can_detect_fields is True
+    assert lever.can_fill_text_fields is True
+    assert lever.can_fill_selects is True
+    assert lever.can_fill_radios is True
+    assert lever.can_fill_checkboxes is True
+    assert lever.can_upload_resume is True
+    assert lever.can_resume_browser_session is True
+    assert lever.can_submit is False
+    assert not isinstance(generic_form, list)
+    assert generic_form.can_detect_fields is True
+    assert generic_form.can_fill_text_fields is True
+    assert generic_form.can_upload_resume is True
+    assert generic_form.can_submit is False
     assert not isinstance(linkedin, list)
     assert linkedin.requires_login is True
     assert linkedin.can_submit is False

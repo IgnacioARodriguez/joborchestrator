@@ -7,6 +7,8 @@ from urllib.parse import quote
 from joborchestrator import worker
 from joborchestrator.automation.executor import _looks_blocked, auto_submit_blockers, run_application_execution
 from joborchestrator.automation import local_browser_agent
+from joborchestrator.scanning.models import JobPosting
+from joborchestrator.scanning.normalization import compute_content_hash
 from joborchestrator.storage import persistence as db
 from test_api_endpoints import make_job
 
@@ -96,6 +98,23 @@ def test_auto_submit_allows_placeholder_resume_for_local_fixture(monkeypatch) ->
     assert blockers == []
 
 
+def test_auto_submit_blocks_lever_until_explicitly_supported(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_AUTO_SUBMIT_APPROVED", "1")
+    blockers = auto_submit_blockers(
+        session={"mode": "auto_submit_approved"},
+        provider="lever",
+        apply_url="https://jobs.lever.co/acme/backend/apply",
+        job={"ats_cv_text": "Professional Summary\nReal backend engineer."},
+        schema={"fields": []},
+        mapping={"unknown_fields": []},
+        resume_upload={"status": "not_applicable"},
+        forbidden_submit_controls=[{"text": "Submit application"}],
+        dry_run=False,
+    )
+
+    assert blockers == ["provider_not_supported"]
+
+
 def test_application_execution_starts_local_browser_handoff(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
     monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "1")
@@ -129,6 +148,157 @@ def test_application_execution_resumes_local_browser_handoff(tmp_path, monkeypat
 
     assert result["second_navigation"][0]["action"] == "resumed_browser_session"
     assert result["first_ref"] == result["second_ref"]
+
+
+def test_application_execution_handles_lever_review_before_submit(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload(
+        {
+            "full_name": "Synthetic Candidate",
+            "email": "candidate@example.test",
+            "phone": "+34 000 000 000",
+            "linkedin_url": "https://www.linkedin.com/in/synthetic",
+        }
+    )
+    apply_url = "https://jobs.lever.co/acme/backend/apply"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="lever-review-job",
+            source="lever",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Build APIs with Python and FastAPI.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Build APIs with Python and FastAPI.", apply_url),
+            raw_payload={"id": "lever-review-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    db.update_job_application_materials(
+        job_id,
+        ats_cv_text=(
+            "Professional Summary\nSynthetic backend engineer.\n\n"
+            "Technical Skills\nPython, FastAPI.\n\n"
+            "Professional Experience\nBuilt reliable APIs.\n\n"
+            "Education\nSynthetic degree."
+        ),
+    )
+    db.upsert_answer_definition(
+        {
+            "canonical_key": "preferred_location",
+            "value": "Remote",
+            "source": "approved",
+            "sensitivity": "public",
+            "requires_confirmation": False,
+        }
+    )
+    db.upsert_answer_definition(
+        {
+            "canonical_key": "sponsorship",
+            "value": "No",
+            "source": "approved",
+            "sensitivity": "sensitive",
+            "requires_confirmation": False,
+        }
+    )
+    session = db.create_application_session({"job_id": job_id, "provider": "lever", "mode": "review_before_submit"})
+    html = Path("tests/fixtures/lever_application.html").read_text(encoding="utf-8")
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="lever",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+
+    assert result["provider"] == "lever"
+    assert result["resume_upload"]["status"] == "uploaded"
+    assert result["unknown_fields"] == 0
+    assert result["auto_submit"]["status"] == "disabled"
+    assert result["forbidden_submit_controls"] == [
+        {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
+    ]
+    assert updated["state"] == "ready_for_review"
+
+
+def test_application_execution_handles_generic_form_review_before_submit(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload(
+        {
+            "full_name": "Synthetic Candidate",
+            "email": "candidate@example.test",
+            "phone": "+34 000 000 000",
+            "linkedin_url": "https://www.linkedin.com/in/synthetic",
+        }
+    )
+    apply_url = "https://careers.example.test/apply"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="generic-review-job",
+            source="company_page",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Build APIs with Python and FastAPI.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Build APIs with Python and FastAPI.", apply_url),
+            raw_payload={"id": "generic-review-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    db.update_job_application_materials(
+        job_id,
+        ats_cv_text=(
+            "Professional Summary\nSynthetic backend engineer.\n\n"
+            "Technical Skills\nPython, FastAPI.\n\n"
+            "Professional Experience\nBuilt reliable APIs.\n\n"
+            "Education\nSynthetic degree."
+        ),
+    )
+    db.upsert_answer_definition(
+        {
+            "canonical_key": "preferred_location",
+            "value": "Remote",
+            "source": "approved",
+            "sensitivity": "public",
+            "requires_confirmation": False,
+        }
+    )
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = Path("tests/fixtures/generic_application.html").read_text(encoding="utf-8")
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+
+    assert result["provider"] == "generic_form"
+    assert result["resume_upload"]["status"] == "uploaded"
+    assert result["unknown_fields"] == 0
+    assert result["auto_submit"]["status"] == "disabled"
+    assert result["forbidden_submit_controls"] == [
+        {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
+    ]
+    assert updated["state"] == "ready_for_review"
 
 
 def test_application_execution_auto_submits_when_preconditions_pass(tmp_path, monkeypatch) -> None:
