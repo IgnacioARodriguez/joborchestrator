@@ -110,6 +110,8 @@ def test_report_writers_create_json_csv_and_markdown(tmp_path: Path) -> None:
                 "validation_issue_types": [],
                 "verified_action_success_rate": 1.0,
                 "dynamic_required_count": 0,
+                "steps_completed_without_human": 0,
+                "step_advance_success_rate": 0.0,
                 "submit_only_ready": True,
                 "reason": None,
                 "last_error": None,
@@ -152,6 +154,7 @@ def test_audit_application_coverage_runs_dry_run_on_local_fixture(tmp_path: Path
     assert result["submit_controls_count"] == 1
     assert result["verified_action_success_rate"] == 1.0
     assert result["dynamic_required_count"] == 0
+    assert result["steps_completed_without_human"] == 0
     assert result["submit_only_ready"] is True
 
 

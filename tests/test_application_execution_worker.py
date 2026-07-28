@@ -10,6 +10,7 @@ from joborchestrator.automation.executor import (
     _looks_blocked,
     _looks_posting_unavailable,
     auto_submit_blockers,
+    detect_safe_step_transition_controls,
     run_application_execution,
 )
 from joborchestrator.automation import local_browser_agent
@@ -72,6 +73,44 @@ def test_application_challenge_copy_is_not_human_verification() -> None:
         "https://jobs.smartrecruiters.com/oneclick-ui",
         '<script src="https://ct.captcha-delivery.com/c.js"></script>',
     ) is True
+
+
+def test_safe_step_transition_detection_excludes_final_submit() -> None:
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form>
+          <button type="button">Next</button>
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    transition = asyncio.run(_detect_step_transition_for_html(html))
+
+    assert transition["status"] == "available"
+    assert transition["control"]["text"] == "Next"
+    assert transition["blocked_controls"][0]["reason"] == "final_submit"
+
+
+def test_safe_step_transition_blocks_continue_application_boundary() -> None:
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form>
+          <button type="button">Continue application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    transition = asyncio.run(_detect_step_transition_for_html(html))
+
+    assert transition["status"] == "not_available"
+    assert transition["blocked_controls"][0]["reason"] == "application_boundary"
 
 
 def test_posting_unavailable_copy_is_detected() -> None:
@@ -539,6 +578,74 @@ def test_application_execution_detects_dynamic_required_fields_after_autofill(tm
     assert artifacts["automation_metrics"]["submit_only_ready"] is False
 
 
+def test_application_execution_advances_safe_multistep_and_stops_at_submit(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    monkeypatch.setenv("APPLICATION_MAX_AUTO_STEPS", "3")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate", "email": "candidate@example.test"})
+    apply_url = "https://careers.example.test/apply"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="multistep-job",
+            source="company_page",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Build APIs with Python and FastAPI.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Build APIs with Python and FastAPI.", apply_url),
+            raw_payload={"id": "multistep-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application">
+          <section id="step-1">
+            <label for="name">Full name *</label>
+            <input id="name" name="name" required>
+            <button type="button" onclick="document.getElementById('step-1').style.display='none';document.getElementById('step-2').style.display='block'">Next</button>
+          </section>
+          <section id="step-2" style="display:none">
+            <label for="email">Email *</label>
+            <input id="email" name="email" type="email" required>
+            <button type="submit">Submit application</button>
+          </section>
+        </form>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    artifacts = updated["artifacts_json"]
+
+    assert result["fields_autofilled"] == 2
+    assert result["unknown_fields"] == 0
+    assert updated["state"] == "ready_for_review"
+    assert artifacts["forbidden_submit_controls"] == [
+        {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
+    ]
+    assert artifacts["automation_metrics"]["steps_completed_without_human"] == 1
+    assert artifacts["automation_metrics"]["step_advance_success_rate"] == 1.0
+    assert artifacts["automation_metrics"]["submit_only_ready"] is True
+    assert artifacts["journey"]["step_transitions"][0]["result"]["status"] == "advanced"
+
+
 def test_application_execution_opens_generic_apply_cta_before_form_fill(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
     monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
@@ -796,6 +903,19 @@ async def _detect_access_issue_for_html(html: str) -> str | None:
             await page.set_content(html)
             await page.wait_for_timeout(500)
             return await _detect_page_access_issue(page, page.url, await page.content())
+        finally:
+            await browser.close()
+
+
+async def _detect_step_transition_for_html(html: str) -> dict:
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(html)
+            return await detect_safe_step_transition_controls(page)
         finally:
             await browser.close()
 

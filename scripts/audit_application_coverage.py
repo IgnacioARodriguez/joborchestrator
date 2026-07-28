@@ -158,6 +158,8 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "validation_issue_types": sorted({str(issue.get("issue_type") or "") for issue in validation_issues if issue.get("issue_type")}),
             "verified_action_success_rate": automation_metrics.get("verified_action_success_rate"),
             "dynamic_required_count": repair.get("dynamic_required_count"),
+            "steps_completed_without_human": automation_metrics.get("steps_completed_without_human"),
+            "step_advance_success_rate": automation_metrics.get("step_advance_success_rate"),
             "submit_only_ready": automation_metrics.get("submit_only_ready"),
             "blocked": bool(execution.get("blocked")),
             "reason": reason or None,
@@ -185,6 +187,8 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "validation_issue_types": [],
             "verified_action_success_rate": None,
             "dynamic_required_count": 0,
+            "steps_completed_without_human": 0,
+            "step_advance_success_rate": None,
             "submit_only_ready": False,
             "blocked": True,
             "reason": exc.__class__.__name__,
@@ -307,6 +311,8 @@ def write_csv_report(path: Path, results: list[dict[str, object]]) -> None:
         "validation_issue_types",
         "verified_action_success_rate",
         "dynamic_required_count",
+        "steps_completed_without_human",
+        "step_advance_success_rate",
         "submit_only_ready",
         "reason",
         "last_error",
@@ -366,6 +372,7 @@ def write_markdown_report(path: Path, report: dict[str, object]) -> None:
             lines.append(
                 f"  - Automation: verified rate `{result.get('verified_action_success_rate')}` / "
                 f"dynamic required `{result.get('dynamic_required_count') or 0}` / "
+                f"steps `{result.get('steps_completed_without_human') or 0}` / "
                 f"submit-only `{result.get('submit_only_ready')}`"
             )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -41,6 +41,10 @@ FORBIDDEN_SUBMIT_TEXT_RE = re.compile(
     r"\b(submit application|send application|complete application|finish|submit|enviar candidatura|enviar solicitud|finalizar)\b",
     re.IGNORECASE,
 )
+SAFE_STEP_TEXT_RE = re.compile(
+    r"\b(next|continue|save and continue|review|review application|siguiente|continuar|revisar)\b",
+    re.IGNORECASE,
+)
 FORM_MARKERS_RE = re.compile(r"<(form|input|textarea|select)\b", re.IGNORECASE)
 
 
@@ -244,7 +248,7 @@ async def run_application_execution(
         journey_engine = ApplicationJourneyEngine()
         profile = db.get_candidate_profile_payload() or {}
         answer_bank = db.list_answer_definitions()
-        initial_step = await journey_engine.prepare_initial_step(
+        current_step = await journey_engine.prepare_initial_step(
             page=live_page,
             adapter=adapter,
             capabilities=capabilities,
@@ -252,75 +256,124 @@ async def run_application_execution(
             profile=profile,
             answer_bank=answer_bank,
         )
-        schema = initial_step.schema
-        mapping = initial_step.mapping
-        journey_step = initial_step.to_dict()
-        browser_surface = initial_step.browser_surface
-        if capabilities.can_fill_text_fields or capabilities.can_fill_selects or capabilities.can_fill_radios or capabilities.can_fill_checkboxes:
-            _progress(
-                progress,
-                f"Filling safe {adapter.provider} fields in dry-run mode." if dry_run else f"Filling safe {adapter.provider} fields.",
-            )
-            live_fill = await fill_safe_fields_on_page(browser_surface, mapping, dry_run=dry_run)
-        if capabilities.can_upload_resume:
-            resume_upload = await upload_resume_on_page(
-                browser_surface,
-                schema,
-                resolve_resume_upload_file(job_id, job),
-            )
-            if resume_upload.get("status") == "uploaded" and live_fill is not None:
-                live_fill["fields_autofilled"] = int(live_fill.get("fields_autofilled") or 0) + 1
-                live_fill.setdefault("filled_fields", []).append(str(resume_upload.get("field_name") or "resume"))
-                _remove_resolved_file_unknowns(mapping)
-        if capabilities.can_detect_fields:
-            validation = await validate_application_surface(browser_surface, journey_step.get("action_plan") or {})
-            validation_report = validation.to_dict()
-            if validation.status == "validation_failed":
-                mapping.setdefault("unknown_fields", []).append(
+        live_fill = {"dry_run": dry_run, "fields_autofilled": 0, "filled_fields": [], "skipped_fields": []}
+        journey_steps: list[dict[str, Any]] = []
+        step_transitions: list[dict[str, Any]] = []
+        max_auto_steps = max(1, int(os.getenv("APPLICATION_MAX_AUTO_STEPS", "3")))
+        for step_index in range(max_auto_steps):
+            schema = current_step.schema
+            mapping = current_step.mapping
+            journey_step = current_step.to_dict()
+            browser_surface = current_step.browser_surface
+            if capabilities.can_fill_text_fields or capabilities.can_fill_selects or capabilities.can_fill_radios or capabilities.can_fill_checkboxes:
+                _progress(
+                    progress,
+                    f"Filling safe {adapter.provider} fields in dry-run mode." if dry_run else f"Filling safe {adapter.provider} fields.",
+                )
+                step_fill = await fill_safe_fields_on_page(browser_surface, mapping, dry_run=dry_run)
+                _merge_fill_result(live_fill, step_fill)
+            if capabilities.can_upload_resume and resume_upload.get("status") != "uploaded":
+                resume_upload = await upload_resume_on_page(
+                    browser_surface,
+                    schema,
+                    resolve_resume_upload_file(job_id, job),
+                )
+                if resume_upload.get("status") == "uploaded":
+                    live_fill["fields_autofilled"] = int(live_fill.get("fields_autofilled") or 0) + 1
+                    live_fill.setdefault("filled_fields", []).append(str(resume_upload.get("field_name") or "resume"))
+                    _remove_resolved_file_unknowns(mapping)
+            if capabilities.can_detect_fields:
+                validation = await validate_application_surface(browser_surface, journey_step.get("action_plan") or {})
+                validation_report = validation.to_dict()
+                if validation.status == "validation_failed":
+                    mapping.setdefault("unknown_fields", []).append(
+                        {
+                            "name": "validation",
+                            "label": "Validation errors or failed postconditions were detected after autofill.",
+                            "type": "validation",
+                            "required": True,
+                            "sensitive": False,
+                            "classification": "unknown",
+                            "issues": validation_report.get("issues") or [],
+                        }
+                    )
+                rescanned_step = await journey_engine.inspect_surface(
+                    adapter=adapter,
+                    capabilities=capabilities,
+                    surface=current_step.surface,
+                    browser_surface=browser_surface,
+                    html=html,
+                    profile=profile,
+                    answer_bank=answer_bank,
+                    surfaces=current_step.surfaces,
+                )
+                dynamic_required_fields = _append_dynamic_required_unknowns(
+                    mapping,
+                    previous_schema=schema,
+                    rescanned_schema=rescanned_step.schema,
+                )
+                repair_report = _build_repair_report(
+                    previous_action_plan=journey_step.get("action_plan") or {},
+                    rescanned_action_plan=rescanned_step.to_dict().get("action_plan") or {},
+                    dynamic_required_fields=dynamic_required_fields,
+                )
+                if dynamic_required_fields:
+                    schema = rescanned_step.schema
+                    journey_step = {
+                        **journey_step,
+                        "repair_rescan": rescanned_step.to_dict(),
+                    }
+                transition = await detect_safe_step_transition_controls(browser_surface)
+                automation_metrics = _build_application_automation_metrics(
+                    action_plan=journey_step.get("action_plan") or {},
+                    validation_report=validation_report,
+                    fill_result=live_fill,
+                    resume_upload=resume_upload,
+                    repair_report=repair_report,
+                    mapping=mapping,
+                    step_transitions=step_transitions,
+                )
+                journey_steps.append(
                     {
-                        "name": "validation",
-                        "label": "Validation errors or failed postconditions were detected after autofill.",
-                        "type": "validation",
-                        "required": True,
-                        "sensitive": False,
-                        "classification": "unknown",
-                        "issues": validation_report.get("issues") or [],
+                        "index": step_index,
+                        "surface": current_step.surface.to_dict(),
+                        "action_plan": journey_step.get("action_plan") or {},
+                        "validation": validation_report,
+                        "repair": repair_report,
+                        "transition": transition,
                     }
                 )
-            rescanned_step = await journey_engine.inspect_surface(
-                adapter=adapter,
-                capabilities=capabilities,
-                surface=initial_step.surface,
-                browser_surface=browser_surface,
-                html=html,
-                profile=profile,
-                answer_bank=answer_bank,
-                surfaces=initial_step.surfaces,
-            )
-            dynamic_required_fields = _append_dynamic_required_unknowns(
-                mapping,
-                previous_schema=schema,
-                rescanned_schema=rescanned_step.schema,
-            )
-            repair_report = _build_repair_report(
-                previous_action_plan=journey_step.get("action_plan") or {},
-                rescanned_action_plan=rescanned_step.to_dict().get("action_plan") or {},
-                dynamic_required_fields=dynamic_required_fields,
-            )
-            if dynamic_required_fields:
-                schema = rescanned_step.schema
-                journey_step = {
-                    **journey_step,
-                    "repair_rescan": rescanned_step.to_dict(),
-                }
-            automation_metrics = _build_application_automation_metrics(
-                action_plan=journey_step.get("action_plan") or {},
-                validation_report=validation_report,
-                fill_result=live_fill,
-                resume_upload=resume_upload,
-                repair_report=repair_report,
-                mapping=mapping,
-            )
+                if mapping.get("unknown_fields") or validation.status != "validation_clean":
+                    break
+                if transition.get("status") != "available":
+                    break
+                click_result = await click_safe_step_transition(browser_surface, transition, timeout_ms=timeout_ms)
+                step_transitions.append({"index": step_index, "transition": transition, "result": click_result})
+                journey_steps[-1]["transition_result"] = click_result
+                if click_result.get("status") != "advanced":
+                    break
+                html = await live_page.content()
+                url = live_page.url
+                current_step = await journey_engine.prepare_initial_step(
+                    page=live_page,
+                    adapter=adapter,
+                    capabilities=capabilities,
+                    html=html,
+                    profile=profile,
+                    answer_bank=answer_bank,
+                )
+                continue
+            break
+        journey_step = {**journey_step, "steps": journey_steps, "step_transitions": step_transitions}
+        automation_metrics = _build_application_automation_metrics(
+            action_plan=journey_step.get("action_plan") or {},
+            validation_report=validation_report,
+            fill_result=live_fill,
+            resume_upload=resume_upload,
+            repair_report=repair_report,
+            mapping=mapping,
+            step_transitions=step_transitions,
+        )
         if capabilities.can_detect_fields:
             forbidden_submit_controls = await detect_forbidden_submit_controls(browser_surface)
             auto_submit_result = await maybe_auto_submit_application(
@@ -704,6 +757,71 @@ async def detect_forbidden_submit_controls(page: Page) -> list[dict[str, str]]:
     return forbidden
 
 
+async def detect_safe_step_transition_controls(page: Page) -> dict[str, Any]:
+    controls = await page.locator("button, input[type='submit'], input[type='button'], a").evaluate_all(
+        """nodes => nodes.map((node, index) => {
+          const tag = node.tagName.toLowerCase();
+          const text = String(
+            node.innerText
+            || node.textContent
+            || node.getAttribute('value')
+            || node.getAttribute('aria-label')
+            || ''
+          ).replace(/\\s+/g, ' ').trim();
+          const type = String(node.getAttribute('type') || '').toLowerCase();
+          const disabled = Boolean(node.disabled || node.getAttribute('aria-disabled') === 'true');
+          const style = window.getComputedStyle(node);
+          const visible = style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && !node.hidden
+            && Boolean(node.offsetWidth || node.offsetHeight || node.getClientRects().length);
+          return { index, tag, text, type, disabled, visible };
+        }).filter(item => item.visible && !item.disabled && (item.text || item.type))"""
+    )
+    candidates: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    for control in controls:
+        label = str(control.get("text") or control.get("type") or "").strip()
+        if not label:
+            continue
+        if classify_browser_action(label) == "forbidden":
+            blocked.append({"index": int(control.get("index") or 0), "text": label[:120], "reason": "final_submit"})
+            continue
+        if re.search(r"\bcontinue application\b", label, re.IGNORECASE):
+            blocked.append({"index": int(control.get("index") or 0), "text": label[:120], "reason": "application_boundary"})
+            continue
+        if APPLY_TEXT_RE.search(label) and not SAFE_STEP_TEXT_RE.search(label):
+            blocked.append({"index": int(control.get("index") or 0), "text": label[:120], "reason": "apply_or_submit_boundary"})
+            continue
+        if SAFE_STEP_TEXT_RE.search(label):
+            candidates.append({"index": int(control.get("index") or 0), "text": label[:120], "tag": str(control.get("tag") or "")})
+    if len(candidates) == 1:
+        return {"status": "available", "control": candidates[0], "blocked_controls": blocked}
+    return {
+        "status": "not_available" if not candidates else "ambiguous",
+        "candidates": candidates,
+        "blocked_controls": blocked,
+    }
+
+
+async def click_safe_step_transition(page: Page, transition: dict[str, Any], *, timeout_ms: int) -> dict[str, Any]:
+    if transition.get("status") != "available":
+        return {"status": "not_clicked", "reason": transition.get("status") or "not_available"}
+    control = transition.get("control") or {}
+    try:
+        await page.locator("button, input[type='submit'], input[type='button'], a").nth(int(control.get("index") or 0)).click(timeout=5000)
+        await page.wait_for_timeout(1000)
+        await _safe_network_idle(page, timeout_ms)
+        return {"status": "advanced", "control_text": str(control.get("text") or ""), "url": page.url}
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "reason": "step_transition_click_failed",
+            "control_text": str(control.get("text") or ""),
+            "error": exc.__class__.__name__,
+        }
+
+
 async def maybe_auto_submit_application(
     page: Page,
     *,
@@ -972,6 +1090,7 @@ def _build_application_automation_metrics(
     resume_upload: dict[str, Any],
     repair_report: dict[str, Any],
     mapping: dict[str, Any],
+    step_transitions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     actions = [action for action in action_plan.get("actions") or [] if isinstance(action, dict)]
     planned = len(actions)
@@ -988,6 +1107,11 @@ def _build_application_automation_metrics(
     verifiable = checked_postconditions + (1 if upload_planned else 0)
     verified = satisfied_postconditions + (1 if upload_verified else 0)
     unresolved_count = len(mapping.get("unknown_fields") or [])
+    transitions = step_transitions or []
+    advanced_steps = [
+        transition for transition in transitions
+        if (transition.get("result") or {}).get("status") == "advanced"
+    ]
     return {
         "planned_action_count": planned,
         "executed_action_count": executed,
@@ -999,6 +1123,9 @@ def _build_application_automation_metrics(
         "unresolved_required_count": unresolved_count,
         "dynamic_required_count": int(repair_report.get("dynamic_required_count") or 0),
         "repair_rescans": int(repair_report.get("rescans") or 0),
+        "safe_step_transition_count": len(transitions),
+        "steps_completed_without_human": len(advanced_steps),
+        "step_advance_success_rate": _ratio(len(advanced_steps), len(transitions)),
         "submit_only_ready": (
             validation_report.get("status") == "validation_clean"
             and unresolved_count == 0
@@ -1009,6 +1136,12 @@ def _build_application_automation_metrics(
 
 def _ratio(numerator: int, denominator: int) -> float:
     return round(numerator / denominator, 3) if denominator else 0.0
+
+
+def _merge_fill_result(target: dict[str, Any], update: dict[str, Any]) -> None:
+    target["fields_autofilled"] = int(target.get("fields_autofilled") or 0) + int(update.get("fields_autofilled") or 0)
+    target.setdefault("filled_fields", []).extend(list(update.get("filled_fields") or []))
+    target.setdefault("skipped_fields", []).extend(list(update.get("skipped_fields") or []))
 
 
 async def try_saved_login(
