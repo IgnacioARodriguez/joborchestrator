@@ -76,18 +76,49 @@ API health: `http://127.0.0.1:8000/api/health`
 6. Click `Prepare application`.
 7. The API creates a persistent session and queues `application_execution`.
 8. Keep `npm run workers` running locally.
-9. The worker opens the external apply URL locally with Playwright, detects the provider, extracts the form, runs dry-run mapping and updates the session.
-10. Resolve unknown fields, review, then manually confirm any real submission.
-11. Record submitted applications only after verification.
+9. The worker opens the external apply URL locally with Playwright, detects the provider, extracts the form, runs mapping/fill and updates the session.
+10. In `review_before_submit`, resolve unknown fields, review, then manually confirm any real submission.
+11. Click `Mark submitted manually` only after you submit on the company site yourself.
+12. Use verification follow-up separately when a confirmation page or email is available.
+
+For personal Greenhouse auto-submit:
+
+```bash
+ENABLE_AUTO_SUBMIT_APPROVED=1
+```
+
+Then create the session with `"mode": "auto_submit_approved"`. The worker submits only when required fields are resolved, the resume upload succeeds, and exactly one final submit control is detected. If it blocks, inspect `application_sessions.artifacts_json.auto_submit.reasons`.
+
+Before testing against a real company page, run the isolated local smoke. It forces SQLite, ignores `.env`/Turso, uses a synthetic Greenhouse fixture and verifies the full worker path reaches `submitted`:
+
+```bash
+npm run smoke:auto-submit
+```
+
+To rehearse a real application page without submitting, use a URL-specific dry run. Add `-- --headful` to watch Chromium:
+
+```bash
+npm run rehearse:application -- "https://boards.greenhouse.io/company/jobs/123"
+npm run rehearse:application -- "https://boards.greenhouse.io/company/jobs/123" --headful
+```
+
+For the Warp Software Engineer rehearsal, `--warp-answers` seeds the confirmed personal answers: not based in US/Canada, no permanent work authorization and sponsorship required.
+
+```bash
+npm run rehearse:application -- "https://job-boards.greenhouse.io/warp/jobs/4324888004" --warp-answers
+```
+
+The rehearsal command writes the exact uploaded PDF to `logs/application-rehearsal-resume.pdf` and prints `resume_preview_lines`. This file is synthetic by design. Do not run real auto-submit until the job has a reviewed ATS CV generated from the candidate's actual profile/materials.
 
 For login/account pages, set:
 
 ```bash
+APPLICATION_BROWSER_HANDOFF=1
 APPLICATION_BROWSER_HEADLESS=0
 APPLICATION_BROWSER_PROFILE_DIR=data/application_browser_profile
 ```
 
-Then resolve the login/check manually in the visible browser and click `Continue after manual step` in the session panel.
+Then resolve the login/check manually in the visible browser and click `Continue after manual step` in the session panel. The session stores only an opaque `local-browser://session/<uuid>` reference.
 
 For fixture/debug Greenhouse dry-run, paste form HTML in the job drawer or call:
 
@@ -110,4 +141,4 @@ POST /api/jobs/{job_id}/application-sessions
 
 ## Manual Steps
 
-LinkedIn login, CAPTCHA, security checks, sensitive answers and real submission approval remain human actions.
+LinkedIn login, CAPTCHA, security checks and unresolved sensitive answers remain human actions.

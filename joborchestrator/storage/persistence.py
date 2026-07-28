@@ -498,6 +498,11 @@ CREATE TABLE IF NOT EXISTS answer_definitions (
     source TEXT NOT NULL,
     sensitivity TEXT NOT NULL,
     requires_confirmation INTEGER DEFAULT 0,
+    status TEXT,
+    language TEXT,
+    confidence REAL,
+    expires_at TEXT,
+    profile_version TEXT,
     last_confirmed_at TEXT,
     updated_at TEXT NOT NULL
 );

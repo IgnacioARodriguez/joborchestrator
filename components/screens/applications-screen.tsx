@@ -16,6 +16,10 @@ import { cn } from "@/lib/utils"
 
 const APPLICATION_COLUMNS: ApplicationStatus[] = [
   "preparing",
+  "needs_user_input",
+  "ready_for_review",
+  "submitted_manually",
+  "submission_verified",
   "submitted",
   "recruiter_screen",
   "interview",
@@ -27,6 +31,13 @@ const APPLICATION_COLUMNS: ApplicationStatus[] = [
 
 const LABELS: Record<ApplicationStatus, string> = {
   preparing: "Preparing",
+  materials_ready: "Materials ready",
+  opened: "Opened",
+  prefilled: "Prefilled",
+  needs_user_input: "Needs input",
+  ready_for_review: "Ready for review",
+  submitted_manually: "Submitted manually",
+  submission_verified: "Verified",
   submitted: "Submitted",
   recruiter_screen: "Recruiter screen",
   interview: "Interview",
@@ -195,7 +206,7 @@ export function ApplicationsScreen({ onOpenJob }: { onOpenJob: (id: string) => v
         description="Only real applications live here, separate from discovered opportunities."
       />
       <div className="min-h-[420px] overflow-x-auto pb-2">
-        <div className="grid min-w-[1320px] grid-cols-8 gap-3">
+        <div className="grid min-w-[1680px] grid-cols-11 gap-3">
           {APPLICATION_COLUMNS.map((status) => {
             const items = byStatus(status)
             return (

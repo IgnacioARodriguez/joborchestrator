@@ -35,6 +35,7 @@ import type {
   ApplicationTarget,
   AnswerDefinition,
   AnswerSensitivity,
+  AnswerStatus,
   CandidateProfile,
   OperationRun,
   ProfileSkill,
@@ -92,6 +93,7 @@ const EMPTY_ANSWER: AnswerDefinition = {
   source: "approved",
   sensitivity: "public",
   requires_confirmation: false,
+  status: "approved",
   last_confirmed_at: null,
 }
 
@@ -413,7 +415,7 @@ export function ProfileScreen() {
         canonical_key,
         question_patterns: answerDraft.question_patterns.filter(Boolean),
         requires_confirmation:
-          answerDraft.requires_confirmation || answerDraft.sensitivity !== "public",
+          answerDraft.requires_confirmation || answerDraft.sensitivity !== "public" || answerDraft.status === "requires_confirmation",
       }
       const response = await api.saveAnswer(payload)
       setAnswers((current) => {
@@ -915,7 +917,7 @@ export function ProfileScreen() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_10rem]">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_10rem_12rem]">
             <Input
               value={answerDraft.canonical_key}
               placeholder="canonical_key"
@@ -943,6 +945,25 @@ export function ProfileScreen() {
                 <SelectItem value="public">Stable</SelectItem>
                 <SelectItem value="preference">Configurable</SelectItem>
                 <SelectItem value="sensitive">Sensitive</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={answerDraft.status ?? "approved"}
+              onValueChange={(value) =>
+                setAnswerDraft((current) => ({
+                  ...current,
+                  status: value as AnswerStatus,
+                  requires_confirmation: value === "requires_confirmation" || current.requires_confirmation,
+                }))
+              }
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="proposed">Proposed</SelectItem>
+                <SelectItem value="requires_confirmation">Needs confirmation</SelectItem>
+                <SelectItem value="rejected">Rejected</SelectItem>
+                <SelectItem value="expired">Expired</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -983,6 +1004,9 @@ export function ProfileScreen() {
                       >
                         <span className="font-medium text-foreground">{answer.canonical_key}</span>
                         <span className="mt-1 block line-clamp-2 text-muted-foreground">{answer.value}</span>
+                        <span className="mt-1 block text-muted-foreground">
+                          {(answer.status ?? "approved").replaceAll("_", " ")} - {answer.source}
+                        </span>
                         {answer.requires_confirmation ? (
                           <span className="mt-1 block text-warning-foreground">review required</span>
                         ) : null}

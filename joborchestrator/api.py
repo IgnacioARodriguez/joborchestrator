@@ -119,6 +119,11 @@ class AnswerPayload(BaseModel):
     source: str = "approved"
     sensitivity: str = "public"
     requires_confirmation: bool = False
+    status: str | None = None
+    language: str | None = None
+    confidence: float | None = None
+    expires_at: str | None = None
+    profile_version: str | None = None
     last_confirmed_at: str | None = None
 
 
@@ -454,6 +459,23 @@ def upsert_automation_account(payload: AutomationAccountPayload) -> dict[str, An
     return {"account": account}
 
 
+@app.get("/api/automation/provider-capabilities")
+def list_provider_capabilities() -> dict[str, Any]:
+    registry = AdapterRegistry()
+    capabilities = registry.capabilities()
+    providers = capabilities if isinstance(capabilities, list) else [capabilities]
+    return {"providers": [item.to_dict() for item in providers]}
+
+
+@app.get("/api/automation/provider-capabilities/{provider}")
+def get_provider_capabilities(provider: str) -> dict[str, Any]:
+    registry = AdapterRegistry()
+    capabilities = registry.capabilities(provider)
+    if isinstance(capabilities, list):
+        capabilities = capabilities[0]
+    return {"provider": capabilities.to_dict()}
+
+
 @app.get("/api/operations/{operation_id}")
 def get_operation(operation_id: int) -> dict[str, Any]:
     operation = db.get_operation(operation_id)
@@ -780,6 +802,7 @@ def create_job_application_session(job_id: int, payload: ApplicationSessionPaylo
     provider = payload.provider if payload.provider != "generic" else adapter.provider
     session = db.create_application_session({"job_id": job_id, "provider": provider, "mode": payload.mode})
     operation_id = None
+    operation_dry_run = False if payload.mode == "auto_submit_approved" else payload.dry_run
     if html:
         schema = adapter.extract_form_schema_html(html)
         mapping = adapter.map_answers(schema, db.get_candidate_profile_payload() or {}, db.list_answer_definitions())
@@ -835,14 +858,23 @@ def create_job_application_session(job_id: int, payload: ApplicationSessionPaylo
                     "job_id": job_id,
                     "apply_url": apply_url,
                     "provider": provider,
-                    "dry_run": payload.dry_run,
+                    "dry_run": operation_dry_run,
                 },
-                "Queued external application dry-run. Waiting for local worker.",
+                "Queued approved auto-submit worker. Waiting for local worker."
+                if payload.mode == "auto_submit_approved"
+                else "Queued external application dry-run. Waiting for local worker.",
             )
             session = db.transition_application_session(
                 int(session["id"]),
                 "preflight",
-                {"note": "Queued browser dry-run worker.", "current_step": "queued_browser_dry_run"},
+                {
+                    "note": "Queued approved auto-submit worker."
+                    if payload.mode == "auto_submit_approved"
+                    else "Queued browser dry-run worker.",
+                    "current_step": "queued_auto_submit"
+                    if payload.mode == "auto_submit_approved"
+                    else "queued_browser_dry_run",
+                },
             )
         else:
             session = db.transition_application_session(
@@ -885,12 +917,39 @@ def transition_application_session(session_id: int, payload: ApplicationSessionT
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/application-sessions/{session_id}/submitted-manually")
+def mark_application_session_submitted_manually(session_id: int) -> dict[str, Any]:
+    session = db.get_application_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Application session not found")
+    if session["state"] not in {"ready_for_review", "needs_user_input"}:
+        raise HTTPException(status_code=409, detail=f"Cannot mark a {session['state']} session as manually submitted.")
+    try:
+        updated = db.transition_application_session(
+            session_id,
+            "submitted_manually",
+            {
+                "note": "User marked the application as submitted manually after final review.",
+                "current_step": "manual_submission_recorded",
+                "requires_review": False,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if updated.get("application_id"):
+        db.create_application_event(
+            int(updated["application_id"]),
+            {"event_type": "submitted_manually", "note": "Submitted manually by the user."},
+        )
+    return {"session": updated}
+
+
 @app.post("/api/application-sessions/{session_id}/continue")
 def continue_application_session(session_id: int) -> dict[str, Any]:
     session = db.get_application_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Application session not found")
-    if session["state"] in {"submitted", "cancelled"}:
+    if session["state"] in {"submitted", "submitted_manually", "submission_verified", "cancelled"}:
         raise HTTPException(status_code=409, detail=f"Cannot continue a {session['state']} session.")
     job = db.get_job_posting(int(session["job_id"]))
     if not job:

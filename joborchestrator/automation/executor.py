@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urljoin
 
@@ -10,14 +12,27 @@ from playwright.async_api import Browser, BrowserContext, Page, TimeoutError as 
 
 from joborchestrator.automation.adapters import AdapterRegistry
 from joborchestrator.automation.accounts import load_password, site_identity_from_url
+from joborchestrator.automation import local_browser_agent
+from joborchestrator.intelligence.llm_application_materials import export_ats_cv_pdf_bytes
 from joborchestrator.storage import persistence as db
 
 Progress = Callable[[str], None]
 
-CHALLENGE_MARKERS = ("captcha", "challenge", "checkpoint", "verify you are human", "security check")
+CHALLENGE_MARKERS = (
+    "checkpoint",
+    "verify you are human",
+    "security check",
+    "human verification",
+    "cloudflare challenge",
+    "please complete the captcha",
+)
 LOGIN_MARKERS = ("sign in", "log in", "login", "create account", "register to apply")
 APPLY_TEXT_RE = re.compile(
     r"\b(apply|apply now|start application|continue application|submit application|aplicar|solicitar|postular|postularme|enviar candidatura)\b",
+    re.IGNORECASE,
+)
+FORBIDDEN_SUBMIT_TEXT_RE = re.compile(
+    r"\b(submit application|send application|complete application|finish|submit|enviar candidatura|enviar solicitud|finalizar)\b",
     re.IGNORECASE,
 )
 FORM_MARKERS_RE = re.compile(r"<(form|input|textarea|select)\b", re.IGNORECASE)
@@ -37,20 +52,36 @@ async def run_application_execution(
     _progress(progress, "Opening external application URL.")
     headless = os.getenv("APPLICATION_BROWSER_HEADLESS", "1") != "0"
     timeout_ms = int(os.getenv("APPLICATION_BROWSER_TIMEOUT_MS", "30000"))
+    handoff_timeout_seconds = int(os.getenv("APPLICATION_BROWSER_HANDOFF_TIMEOUT_SECONDS", "3600"))
     profile_dir = os.getenv("APPLICATION_BROWSER_PROFILE_DIR")
-    async with async_playwright() as p:
+    existing_session = db.get_application_session(session_id) or {}
+    browser_ref = str(existing_session.get("browser_session_ref") or "")
+    resumed_session = await local_browser_agent.get_session(browser_ref)
+    playwright_manager = None
+    playwright_instance = None
+    if resumed_session:
+        live_page = resumed_session.page
+        live_browser = resumed_session.browser
+        live_context = resumed_session.context
+        navigation = [{"action": "resumed_browser_session", "url": live_page.url}]
+        html = await live_page.content()
+        url = live_page.url
+    else:
+        playwright_manager = async_playwright()
+        playwright_instance = await playwright_manager.start()
+        p = playwright_instance
         browser: Browser | None = None
         context: BrowserContext | None = None
-        if profile_dir:
-            context = await p.chromium.launch_persistent_context(
-                user_data_dir=profile_dir,
-                headless=headless,
-            )
-            page = context.pages[0] if context.pages else await context.new_page()
-        else:
-            browser = await p.chromium.launch(headless=headless)
-            page = await browser.new_page()
         try:
+            if profile_dir:
+                context = await p.chromium.launch_persistent_context(
+                    user_data_dir=profile_dir,
+                    headless=headless,
+                )
+                page = context.pages[0] if context.pages else await context.new_page()
+            else:
+                browser = await p.chromium.launch(headless=headless)
+                page = await browser.new_page()
             await page.goto(apply_url, wait_until="domcontentloaded", timeout=timeout_ms)
             await _safe_network_idle(page, timeout_ms)
             navigation = await _follow_apply_hops(page, timeout_ms=timeout_ms, max_hops=2, progress=progress)
@@ -66,9 +97,13 @@ async def run_application_execution(
                 await browser.close()
             if context is not None:
                 await context.close()
+            if (browser is not None or context is not None) and playwright_instance is not None:
+                await playwright_instance.stop()
 
     if _looks_blocked(apply_url, html):
         await _close_browser_or_context(live_browser, live_context)
+        if playwright_instance is not None:
+            await playwright_instance.stop()
         identity = site_identity_from_url(url, provider_hint)
         db.upsert_automation_site_account(
             {"provider": identity.provider, "domain": identity.domain, "status": "blocked", "notes": "Challenge or CAPTCHA detected."}
@@ -100,6 +135,8 @@ async def run_application_execution(
             url = live_page.url
             if _looks_login_required(html):
                 await _close_browser_or_context(live_browser, live_context)
+                if playwright_instance is not None:
+                    await playwright_instance.stop()
                 db.upsert_automation_site_account(
                     {
                         "provider": identity.provider,
@@ -126,6 +163,8 @@ async def run_application_execution(
                 return {"session": session, "blocked": True, "reason": "login_required"}
         else:
             await _close_browser_or_context(live_browser, live_context)
+            if playwright_instance is not None:
+                await playwright_instance.stop()
             db.upsert_automation_site_account(
                 {
                     "provider": identity.provider,
@@ -165,15 +204,71 @@ async def run_application_execution(
         }
     )
     live_fill = None
+    resume_upload: dict[str, Any] = {"status": "not_attempted"}
+    forbidden_submit_controls: list[dict[str, str]] = []
+    handoff: dict[str, Any] = {"status": "disabled"}
+    auto_submit_result: dict[str, Any] = {"status": "disabled"}
     try:
-        schema = adapter.extract_form_schema_html(html)
+        if adapter.provider == "greenhouse":
+            schema = await adapter.extract_form_schema_page(live_page)
+        else:
+            schema = adapter.extract_form_schema_html(html)
         mapping = adapter.map_answers(schema, db.get_candidate_profile_payload() or {}, db.list_answer_definitions())
         if adapter.provider == "greenhouse":
-            _progress(progress, "Filling safe Greenhouse fields in dry-run mode.")
+            _progress(progress, "Filling safe Greenhouse fields in dry-run mode." if dry_run else "Filling safe Greenhouse fields.")
             live_fill = await fill_safe_fields_on_page(live_page, mapping, dry_run=dry_run)
-            html = await live_page.content()
+            resume_upload = await upload_resume_on_page(
+                live_page,
+                schema,
+                resolve_resume_upload_file(job_id, job),
+            )
+            if resume_upload.get("status") == "uploaded" and live_fill is not None:
+                live_fill["fields_autofilled"] = int(live_fill.get("fields_autofilled") or 0) + 1
+                live_fill.setdefault("filled_fields", []).append(str(resume_upload.get("field_name") or "resume"))
+                _remove_resolved_file_unknowns(mapping)
+            forbidden_submit_controls = await detect_forbidden_submit_controls(live_page)
+            auto_submit_result = await maybe_auto_submit_application(
+                live_page,
+                session=existing_session,
+                provider=adapter.provider,
+                apply_url=apply_url,
+                job=job,
+                schema=schema,
+                mapping=mapping,
+                resume_upload=resume_upload,
+                forbidden_submit_controls=forbidden_submit_controls,
+                dry_run=dry_run,
+                timeout_ms=timeout_ms,
+                progress=progress,
+            )
+            try:
+                html = await live_page.content()
+                url = live_page.url
+            except Exception:
+                if auto_submit_result.get("status") != "submitted":
+                    raise
     finally:
-        await _close_browser_or_context(live_browser, live_context)
+        cleanup_path = resume_upload.get("cleanup_path")
+        if cleanup_path:
+            _cleanup_resume_upload_file(str(cleanup_path))
+        if local_browser_agent.enabled() and auto_submit_result.get("status") != "submitted":
+            session = await local_browser_agent.get_session(browser_ref)
+            if session is None:
+                session = local_browser_agent.register_session(
+                    page=live_page,
+                    browser=live_browser,
+                    context=live_context,
+                    playwright=playwright_instance,
+                    provider=adapter.provider,
+                    session_id=session_id,
+                    job_id=job_id,
+                    timeout_seconds=handoff_timeout_seconds,
+                )
+            handoff = {"status": "started", **local_browser_agent.public_metadata(session)}
+        else:
+            await _close_browser_or_context(live_browser, live_context)
+            if playwright_instance is not None:
+                await playwright_instance.stop()
     fill = adapter.fill_fields_html(html, mapping, dry_run=dry_run)
     if live_fill is not None:
         fill.data["fields_autofilled"] = live_fill["fields_autofilled"]
@@ -181,51 +276,103 @@ async def run_application_execution(
         fill.data["skipped_fields"] = live_fill["skipped_fields"]
     review = adapter.prepare_review(schema, mapping, fill)
     next_state = "needs_user_input" if mapping.get("unknown_fields") else "ready_for_review"
+    if auto_submit_result.get("status") == "submitted":
+        next_state = "submitted"
 
     _advance_to_ready_to_fill(
         session_id,
         {
             "note": f"Opened {adapter.provider} application page.",
             "current_step": "provider_detected",
-            "browser_session_ref": url,
+            "browser_session_ref": handoff.get("ref") or browser_ref or url,
             "form_schema_json": schema,
             "mapped_answers_json": mapping,
-            "artifacts_json": {"navigation": navigation, "opened_url": apply_url, "final_url": url},
+            "artifacts_json": {
+                "navigation": navigation,
+                "opened_url": apply_url,
+                "final_url": url,
+                "resume_upload": _public_resume_upload_result(resume_upload),
+                "forbidden_submit_controls": forbidden_submit_controls,
+                "browser_handoff": handoff,
+                "auto_submit": auto_submit_result,
+            },
         },
     )
     db.transition_application_session(
         session_id,
         "filling",
         {
-            "note": "Ran browser dry-run fill.",
-            "current_step": "dry_run_fill",
+            "note": "Ran browser dry-run fill." if dry_run else "Ran browser fill.",
+            "current_step": "dry_run_fill" if dry_run else "fill",
             "fields_detected": review["fields_detected"],
             "fields_autofilled": review["fields_autofilled"],
             "unknown_fields_json": review["unknown_fields"],
             "requires_review": True,
         },
     )
-    session = db.transition_application_session(
-        session_id,
-        next_state,
-        {
-            "note": "Ready for review." if next_state == "ready_for_review" else "Missing fields require user input.",
-            "current_step": "review",
-            "artifacts_json": {"review": review, "dry_run": dry_run, "final_url": url, "navigation": navigation},
-        },
-    )
+    final_artifacts = {
+        "review": review,
+        "dry_run": dry_run,
+        "final_url": url,
+        "navigation": navigation,
+        "resume_upload": _public_resume_upload_result(resume_upload),
+        "forbidden_submit_controls": forbidden_submit_controls,
+        "browser_handoff": handoff,
+        "auto_submit": auto_submit_result,
+    }
+    if next_state == "submitted":
+        db.transition_application_session(
+            session_id,
+            "ready_for_review",
+            {"note": "Auto-submit preconditions passed.", "current_step": "auto_submit_ready", "artifacts_json": final_artifacts},
+        )
+        db.transition_application_session(
+            session_id,
+            "approved",
+            {"note": "Approved by auto_submit_approved mode.", "current_step": "auto_submit_approved"},
+        )
+        db.transition_application_session(
+            session_id,
+            "submitting",
+            {"note": "Submitting approved application.", "current_step": "auto_submit"},
+        )
+        session = db.transition_application_session(
+            session_id,
+            "submitted",
+            {"note": "Auto-submit completed.", "current_step": "submitted", "artifacts_json": final_artifacts},
+        )
+    else:
+        session = db.transition_application_session(
+            session_id,
+            next_state,
+            {
+                "note": "Ready for review." if next_state == "ready_for_review" else "Missing fields require user input.",
+                "current_step": "review",
+                "artifacts_json": final_artifacts,
+            },
+        )
     return {
         "session": session,
         "provider": adapter.provider,
         "fields_detected": review["fields_detected"],
         "fields_autofilled": review["fields_autofilled"],
         "unknown_fields": len(review["unknown_fields"]),
+        "resume_upload": _public_resume_upload_result(resume_upload),
+        "forbidden_submit_controls": forbidden_submit_controls,
+        "browser_handoff": handoff,
+        "auto_submit": auto_submit_result,
         "navigation": navigation,
     }
 
 
 def _looks_blocked(url: str, html: str) -> bool:
     text = f"{url}\n{html[:5000]}".lower()
+    has_application_form = 'id="application_form"' in text or "id='application_form'" in text
+    if has_application_form:
+        return any(
+            marker in text
+            for marker in ("checkpoint", "verify you are human", "security check", "human verification", "cloudflare challenge")
+        )
     return any(marker in text for marker in CHALLENGE_MARKERS)
 
 
@@ -383,6 +530,175 @@ def _progress(progress: Progress | None, message: str) -> None:
         progress(message)
 
 
+def classify_browser_action(label: str) -> str:
+    if FORBIDDEN_SUBMIT_TEXT_RE.search(label):
+        return "forbidden"
+    if APPLY_TEXT_RE.search(label):
+        return "safe"
+    return "review_required"
+
+
+async def detect_forbidden_submit_controls(page: Page) -> list[dict[str, str]]:
+    controls = await page.locator("button, input[type='submit'], input[type='button'], a").evaluate_all(
+        """nodes => nodes.map(node => {
+          const tag = node.tagName.toLowerCase();
+          const text = (node.innerText || node.textContent || node.getAttribute('value') || node.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
+          const type = node.getAttribute('type') || '';
+          const name = node.getAttribute('name') || '';
+          return { tag, text, type, name };
+        }).filter(item => item.text || item.type === 'submit')"""
+    )
+    forbidden: list[dict[str, str]] = []
+    for control in controls:
+        label = str(control.get("text") or control.get("type") or "").strip()
+        if classify_browser_action(label) == "forbidden":
+            forbidden.append(
+                {
+                    "tag": str(control.get("tag") or ""),
+                    "text": label[:120],
+                    "action_policy": "forbidden",
+                }
+            )
+    return forbidden
+
+
+async def maybe_auto_submit_application(
+    page: Page,
+    *,
+    session: dict[str, Any],
+    provider: str,
+    apply_url: str,
+    job: dict[str, Any],
+    schema: dict[str, Any],
+    mapping: dict[str, Any],
+    resume_upload: dict[str, Any],
+    forbidden_submit_controls: list[dict[str, str]],
+    dry_run: bool,
+    timeout_ms: int,
+    progress: Progress | None = None,
+) -> dict[str, Any]:
+    blockers = auto_submit_blockers(
+        session=session,
+        provider=provider,
+        apply_url=apply_url,
+        job=job,
+        schema=schema,
+        mapping=mapping,
+        resume_upload=resume_upload,
+        forbidden_submit_controls=forbidden_submit_controls,
+        dry_run=dry_run,
+    )
+    if os.getenv("ENABLE_AUTO_SUBMIT_APPROVED") != "1" or str(session.get("mode") or "") != "auto_submit_approved":
+        return {"status": "disabled"}
+    if blockers:
+        return {"status": "blocked", "reasons": blockers}
+    _progress(progress, "Auto-submit preconditions passed; clicking final submit.")
+    return await click_approved_submit_control(page, timeout_ms=timeout_ms)
+
+
+def auto_submit_blockers(
+    *,
+    session: dict[str, Any],
+    provider: str,
+    apply_url: str,
+    job: dict[str, Any],
+    schema: dict[str, Any],
+    mapping: dict[str, Any],
+    resume_upload: dict[str, Any],
+    forbidden_submit_controls: list[dict[str, str]],
+    dry_run: bool,
+) -> list[str]:
+    blockers: list[str] = []
+    if os.getenv("ENABLE_AUTO_SUBMIT_APPROVED") != "1":
+        blockers.append("auto_submit_disabled")
+    if str(session.get("mode") or "") != "auto_submit_approved":
+        blockers.append("session_mode_not_auto_submit")
+    if provider != "greenhouse":
+        blockers.append("provider_not_supported")
+    if dry_run:
+        blockers.append("dry_run_enabled")
+    if _looks_placeholder_resume_for_real_url(apply_url, job):
+        blockers.append("placeholder_resume_for_real_url")
+    unknown_required = [
+        field for field in mapping.get("unknown_fields") or []
+        if field.get("required") or field.get("sensitive")
+    ]
+    if unknown_required:
+        blockers.append("unknown_required_or_sensitive_fields")
+    if _schema_requires_resume(schema) and resume_upload.get("status") != "uploaded":
+        blockers.append("required_resume_not_uploaded")
+    if len(forbidden_submit_controls) != 1:
+        blockers.append("ambiguous_submit_control" if forbidden_submit_controls else "missing_submit_control")
+    return blockers
+
+
+def _looks_placeholder_resume_for_real_url(apply_url: str, job: dict[str, Any]) -> bool:
+    if str(apply_url or "").lower().startswith("data:"):
+        return False
+    text = str(job.get("ats_cv_text") or "").lower()
+    markers = (
+        "synthetic",
+        "rehearsal",
+        "placeholder",
+        "this should never be submitted",
+        "automation rehearsal",
+    )
+    return any(marker in text for marker in markers)
+
+
+async def click_approved_submit_control(page: Page, *, timeout_ms: int) -> dict[str, Any]:
+    locator = page.locator("button, input[type='submit'], input[type='button']")
+    matches: list[dict[str, Any]] = []
+    try:
+        count = await locator.count()
+    except Exception as exc:
+        return {"status": "failed", "reason": "submit_controls_unavailable", "error": exc.__class__.__name__}
+    for index in range(count):
+        item = locator.nth(index)
+        try:
+            label = await item.evaluate(
+                """node => String(
+                  node.innerText
+                  || node.textContent
+                  || node.getAttribute('value')
+                  || node.getAttribute('aria-label')
+                  || node.getAttribute('type')
+                  || ''
+                ).replace(/\\s+/g, ' ').trim()"""
+            )
+        except Exception:
+            continue
+        if classify_browser_action(str(label)) == "forbidden":
+            matches.append({"index": index, "text": str(label)[:120]})
+    if len(matches) != 1:
+        return {
+            "status": "blocked",
+            "reasons": ["ambiguous_submit_control" if matches else "missing_submit_control"],
+            "matched_controls": matches,
+        }
+    selected = matches[0]
+    try:
+        await locator.nth(int(selected["index"])).click(timeout=5000)
+        await page.wait_for_timeout(1000)
+        await _safe_network_idle(page, timeout_ms)
+        return {"status": "submitted", "control_text": selected["text"], "final_url": page.url}
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "reason": "submit_click_failed",
+            "control_text": selected["text"],
+            "error": exc.__class__.__name__,
+        }
+
+
+def _schema_requires_resume(schema: dict[str, Any]) -> bool:
+    return any(
+        str(field.get("type") or "").lower() == "file" and bool(field.get("required"))
+        for field in schema.get("fields") or []
+        if isinstance(field, dict)
+    )
+
+
 def safe_fill_plan(mapping: dict[str, Any]) -> list[dict[str, str]]:
     plan: list[dict[str, str]] = []
     for answer in mapping.get("answers") or []:
@@ -393,10 +709,54 @@ def safe_fill_plan(mapping: dict[str, Any]) -> list[dict[str, str]]:
         canonical = str(answer.get("canonical_key") or "").strip()
         if not value or not field_name:
             continue
-        if canonical not in {"full_name", "email", "phone", "linkedin", "portfolio"}:
+        if answer.get("source") != "approved_answer" and canonical not in {
+            "full_name",
+            "email",
+            "phone",
+            "linkedin",
+            "portfolio",
+            "preferred_location",
+            "talent_pool",
+        }:
             continue
-        plan.append({"field_name": field_name, "value": value, "canonical_key": canonical})
+        field_type = str(answer.get("field_type") or "text")
+        options = list(answer.get("options") or [])
+        if field_type == "select":
+            matched = _match_option(value, options)
+            if matched is None:
+                continue
+            plan.append({"field_name": field_name, "value": matched["value"], "canonical_key": canonical, "action_type": "select_option"})
+            continue
+        if field_type == "radio":
+            matched = _match_option(value, options)
+            if matched is None:
+                continue
+            plan.append({"field_name": field_name, "value": matched["value"], "canonical_key": canonical, "action_type": "choose_radio"})
+            continue
+        if field_type == "checkbox":
+            if _normalized(value) not in {"yes", "true", "checked", "1"}:
+                continue
+            plan.append({"field_name": field_name, "value": value, "canonical_key": canonical, "action_type": "check"})
+            continue
+        plan.append({"field_name": field_name, "value": value, "canonical_key": canonical, "action_type": "fill_text"})
     return plan
+
+
+def _match_option(value: str, options: list[Any]) -> dict[str, str] | None:
+    wanted = _normalized(value)
+    matches: list[dict[str, str]] = []
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        label = str(option.get("label") or "")
+        raw_value = str(option.get("value") or "")
+        if wanted and wanted in {_normalized(label), _normalized(raw_value)}:
+            matches.append({"label": label, "value": raw_value})
+    return matches[0] if len(matches) == 1 else None
+
+
+def _normalized(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]+", " ", value.lower())).strip()
 
 
 async def try_saved_login(
@@ -479,6 +839,40 @@ async def fill_safe_fields_on_page(page: Page, mapping: dict[str, Any], *, dry_r
     for item in safe_fill_plan(mapping):
         field_name = item["field_name"]
         value = item["value"]
+        action_type = item.get("action_type") or "fill_text"
+        if action_type == "select_option":
+            locator = page.locator(f'select[name="{field_name}"], select[id="{field_name}"]').first
+            try:
+                if await locator.count() > 0:
+                    await locator.select_option(value=value, timeout=3000)
+                    filled.append(field_name)
+                else:
+                    skipped.append(field_name)
+            except Exception:
+                skipped.append(field_name)
+            continue
+        if action_type == "choose_radio":
+            locator = page.locator(f'input[type="radio"][name="{field_name}"][value="{value}"]').first
+            try:
+                if await locator.count() > 0:
+                    await locator.check(timeout=3000)
+                    filled.append(field_name)
+                else:
+                    skipped.append(field_name)
+            except Exception:
+                skipped.append(field_name)
+            continue
+        if action_type == "check":
+            locator = page.locator(f'input[type="checkbox"][name="{field_name}"], input[type="checkbox"][id="{field_name}"]').first
+            try:
+                if await locator.count() > 0:
+                    await locator.check(timeout=3000)
+                    filled.append(field_name)
+                else:
+                    skipped.append(field_name)
+            except Exception:
+                skipped.append(field_name)
+            continue
         selectors = [
             f'input[name="{field_name}"]',
             f'textarea[name="{field_name}"]',
@@ -514,6 +908,130 @@ async def fill_safe_fields_on_page(page: Page, mapping: dict[str, Any], *, dry_r
         "filled_fields": filled,
         "skipped_fields": skipped,
     }
+
+
+def resolve_resume_upload_file(job_id: int, job: dict[str, Any], *, max_bytes: int = 5_000_000) -> dict[str, Any]:
+    ats_cv_text = str(job.get("ats_cv_text") or "").strip()
+    if not ats_cv_text:
+        return {"status": "unresolved", "reason": "missing_ats_cv_text"}
+    try:
+        content = export_ats_cv_pdf_bytes(job, ats_cv_text)
+    except Exception as exc:
+        return {"status": "unresolved", "reason": "export_failed", "error": exc.__class__.__name__}
+    if not content:
+        return {"status": "unresolved", "reason": "empty_export"}
+    if len(content) > max_bytes:
+        return {"status": "unresolved", "reason": "file_too_large", "max_bytes": max_bytes}
+    filename = _safe_resume_filename(job, "pdf")
+    temp_dir = Path(tempfile.mkdtemp(prefix="joborchestrator-resume-"))
+    path = temp_dir / filename
+    path.write_bytes(content)
+    session = None
+    resume_variant_id = None
+    try:
+        latest_session = db.get_latest_application_session_for_job(job_id)
+        session = latest_session if latest_session and int(latest_session.get("job_id") or 0) == int(job_id) else None
+        if session and session.get("application_id"):
+            application = db.get_application(int(session["application_id"]))
+            resume_variant_id = application.get("resume_variant_id") if application else None
+        if not resume_variant_id:
+            resume_variant = db.register_generated_resume_variant(
+                job_id,
+                f"{job.get('company') or 'Company'} - {job.get('title') or 'Role'} ATS CV",
+                ats_cv_text,
+            )
+            resume_variant_id = resume_variant.get("id")
+    except Exception:
+        resume_variant_id = None
+    return {
+        "status": "resolved",
+        "path": str(path),
+        "cleanup_path": str(temp_dir),
+        "filename": filename,
+        "extension": ".pdf",
+        "size_bytes": len(content),
+        "resume_variant_id": resume_variant_id,
+    }
+
+
+async def upload_resume_on_page(page: Page, schema: dict[str, Any], resume_file: dict[str, Any]) -> dict[str, Any]:
+    file_fields = [
+        field for field in schema.get("fields") or []
+        if str(field.get("type") or "").lower() == "file"
+    ]
+    if not file_fields:
+        return {"status": "not_applicable", "cleanup_path": resume_file.get("cleanup_path")}
+    field = file_fields[0]
+    field_name = str(field.get("name") or field.get("id") or "resume")
+    if resume_file.get("status") != "resolved":
+        return {"status": "unresolved", "field_name": field_name, "reason": resume_file.get("reason") or "missing_resume_file"}
+    path = Path(str(resume_file.get("path") or ""))
+    extension = path.suffix.lower()
+    if extension not in {".pdf", ".docx"}:
+        return {"status": "unresolved", "field_name": field_name, "reason": "unsupported_extension", "cleanup_path": resume_file.get("cleanup_path")}
+    if not path.exists() or not path.is_file():
+        return {"status": "unresolved", "field_name": field_name, "reason": "missing_local_file", "cleanup_path": resume_file.get("cleanup_path")}
+    if path.stat().st_size > 5_000_000:
+        return {"status": "unresolved", "field_name": field_name, "reason": "file_too_large", "cleanup_path": resume_file.get("cleanup_path")}
+    selectors = [
+        f'input[type="file"][name="{field_name}"]',
+        f'input[type="file"][id="{field_name}"]',
+        'input[type="file"]',
+    ]
+    for selector in selectors:
+        locator = page.locator(selector).first
+        try:
+            if await locator.count() > 0:
+                await locator.set_input_files(str(path), timeout=3000)
+                return {
+                    "status": "uploaded",
+                    "field_name": field_name,
+                    "filename": path.name,
+                    "extension": extension,
+                    "size_bytes": path.stat().st_size,
+                    "resume_variant_id": resume_file.get("resume_variant_id"),
+                    "cleanup_path": resume_file.get("cleanup_path"),
+                }
+        except Exception:
+            continue
+    return {"status": "unresolved", "field_name": field_name, "reason": "file_input_not_found", "cleanup_path": resume_file.get("cleanup_path")}
+
+
+def _remove_resolved_file_unknowns(mapping: dict[str, Any]) -> None:
+    mapping["unknown_fields"] = [
+        field for field in mapping.get("unknown_fields") or []
+        if str(field.get("type") or "").lower() != "file"
+    ]
+
+
+def _public_resume_upload_result(result: dict[str, Any]) -> dict[str, Any]:
+    redacted = {
+        key: value
+        for key, value in result.items()
+        if key not in {"path", "cleanup_path"}
+    }
+    return redacted or {"status": "not_attempted"}
+
+
+def _cleanup_resume_upload_file(path: str) -> None:
+    target = Path(path)
+    if not target.exists():
+        return
+    try:
+        if target.is_dir():
+            for child in target.iterdir():
+                child.unlink(missing_ok=True)
+            target.rmdir()
+        else:
+            target.unlink(missing_ok=True)
+    except OSError:
+        return
+
+
+def _safe_resume_filename(job: dict[str, Any], extension: str) -> str:
+    raw = f"{job.get('company') or 'company'}-{job.get('title') or 'role'}-ats-cv"
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", raw).strip("-").lower()
+    return f"{(slug or 'ats-cv')[:80]}.{extension}"
 
 
 async def _first_visible_locator(page: Page, selectors: list[str]):

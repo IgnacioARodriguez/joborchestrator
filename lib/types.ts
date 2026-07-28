@@ -18,6 +18,13 @@ export type PipelineStatus =
 
 export type ApplicationStatus =
   | "preparing"
+  | "materials_ready"
+  | "opened"
+  | "prefilled"
+  | "needs_user_input"
+  | "ready_for_review"
+  | "submitted_manually"
+  | "submission_verified"
   | "submitted"
   | "recruiter_screen"
   | "interview"
@@ -228,6 +235,7 @@ export interface ResumeVariant {
 
 export type AnswerSource = "approved" | "generated"
 export type AnswerSensitivity = "public" | "preference" | "sensitive"
+export type AnswerStatus = "proposed" | "approved" | "rejected" | "expired" | "requires_confirmation"
 
 export interface AnswerDefinition {
   canonical_key: string
@@ -237,6 +245,11 @@ export interface AnswerDefinition {
   source: AnswerSource
   sensitivity: AnswerSensitivity
   requires_confirmation: boolean
+  status?: AnswerStatus | string | null
+  language?: string | null
+  confidence?: number | null
+  expires_at?: string | null
+  profile_version?: string | null
   last_confirmed_at?: string | null
   updated_at?: string | null
 }
@@ -295,6 +308,25 @@ export interface ApplicationSession {
   requires_review: boolean
   last_error?: string | null
   events?: ApplicationSessionEvent[]
+}
+
+export interface ProviderCapabilities {
+  provider: string
+  can_open_application: boolean
+  can_follow_apply_redirects: boolean
+  can_detect_fields: boolean
+  can_fill_text_fields: boolean
+  can_fill_selects: boolean
+  can_fill_radios: boolean
+  can_fill_checkboxes: boolean
+  can_upload_resume: boolean
+  can_prepare_custom_answers: boolean
+  can_handle_multistep: boolean
+  can_resume_browser_session: boolean
+  requires_login: boolean
+  requires_final_review: boolean
+  can_observe_submission: boolean
+  can_submit: boolean
 }
 
 export interface ApplicationSessionResponse {

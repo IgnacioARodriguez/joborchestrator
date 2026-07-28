@@ -175,7 +175,7 @@ export function InsightsScreen() {
       />
       <section className="grid shrink-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard label="Total opportunities" value={kpis.total} icon={Briefcase} hint="all time" />
-        <KpiCard label="Apply now" value={kpis.applyCandidates} icon={Send} tone="primary" hint="ready" />
+        <KpiCard label="Prepare next" value={kpis.applyCandidates} icon={Send} tone="primary" hint="ready" />
         <KpiCard label="Applied" value={kpis.applied} icon={CheckCircle2} tone="success" />
         <KpiCard label="New this week" value={kpis.newThisWeek} icon={Sparkles} hint="7 days" tone="warning" />
         <KpiCard label="Average score" value={kpis.avgScore} icon={Gauge} />

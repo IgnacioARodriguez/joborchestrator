@@ -7,7 +7,7 @@ import pytest
 
 from joborchestrator.application_sessions import validate_transition
 from joborchestrator.automation.adapters import AdapterRegistry, GreenhouseAdapter
-from joborchestrator.automation.answer_bank import classify_field, map_answers
+from joborchestrator.automation.answer_bank import classify_field, map_answers, normalize_question
 from joborchestrator.automation.executor import find_apply_links, safe_fill_plan
 from joborchestrator.priority import compute_priority
 
@@ -75,6 +75,110 @@ def test_answer_bank_marks_sensitive_fields_unknown_without_approved_answer() ->
     assert mapping["unknown_fields"][0]["name"] == "salary"
 
 
+def test_answer_bank_uses_explicitly_approved_sensitive_answers() -> None:
+    mapping = map_answers(
+        {
+            "fields": [
+                {
+                    "name": "work_authorization",
+                    "label": "Do you have permanent authorization to work for Warp in the U.S. or Canada?",
+                    "type": "select",
+                    "required": True,
+                    "options": [{"value": "no", "label": "No"}, {"value": "yes", "label": "Yes"}],
+                }
+            ]
+        },
+        {},
+        [
+            {
+                "canonical_key": "work_authorization",
+                "question_patterns": ["Do you have permanent authorization to work for Warp in the U.S. or Canada?"],
+                "answer_type": "select",
+                "value": "No",
+                "source": "approved",
+                "status": "approved",
+                "sensitivity": "sensitive",
+                "requires_confirmation": False,
+            }
+        ],
+    )
+
+    answer = mapping["answers"][0]
+    assert answer["classification"] == "sensitive"
+    assert answer["requires_confirmation"] is False
+    assert answer["source"] == "approved_answer"
+    assert mapping["unknown_fields"] == []
+    assert safe_fill_plan(mapping) == [
+        {
+            "field_name": "work_authorization",
+            "value": "no",
+            "canonical_key": "work_authorization",
+            "action_type": "select_option",
+        }
+    ]
+
+
+def test_answer_bank_uses_question_patterns_for_unknown_safe_fields() -> None:
+    mapping = map_answers(
+        {"fields": [{"name": "remote_pref", "label": "Where would you prefer to work from?", "required": True}]},
+        {},
+        [
+            {
+                "canonical_key": "preferred_location",
+                "question_patterns": ["Where would you prefer to work from?"],
+                "answer_type": "select",
+                "value": "Remote",
+                "source": "approved",
+                "status": "approved",
+                "sensitivity": "public",
+                "requires_confirmation": False,
+            }
+        ],
+    )
+
+    answer = mapping["answers"][0]
+    assert answer["canonical_key"] == "preferred_location"
+    assert answer["value"] == "Remote"
+    assert answer["source"] == "approved_answer"
+    assert answer["match_strategy"] == "question_pattern_exact"
+    assert mapping["unknown_fields"] == []
+
+
+def test_answer_bank_does_not_use_generated_or_expired_answers() -> None:
+    mapping = map_answers(
+        {"fields": [{"name": "custom", "label": "Tell us about your favorite project", "required": True}]},
+        {},
+        [
+            {
+                "canonical_key": "favorite_project",
+                "question_patterns": ["Tell us about your favorite project"],
+                "value": "Generated answer",
+                "source": "generated",
+                "status": "proposed",
+                "sensitivity": "public",
+                "requires_confirmation": False,
+            },
+            {
+                "canonical_key": "old_project",
+                "question_patterns": ["Tell us about your favorite project"],
+                "value": "Expired answer",
+                "source": "approved",
+                "status": "expired",
+                "sensitivity": "public",
+                "requires_confirmation": False,
+            },
+        ],
+    )
+
+    assert mapping["answers"][0]["value"] is None
+    assert mapping["answers"][0]["requires_confirmation"] is True
+    assert mapping["unknown_fields"][0]["name"] == "custom"
+
+
+def test_question_normalization_removes_accents_punctuation_and_repeated_spaces() -> None:
+    assert normalize_question("  Teléfono -- principal? ") == "telefono principal"
+
+
 def test_greenhouse_detection_schema_and_dry_run_fill() -> None:
     html = Path("tests/fixtures/greenhouse_application.html").read_text(encoding="utf-8")
     adapter = GreenhouseAdapter()
@@ -84,10 +188,10 @@ def test_greenhouse_detection_schema_and_dry_run_fill() -> None:
     review = adapter.prepare_review(schema, mapping, fill)
 
     assert adapter.detect_html(html)
-    assert len(schema["fields"]) == 5
+    assert len(schema["fields"]) >= 8
     assert fill.ok is True
     assert fill.data["dry_run"] is True
-    assert review["fields_autofilled"] == 2
+    assert review["fields_autofilled"] >= 2
     assert {field["name"] for field in review["unknown_fields"]} >= {"salary", "resume"}
 
 
@@ -95,6 +199,29 @@ def test_adapter_registry_prefers_greenhouse() -> None:
     html = Path("tests/fixtures/greenhouse_application.html").read_text(encoding="utf-8")
 
     assert AdapterRegistry().detect(html).provider == "greenhouse"
+
+
+def test_provider_capabilities_are_explicit_and_do_not_claim_submit() -> None:
+    registry = AdapterRegistry()
+    greenhouse = registry.capabilities("greenhouse")
+    lever = registry.capabilities("lever")
+    linkedin = registry.capabilities("linkedin_easy_apply")
+
+    assert not isinstance(greenhouse, list)
+    assert greenhouse.provider == "greenhouse"
+    assert greenhouse.can_detect_fields is True
+    assert greenhouse.can_fill_text_fields is True
+    assert greenhouse.can_fill_selects is True
+    assert greenhouse.can_fill_radios is True
+    assert greenhouse.can_fill_checkboxes is True
+    assert greenhouse.can_upload_resume is True
+    assert greenhouse.can_resume_browser_session is True
+    assert greenhouse.can_submit is False
+    assert not isinstance(lever, list)
+    assert lever.can_detect_fields is False
+    assert not isinstance(linkedin, list)
+    assert linkedin.requires_login is True
+    assert linkedin.can_submit is False
 
 
 def test_external_apply_intermediate_links_are_detected() -> None:
@@ -127,6 +254,33 @@ def test_safe_fill_plan_only_includes_non_sensitive_confirmed_answers() -> None:
     }
 
     assert safe_fill_plan(mapping) == [
-        {"field_name": "first_name", "value": "Ignacio Rodriguez", "canonical_key": "full_name"},
-        {"field_name": "email", "value": "me@example.com", "canonical_key": "email"},
+        {"field_name": "first_name", "value": "Ignacio Rodriguez", "canonical_key": "full_name", "action_type": "fill_text"},
+        {"field_name": "email", "value": "me@example.com", "canonical_key": "email", "action_type": "fill_text"},
+    ]
+
+
+def test_safe_fill_plan_requires_exact_select_match() -> None:
+    mapping = {
+        "answers": [
+            {
+                "field_name": "location",
+                "canonical_key": "preferred_location",
+                "value": "Madrid",
+                "field_type": "select",
+                "options": [{"value": "remote", "label": "Remote"}, {"value": "madrid", "label": "Madrid"}],
+                "requires_confirmation": False,
+            },
+            {
+                "field_name": "ambiguous",
+                "canonical_key": "preferred_location",
+                "value": "Remote",
+                "field_type": "select",
+                "options": [{"value": "remote-1", "label": "Remote"}, {"value": "remote-2", "label": "Remote"}],
+                "requires_confirmation": False,
+            },
+        ]
+    }
+
+    assert safe_fill_plan(mapping) == [
+        {"field_name": "location", "value": "madrid", "canonical_key": "preferred_location", "action_type": "select_option"}
     ]

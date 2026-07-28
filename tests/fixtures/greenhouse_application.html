@@ -9,9 +9,31 @@
         <input id="email" name="email" type="email" required>
         <label for="phone">Phone</label>
         <input id="phone" name="phone" type="text">
+        <label for="linkedin">LinkedIn profile</label>
+        <input id="linkedin" name="linkedin" type="url">
+        <label for="portfolio">Portfolio website</label>
+        <input id="portfolio" name="portfolio" type="url">
+        <label for="cover_letter">Why are you interested?</label>
+        <textarea id="cover_letter" name="cover_letter"></textarea>
+        <label for="location">Preferred location</label>
+        <select id="location" name="location">
+          <option value="">Select one</option>
+          <option value="remote">Remote</option>
+          <option value="madrid">Madrid</option>
+        </select>
+        <fieldset>
+          <legend>Are you legally authorized to work?</legend>
+          <label><input type="radio" name="work_authorization" value="yes" required> Yes</label>
+          <label><input type="radio" name="work_authorization" value="no" required> No</label>
+        </fieldset>
+        <label><input id="talent_pool" name="talent_pool" type="checkbox" value="yes"> Keep me in the talent pool</label>
         <label for="salary">Expected salary *</label>
         <input id="salary" name="salary" type="text" required>
+        <input id="hidden_tracking" name="hidden_tracking" type="hidden" value="ignore">
+        <label for="disabled_field">Disabled internal field</label>
+        <input id="disabled_field" name="disabled_field" type="text" disabled>
         <input id="resume" name="resume" type="file" required>
+        <button type="submit">Submit application</button>
       </form>
     </main>
   </body>

@@ -7,7 +7,14 @@ Rules enforced by design:
 - Sensitive fields are never invented or silently persisted.
 - Salary, work authorization, sponsorship, availability, address, disability, gender, ethnicity, background checks, years of experience and certifications require confirmation.
 - CAPTCHA bypass and anti-bot evasion are out of scope.
-- Auto-submit is disabled by default.
-- Submitted state should only be reached after a verification step or an explicit human-confirmed transition.
+- Auto-submit is disabled by default and requires `ENABLE_AUTO_SUBMIT_APPROVED=1` plus a session in `auto_submit_approved` mode.
+- Auto-submit currently supports only Greenhouse and is blocked by dry-run mode, unknown required/sensitive fields, missing required resume upload, or ambiguous final submit controls.
+- Automation capabilities are declared per provider and exposed by API/UI.
+- Submit-like controls such as `Submit application`, `Send application`, `Finish`, `Submit`, and `Enviar candidatura` are classified as forbidden browser actions.
+- In `auto_submit_approved` mode, exactly one classified submit control may be clicked after all preconditions pass.
+- Local browser handoff stores only opaque `local-browser://session/<uuid>` references in application sessions.
+- `submitted_manually` is the explicit human-confirmed state for a real submission performed outside automation.
+- `submitted` records an application submitted by the env-gated automation path.
+- `submission_verified` is reserved for a later confirmation step.
 
 Logs and screenshots should avoid PII unless an explicit debug mode is added.
