@@ -753,6 +753,107 @@ def test_nvidia_ranking_caps_low_coverage_maybe_with_dealbreaker_to_skip(monkeyp
     assert "evidence_dealbreaker_low_coverage_cap_skip" in saved[1].evidence.llm_escalation_reasons
 
 
+def test_nvidia_ranking_caps_soft_decision_with_many_central_gaps_to_skip(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Backend Engineer",
+                "company": "Acme",
+                "location": "Remote",
+                "workplace_type": "remote",
+                "description_text": (
+                    "Backend role requiring distributed systems, production message queues, "
+                    "container orchestration, and a typed backend framework."
+                ),
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 58, "MAYBE")
+        payload["evidence"]["central_requirements"] = [
+            "distributed systems",
+            "production message queues",
+            "container orchestration",
+            "typed backend framework",
+        ]
+        payload["evidence"]["missing_requirements"] = [
+            "production message queues",
+            "container orchestration",
+            "typed backend framework",
+        ]
+        payload["evidence"]["central_requirement_coverage"] = 0.55
+        payload["scores"]["central_requirement_coverage"] = 55
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["MAYBE"] == 0
+    assert summary["SKIP"] == 1
+    assert saved[1].decision == "SKIP"
+    assert saved[1].final_score == 45
+    assert "evidence_central_gap_cap_skip" in saved[1].evidence.llm_escalation_reasons
+
+
+def test_nvidia_ranking_caps_tailored_with_many_central_gaps_to_maybe(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Data Engineer",
+                "company": "Acme",
+                "location": "Remote",
+                "workplace_type": "remote",
+                "description_text": (
+                    "Data role requiring Python, SQL, production data pipelines, orchestration, "
+                    "and deployment ownership."
+                ),
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 72, "APPLY_WITH_TAILORED_CV")
+        payload["evidence"]["strong_matches"] = ["Python", "SQL"]
+        payload["evidence"]["central_requirements"] = [
+            "Data Engineer",
+            "Python",
+            "SQL",
+            "production data pipelines",
+            "orchestration",
+            "deployment ownership",
+        ]
+        payload["evidence"]["missing_requirements"] = [
+            "production data pipelines",
+            "orchestration",
+            "deployment ownership",
+        ]
+        payload["evidence"]["central_requirement_coverage"] = 0.68
+        payload["scores"]["central_requirement_coverage"] = 68
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["APPLY_WITH_TAILORED_CV"] == 0
+    assert summary["MAYBE"] == 1
+    assert saved[1].decision == "MAYBE"
+    assert saved[1].final_score == 58
+    assert "evidence_central_gap_cap_maybe" in saved[1].evidence.llm_escalation_reasons
+
+
 def test_nvidia_ranking_blocks_industrial_automation_mismatch(monkeypatch):
     jobs = pd.DataFrame(
         [

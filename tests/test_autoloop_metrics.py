@@ -191,6 +191,45 @@ def test_compute_metrics_flags_soft_dealbreakers_and_generic_review_signals():
     assert summary["soft_dealbreaker_examples"][0]["job_id"] == 1
 
 
+def test_compute_metrics_flags_soft_decisions_with_many_central_gaps():
+    rows = [
+        _row(
+            1,
+            decision="APPLY_WITH_TAILORED_CV",
+            final_score=58,
+            evidence_json=json.dumps(
+                {
+                    "dealbreakers": [],
+                    "red_flags": [],
+                    "missing_requirements": ["pipelines", "orchestration", "deployment"],
+                    "requires_llm_review": True,
+                    "central_requirement_coverage": 0.68,
+                }
+            ),
+        ),
+        _row(
+            2,
+            decision="SKIP",
+            final_score=42,
+            evidence_json=json.dumps(
+                {
+                    "dealbreakers": [],
+                    "red_flags": [],
+                    "missing_requirements": ["pipelines", "orchestration", "deployment"],
+                    "requires_llm_review": True,
+                    "central_requirement_coverage": 0.45,
+                }
+            ),
+        ),
+    ]
+
+    summary = metrics.compute_metrics(rows)
+
+    assert summary["soft_central_gap_count"] == 1
+    assert summary["soft_central_gap_rate"] == 0.5
+    assert summary["soft_central_gap_examples"][0]["job_id"] == 1
+
+
 def test_compute_metrics_counts_non_active_prompt_versions(monkeypatch):
     monkeypatch.setattr(metrics, "active_prompt_version", lambda surface, sub_case: "v3")
     rows = [

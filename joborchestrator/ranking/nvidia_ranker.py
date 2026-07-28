@@ -1010,7 +1010,53 @@ def _apply_evidence_consistency_gate(ranking: Any) -> None:
         if "evidence_requires_review" not in reasons:
             reasons.append("evidence_requires_review")
 
+    central_gap_cap = _central_gap_consistency_cap(ranking, coverage_percent)
+    if central_gap_cap and ranking.decision in {"APPLY_WITH_TAILORED_CV", "MAYBE"}:
+        cap_decision, max_score, risk_penalty, reason = central_gap_cap
+        if _DECISION_SEVERITY[ranking.decision] < _DECISION_SEVERITY[cap_decision]:
+            ranking.decision = cap_decision
+        ranking.final_score = min(int(ranking.final_score), max_score)
+        ranking.scores.risk_penalty = max(int(ranking.scores.risk_penalty), risk_penalty)
+        evidence.requires_llm_review = True
+        if reason not in reasons:
+            reasons.append(reason)
+        if "evidence_requires_review" not in reasons:
+            reasons.append("evidence_requires_review")
+
     evidence.llm_escalation_reasons = reasons
+
+
+def _central_gap_consistency_cap(
+    ranking: Any,
+    coverage_percent: float,
+) -> tuple[Decision, int, int, str] | None:
+    evidence = ranking.evidence
+    missing_count = _material_evidence_count(evidence.missing_requirements)
+    if missing_count == 0:
+        return None
+    central_count = _material_evidence_count(evidence.central_requirements)
+    high_missing_pressure = missing_count >= 3 or (
+        central_count >= 4 and missing_count / max(central_count, 1) >= 0.45
+    )
+    if coverage_percent < 50 and missing_count >= 2:
+        return cast(Decision, "SKIP"), 45, 30, "evidence_central_gap_cap_skip"
+    if coverage_percent < 60 and high_missing_pressure:
+        return cast(Decision, "SKIP"), 45, 30, "evidence_central_gap_cap_skip"
+    if coverage_percent < 70 and high_missing_pressure:
+        return cast(Decision, "MAYBE"), 58, 25, "evidence_central_gap_cap_maybe"
+    return None
+
+
+def _material_evidence_count(items: list[Any]) -> int:
+    count = 0
+    for item in items:
+        if isinstance(item, dict):
+            text = _normalize_text(" ".join(str(value) for value in item.values()))
+        else:
+            text = _normalize_text(str(item))
+        if text:
+            count += 1
+    return count
 
 
 def _dealbreaker_consistency_cap(
