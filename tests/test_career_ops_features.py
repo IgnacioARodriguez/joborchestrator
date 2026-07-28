@@ -1200,11 +1200,28 @@ def test_ats_cv_docx_export_returns_document_bytes():
 def test_ats_cv_pdf_export_returns_document_bytes():
     content = export_ats_cv_pdf_bytes(
         {"title": "Backend Engineer", "company": "Acme"},
-        "Summary\nPython APIs\nPostgreSQL",
+        "Ignacio Rodriguez\nMadrid, Spain\nProfessional Summary\nPython APIs\nTechnical Skills\nPostgreSQL",
     )
 
     assert content.startswith(b"%PDF")
     assert len(content) > 1000
+
+
+def test_ats_cv_pdf_export_keeps_parseable_headings():
+    content = export_ats_cv_pdf_bytes(
+        {"title": "Backend Engineer", "company": "Acme"},
+        _complete_ats_cv_text(),
+    )
+
+    from pypdf import PdfReader
+    from io import BytesIO
+
+    text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(content)).pages)
+    assert "Ignacio Rodriguez" in text
+    assert "PROFESSIONAL SUMMARY" in text
+    assert "TECHNICAL SKILLS" in text
+    assert "PROFESSIONAL EXPERIENCE" in text
+    assert "EDUCATION" in text
 
 
 def test_ats_cv_export_strips_internal_optimization_notes():

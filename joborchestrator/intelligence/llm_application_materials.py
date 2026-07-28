@@ -533,18 +533,54 @@ def build_lightweight_kit_with_nvidia(
 def export_ats_cv_docx_bytes(job: dict[str, Any], ats_cv_text: str) -> bytes:
     try:
         from docx import Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Inches, Pt
     except ModuleNotFoundError as exc:
         raise LLMMaterialsError("DOCX export requires python-docx. Install it with `pip install python-docx`.") from exc
 
     document = Document()
-    for block in _clean_cv_text_for_export(ats_cv_text).splitlines():
+    section = document.sections[0]
+    section.top_margin = Inches(0.65)
+    section.bottom_margin = Inches(0.65)
+    section.left_margin = Inches(0.75)
+    section.right_margin = Inches(0.75)
+    styles = document.styles
+    styles["Normal"].font.name = "Times New Roman"
+    styles["Normal"].font.size = Pt(10)
+
+    lines = _clean_cv_text_for_export(ats_cv_text).splitlines()
+    for index, block in enumerate(lines):
         text = block.strip()
         if not text:
             document.add_paragraph("")
+        elif index == 0:
+            paragraph = document.add_paragraph()
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = paragraph.add_run(text)
+            run.bold = True
+            run.font.size = Pt(20)
+        elif _is_cv_section_heading(text):
+            paragraph = document.add_paragraph()
+            run = paragraph.add_run(text.upper())
+            run.bold = True
+            run.font.size = Pt(12)
+            paragraph.paragraph_format.space_before = Pt(8)
+            paragraph.paragraph_format.space_after = Pt(2)
         elif text.startswith(("-", "*")):
-            document.add_paragraph(text[1:].strip(), style="List Bullet")
+            paragraph = document.add_paragraph(text[1:].strip(), style="List Bullet")
+            paragraph.paragraph_format.left_indent = Inches(0.25)
+            paragraph.paragraph_format.space_after = Pt(1)
+        elif _looks_like_experience_header(text):
+            paragraph = document.add_paragraph()
+            run = paragraph.add_run(text)
+            run.bold = True
+            paragraph.paragraph_format.space_before = Pt(4)
+            paragraph.paragraph_format.space_after = Pt(1)
         else:
-            document.add_paragraph(text)
+            paragraph = document.add_paragraph(text)
+            if index == 1:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            paragraph.paragraph_format.space_after = Pt(2)
 
     buffer = BytesIO()
     document.save(buffer)
@@ -562,21 +598,50 @@ def export_ats_cv_pdf_bytes(job: dict[str, Any], ats_cv_text: str) -> bytes:
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
-    x = 2 * cm
-    y = height - 2 * cm
-    pdf.setFont("Helvetica", 10)
-    for raw_line in _clean_cv_text_for_export(ats_cv_text).splitlines():
+    left = 2 * cm
+    right = width - 2 * cm
+    y = height - 1.8 * cm
+    lines = _clean_cv_text_for_export(ats_cv_text).splitlines()
+    for index, raw_line in enumerate(lines):
         line = raw_line.rstrip()
         if not line:
-            y -= 0.35 * cm
+            y -= 0.22 * cm
             continue
-        for chunk in _wrap_pdf_line(line, max_chars=95):
-            if y < 2 * cm:
-                pdf.showPage()
-                y = height - 2 * cm
-                pdf.setFont("Helvetica", 10)
-            pdf.drawString(x, y, chunk)
+        if index == 0:
+            y = _ensure_pdf_space(pdf, y, height, 1.0 * cm)
+            pdf.setFont("Times-Bold", 22)
+            pdf.drawCentredString(width / 2, y, line)
+            y -= 0.55 * cm
+            continue
+        if index == 1:
+            y = _ensure_pdf_space(pdf, y, height, 0.6 * cm)
+            pdf.setFont("Times-Roman", 10)
+            pdf.drawCentredString(width / 2, y, line)
+            y -= 0.55 * cm
+            continue
+        if _is_cv_section_heading(line):
+            y = _ensure_pdf_space(pdf, y, height, 0.8 * cm)
+            y -= 0.15 * cm
+            pdf.setFont("Times-Bold", 12)
+            pdf.drawString(left, y, line.upper())
+            pdf.line(left, y - 0.08 * cm, right, y - 0.08 * cm)
             y -= 0.42 * cm
+            continue
+
+        bullet = line.lstrip().startswith(("-", "*"))
+        x = left + (0.45 * cm if bullet else 0)
+        prefix = "- " if bullet else ""
+        content = line.lstrip("-* ").strip() if bullet else line
+        font = "Times-Bold" if _looks_like_experience_header(line) else "Times-Roman"
+        pdf.setFont(font, 10)
+        wrapped = _wrap_pdf_line(prefix + content, max_chars=92 if bullet else 98)
+        for chunk_index, chunk in enumerate(wrapped):
+            y = _ensure_pdf_space(pdf, y, height, 0.45 * cm)
+            pdf.setFont(font, 10)
+            if bullet and chunk_index > 0:
+                chunk = "  " + chunk
+            pdf.drawString(x, y, chunk)
+            y -= 0.36 * cm
     pdf.save()
     return buffer.getvalue()
 
@@ -634,6 +699,37 @@ def _wrap_pdf_line(line: str, max_chars: int) -> list[str]:
     if current:
         lines.append(current)
     return lines
+
+
+def _ensure_pdf_space(pdf: Any, y: float, height: float, needed: float) -> float:
+    from reportlab.lib.units import cm
+
+    if y >= 1.8 * cm + needed:
+        return y
+    pdf.showPage()
+    return height - 1.8 * cm
+
+
+def _is_cv_section_heading(text: str) -> bool:
+    normalized = _normalize_for_match(text).strip(" :")
+    return normalized in {
+        "summary",
+        "professional summary",
+        "technical skills",
+        "skills",
+        "experience",
+        "professional experience",
+        "education",
+    }
+
+
+def _looks_like_experience_header(text: str) -> bool:
+    if text.strip().startswith(("-", "*")):
+        return False
+    normalized = _normalize_for_match(text)
+    if "|" in text and any(role in normalized for role in ["developer", "engineer", "consultant", "architect"]):
+        return True
+    return bool(re.search(r"(?i)\b(developer|engineer|consultant|architect)\b", text) and _date_range_match(text))
 
 
 def _call_openai(
