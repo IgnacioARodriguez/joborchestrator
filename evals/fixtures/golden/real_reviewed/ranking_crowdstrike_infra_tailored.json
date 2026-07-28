@@ -26,10 +26,10 @@
     }
   },
   "expected": {
-    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE"],
+    "allowed_decisions": ["APPLY_WITH_TAILORED_CV", "MAYBE", "SKIP"],
     "max_score": 75,
     "required_evidence_terms": ["Kubernetes", "infrastructure"],
     "dealbreaker_terms": ["senior infrastructure"]
   },
-  "human_review_notes": "Reviewed real case: relevant adjacent infra role, but not direct APPLY_NOW for the current backend profile."
+  "human_review_notes": "Reviewed real case: relevant adjacent infra role, but not direct APPLY_NOW for the current backend profile. Under the SKIP vs AVOID policy, SKIP is acceptable when evidence names the senior infrastructure/platform specialization gap; AVOID remains too strict without a hard blocker."
 }
