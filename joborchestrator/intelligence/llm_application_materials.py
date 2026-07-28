@@ -63,6 +63,13 @@ ROLE_ATTRIBUTION_TECH_TERMS = [
     "Docker",
     "Git",
 ]
+BULLET_PREFIXES = ("-", "*", "•", "▪", "◦", "‣", "·")
+EXPERIENCE_DENSITY_CHAR_RATIO = 0.45
+EXPERIENCE_DENSITY_BULLET_RULES = [
+    {"ratio": 0.50, "floor": 4, "cap": 6},
+    {"ratio": 0.35, "floor": 3, "cap": 5},
+    {"ratio": 0.25, "floor": 1, "cap": 3},
+]
 
 
 class LLMMaterialsError(RuntimeError):
@@ -1384,9 +1391,14 @@ def _experience_coverage_problems(base_cv_text: str, ats_cv_text: str) -> list[s
 
 def _experience_density_problems(base_cv_text: str, ats_cv_text: str) -> list[str]:
     entries = _extract_base_experience_entries(base_cv_text)
-    if len(entries) < 2:
-        return []
     source_section = _experience_section(base_cv_text)
+    if len(entries) < 2:
+        if len(_normalize_whitespace_for_materials(source_section)) >= 1400:
+            return [
+                "ats_cv_text density validation was not applied because base CV experience roles could not be "
+                "parsed. Review the base CV experience headings/date format before trusting compression checks."
+            ]
+        return []
     generated_section = _experience_section(ats_cv_text) or ats_cv_text
     if not source_section or not generated_section:
         return []
@@ -1394,7 +1406,7 @@ def _experience_density_problems(base_cv_text: str, ats_cv_text: str) -> list[st
     problems: list[str] = []
     base_chars = len(_normalize_whitespace_for_materials(source_section))
     generated_chars = len(_normalize_whitespace_for_materials(generated_section))
-    if base_chars >= 1400 and generated_chars / max(base_chars, 1) < 0.45:
+    if base_chars >= 1400 and generated_chars / max(base_chars, 1) < EXPERIENCE_DENSITY_CHAR_RATIO:
         problems.append(
             f"ats_cv_text is overcompressed compared with base CV experience detail: "
             f"{generated_chars}/{base_chars} chars. Preserve more source-backed role detail."
@@ -1410,11 +1422,10 @@ def _experience_density_problems(base_cv_text: str, ats_cv_text: str) -> list[st
         generated_bullets = _cv_bullet_count(generated_block)
         if source_bullets < 3:
             continue
-        required_ratio = _minimum_bullet_ratio_for_role(index)
-        ratio = generated_bullets / max(source_bullets, 1)
-        if ratio < required_ratio:
+        required_bullets = _minimum_bullets_for_role(index, source_bullets)
+        if generated_bullets < required_bullets:
             compressed_roles.append(
-                f"{entry['company']} kept {generated_bullets}/{source_bullets} bullets"
+                f"{entry['company']} kept {generated_bullets}/{source_bullets} bullets; expected at least {required_bullets}"
             )
     if compressed_roles:
         problems.append(
@@ -1425,16 +1436,16 @@ def _experience_density_problems(base_cv_text: str, ats_cv_text: str) -> list[st
     return problems[:2]
 
 
-def _minimum_bullet_ratio_for_role(index: int) -> float:
-    if index == 0:
-        return 0.6
-    if index == 1:
-        return 0.4
-    return 0.25
+def _minimum_bullets_for_role(index: int, source_bullets: int) -> int:
+    import math
+
+    rule = EXPERIENCE_DENSITY_BULLET_RULES[min(index, len(EXPERIENCE_DENSITY_BULLET_RULES) - 1)]
+    proportional = math.ceil(source_bullets * float(rule["ratio"]))
+    return min(int(rule["cap"]), max(int(rule["floor"]), proportional))
 
 
 def _cv_bullet_count(block: str) -> int:
-    return sum(1 for line in str(block or "").splitlines() if line.strip().startswith(("-", "*")))
+    return sum(1 for line in str(block or "").splitlines() if line.strip().startswith(BULLET_PREFIXES))
 
 
 def _normalize_whitespace_for_materials(text: str) -> str:
@@ -1757,7 +1768,7 @@ def _extract_base_experience_entries(base_cv_text: str) -> list[dict[str, Any]]:
 
 def _experience_section(text: str) -> str:
     match = re.search(
-        r"(?ims)^\s*(experience|professional experience|experiencia)\s*$([\s\S]*?)(?=^\s*(projects|technical skills|skills|education|formaci[oó]n)\s*$|\Z)",
+        r"(?ims)^\s*(experience|professional experience|work experience|employment history|experiencia|historial laboral)\s*$([\s\S]*?)(?=^\s*(projects?|technical skills|skills|education|formaci[oó]n|certifications?)\s*$|\Z)",
         text,
     )
     return match.group(2) if match else ""
@@ -1765,16 +1776,22 @@ def _experience_section(text: str) -> str:
 
 def _date_range_match(line: str) -> re.Match[str] | None:
     month = (
-        r"january|february|march|april|may|june|july|august|september|october|november|december|"
-        r"enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre"
+        r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+        r"sep(?:tember)?|sept|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|"
+        r"ene(?:ro)?|feb(?:rero)?|mar(?:zo)?|abr(?:il)?|may(?:o)?|jun(?:io)?|jul(?:io)?|"
+        r"ago(?:sto)?|sep(?:tiembre)?|sept(?:iembre)?|oct(?:ubre)?|nov(?:iembre)?|dic(?:iembre)?"
     )
-    return re.search(rf"(?i)\b(?:{month})\s+\d{{4}}\s*[-–—]\s*(?:(?:{month})\s+\d{{4}}|present|current|actualidad)", line)
+    month_year = rf"(?:{month})\.?\s+\d{{4}}"
+    year_only = r"\d{4}"
+    separator = r"\s*[-–—]\s*"
+    end = rf"(?:{month_year}|{year_only}|present|current|actualidad|presente)"
+    return re.search(rf"(?i)\b(?:{month_year}|{year_only}){separator}{end}\b", line)
 
 
 def _next_company_line(lines: list[str], start: int) -> str:
     for line in lines[start : start + 3]:
         stripped = line.strip()
-        if not stripped or stripped.startswith(("•", "-", "*")):
+        if not stripped or stripped.startswith(BULLET_PREFIXES):
             continue
         if _date_range_match(stripped):
             continue
