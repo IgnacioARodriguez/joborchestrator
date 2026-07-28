@@ -25,6 +25,10 @@ CHALLENGE_MARKERS = (
     "human verification",
     "cloudflare challenge",
     "please complete the captcha",
+    "captcha-delivery",
+    "access is temporarily restricted",
+    "you have been blocked",
+    "detected unusual activity",
 )
 LOGIN_MARKERS = ("sign in", "log in", "login", "create account", "register to apply")
 APPLY_TEXT_RE = re.compile(
@@ -100,7 +104,28 @@ async def run_application_execution(
             if (browser is not None or context is not None) and playwright_instance is not None:
                 await playwright_instance.stop()
 
-    if _looks_blocked(apply_url, html):
+    access_issue = await _detect_page_access_issue(live_page, apply_url, html)
+    if access_issue == "posting_unavailable":
+        await _close_browser_or_context(live_browser, live_context)
+        if playwright_instance is not None:
+            await playwright_instance.stop()
+        db.transition_application_session(
+            session_id,
+            "preflight",
+            {"note": "Application posting appears to be closed or unavailable.", "last_error": "Posting unavailable."},
+        )
+        session = db.transition_application_session(
+            session_id,
+            "needs_user_input",
+            {
+                "note": "Application posting is closed, removed, or unavailable.",
+                "last_error": "Posting unavailable.",
+                "artifacts_json": {"url": apply_url, "provider_hint": provider_hint, "navigation": navigation},
+            },
+        )
+        return {"session": session, "blocked": False, "reason": "posting_unavailable"}
+
+    if access_issue == "challenge_detected":
         await _close_browser_or_context(live_browser, live_context)
         if playwright_instance is not None:
             await playwright_instance.stop()
@@ -391,6 +416,41 @@ def _looks_blocked(url: str, html: str) -> bool:
             for marker in ("checkpoint", "verify you are human", "security check", "human verification", "cloudflare challenge")
         )
     return any(marker in text for marker in CHALLENGE_MARKERS)
+
+
+async def _detect_page_access_issue(page: Page, url: str, html: str) -> str | None:
+    if _looks_posting_unavailable(url, html):
+        return "posting_unavailable"
+    if _looks_blocked(url, html):
+        return "challenge_detected"
+    for frame in page.frames:
+        if frame == page.main_frame:
+            continue
+        try:
+            frame_url = frame.url
+            frame_html = await frame.content()
+        except Exception:
+            continue
+        if _looks_blocked(frame_url, frame_html):
+            return "challenge_detected"
+    return None
+
+
+def _looks_posting_unavailable(url: str, html: str) -> bool:
+    text = f"{url}\n{html[:5000]}".lower()
+    markers = (
+        "404 error",
+        "couldn't find anything here",
+        "job posting you're looking for might have closed",
+        "job posting you re looking for might have closed",
+        "job posting has closed",
+        "job has been closed",
+        "job has been removed",
+        "posting has been removed",
+        "position has been filled",
+        "no longer accepting applications",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _looks_login_required(html: str) -> bool:

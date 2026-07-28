@@ -60,6 +60,18 @@ def test_coverage_score_classifies_low_friction_and_gaps() -> None:
     assert (
         coverage_score(
             state="needs_user_input",
+            reason="posting_unavailable",
+            fields_detected=0,
+            fields_autofilled=0,
+            unknown_fields=0,
+            submit_controls_count=0,
+            blocked=False,
+        )
+        == "posting_unavailable"
+    )
+    assert (
+        coverage_score(
+            state="needs_user_input",
             fields_detected=0,
             fields_autofilled=0,
             unknown_fields=1,
