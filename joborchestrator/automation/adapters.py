@@ -136,10 +136,13 @@ class BrowserFormAdapter(GenericAssistedAdapter):
         return await page.locator(self.form_selector).count() > 0
 
     async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]:
-        form = page.locator(self.form_selector).first
-        fields = await form.evaluate(_APPLICATION_FORM_DISCOVERY_JS) if await form.count() > 0 else []
-        normalized = [_normalize_dom_field(field) for field in fields]
-        return {"provider": self.provider, "fields": normalized}
+        candidate = await _extract_best_form_candidate(page, self.form_selector)
+        return {
+            "provider": self.provider,
+            "fields": candidate["fields"],
+            "form_candidates": candidate["form_candidates"],
+            "selected_form_index": candidate["selected_form_index"],
+        }
 
     def extract_form_schema_html(self, html: str) -> dict[str, Any]:
         fields: list[dict[str, Any]] = []
@@ -220,8 +223,7 @@ class LeverAdapter(BrowserFormAdapter):
         return await page.locator('[data-qa="btn-apply"], .lever-application-form').count() > 0
 
     async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]:
-        form = page.locator("form").first
-        if await form.count() == 0:
+        if await page.locator("form").count() == 0:
             apply_button = page.locator('[data-qa="btn-apply"], a[href$="/apply"], a:has-text("Apply")').first
             try:
                 if await apply_button.count() > 0 and await apply_button.is_visible(timeout=1000):
@@ -229,10 +231,13 @@ class LeverAdapter(BrowserFormAdapter):
                     await page.wait_for_load_state("domcontentloaded", timeout=3000)
             except Exception:
                 pass
-            form = page.locator("form").first
-        fields = await form.evaluate(_APPLICATION_FORM_DISCOVERY_JS) if await form.count() > 0 else []
-        normalized = [_normalize_dom_field(field) for field in fields]
-        return {"provider": self.provider, "fields": normalized}
+        candidate = await _extract_best_form_candidate(page, "form")
+        return {
+            "provider": self.provider,
+            "fields": candidate["fields"],
+            "form_candidates": candidate["form_candidates"],
+            "selected_form_index": candidate["selected_form_index"],
+        }
 
 
 class GenericFormAdapter(BrowserFormAdapter):
@@ -325,6 +330,65 @@ def _recognition_only_capabilities(provider: str, *, requires_login: bool = Fals
         can_observe_submission=False,
         can_submit=False,
     )
+
+
+async def _extract_best_form_candidate(page: "Page", selector: str) -> dict[str, Any]:
+    forms = page.locator(selector)
+    count = await forms.count()
+    candidates: list[dict[str, Any]] = []
+    best: dict[str, Any] | None = None
+    for index in range(count):
+        form = forms.nth(index)
+        try:
+            raw_fields = await form.evaluate(_APPLICATION_FORM_DISCOVERY_JS)
+            metadata = await form.evaluate(_FORM_METADATA_JS)
+        except Exception:
+            continue
+        normalized_fields = [_normalize_dom_field(field) for field in raw_fields]
+        score = _score_form_candidate(normalized_fields, metadata)
+        candidate = {
+            "index": index,
+            "score": score,
+            "fields": normalized_fields,
+            "field_count": len(normalized_fields),
+            "submit_controls": int(metadata.get("submit_controls") or 0),
+            "text": str(metadata.get("text") or "")[:160],
+        }
+        candidates.append({key: value for key, value in candidate.items() if key != "fields"})
+        if best is None or score > int(best["score"]):
+            best = candidate
+    if best is None:
+        return {"fields": [], "form_candidates": [], "selected_form_index": None}
+    return {
+        "fields": best["fields"],
+        "form_candidates": candidates,
+        "selected_form_index": best["index"],
+    }
+
+
+def _score_form_candidate(fields: list[dict[str, Any]], metadata: dict[str, Any]) -> int:
+    if not fields:
+        return 0
+    score = len(fields)
+    score += min(int(metadata.get("submit_controls") or 0), 2) * 3
+    labels = " ".join(str(field.get("label") or field.get("name") or "") for field in fields).lower()
+    names = " ".join(str(field.get("name") or "") for field in fields).lower()
+    field_text = f"{labels} {names}"
+    for marker in ("resume", "cv", "curriculum"):
+        if marker in field_text:
+            score += 6
+            break
+    for marker in ("email", "phone", "linkedin", "portfolio", "cover letter"):
+        if marker in field_text:
+            score += 2
+    if any(str(field.get("type") or "") == "file" for field in fields):
+        score += 8
+    if int(metadata.get("password_fields") or 0):
+        score -= 8
+    text = str(metadata.get("text") or "").lower()
+    if any(marker in text for marker in ("newsletter", "search jobs", "job alert", "sign up", "log in", "login")):
+        score -= 4
+    return score
 
 
 def _attr(tag: str, name: str) -> str | None:
@@ -488,6 +552,24 @@ form => {
   }
   fields.push(...Array.from(byNameRadio.values()));
   return fields;
+}
+"""
+
+_FORM_METADATA_JS = """
+form => {
+  function text(value) {
+    return String(value || '').replace(/\\s+/g, ' ').trim();
+  }
+  const controls = Array.from(form.querySelectorAll('button, input[type="submit"], input[type="button"]'));
+  const submitControls = controls.filter(element => {
+    const label = text(element.innerText || element.textContent || element.getAttribute('value') || element.getAttribute('aria-label') || element.getAttribute('type'));
+    return /submit|send|apply|enviar|solicitar|finalizar/i.test(label);
+  }).length;
+  return {
+    text: text(form.innerText || form.textContent).slice(0, 500),
+    submit_controls: submitControls,
+    password_fields: form.querySelectorAll('input[type="password"]').length,
+  };
 }
 """
 
