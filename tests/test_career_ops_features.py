@@ -9,6 +9,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     _call_openai,
     _call_nvidia_kit,
     _experience_coverage_problems,
+    _experience_density_problems,
     _experience_technology_attribution_problems,
     _kit_from_response,
     _kit_validation_error,
@@ -411,6 +412,14 @@ def test_materials_repair_instruction_expands_short_ats_cv():
     assert "700 characters" in instruction
     assert "18 non-empty lines" in instruction
     assert "every base CV employer" in instruction
+
+
+def test_materials_repair_instruction_expands_overcompressed_ats_cv():
+    instruction = _materials_repair_instruction("ats_cv_text is overcompressed for base CV experience roles")
+
+    assert "more source-backed detail" in instruction
+    assert "recent and substantial roles" in instruction
+    assert "Do not add unsupported new claims" in instruction
 
 
 def test_llm_application_kit_validation_accepts_complete_parseable_ats_cv():
@@ -1084,6 +1093,94 @@ Software Engineering.
 """.strip()
 
     assert _experience_coverage_problems(base_cv, complete_cv) == []
+
+
+def test_ats_cv_validation_rejects_overcompressed_experience_detail():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+- Collaborated with product managers on backend requirements.
+- Documented backend processes and runbooks.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+- Built dashboards for finance teams.
+- Developed reporting tools for market data.
+- Automated manual reporting workflows.
+- Designed SQL queries and backend integrations.
+- Connected internal data sources and dashboards.
+Backend Developer August 2022 - October 2022
+Globant Client: Tigo LATAM Buenos Aires, Argentina
+- Built AWS microservices.
+- Optimized backend APIs.
+PROJECTS
+AI Automation
+""".strip()
+    compressed_cv = """
+Professional Summary
+Backend developer focused on Python APIs and dashboards.
+Technical Skills
+Python, SQL, MongoDB, AWS.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | October 2022 - April 2025
+- Built dashboards.
+Backend Developer | Globant (Client: Tigo LATAM) | August 2022 - October 2022
+- Built AWS microservices.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, compressed_cv)
+
+    assert problems
+    assert "overcompressed" in problems[-1]
+    assert "Fiction Express" in problems[-1]
+    assert "Talan" in problems[-1]
+
+
+def test_ats_cv_validation_accepts_reasonable_experience_compression():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+- Collaborated with product managers on backend requirements.
+- Documented backend processes and runbooks.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+- Built dashboards for finance teams.
+- Developed reporting tools for market data.
+- Automated manual reporting workflows.
+- Designed SQL queries and backend integrations.
+- Connected internal data sources and dashboards.
+PROJECTS
+AI Automation
+""".strip()
+    compressed_cv = """
+Professional Summary
+Backend developer focused on Python APIs, data workflows, and internal dashboards.
+Technical Skills
+Python, SQL, MongoDB, APIs, dashboards, documentation.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | October 2022 - April 2025
+- Built dashboards for finance teams.
+- Developed reporting tools for market data.
+Education
+Software Engineering.
+""".strip()
+
+    assert _experience_density_problems(base_cv, compressed_cv) == []
 
 
 def test_ats_cv_validation_rejects_role_specific_technology_drift():

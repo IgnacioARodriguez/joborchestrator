@@ -1064,6 +1064,12 @@ def _materials_repair_instruction(validation_feedback: str) -> str:
             "Technical Skills, Professional Experience with every base CV employer, and Education. Use at least "
             "700 characters and 18 non-empty lines while preserving only truthful source-backed facts."
         )
+    if "overcompressed" in normalized:
+        instructions.append(
+            "Expand ats_cv_text using more source-backed detail from Context.base_cv. Preserve proportionally more "
+            "truthful bullets for recent and substantial roles, especially the current and second-most-recent roles. "
+            "Do not add unsupported new claims just to increase length."
+        )
     if "hedge language" in normalized:
         instructions.append(
             "Remove parenthetical hedges such as 'SQL expertise' or 'implied'. Use broader supported terms "
@@ -1284,6 +1290,7 @@ def _ats_cv_response_validation_error(
             problems.append(f"{field} must be an array")
     problems.extend(_ats_cv_quality_problems(ats_cv_text))
     problems.extend(_experience_coverage_problems(str(base_cv_text or ""), ats_cv_text))
+    problems.extend(_experience_density_problems(str(base_cv_text or ""), ats_cv_text))
     problems.extend(_experience_technology_attribution_problems(str(base_cv_text or ""), ats_cv_text))
     problems.extend(_avoid_overclaiming_problems(ats_cv_text, source_payload, field_name="ats_cv_text"))
     return "; ".join(problems) if problems else None
@@ -1373,6 +1380,65 @@ def _experience_coverage_problems(base_cv_text: str, ats_cv_text: str) -> list[s
     if missing:
         return [f"ats_cv_text omitted base CV experience entries: {', '.join(missing[:6])}"]
     return []
+
+
+def _experience_density_problems(base_cv_text: str, ats_cv_text: str) -> list[str]:
+    entries = _extract_base_experience_entries(base_cv_text)
+    if len(entries) < 2:
+        return []
+    source_section = _experience_section(base_cv_text)
+    generated_section = _experience_section(ats_cv_text) or ats_cv_text
+    if not source_section or not generated_section:
+        return []
+
+    problems: list[str] = []
+    base_chars = len(_normalize_whitespace_for_materials(source_section))
+    generated_chars = len(_normalize_whitespace_for_materials(generated_section))
+    if base_chars >= 1400 and generated_chars / max(base_chars, 1) < 0.45:
+        problems.append(
+            f"ats_cv_text is overcompressed compared with base CV experience detail: "
+            f"{generated_chars}/{base_chars} chars. Preserve more source-backed role detail."
+        )
+
+    compressed_roles = []
+    for index, entry in enumerate(entries):
+        source_block = _experience_block_for_entry(source_section, entry, entries)
+        generated_block = _experience_block_for_entry(generated_section, entry, entries)
+        if not source_block or not generated_block:
+            continue
+        source_bullets = _cv_bullet_count(source_block)
+        generated_bullets = _cv_bullet_count(generated_block)
+        if source_bullets < 3:
+            continue
+        required_ratio = _minimum_bullet_ratio_for_role(index)
+        ratio = generated_bullets / max(source_bullets, 1)
+        if ratio < required_ratio:
+            compressed_roles.append(
+                f"{entry['company']} kept {generated_bullets}/{source_bullets} bullets"
+            )
+    if compressed_roles:
+        problems.append(
+            "ats_cv_text is overcompressed for base CV experience roles: "
+            + "; ".join(compressed_roles[:4])
+            + ". Preserve proportionally more truthful bullets for recent or substantial roles."
+        )
+    return problems[:2]
+
+
+def _minimum_bullet_ratio_for_role(index: int) -> float:
+    if index == 0:
+        return 0.6
+    if index == 1:
+        return 0.4
+    return 0.25
+
+
+def _cv_bullet_count(block: str) -> int:
+    return sum(1 for line in str(block or "").splitlines() if line.strip().startswith(("-", "*")))
+
+
+def _normalize_whitespace_for_materials(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
 
 
 def _experience_technology_attribution_problems(base_cv_text: str, ats_cv_text: str) -> list[str]:
