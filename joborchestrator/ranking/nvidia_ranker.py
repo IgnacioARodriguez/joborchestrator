@@ -553,6 +553,7 @@ def _apply_nvidia_batch_result(
                     reasons.append("nvidia_ranking_applied")
                 ranking.evidence.llm_escalation_reasons = reasons
                 ranking.ranking_version = ranking_version
+                _sanitize_inferred_evidence(row, ranking)
                 _apply_ranking_safety_gate(row, ranking, safety_context)
                 _apply_profile_backed_evidence_terms(row, ranking, safety_context)
                 _apply_evidence_consistency_gate(ranking)
@@ -906,6 +907,72 @@ def _apply_profile_backed_evidence_terms(
         evidence_text = _normalize_text(f"{evidence_text} {term}")
 
 
+def _sanitize_inferred_evidence(job: dict[str, Any], ranking: Any) -> None:
+    job_text = _normalized_job_text(job)
+    evidence = ranking.evidence
+    reasons = list(evidence.llm_escalation_reasons or [])
+
+    if not _has_explicit_german_requirement(job_text):
+        moved = _move_matching_items(
+            evidence.dealbreakers,
+            evidence.red_flags,
+            ["german language signal not supported by profile"],
+            replacement="German-language posting may require German; verify before applying",
+        )
+        moved += _remove_matching_items(
+            evidence.missing_requirements,
+            ["german language signal not supported by profile"],
+        )
+        if moved and "evidence_inferred_language_review" not in reasons:
+            reasons.append("evidence_inferred_language_review")
+
+    if not _has_actionable_onsite_or_hybrid_restriction(job_text):
+        removed = _remove_matching_items(
+            evidence.red_flags,
+            ["onsite/hybrid location is not clearly within preferred locations"],
+        )
+        removed += _remove_matching_items(
+            evidence.dealbreakers,
+            ["onsite/hybrid location is not clearly within preferred locations"],
+        )
+        if removed and "evidence_removed_generic_location_review" not in reasons:
+            reasons.append("evidence_removed_generic_location_review")
+
+    evidence.llm_escalation_reasons = reasons
+
+
+def _move_matching_items(
+    source: list[str],
+    target: list[str],
+    markers: list[str],
+    *,
+    replacement: str,
+) -> int:
+    moved = 0
+    kept = []
+    for item in source:
+        if _contains_any(_normalize_text(str(item)), markers):
+            moved += 1
+            if replacement not in target:
+                target.append(replacement)
+        else:
+            kept.append(item)
+    source[:] = kept
+    return moved
+
+
+def _remove_matching_items(items: list[str], markers: list[str]) -> int:
+    removed = 0
+    kept = []
+    for item in items:
+        if _contains_any(_normalize_text(str(item)), markers):
+            removed += 1
+        else:
+            kept.append(item)
+    items[:] = kept
+    return removed
+
+
 def _apply_evidence_consistency_gate(ranking: Any) -> None:
     evidence = ranking.evidence
     reasons = list(evidence.llm_escalation_reasons or [])
@@ -913,10 +980,11 @@ def _apply_evidence_consistency_gate(ranking: Any) -> None:
     has_dealbreakers = bool(evidence.dealbreakers)
     has_red_flags = bool(evidence.red_flags)
     has_missing = bool(evidence.missing_requirements)
-    low_coverage = _ranking_central_coverage_percent(ranking) < 80
+    coverage_percent = _ranking_central_coverage_percent(ranking)
+    low_coverage = coverage_percent < 80
 
-    dealbreaker_cap = _dealbreaker_consistency_cap(evidence.dealbreakers)
-    if dealbreaker_cap and ranking.decision in {"APPLY_NOW", "APPLY_WITH_TAILORED_CV"}:
+    dealbreaker_cap = _dealbreaker_consistency_cap(evidence.dealbreakers, coverage_percent)
+    if dealbreaker_cap and ranking.decision in {"APPLY_NOW", "APPLY_WITH_TAILORED_CV", "MAYBE"}:
         cap_decision, max_score, risk_penalty, reason = dealbreaker_cap
         if _DECISION_SEVERITY[ranking.decision] < _DECISION_SEVERITY[cap_decision]:
             ranking.decision = cap_decision
@@ -945,7 +1013,10 @@ def _apply_evidence_consistency_gate(ranking: Any) -> None:
     evidence.llm_escalation_reasons = reasons
 
 
-def _dealbreaker_consistency_cap(dealbreakers: list[str]) -> tuple[Decision, int, int, str] | None:
+def _dealbreaker_consistency_cap(
+    dealbreakers: list[str],
+    coverage_percent: float,
+) -> tuple[Decision, int, int, str] | None:
     if not dealbreakers:
         return None
     normalized = [_normalize_text(str(item)) for item in dealbreakers]
@@ -962,6 +1033,8 @@ def _dealbreaker_consistency_cap(dealbreakers: list[str]) -> tuple[Decision, int
     ]
     if any(any(marker in item for marker in skip_markers) for item in normalized):
         return cast(Decision, "SKIP"), 45, 30, "evidence_dealbreaker_cap_skip"
+    if coverage_percent < 70:
+        return cast(Decision, "SKIP"), 45, 30, "evidence_dealbreaker_low_coverage_cap_skip"
     return cast(Decision, "MAYBE"), 58, 25, "evidence_dealbreaker_cap_maybe"
 
 
@@ -1354,6 +1427,14 @@ def _onsite_or_hybrid_outside_preferred_location(
     return "onsite/hybrid location is not clearly within preferred locations"
 
 
+def _has_actionable_onsite_or_hybrid_restriction(job_text: str) -> bool:
+    if not _contains_any(job_text, ["onsite", "on site", "presencial", "hybrid", "hibrido"]):
+        return False
+    if _has_clear_remote_option(job_text) and not _hybrid_with_specific_site(job_text):
+        return False
+    return True
+
+
 def _has_clear_remote_option(job_text: str) -> bool:
     return _contains_any(
         job_text,
@@ -1657,14 +1738,34 @@ def _required_language_gap_label(job_text: str, profile_text: str) -> str | None
     )
     if "german" in profile_text and not profile_negates_german:
         return None
-    if _contains_any(
-        job_text,
-        ["german required", "fluent german", "c1 german", "b2 german", "must speak german", "german language"],
-    ):
+    if _has_explicit_german_requirement(job_text):
         return "German language requirement not supported by profile"
-    if "german" in job_text:
-        return "German language signal not supported by profile"
     return None
+
+
+def _has_explicit_german_requirement(job_text: str) -> bool:
+    return _contains_any(
+        job_text,
+        [
+            "german required",
+            "fluent german",
+            "native german",
+            "c1 german",
+            "b2 german",
+            "must speak german",
+            "german language required",
+            "requires german",
+            "german fluency",
+            "deutsch erforderlich",
+            "fließend deutsch",
+            "fliessend deutsch",
+            "sehr gute deutschkenntnisse",
+            "deutschkenntnisse erforderlich",
+            "deutschkenntnisse vorausgesetzt",
+            "verhandlungssicheres deutsch",
+            "muttersprache deutsch",
+        ],
+    )
 
 
 def _munich_location_review(job_text: str, safety_context: dict[str, Any]) -> bool:

@@ -107,6 +107,9 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     stale_completed = [row for row in rows if is_stale_completion(row)]
     retry_rows = [row for row in ranked if int_or_zero(row.get("ranking_validation_attempts")) > 1 or bool(loads_json(row.get("ranking_validation_errors_json"), []))]
     review_rows = [row for row in ranked if bool(evidence(row).get("requires_llm_review"))]
+    soft_dealbreaker_rows = [row for row in ranked if has_soft_decision_with_dealbreaker(row)]
+    inferred_language_rows = [row for row in ranked if has_inferred_language_signal(row)]
+    generic_location_rows = [row for row in ranked if has_generic_location_signal(row)]
     scores = [int(row["final_score"]) for row in ranked if row.get("final_score") is not None]
     coverage_values = [coverage for row in ranked if (coverage := central_coverage(row)) is not None]
     active_ranking_prompt = active_prompt_version("ranking", "nvidia_response_contract")
@@ -135,6 +138,10 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "schema_failure_retry_rate": round(len(retry_rows) / len(ranked), 4) if ranked else 0.0,
         "review_required_count": len(review_rows),
         "review_required_rate": round(len(review_rows) / len(ranked), 4) if ranked else 0.0,
+        "soft_dealbreaker_count": len(soft_dealbreaker_rows),
+        "soft_dealbreaker_rate": round(len(soft_dealbreaker_rows) / len(ranked), 4) if ranked else 0.0,
+        "inferred_language_signal_count": len(inferred_language_rows),
+        "generic_location_signal_count": len(generic_location_rows),
         "active_ranking_prompt_version": active_ranking_prompt,
         "prompt_version_counts": dict(sorted(prompt_versions.items())),
         "non_active_prompt_count": len(non_active_prompt_rows),
@@ -143,6 +150,9 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "stale_completion_examples": examples(stale_completed),
         "failed_item_examples": examples(failed_items),
         "high_item_attempt_examples": item_attempt_examples(high_item_attempt_rows),
+        "soft_dealbreaker_examples": examples(soft_dealbreaker_rows),
+        "inferred_language_signal_examples": examples(inferred_language_rows),
+        "generic_location_signal_examples": examples(generic_location_rows),
         "non_active_prompt_examples": prompt_version_examples(non_active_prompt_rows),
     }
 
@@ -160,6 +170,30 @@ def is_low_central_coverage(row: dict[str, Any], *, threshold: float = 80.0) -> 
         percent_value(scores(row).get("central_requirement_coverage")),
     ]
     return any(value < threshold for value in values if value is not None)
+
+
+def has_soft_decision_with_dealbreaker(row: dict[str, Any]) -> bool:
+    return row.get("decision") in {"APPLY_WITH_TAILORED_CV", "MAYBE"} and bool(evidence(row).get("dealbreakers"))
+
+
+def has_inferred_language_signal(row: dict[str, Any]) -> bool:
+    ev = evidence(row)
+    return has_evidence_marker(ev, "German language signal not supported by profile")
+
+
+def has_generic_location_signal(row: dict[str, Any]) -> bool:
+    ev = evidence(row)
+    return has_evidence_marker(ev, "onsite/hybrid location is not clearly within preferred locations")
+
+
+def has_evidence_marker(ev: dict[str, Any], marker: str) -> bool:
+    marker = marker.lower()
+    buckets = [
+        ev.get("dealbreakers") or [],
+        ev.get("red_flags") or [],
+        ev.get("missing_requirements") or [],
+    ]
+    return any(marker in str(item).lower() for bucket in buckets for item in bucket)
 
 
 def row_is_current_for_metrics(row: dict[str, Any]) -> bool:

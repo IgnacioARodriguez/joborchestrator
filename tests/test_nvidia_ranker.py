@@ -682,6 +682,77 @@ def test_nvidia_ranking_downgrades_required_language_gap(monkeypatch):
     assert "safety_cap_language_gap" in saved[1].evidence.llm_escalation_reasons
 
 
+def test_nvidia_ranking_treats_inferred_german_language_as_review_not_dealbreaker(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Senior Backend Engineer (TypeScript, NestJS/Node.js) (m/f/x)",
+                "company": "Atolls",
+                "location": "Berlin, Germany",
+                "description_text": "Remote role from Germany building backend systems with TypeScript and REST APIs.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 72, "MAYBE")
+        payload["evidence"]["dealbreakers"] = ["German language signal not supported by profile"]
+        payload["evidence"]["red_flags"] = ["onsite/hybrid location is not clearly within preferred locations"]
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload_with_negative_gaps)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["MAYBE"] == 1
+    assert "German language signal not supported by profile" not in saved[1].evidence.dealbreakers
+    assert "German-language posting may require German; verify before applying" in saved[1].evidence.red_flags
+    assert "onsite/hybrid location is not clearly within preferred locations" not in saved[1].evidence.red_flags
+    assert "evidence_inferred_language_review" in saved[1].evidence.llm_escalation_reasons
+    assert "evidence_removed_generic_location_review" in saved[1].evidence.llm_escalation_reasons
+
+
+def test_nvidia_ranking_caps_low_coverage_maybe_with_dealbreaker_to_skip(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Applied AI Engineer",
+                "company": "Bjak",
+                "location": "Malaysia",
+                "description_text": "Hybrid role requiring 3 days/week in Malaysia office. Python and LLM APIs required.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 58, "MAYBE")
+        payload["evidence"]["dealbreakers"] = ["Hybrid role requiring 3 days/week in Malaysia office"]
+        payload["evidence"]["missing_requirements"] = ["Hands-on experience with RAG"]
+        payload["evidence"]["central_requirements"] = ["AI Engineer", "Python", "LLM"]
+        payload["evidence"]["partial_matches"] = ["Python", "LLM APIs"]
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["MAYBE"] == 0
+    assert summary["SKIP"] == 1
+    assert saved[1].decision == "SKIP"
+    assert saved[1].final_score == 45
+    assert "evidence_dealbreaker_low_coverage_cap_skip" in saved[1].evidence.llm_escalation_reasons
+
+
 def test_nvidia_ranking_blocks_industrial_automation_mismatch(monkeypatch):
     jobs = pd.DataFrame(
         [

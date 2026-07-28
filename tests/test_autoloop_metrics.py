@@ -150,6 +150,47 @@ def test_compute_metrics_counts_high_item_attempts_separately_from_schema_retrie
     assert summary["high_item_attempt_examples"][0]["ranking_validation_attempts"] == 1
 
 
+def test_compute_metrics_flags_soft_dealbreakers_and_generic_review_signals():
+    rows = [
+        _row(
+            1,
+            decision="MAYBE",
+            final_score=55,
+            evidence_json=json.dumps(
+                {
+                    "dealbreakers": ["Hybrid role requiring 3 days/week in Malaysia office"],
+                    "red_flags": ["onsite/hybrid location is not clearly within preferred locations"],
+                    "missing_requirements": [],
+                    "requires_llm_review": True,
+                    "central_requirement_coverage": 0.58,
+                }
+            ),
+        ),
+        _row(
+            2,
+            decision="SKIP",
+            final_score=40,
+            evidence_json=json.dumps(
+                {
+                    "dealbreakers": ["German language signal not supported by profile"],
+                    "red_flags": [],
+                    "missing_requirements": [],
+                    "requires_llm_review": True,
+                    "central_requirement_coverage": 0.4,
+                }
+            ),
+        ),
+    ]
+
+    summary = metrics.compute_metrics(rows)
+
+    assert summary["soft_dealbreaker_count"] == 1
+    assert summary["soft_dealbreaker_rate"] == 0.5
+    assert summary["inferred_language_signal_count"] == 1
+    assert summary["generic_location_signal_count"] == 1
+    assert summary["soft_dealbreaker_examples"][0]["job_id"] == 1
+
+
 def test_compute_metrics_counts_non_active_prompt_versions(monkeypatch):
     monkeypatch.setattr(metrics, "active_prompt_version", lambda surface, sub_case: "v3")
     rows = [
