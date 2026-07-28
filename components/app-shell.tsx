@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import { useCallback, useEffect, useState } from "react"
 import {
   Activity,
@@ -179,16 +180,15 @@ export function AppShell() {
       <div className="flex min-h-dvh w-full lg:h-full">
         {/* Desktop sidebar */}
         <aside className="sticky top-0 hidden h-dvh w-[256px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-5 lg:flex">
-          <div className="flex items-center gap-3 px-2 pb-7">
-            <div className="flex size-10 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-[0_8px_18px_rgba(65,105,225,0.22)]">
-              <Compass className="size-5" />
-            </div>
-            <div>
-              <span className="block text-sm font-semibold text-sidebar-foreground">
-                Job Orchestrator
-              </span>
-              <span className="text-xs text-muted-foreground">Career ops system</span>
-            </div>
+          <div className="px-2 pb-7">
+            <Image
+              src="/rocket-development-logo.png"
+              alt="Rocket Development"
+              width={190}
+              height={53}
+              priority
+              className="h-12 w-[190px] object-contain object-left"
+            />
           </div>
           <nav className="flex flex-col gap-1.5">
             {NAV_ITEMS.map((item) => {
