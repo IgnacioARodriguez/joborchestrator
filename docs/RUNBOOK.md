@@ -89,6 +89,12 @@ ENABLE_AUTO_SUBMIT_APPROVED=1
 
 Then create the session with `"mode": "auto_submit_approved"`. The worker submits only when required fields are resolved, the resume upload succeeds, and exactly one final submit control is detected. If it blocks, inspect `application_sessions.artifacts_json.auto_submit.reasons`.
 
+Before testing against a real company page, run the isolated local smoke. It forces SQLite, ignores `.env`/Turso, uses a synthetic Greenhouse fixture and verifies the full worker path reaches `submitted`:
+
+```bash
+npm run smoke:auto-submit
+```
+
 For login/account pages, set:
 
 ```bash
