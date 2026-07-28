@@ -1245,6 +1245,24 @@ def test_ats_cv_density_warns_when_experience_heading_is_unknown():
     assert "density validation was not applied" in problems[0]
 
 
+def test_ats_cv_density_warns_for_short_unknown_experience_heading():
+    base_cv = """
+Career Journey
+Backend Developer 04/2022 - 03/2025
+Acme Systems
+- Built APIs.
+- Built reports.
+- Built dashboards.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, "Professional Experience\n- Short generated CV.")
+
+    assert problems
+    assert "density validation was not applied" in problems[0]
+
+
 def test_ats_cv_density_does_not_require_more_bullets_than_source():
     base_cv = """
 EXPERIENCE
@@ -1301,6 +1319,38 @@ Software Engineering.
 
     assert problems
     assert "Fiction Express" in problems[-1]
+
+
+def test_ats_cv_rejects_omitted_single_experience_role():
+    base_cv = """
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+Education
+Software Engineering.
+""".strip()
+    generated_cv = """
+Professional Summary
+Backend developer focused on Python APIs and product data workflows.
+Technical Skills
+Python, SQL, MongoDB.
+Professional Experience
+Project Consultant | Independent | 2022 - 2025
+- Supported internal reporting workflows.
+Education
+Software Engineering.
+""".strip()
+
+    coverage = _experience_coverage_problems(base_cv, generated_cv)
+    density = _experience_density_problems(base_cv, generated_cv)
+
+    assert coverage
+    assert "Fiction Express" in coverage[0]
+    assert density
+    assert "missing from generated experience" in density[-1]
 
 
 def test_ats_cv_density_requires_at_least_one_bullet_for_short_source_role():

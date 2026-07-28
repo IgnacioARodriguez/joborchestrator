@@ -1389,7 +1389,7 @@ def _contains_section_heading(normalized_text: str, heading: str) -> bool:
 
 def _experience_coverage_problems(base_cv_text: str, ats_cv_text: str) -> list[str]:
     entries = _extract_base_experience_entries(base_cv_text)
-    if len(entries) < 2:
+    if not entries:
         return []
     normalized_cv = _normalize_for_match(ats_cv_text)
     missing = []
@@ -1426,7 +1426,10 @@ def _experience_density_problems(base_cv_text: str, ats_cv_text: str) -> list[st
     for index, entry in enumerate(entries):
         source_block = _experience_block_for_entry(source_section, entry, entries)
         generated_block = _experience_block_for_entry(generated_section, entry, entries)
-        if not source_block or not generated_block:
+        if not source_block:
+            continue
+        if not generated_block:
+            compressed_roles.append(f"{entry['company']} is missing from generated experience")
             continue
         source_bullets = _cv_bullet_count(source_block)
         generated_bullets = _cv_bullet_count(generated_block)
@@ -1462,10 +1465,8 @@ def _cv_bullet_count(block: str) -> int:
 def _looks_like_unparsed_experience_text(base_cv_text: str, source_section: str) -> bool:
     candidate = source_section or base_cv_text
     normalized = _normalize_whitespace_for_materials(candidate)
-    if len(normalized) < 1400:
-        return False
     if source_section:
-        return True
+        return len(normalized) >= 1400
     date_ranges = len([line for line in str(candidate or "").splitlines() if _date_range_match(line)])
     bullets = _cv_bullet_count(candidate)
     role_terms = len(
@@ -1474,7 +1475,11 @@ def _looks_like_unparsed_experience_text(base_cv_text: str, source_section: str)
             candidate,
         )
     )
-    return date_ranges >= 1 and (bullets >= 3 or role_terms >= 2)
+    if date_ranges >= 1 and bullets >= 3:
+        return True
+    if len(normalized) >= 1400 and date_ranges >= 1 and role_terms >= 2:
+        return True
+    return False
 
 
 def _normalize_whitespace_for_materials(text: str) -> str:
