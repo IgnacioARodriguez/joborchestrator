@@ -1221,8 +1221,9 @@ def _ats_cv_quality_problems(text: str) -> list[str]:
     problems: list[str] = []
     if len(cleaned) < 700:
         problems.append("ats_cv_text is too short to be a complete ATS CV")
-    if len([line for line in cleaned.splitlines() if line.strip()]) < 18:
-        problems.append("ats_cv_text has too few parseable lines for a complete CV")
+    line_count = len([line for line in cleaned.splitlines() if line.strip()])
+    if line_count < 18:
+        problems.append(f"ats_cv_text has too few parseable lines for a complete CV: {line_count}/18")
 
     section_patterns = {
         "summary": ["summary", "profile", "professional summary", "perfil", "resumen"],

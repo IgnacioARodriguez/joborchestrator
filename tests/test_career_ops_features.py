@@ -399,6 +399,7 @@ def test_llm_application_kit_validation_requires_complete_ats_cv():
     assert "too short to be a complete ATS CV" in error
     assert "missing standard ATS sections" in error
     assert "internal/non-CV notes" in error
+    assert "/18" in error
 
 
 def test_materials_repair_instruction_expands_short_ats_cv():
