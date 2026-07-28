@@ -238,6 +238,30 @@ class LeverAdapter(BrowserFormAdapter):
 class GenericFormAdapter(BrowserFormAdapter):
     provider = "generic_form"
 
+    def detect_html(self, html: str, job: dict[str, Any] | None = None) -> bool:
+        normalized = html.lower()
+        return super().detect_html(html, job) or bool(
+            re.search(r"\b(apply|apply now|i'?m interested|start application|submit application|aplicar|solicitar)\b", normalized)
+        )
+
+    async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]:
+        form = page.locator(self.form_selector).first
+        if await form.count() == 0:
+            cta = page.locator("a, button").filter(
+                has_text=re.compile(
+                    r"\b(apply|apply now|i'?m interested|start application|aplicar|solicitar)\b",
+                    re.IGNORECASE,
+                )
+            ).first
+            try:
+                if await cta.count() > 0 and await cta.is_visible(timeout=1000):
+                    await cta.click(timeout=3000)
+                    await page.wait_for_load_state("domcontentloaded", timeout=3000)
+                    await page.wait_for_timeout(1000)
+            except Exception:
+                pass
+        return await super().extract_form_schema_page(page)
+
 
 class AdapterRegistry:
     def __init__(self) -> None:
@@ -361,7 +385,7 @@ def _safe_key(value: str) -> str:
 
 _APPLICATION_FORM_DISCOVERY_JS = """
 form => {
-  const TECHNICAL_RE = /(^_|csrf|token|utf8|captcha|g-recaptcha|h-captcha|honeypot|bot-field|website_url)/i;
+  const TECHNICAL_RE = /(^_|^hp_|csrf|token|utf8|captcha|g-recaptcha|h-captcha|honeypot|bot-field|website_url)/i;
   const controls = Array.from(form.querySelectorAll('input, textarea, select'));
   const byNameRadio = new Map();
   const fields = [];
@@ -382,7 +406,7 @@ form => {
 
   function labelFor(element) {
     function questionText() {
-      const question = element.closest('.application-question, .custom-question, .posting-field, .field-group');
+      const question = element.closest('.application-question, .custom-question, .question, .posting-field, .field-group');
       if (!question) return '';
       const clone = question.cloneNode(true);
       clone.querySelectorAll('input, textarea, select, option, script, style, label').forEach(node => node.remove());
@@ -403,6 +427,8 @@ form => {
       const label = labelledBy.split(/\\s+/).map(part => document.getElementById(part)?.innerText || document.getElementById(part)?.textContent || '').join(' ');
       if (text(label)) return { label: text(label), strategy: 'aria_labelledby' };
     }
+    const placeholder = text(element.getAttribute('placeholder'));
+    if (placeholder) return { label: placeholder, strategy: 'placeholder' };
     const container = element.closest('.field, .field-group, .application-field, .question, div, li');
     if (container) {
       const clone = container.cloneNode(true);
@@ -415,7 +441,7 @@ form => {
     const name = element.getAttribute('name');
     if (name) return { label: text(name.replace(/[_.-]+/g, ' ')), strategy: 'name' };
     if (id) return { label: text(id.replace(/[_.-]+/g, ' ')), strategy: 'id' };
-    return { label: text(element.getAttribute('placeholder')), strategy: 'placeholder' };
+    return { label: '', strategy: 'unknown' };
   }
 
   function baseField(element) {
@@ -442,7 +468,7 @@ form => {
     if (field.type === 'radio') {
       const groupKey = name || id || field.label;
       const legend = text(element.closest('fieldset')?.querySelector('legend')?.innerText || element.closest('fieldset')?.querySelector('legend')?.textContent);
-      const question = labelFor(element.closest('.application-question, .custom-question') || element).label;
+      const question = labelFor(element.closest('.application-question, .custom-question, .question') || element).label;
       if (!byNameRadio.has(groupKey)) {
         byNameRadio.set(groupKey, { ...field, id: groupKey, name: groupKey, label: legend || question || field.label, options: [] });
       }

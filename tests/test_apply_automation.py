@@ -215,6 +215,12 @@ def test_adapter_registry_uses_generic_form_before_assisted_fallback() -> None:
     assert AdapterRegistry().detect(html, {"apply_url": "https://careers.example.test/apply"}).provider == "generic_form"
 
 
+def test_adapter_registry_uses_generic_form_for_apply_landing_page() -> None:
+    html = Path("tests/fixtures/generic_apply_landing.html").read_text(encoding="utf-8")
+
+    assert AdapterRegistry().detect(html, {"apply_url": "https://careers.example.test/jobs/backend"}).provider == "generic_form"
+
+
 def test_provider_capabilities_are_explicit_and_do_not_claim_submit() -> None:
     registry = AdapterRegistry()
     greenhouse = registry.capabilities("greenhouse")

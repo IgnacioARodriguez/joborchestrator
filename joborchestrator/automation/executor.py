@@ -215,6 +215,17 @@ async def run_application_execution(
         else:
             schema = adapter.extract_form_schema_html(html)
         mapping = adapter.map_answers(schema, db.get_candidate_profile_payload() or {}, db.list_answer_definitions())
+        if capabilities.can_detect_fields and not (schema.get("fields") or []):
+            mapping.setdefault("unknown_fields", []).append(
+                {
+                    "name": "form_detection",
+                    "label": "No application form fields were detected.",
+                    "type": "unknown",
+                    "required": True,
+                    "sensitive": False,
+                    "classification": "unknown",
+                }
+            )
         if capabilities.can_fill_text_fields or capabilities.can_fill_selects or capabilities.can_fill_radios or capabilities.can_fill_checkboxes:
             _progress(
                 progress,
