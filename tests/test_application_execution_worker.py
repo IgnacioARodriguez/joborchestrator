@@ -230,6 +230,77 @@ def test_application_execution_handles_lever_review_before_submit(tmp_path, monk
     assert updated["state"] == "ready_for_review"
 
 
+def test_application_execution_handles_generic_form_review_before_submit(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload(
+        {
+            "full_name": "Synthetic Candidate",
+            "email": "candidate@example.test",
+            "phone": "+34 000 000 000",
+            "linkedin_url": "https://www.linkedin.com/in/synthetic",
+        }
+    )
+    apply_url = "https://careers.example.test/apply"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="generic-review-job",
+            source="company_page",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Build APIs with Python and FastAPI.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Build APIs with Python and FastAPI.", apply_url),
+            raw_payload={"id": "generic-review-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    db.update_job_application_materials(
+        job_id,
+        ats_cv_text=(
+            "Professional Summary\nSynthetic backend engineer.\n\n"
+            "Technical Skills\nPython, FastAPI.\n\n"
+            "Professional Experience\nBuilt reliable APIs.\n\n"
+            "Education\nSynthetic degree."
+        ),
+    )
+    db.upsert_answer_definition(
+        {
+            "canonical_key": "preferred_location",
+            "value": "Remote",
+            "source": "approved",
+            "sensitivity": "public",
+            "requires_confirmation": False,
+        }
+    )
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = Path("tests/fixtures/generic_application.html").read_text(encoding="utf-8")
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+
+    assert result["provider"] == "generic_form"
+    assert result["resume_upload"]["status"] == "uploaded"
+    assert result["unknown_fields"] == 0
+    assert result["auto_submit"]["status"] == "disabled"
+    assert result["forbidden_submit_controls"] == [
+        {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
+    ]
+    assert updated["state"] == "ready_for_review"
+
+
 def test_application_execution_auto_submits_when_preconditions_pass(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
     monkeypatch.setenv("ENABLE_AUTO_SUBMIT_APPROVED", "1")

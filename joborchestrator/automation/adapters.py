@@ -104,8 +104,9 @@ class GenericAssistedAdapter:
         }
 
 
-class GreenhouseAdapter(GenericAssistedAdapter):
-    provider = "greenhouse"
+class BrowserFormAdapter(GenericAssistedAdapter):
+    provider = "generic_form"
+    form_selector = "form"
 
     def capabilities(self) -> ProviderCapabilities:
         return ProviderCapabilities(
@@ -128,17 +129,15 @@ class GreenhouseAdapter(GenericAssistedAdapter):
         )
 
     def detect_html(self, html: str, job: dict[str, Any] | None = None) -> bool:
-        url = str((job or {}).get("apply_url") or (job or {}).get("url") or "").lower()
-        return "greenhouse.io" in url or "grnh.se" in url or "boards.greenhouse.io" in html.lower() or 'id="application_form"' in html
+        normalized = html.lower()
+        return "<form" in normalized and any(marker in normalized for marker in ("<input", "<textarea", "<select"))
 
     async def detect_page(self, page: "Page", job: dict[str, Any] | None = None) -> bool:
-        url = page.url.lower()
-        if "greenhouse.io" in url or "grnh.se" in url:
-            return True
-        return await page.locator("#application_form, form[action*='greenhouse' i]").count() > 0
+        return await page.locator(self.form_selector).count() > 0
 
     async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]:
-        fields = await page.locator("#application_form, form").first.evaluate(_GREENHOUSE_FORM_DISCOVERY_JS)
+        form = page.locator(self.form_selector).first
+        fields = await form.evaluate(_APPLICATION_FORM_DISCOVERY_JS) if await form.count() > 0 else []
         normalized = [_normalize_dom_field(field) for field in fields]
         return {"provider": self.provider, "fields": normalized}
 
@@ -185,7 +184,22 @@ class GreenhouseAdapter(GenericAssistedAdapter):
         )
 
 
-class LeverAdapter(GreenhouseAdapter):
+class GreenhouseAdapter(BrowserFormAdapter):
+    provider = "greenhouse"
+    form_selector = "#application_form, form"
+
+    def detect_html(self, html: str, job: dict[str, Any] | None = None) -> bool:
+        url = str((job or {}).get("apply_url") or (job or {}).get("url") or "").lower()
+        return "greenhouse.io" in url or "grnh.se" in url or "boards.greenhouse.io" in html.lower() or 'id="application_form"' in html
+
+    async def detect_page(self, page: "Page", job: dict[str, Any] | None = None) -> bool:
+        url = page.url.lower()
+        if "greenhouse.io" in url or "grnh.se" in url:
+            return True
+        return await page.locator("#application_form, form[action*='greenhouse' i]").count() > 0
+
+
+class LeverAdapter(BrowserFormAdapter):
     provider = "lever"
 
     def detect_html(self, html: str, job: dict[str, Any] | None = None) -> bool:
@@ -196,7 +210,6 @@ class LeverAdapter(GreenhouseAdapter):
             or "lever.co" in url
             or "jobs.lever.co" in normalized_html
             or 'data-qa="btn-apply"' in normalized_html
-            or 'action="/apply"' in normalized_html
             or "lever-application-form" in normalized_html
         )
 
@@ -204,7 +217,7 @@ class LeverAdapter(GreenhouseAdapter):
         url = page.url.lower()
         if "jobs.lever.co" in url or "lever.co" in url:
             return True
-        return await page.locator('form, [data-qa="btn-apply"]').count() > 0
+        return await page.locator('[data-qa="btn-apply"], .lever-application-form').count() > 0
 
     async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]:
         form = page.locator("form").first
@@ -222,9 +235,13 @@ class LeverAdapter(GreenhouseAdapter):
         return {"provider": self.provider, "fields": normalized}
 
 
+class GenericFormAdapter(BrowserFormAdapter):
+    provider = "generic_form"
+
+
 class AdapterRegistry:
     def __init__(self) -> None:
-        self._adapters: list[ApplicationAdapter] = [GreenhouseAdapter(), LeverAdapter(), GenericAssistedAdapter()]
+        self._adapters: list[ApplicationAdapter] = [GreenhouseAdapter(), LeverAdapter(), GenericFormAdapter(), GenericAssistedAdapter()]
         self._declared: dict[str, ProviderCapabilities] = {
             adapter.provider: adapter.capabilities() for adapter in self._adapters
         }
