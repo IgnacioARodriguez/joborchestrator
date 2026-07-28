@@ -116,6 +116,7 @@ def test_audit_application_coverage_runs_dry_run_on_local_fixture(tmp_path: Path
             [f"data:text/html,{quote(html)}"],
             db_path=tmp_path / "coverage.db",
             provider="generic_form",
+            answers_file=None,
             headful=False,
             timeout_ms=10_000,
             keep_db=False,

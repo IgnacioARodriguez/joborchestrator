@@ -133,10 +133,6 @@ def _normalize_answer_definition(answer: dict[str, Any]) -> dict[str, Any]:
 def _match_answer_definition(label: str, canonical: str | None, answers: list[dict[str, Any]]) -> dict[str, Any] | None:
     normalized_label = normalize_question(label)
     normalized_canonical = normalize_question(canonical or "")
-    if normalized_canonical:
-        for answer in answers:
-            if answer.get("_normalized_key") == normalized_canonical:
-                return {**answer, "_match_strategy": "canonical_key"}
     exact_matches = [
         answer for answer in answers
         if normalized_label and normalized_label in set(answer.get("_normalized_patterns") or [])
@@ -151,6 +147,10 @@ def _match_answer_definition(label: str, canonical: str | None, answers: list[di
                 break
     if len(regex_matches) == 1:
         return {**regex_matches[0], "_match_strategy": "question_pattern_regex"}
+    if normalized_canonical:
+        for answer in answers:
+            if answer.get("_normalized_key") == normalized_canonical:
+                return {**answer, "_match_strategy": "canonical_key"}
     return None
 
 

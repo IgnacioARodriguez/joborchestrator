@@ -18,6 +18,7 @@
     "smoke:auto-submit": ".venv\\Scripts\\python.exe scripts/smoke_auto_submit.py",
     "rehearse:application": ".venv\\Scripts\\python.exe scripts/rehearse_application_url.py",
     "audit:application-coverage": ".venv\\Scripts\\python.exe scripts/audit_application_coverage.py",
+    "seed:application-answers": ".venv\\Scripts\\python.exe scripts/seed_application_answers.py",
     "build": "next build",
     "start": "next start",
     "lint": "eslint app components lib --max-warnings=0",

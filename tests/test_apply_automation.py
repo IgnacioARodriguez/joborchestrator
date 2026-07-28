@@ -144,6 +144,58 @@ def test_answer_bank_uses_question_patterns_for_unknown_safe_fields() -> None:
     assert mapping["unknown_fields"] == []
 
 
+def test_answer_bank_prefers_question_pattern_over_canonical_guess() -> None:
+    mapping = map_answers(
+        {
+            "fields": [
+                {
+                    "name": "require_work_auth",
+                    "label": "Do you require work authorization?",
+                    "type": "select",
+                    "required": True,
+                    "options": [{"value": "yes", "label": "Yes"}, {"value": "no", "label": "No"}],
+                }
+            ]
+        },
+        {},
+        [
+            {
+                "canonical_key": "work_authorization",
+                "question_patterns": ["Do you have permanent authorization to work?"],
+                "answer_type": "select",
+                "value": "No",
+                "source": "approved",
+                "status": "approved",
+                "sensitivity": "sensitive",
+                "requires_confirmation": False,
+            },
+            {
+                "canonical_key": "sponsorship",
+                "question_patterns": ["Do you require work authorization?"],
+                "answer_type": "select",
+                "value": "Yes",
+                "source": "approved",
+                "status": "approved",
+                "sensitivity": "sensitive",
+                "requires_confirmation": False,
+            },
+        ],
+    )
+
+    answer = mapping["answers"][0]
+    assert answer["canonical_key"] == "sponsorship"
+    assert answer["value"] == "Yes"
+    assert answer["match_strategy"] == "question_pattern_exact"
+    assert safe_fill_plan(mapping) == [
+        {
+            "field_name": "require_work_auth",
+            "value": "yes",
+            "canonical_key": "sponsorship",
+            "action_type": "select_option",
+        }
+    ]
+
+
 def test_answer_bank_does_not_use_generated_or_expired_answers() -> None:
     mapping = map_answers(
         {"fields": [{"name": "custom", "label": "Tell us about your favorite project", "required": True}]},

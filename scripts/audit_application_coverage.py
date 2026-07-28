@@ -187,6 +187,7 @@ async def audit_application_coverage(
     *,
     db_path: Path,
     provider: str,
+    answers_file: Path | None,
     headful: bool,
     timeout_ms: int,
     keep_db: bool,
@@ -199,6 +200,10 @@ async def audit_application_coverage(
 
     db.init_db()
     db.save_candidate_profile_payload(SYNTHETIC_PROFILE)
+    if answers_file:
+        for answer in json.loads(answers_file.read_text(encoding="utf-8")):
+            if isinstance(answer, dict):
+                db.upsert_answer_definition(answer)
 
     results: list[dict[str, object]] = []
     for index, url in enumerate(urls, start=1):
@@ -324,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--url", action="append", default=[], help="Application URL to audit. Can be provided more than once.")
     parser.add_argument("--urls-file", type=Path, help="Text file with one application URL per line.")
     parser.add_argument("--provider", default="generic", help="Provider hint passed to the automation registry.")
+    parser.add_argument("--answers-file", type=Path, help="JSON file with approved answer definitions to seed into the isolated audit DB.")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--db-path", type=Path, default=PROJECT_ROOT / "logs" / "application-coverage-audit.db")
     parser.add_argument("--json-out", type=Path, default=PROJECT_ROOT / "logs" / "application-coverage-audit.json")
@@ -344,6 +350,7 @@ def main(argv: list[str] | None = None) -> int:
             urls,
             db_path=args.db_path,
             provider=args.provider,
+            answers_file=args.answers_file,
             headful=args.headful,
             timeout_ms=args.timeout_ms,
             keep_db=args.keep_db,
