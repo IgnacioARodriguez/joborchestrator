@@ -962,6 +962,12 @@ def _materials_repair_instruction(validation_feedback: str) -> str:
             "'I would treat this as exploratory'. Remove the exact words confident, excited, eager, strong fit, "
             "ideal fit, perfect fit, excellent fit, and immediate impact."
         )
+    if "ats_cv_text is too short" in normalized or "too few parseable lines" in normalized:
+        instructions.append(
+            "Rewrite ats_cv_text as a complete ATS CV, not a summary. Include contact/header, Professional Summary, "
+            "Technical Skills, Professional Experience with every base CV employer, and Education. Use at least "
+            "700 characters and 18 non-empty lines while preserving only truthful source-backed facts."
+        )
     if "hedge language" in normalized:
         instructions.append(
             "Remove parenthetical hedges such as 'SQL expertise' or 'implied'. Use broader supported terms "

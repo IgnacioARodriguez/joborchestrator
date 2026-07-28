@@ -14,6 +14,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     _kit_validation_error,
     _materials_validation_error,
     _materials_payload,
+    _materials_repair_instruction,
     _materials_validation_retry_limit,
     _openai_materials_messages,
     build_application_kit_with_llm,
@@ -398,6 +399,17 @@ def test_llm_application_kit_validation_requires_complete_ats_cv():
     assert "too short to be a complete ATS CV" in error
     assert "missing standard ATS sections" in error
     assert "internal/non-CV notes" in error
+
+
+def test_materials_repair_instruction_expands_short_ats_cv():
+    instruction = _materials_repair_instruction(
+        "ats_cv_text is too short to be a complete ATS CV; ats_cv_text has too few parseable lines for a complete CV"
+    )
+
+    assert "complete ATS CV" in instruction
+    assert "700 characters" in instruction
+    assert "18 non-empty lines" in instruction
+    assert "every base CV employer" in instruction
 
 
 def test_llm_application_kit_validation_accepts_complete_parseable_ats_cv():
