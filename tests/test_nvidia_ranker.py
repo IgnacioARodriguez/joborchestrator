@@ -451,6 +451,56 @@ def test_rank_jobs_with_nvidia_caps_onsite_outside_preferred_location(monkeypatc
     assert "safety_cap_location_review" in ranking.evidence.llm_escalation_reasons
 
 
+def test_rank_jobs_with_nvidia_caps_hybrid_outside_preferences_to_skip(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Applied AI Engineer",
+                "company": "Bjak",
+                "location": "Malaysia",
+                "workplace_type": "remote",
+                "description_text": (
+                    "Remote-friendly AI Engineer role with Python and backend APIs, "
+                    "but hybrid work requires at least 3 days per week in the Malaysia office."
+                ),
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 82, "APPLY_WITH_TAILORED_CV")
+        payload["evidence"]["central_requirements"] = ["AI Engineer", "Python", "backend APIs"]
+        payload["evidence"]["strong_matches"] = ["Python", "backend APIs"]
+        payload["evidence"]["red_flags"] = [
+            "Hybrid role requiring at least 3 days/week in Malaysia office"
+        ]
+        payload["evidence"]["central_requirement_coverage"] = 0.82
+        payload["scores"]["central_requirement_coverage"] = 82
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(
+        nvidia_ranker.db,
+        "save_job_ranking",
+        lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking),
+    )
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    ranking = saved[1]
+    assert summary["APPLY_WITH_TAILORED_CV"] == 0
+    assert summary["SKIP"] == 1
+    assert ranking.decision == "SKIP"
+    assert ranking.final_score == 45
+    assert ranking.evidence.requires_llm_review is True
+    assert any("onsite/hybrid" in item for item in ranking.evidence.red_flags)
+    assert "safety_cap_location_review" in ranking.evidence.llm_escalation_reasons
+
+
 def test_nvidia_ranking_flags_brazil_power_systems_tnd_gap(monkeypatch):
     jobs = pd.DataFrame(
         [
@@ -725,7 +775,7 @@ def test_nvidia_ranking_caps_low_coverage_maybe_with_dealbreaker_to_skip(monkeyp
                 "title": "Applied AI Engineer",
                 "company": "Bjak",
                 "location": "Malaysia",
-                "description_text": "Hybrid role requiring 3 days/week in Malaysia office. Python and LLM APIs required.",
+                "description_text": "Remote role with country eligibility to verify. Python and LLM APIs required.",
             }
         ]
     )

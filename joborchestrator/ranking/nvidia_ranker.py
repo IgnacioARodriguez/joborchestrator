@@ -1156,12 +1156,17 @@ def _ranking_safety_signals(
 
     onsite_label = _onsite_or_hybrid_outside_preferred_location(job_text, safety_context)
     if onsite_label:
+        onsite_decision_cap = (
+            cast(Decision, "SKIP")
+            if _is_actionable_outside_preferred_location_label(onsite_label)
+            else cast(Decision, "APPLY_WITH_TAILORED_CV")
+        )
         signals.append(
             RankingSafetySignal(
                 label=onsite_label,
-                decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
-                max_score=75,
-                risk_penalty=20,
+                decision_cap=onsite_decision_cap,
+                max_score=45 if onsite_decision_cap == "SKIP" else 75,
+                risk_penalty=30 if onsite_decision_cap == "SKIP" else 20,
                 reason="safety_cap_location_review",
             )
         )
@@ -1458,6 +1463,8 @@ def _onsite_or_hybrid_outside_preferred_location(
         return None
     if _has_clear_remote_option(job_text) and not has_onsite and not _hybrid_with_specific_site(job_text):
         return None
+    if not _has_specific_onsite_or_hybrid_site(job_text):
+        return "onsite/hybrid location requires review"
     preferred_locations = [
         _normalize_text(str(item))
         for item in safety_context.get("preferred_locations") or []
@@ -1466,11 +1473,26 @@ def _onsite_or_hybrid_outside_preferred_location(
     if not preferred_locations:
         return "onsite/hybrid location requires review"
     if any(location and location in job_text for location in preferred_locations):
+        if _requires_work_mode_review(job_text, safety_context):
+            return "onsite/hybrid location requires review"
         return None
     preferred_cities = [location.split(",", 1)[0].strip() for location in preferred_locations]
     if any(city and city in job_text for city in preferred_cities):
+        if _requires_work_mode_review(job_text, safety_context):
+            return "onsite/hybrid location requires review"
+        return None
+    if "spain" in preferred_locations and _mentions_spain_location(job_text):
+        if _requires_work_mode_review(job_text, safety_context):
+            return "onsite/hybrid location requires review"
         return None
     return "onsite/hybrid location is not clearly within preferred locations"
+
+
+def _is_actionable_outside_preferred_location_label(label: str) -> bool:
+    normalized = _normalize_text(label)
+    return normalized in {
+        "onsite/hybrid location is not clearly within preferred locations",
+    }
 
 
 def _has_actionable_onsite_or_hybrid_restriction(job_text: str) -> bool:
@@ -1478,7 +1500,63 @@ def _has_actionable_onsite_or_hybrid_restriction(job_text: str) -> bool:
         return False
     if _has_clear_remote_option(job_text) and not _hybrid_with_specific_site(job_text):
         return False
-    return True
+    return _has_specific_onsite_or_hybrid_site(job_text)
+
+
+def _requires_work_mode_review(job_text: str, safety_context: dict[str, Any]) -> bool:
+    preferred_work_modes = {
+        _normalize_text(str(item))
+        for item in safety_context.get("preferred_work_modes") or []
+        if str(item).strip()
+    }
+    if not preferred_work_modes:
+        return False
+    if "remote" not in preferred_work_modes:
+        return False
+    has_onsite = _contains_any(job_text, ["onsite", "on site", "presencial"])
+    has_hybrid = _contains_any(job_text, ["hybrid", "hibrido"])
+    return has_onsite or has_hybrid
+
+
+def _has_specific_onsite_or_hybrid_site(job_text: str) -> bool:
+    if _hybrid_with_specific_site(job_text):
+        return True
+    return _contains_any(
+        job_text,
+        [
+            "hub de",
+            "office",
+            "oficina",
+            "barcelona",
+            "madrid",
+            "malaga",
+            "málaga",
+            "munich",
+            "berlin",
+            "malaysia",
+            "brazil",
+            "india",
+        ],
+    )
+
+
+def _mentions_spain_location(job_text: str) -> bool:
+    return _contains_any(
+        job_text,
+        [
+            "spain",
+            "espana",
+            "españa",
+            "barcelona",
+            "madrid",
+            "malaga",
+            "málaga",
+            "valencia",
+            "sevilla",
+            "bilbao",
+            "valladolid",
+        ],
+    )
 
 
 def _has_clear_remote_option(job_text: str) -> bool:
@@ -1505,6 +1583,8 @@ def _hybrid_with_specific_site(job_text: str) -> bool:
             "hybrid in",
             "hibrido en",
             "hybrid setting in",
+            "days/week",
+            "days per week",
             "days onsite",
             "days on site",
             "dias presencial",

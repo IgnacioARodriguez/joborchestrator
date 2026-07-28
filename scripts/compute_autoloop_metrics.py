@@ -109,6 +109,7 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     review_rows = [row for row in ranked if bool(evidence(row).get("requires_llm_review"))]
     soft_dealbreaker_rows = [row for row in ranked if has_soft_decision_with_dealbreaker(row)]
     soft_central_gap_rows = [row for row in ranked if has_soft_decision_with_many_central_gaps(row)]
+    soft_location_review_rows = [row for row in ranked if has_soft_decision_with_generic_location_signal(row)]
     inferred_language_rows = [row for row in ranked if has_inferred_language_signal(row)]
     generic_location_rows = [row for row in ranked if has_generic_location_signal(row)]
     scores = [int(row["final_score"]) for row in ranked if row.get("final_score") is not None]
@@ -143,6 +144,8 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "soft_dealbreaker_rate": round(len(soft_dealbreaker_rows) / len(ranked), 4) if ranked else 0.0,
         "soft_central_gap_count": len(soft_central_gap_rows),
         "soft_central_gap_rate": round(len(soft_central_gap_rows) / len(ranked), 4) if ranked else 0.0,
+        "soft_location_review_count": len(soft_location_review_rows),
+        "soft_location_review_rate": round(len(soft_location_review_rows) / len(ranked), 4) if ranked else 0.0,
         "inferred_language_signal_count": len(inferred_language_rows),
         "generic_location_signal_count": len(generic_location_rows),
         "active_ranking_prompt_version": active_ranking_prompt,
@@ -155,6 +158,7 @@ def compute_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "high_item_attempt_examples": item_attempt_examples(high_item_attempt_rows),
         "soft_dealbreaker_examples": examples(soft_dealbreaker_rows),
         "soft_central_gap_examples": examples(soft_central_gap_rows),
+        "soft_location_review_examples": examples(soft_location_review_rows),
         "inferred_language_signal_examples": examples(inferred_language_rows),
         "generic_location_signal_examples": examples(generic_location_rows),
         "non_active_prompt_examples": prompt_version_examples(non_active_prompt_rows),
@@ -189,6 +193,10 @@ def has_soft_decision_with_many_central_gaps(row: dict[str, Any]) -> bool:
         return False
     coverage = central_coverage(row)
     return coverage is not None and coverage < 70
+
+
+def has_soft_decision_with_generic_location_signal(row: dict[str, Any]) -> bool:
+    return row.get("decision") in {"APPLY_WITH_TAILORED_CV", "MAYBE"} and has_generic_location_signal(row)
 
 
 def has_inferred_language_signal(row: dict[str, Any]) -> bool:

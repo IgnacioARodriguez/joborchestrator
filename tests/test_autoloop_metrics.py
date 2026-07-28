@@ -188,7 +188,10 @@ def test_compute_metrics_flags_soft_dealbreakers_and_generic_review_signals():
     assert summary["soft_dealbreaker_rate"] == 0.5
     assert summary["inferred_language_signal_count"] == 1
     assert summary["generic_location_signal_count"] == 1
+    assert summary["soft_location_review_count"] == 1
+    assert summary["soft_location_review_rate"] == 0.5
     assert summary["soft_dealbreaker_examples"][0]["job_id"] == 1
+    assert summary["soft_location_review_examples"][0]["job_id"] == 1
 
 
 def test_compute_metrics_flags_soft_decisions_with_many_central_gaps():
