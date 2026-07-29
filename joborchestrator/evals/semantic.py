@@ -17,9 +17,14 @@ class SemanticEvalResult:
     metrics: dict[str, Any]
 
 
-def build_auto_eval_case(job: Any, profile_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_auto_eval_case(
+    job: Any,
+    profile_payload: dict[str, Any] | None = None,
+    ranking_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     job_payload = _to_dict(job)
     profile_payload = profile_payload or {}
+    ranking_payload = ranking_payload or {}
     base_cv_text = str(profile_payload.get("base_cv_text") or "").strip()
     supported_terms = _supported_profile_terms(profile_payload)
     job_text = _normalize(
