@@ -4,7 +4,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
-from joborchestrator.automation.answer_bank import requires_explicit_human_consent
+from joborchestrator.automation.policy import evaluate_answer_action
 
 
 JourneyPhase = Literal[
@@ -62,6 +62,8 @@ class PlannedAction:
     source: str | None = None
     value_preview: str | None = None
     reason: str | None = None
+    policy_decision: dict[str, Any] | None = None
+    reason_code: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -291,9 +293,25 @@ def _planned_action_for_answer(answer: dict[str, Any], control_handle: dict[str,
     value = str(answer.get("value") or "").strip()
     canonical = str(answer.get("canonical_key") or "").strip() or None
     field_type = str(answer.get("field_type") or "text")
+    action_type = _action_type_for_field(field_type)
+    decision = evaluate_answer_action(answer, action=action_type)
     if not field_name:
         return None
-    if answer.get("requires_confirmation"):
+    if decision.outcome == "DENY":
+        return PlannedAction(
+            action_type="review_answer",
+            field_name=field_name,
+            canonical_key=canonical,
+            field_type=field_type,
+            policy="forbid",
+            surface_id=(control_handle or {}).get("surface_id"),
+            control_handle=control_handle,
+            source=answer.get("source"),
+            reason=decision.reason_code,
+            policy_decision=decision.to_dict(),
+            reason_code=decision.reason_code,
+        )
+    if decision.outcome == "REVIEW_REQUIRED":
         return PlannedAction(
             action_type="review_answer",
             field_name=field_name,
@@ -303,42 +321,12 @@ def _planned_action_for_answer(answer: dict[str, Any], control_handle: dict[str,
             surface_id=(control_handle or {}).get("surface_id"),
             control_handle=control_handle,
             source=answer.get("source"),
-            reason="requires_confirmation",
+            reason=decision.reason_code,
+            policy_decision=decision.to_dict(),
+            reason_code=decision.reason_code,
         )
     if not value:
         return None
-    if _requires_explicit_human_consent(answer):
-        return PlannedAction(
-            action_type="review_answer",
-            field_name=field_name,
-            canonical_key=canonical,
-            field_type=field_type,
-            policy="require_confirmation",
-            surface_id=(control_handle or {}).get("surface_id"),
-            control_handle=control_handle,
-            source=answer.get("source"),
-            reason="explicit_human_consent_required",
-        )
-    if answer.get("source") != "approved_answer" and canonical not in {
-        "full_name",
-        "email",
-        "phone",
-        "linkedin",
-        "portfolio",
-        "preferred_location",
-        "talent_pool",
-    }:
-        return PlannedAction(
-            action_type="review_answer",
-            field_name=field_name,
-            canonical_key=canonical,
-            field_type=field_type,
-            policy="require_confirmation",
-            surface_id=(control_handle or {}).get("surface_id"),
-            control_handle=control_handle,
-            source=answer.get("source"),
-            reason="unapproved_non_profile_answer",
-        )
     if field_type in {"select", "radio"} and _match_option(value, list(answer.get("options") or [])) is None:
         return PlannedAction(
             action_type="review_answer",
@@ -350,11 +338,12 @@ def _planned_action_for_answer(answer: dict[str, Any], control_handle: dict[str,
             control_handle=control_handle,
             source=answer.get("source"),
             reason="option_not_matched",
+            reason_code="option_not_matched",
         )
     if field_type == "checkbox" and _normalized(value) not in {"yes", "true", "checked", "1"}:
         return None
     return PlannedAction(
-        action_type=_action_type_for_field(field_type),
+        action_type=action_type,
         field_name=field_name,
         canonical_key=canonical,
         field_type=field_type,
@@ -363,14 +352,8 @@ def _planned_action_for_answer(answer: dict[str, Any], control_handle: dict[str,
         control_handle=control_handle,
         source=answer.get("source"),
         value_preview=_preview_value(value),
-    )
-
-
-def _requires_explicit_human_consent(answer: dict[str, Any]) -> bool:
-    return requires_explicit_human_consent(
-        str(answer.get("label") or ""),
-        str(answer.get("field_name") or ""),
-        str(answer.get("canonical_key") or ""),
+        policy_decision=decision.to_dict(),
+        reason_code=decision.reason_code,
     )
 
 

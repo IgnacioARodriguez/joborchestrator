@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from joborchestrator.automation.policy import requires_explicit_human_consent as policy_requires_explicit_human_consent
+
 
 SENSITIVE_KEYS = {
     "salary",
@@ -65,24 +67,7 @@ def classify_field(label: str, field_type: str = "text") -> tuple[str | None, st
 
 
 def requires_explicit_human_consent(*parts: str) -> bool:
-    text = normalize_question(" ".join(str(part or "") for part in parts))
-    consent_markers = {
-        "consent",
-        "agree",
-        "agreement",
-        "terms",
-        "privacy",
-        "policy",
-        "declaration",
-        "certify",
-        "accurate",
-        "accuracy",
-        "signature",
-        "acknowledge",
-        "acknowledgement",
-        "background check",
-    }
-    return any(marker in text for marker in consent_markers)
+    return policy_requires_explicit_human_consent(*parts)
 
 
 def map_answers(schema: dict[str, Any], profile: dict[str, Any], answer_bank: list[dict[str, Any]]) -> dict[str, Any]:

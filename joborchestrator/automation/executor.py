@@ -13,7 +13,7 @@ from playwright.async_api import Browser, BrowserContext, Page, TimeoutError as 
 from joborchestrator.automation.adapters import AdapterRegistry
 from joborchestrator.automation.accounts import load_password, site_identity_from_url
 from joborchestrator.automation import local_browser_agent
-from joborchestrator.automation.answer_bank import requires_explicit_human_consent
+from joborchestrator.automation.policy import evaluate_answer_action, evaluate_browser_action
 from joborchestrator.automation.journey import ApplicationJourneyEngine
 from joborchestrator.automation.validation import validate_application_surface
 from joborchestrator.intelligence.llm_application_materials import export_ats_cv_pdf_bytes
@@ -871,9 +871,10 @@ def _progress(progress: Progress | None, message: str) -> None:
 
 
 def classify_browser_action(label: str) -> str:
-    if FORBIDDEN_SUBMIT_TEXT_RE.search(label):
+    decision = evaluate_browser_action(label)
+    if decision.reason_code == "final_submit_reserved_for_user":
         return "forbidden"
-    if APPLY_TEXT_RE.search(label):
+    if decision.outcome == "ALLOW":
         return "safe"
     return "review_required"
 
@@ -1109,26 +1110,20 @@ def _schema_requires_resume(schema: dict[str, Any]) -> bool:
 def safe_fill_plan(mapping: dict[str, Any]) -> list[dict[str, str]]:
     plan: list[dict[str, str]] = []
     for answer in mapping.get("answers") or []:
-        if answer.get("requires_confirmation"):
-            continue
         value = str(answer.get("value") or "").strip()
         field_name = str(answer.get("field_name") or "").strip()
         canonical = str(answer.get("canonical_key") or "").strip()
         if not value or not field_name:
             continue
-        if _requires_explicit_human_consent(answer):
-            continue
-        if answer.get("source") != "approved_answer" and canonical not in {
-            "full_name",
-            "email",
-            "phone",
-            "linkedin",
-            "portfolio",
-            "preferred_location",
-            "talent_pool",
-        }:
-            continue
         field_type = str(answer.get("field_type") or "text")
+        action_type = {
+            "select": "select_option",
+            "radio": "choose_radio",
+            "checkbox": "check",
+        }.get(field_type, "fill_text")
+        decision = evaluate_answer_action(answer, action=action_type)
+        if decision.outcome != "ALLOW":
+            continue
         options = list(answer.get("options") or [])
         if field_type == "select":
             matched = _match_option(value, options)
@@ -1149,16 +1144,6 @@ def safe_fill_plan(mapping: dict[str, Any]) -> list[dict[str, str]]:
             continue
         plan.append({"field_name": field_name, "value": value, "canonical_key": canonical, "action_type": "fill_text"})
     return plan
-
-
-def _requires_explicit_human_consent(answer: dict[str, Any]) -> bool:
-    return requires_explicit_human_consent(
-        str(answer.get("label") or ""),
-        str(answer.get("field_name") or ""),
-        str(answer.get("canonical_key") or ""),
-    )
-
-
 def _match_option(value: str, options: list[Any]) -> dict[str, str] | None:
     wanted = _normalized(value)
     matches: list[dict[str, str]] = []
