@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from joborchestrator.automation.ledger import build_obligation_ledger
 from joborchestrator.automation.policy import evaluate_answer_action
+from joborchestrator.automation.surfaces import build_surface_fingerprint, logical_control_identity
 
 
 JourneyPhase = Literal[
@@ -28,6 +29,7 @@ class InteractionSurface:
     parent_surface_id: str | None = None
     accessible: bool = True
     challenge_detected: bool = False
+    fingerprint: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -46,6 +48,7 @@ class ControlHandle:
     visible: bool = True
     confidence: float = 0.5
     fingerprint: str = ""
+    logical_identity: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -230,6 +233,10 @@ class ApplicationJourneyEngine:
             kind=root_surface_kind,
             origin=_origin_from_url(str(getattr(page, "url", "") or "")),
             accessible=True,
+            fingerprint=build_surface_fingerprint(
+                kind=root_surface_kind,
+                origin=_origin_from_url(str(getattr(page, "url", "") or "")),
+            ),
         )
         if not capabilities.can_detect_fields:
             return [{"surface": main_surface, "schema": adapter.extract_form_schema_html(html), "browser_surface": page}]
@@ -250,6 +257,12 @@ class ApplicationJourneyEngine:
                 origin=_origin_from_url(str(getattr(frame, "url", "") or "")),
                 parent_surface_id="main",
                 accessible=True,
+                fingerprint=build_surface_fingerprint(
+                    kind="frame",
+                    origin=_origin_from_url(str(getattr(frame, "url", "") or "")),
+                    parent_surface_id="main",
+                    index=index,
+                ),
             )
             try:
                 schema = await adapter.extract_form_schema_page(frame)
@@ -262,6 +275,7 @@ class ApplicationJourneyEngine:
                             origin=surface.origin,
                             parent_surface_id="main",
                             accessible=False,
+                            fingerprint=surface.fingerprint,
                         ),
                         "schema": {"provider": str(adapter.provider), "fields": []},
                         "browser_surface": frame,
@@ -467,7 +481,7 @@ def _control_handle_for_field(field: dict[str, Any], surface_id: str, index: int
     strategies = [locator_strategy] if locator_strategy else []
     if field.get("in_shadow_root"):
         strategies.append("shadow_root")
-    fingerprint = f"{surface_id}:{name}:{native_type}:{bool(field.get('required'))}"
+    identity = logical_control_identity(field, surface_id=surface_id, index=index)
     return ControlHandle(
         surface_id=surface_id,
         control_id=name,
@@ -477,7 +491,8 @@ def _control_handle_for_field(field: dict[str, Any], surface_id: str, index: int
         locator_strategies=strategies,
         required=bool(field.get("required")),
         confidence=float(field.get("confidence") or 0.5),
-        fingerprint=fingerprint,
+        fingerprint=identity.fingerprint,
+        logical_identity=identity.to_dict(),
     )
 
 
