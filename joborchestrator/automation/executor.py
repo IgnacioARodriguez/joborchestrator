@@ -1231,6 +1231,8 @@ async def fill_safe_fields_on_page(page: Page, mapping: dict[str, Any], *, dry_r
                 if await locator.count() > 0:
                     await locator.select_option(value=value, timeout=3000)
                     filled.append(field_name)
+                elif await _select_deep_native(page, field_name=field_name, value=value, dry_run=dry_run):
+                    filled.append(field_name)
                 elif await _select_aria_choice(page, field_name=field_name, value=value, dry_run=dry_run):
                     filled.append(field_name)
                 else:
@@ -1244,6 +1246,8 @@ async def fill_safe_fields_on_page(page: Page, mapping: dict[str, Any], *, dry_r
                 if await locator.count() > 0:
                     await locator.check(timeout=3000)
                     filled.append(field_name)
+                elif await _choose_deep_native_radio(page, field_name=field_name, value=value, dry_run=dry_run):
+                    filled.append(field_name)
                 elif await _choose_aria_radio(page, field_name=field_name, value=value, dry_run=dry_run):
                     filled.append(field_name)
                 else:
@@ -1256,6 +1260,8 @@ async def fill_safe_fields_on_page(page: Page, mapping: dict[str, Any], *, dry_r
             try:
                 if await locator.count() > 0:
                     await locator.check(timeout=3000)
+                    filled.append(field_name)
+                elif await _check_deep_native_checkbox(page, field_name=field_name, dry_run=dry_run):
                     filled.append(field_name)
                 elif await _check_aria_checkbox(page, field_name=field_name, dry_run=dry_run):
                     filled.append(field_name)
@@ -1280,6 +1286,9 @@ async def fill_safe_fields_on_page(page: Page, mapping: dict[str, Any], *, dry_r
             except Exception:
                 continue
         if locator is None:
+            if await _fill_deep_text(page, field_name=field_name, value=value, dry_run=dry_run):
+                filled.append(field_name)
+                continue
             skipped.append(field_name)
             continue
         try:
@@ -1299,6 +1308,171 @@ async def fill_safe_fields_on_page(page: Page, mapping: dict[str, Any], *, dry_r
         "filled_fields": filled,
         "skipped_fields": skipped,
     }
+
+
+async def _fill_deep_text(page: Page, *, field_name: str, value: str, dry_run: bool) -> bool:
+    return bool(
+        await page.evaluate(
+            """({ fieldName, value, dryRun }) => {
+              const element = findDeepControl(fieldName, 'input:not([type]), input[type="text"], input[type="email"], input[type="tel"], input[type="url"], textarea');
+              if (!element) return false;
+              element.focus();
+              element.value = value;
+              element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+              element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+              if (dryRun) element.setAttribute('data-joborchestrator-dry-run', 'filled');
+              return true;
+
+              function findDeepControl(fieldName, selector) {
+                const wanted = normalize(fieldName);
+                return collectDeep(document, selector)
+                  .find(element => visible(element) && normalize(element.getAttribute('name') || element.id || element.getAttribute('aria-label') || element.getAttribute('placeholder')) === wanted) || null;
+              }
+              function collectDeep(root, selector) {
+                const found = [];
+                const visit = node => {
+                  if (!node) return;
+                  if (node.querySelectorAll) found.push(...Array.from(node.querySelectorAll(selector)));
+                  const descendants = node.querySelectorAll ? Array.from(node.querySelectorAll('*')) : [];
+                  for (const descendant of descendants) {
+                    if (descendant.shadowRoot) visit(descendant.shadowRoot);
+                  }
+                };
+                visit(root);
+                return found;
+              }
+              function visible(element) {
+                const style = window.getComputedStyle(element);
+                return style.display !== 'none' && style.visibility !== 'hidden' && !element.hidden && Boolean(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+              }
+              function normalize(raw) {
+                return String(raw || '').replace(/\\s+/g, ' ').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+              }
+            }""",
+            {"fieldName": field_name, "value": value, "dryRun": dry_run},
+        )
+    )
+
+
+async def _select_deep_native(page: Page, *, field_name: str, value: str, dry_run: bool) -> bool:
+    return bool(
+        await page.evaluate(
+            """({ fieldName, value, dryRun }) => {
+              const element = findDeepControl(fieldName, 'select');
+              if (!element) return false;
+              const wanted = normalize(value);
+              const option = Array.from(element.options).find(item => normalize(item.value) === wanted || normalize(item.textContent) === wanted);
+              if (!option) return false;
+              element.value = option.value;
+              element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+              element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+              if (dryRun) element.setAttribute('data-joborchestrator-dry-run', 'filled');
+              return true;
+
+              function findDeepControl(fieldName, selector) {
+                const wanted = normalize(fieldName);
+                return collectDeep(document, selector)
+                  .find(element => visible(element) && normalize(element.getAttribute('name') || element.id || element.getAttribute('aria-label')) === wanted) || null;
+              }
+              function collectDeep(root, selector) {
+                const found = [];
+                const visit = node => {
+                  if (!node) return;
+                  if (node.querySelectorAll) found.push(...Array.from(node.querySelectorAll(selector)));
+                  const descendants = node.querySelectorAll ? Array.from(node.querySelectorAll('*')) : [];
+                  for (const descendant of descendants) if (descendant.shadowRoot) visit(descendant.shadowRoot);
+                };
+                visit(root);
+                return found;
+              }
+              function visible(element) {
+                const style = window.getComputedStyle(element);
+                return style.display !== 'none' && style.visibility !== 'hidden' && !element.hidden && Boolean(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+              }
+              function normalize(raw) {
+                return String(raw || '').replace(/\\s+/g, ' ').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+              }
+            }""",
+            {"fieldName": field_name, "value": value, "dryRun": dry_run},
+        )
+    )
+
+
+async def _choose_deep_native_radio(page: Page, *, field_name: str, value: str, dry_run: bool) -> bool:
+    return bool(
+        await page.evaluate(
+            """({ fieldName, value, dryRun }) => {
+              const wantedField = normalize(fieldName);
+              const wantedValue = normalize(value);
+              const radio = collectDeep(document, 'input[type="radio"]')
+                .find(element => visible(element) && normalize(element.getAttribute('name') || element.id) === wantedField && normalize(element.value) === wantedValue);
+              if (!radio) return false;
+              radio.checked = true;
+              radio.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+              radio.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+              if (dryRun) radio.setAttribute('data-joborchestrator-dry-run', 'filled');
+              return true;
+
+              function collectDeep(root, selector) {
+                const found = [];
+                const visit = node => {
+                  if (!node) return;
+                  if (node.querySelectorAll) found.push(...Array.from(node.querySelectorAll(selector)));
+                  const descendants = node.querySelectorAll ? Array.from(node.querySelectorAll('*')) : [];
+                  for (const descendant of descendants) if (descendant.shadowRoot) visit(descendant.shadowRoot);
+                };
+                visit(root);
+                return found;
+              }
+              function visible(element) {
+                const style = window.getComputedStyle(element);
+                return style.display !== 'none' && style.visibility !== 'hidden' && !element.hidden && Boolean(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+              }
+              function normalize(raw) {
+                return String(raw || '').replace(/\\s+/g, ' ').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+              }
+            }""",
+            {"fieldName": field_name, "value": value, "dryRun": dry_run},
+        )
+    )
+
+
+async def _check_deep_native_checkbox(page: Page, *, field_name: str, dry_run: bool) -> bool:
+    return bool(
+        await page.evaluate(
+            """({ fieldName, dryRun }) => {
+              const wanted = normalize(fieldName);
+              const checkbox = collectDeep(document, 'input[type="checkbox"]')
+                .find(element => visible(element) && normalize(element.getAttribute('name') || element.id || element.getAttribute('aria-label')) === wanted);
+              if (!checkbox) return false;
+              checkbox.checked = true;
+              checkbox.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+              checkbox.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+              if (dryRun) checkbox.setAttribute('data-joborchestrator-dry-run', 'filled');
+              return true;
+
+              function collectDeep(root, selector) {
+                const found = [];
+                const visit = node => {
+                  if (!node) return;
+                  if (node.querySelectorAll) found.push(...Array.from(node.querySelectorAll(selector)));
+                  const descendants = node.querySelectorAll ? Array.from(node.querySelectorAll('*')) : [];
+                  for (const descendant of descendants) if (descendant.shadowRoot) visit(descendant.shadowRoot);
+                };
+                visit(root);
+                return found;
+              }
+              function visible(element) {
+                const style = window.getComputedStyle(element);
+                return style.display !== 'none' && style.visibility !== 'hidden' && !element.hidden && Boolean(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+              }
+              function normalize(raw) {
+                return String(raw || '').replace(/\\s+/g, ' ').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+              }
+            }""",
+            {"fieldName": field_name, "dryRun": dry_run},
+        )
+    )
 
 
 async def _select_aria_choice(page: Page, *, field_name: str, value: str, dry_run: bool) -> bool:

@@ -451,8 +451,24 @@ def _safe_key(value: str) -> str:
 _APPLICATION_FORM_DISCOVERY_JS = """
 form => {
   const TECHNICAL_RE = /(^_|^hp_|csrf|token|utf8|captcha|g-recaptcha|h-captcha|honeypot|bot-field|website_url)/i;
-  const controls = Array.from(form.querySelectorAll('input, textarea, select'));
-  const ariaControls = Array.from(form.querySelectorAll('[role="combobox"], [role="listbox"], [role="radiogroup"], [role="radio"], [role="checkbox"]'));
+  function collectDeep(root, selector) {
+    const found = [];
+    const visit = node => {
+      if (!node) return;
+      if (node.querySelectorAll) found.push(...Array.from(node.querySelectorAll(selector)));
+      const descendants = node.querySelectorAll ? Array.from(node.querySelectorAll('*')) : [];
+      for (const descendant of descendants) {
+        if (descendant.shadowRoot) visit(descendant.shadowRoot);
+      }
+    };
+    visit(root);
+    return found;
+  }
+  function queryDeepFirst(root, selector) {
+    return collectDeep(root, selector)[0] || null;
+  }
+  const controls = collectDeep(form, 'input, textarea, select');
+  const ariaControls = collectDeep(form, '[role="combobox"], [role="listbox"], [role="radiogroup"], [role="radio"], [role="checkbox"]');
   const controlledAriaIds = new Set(
     ariaControls
       .flatMap(element => String(element.getAttribute('aria-controls') || element.getAttribute('aria-owns') || '').split(/\\s+/))
@@ -482,13 +498,13 @@ form => {
       const question = element.closest('.application-question, .custom-question, .question, .posting-field, .field-group');
       if (!question) return '';
       const clone = question.cloneNode(true);
-      clone.querySelectorAll('input, textarea, select, option, script, style, label').forEach(node => node.remove());
+      collectDeep(clone, 'input, textarea, select, option, script, style, label').forEach(node => node.remove());
       return text(clone.innerText || clone.textContent);
     }
 
     const id = element.id;
     if (id) {
-      const explicit = form.querySelector(`label[for="${CSS.escape(id)}"]`) || document.querySelector(`label[for="${CSS.escape(id)}"]`);
+      const explicit = queryDeepFirst(form, `label[for="${CSS.escape(id)}"]`) || document.querySelector(`label[for="${CSS.escape(id)}"]`);
       if (explicit) return { label: text(explicit.innerText || explicit.textContent), strategy: 'label_for' };
     }
     const wrapping = element.closest('label');
@@ -497,7 +513,7 @@ form => {
     if (aria) return { label: text(aria), strategy: 'aria_label' };
     const labelledBy = element.getAttribute('aria-labelledby');
     if (labelledBy) {
-      const label = labelledBy.split(/\\s+/).map(part => document.getElementById(part)?.innerText || document.getElementById(part)?.textContent || '').join(' ');
+      const label = labelledBy.split(/\\s+/).map(part => document.getElementById(part)?.innerText || document.getElementById(part)?.textContent || queryDeepFirst(form, `#${CSS.escape(part)}`)?.innerText || queryDeepFirst(form, `#${CSS.escape(part)}`)?.textContent || '').join(' ');
       if (text(label)) return { label: text(label), strategy: 'aria_labelledby' };
     }
     const placeholder = text(element.getAttribute('placeholder'));
@@ -505,7 +521,7 @@ form => {
     const container = element.closest('.field, .field-group, .application-field, .question, div, li');
     if (container) {
       const clone = container.cloneNode(true);
-      clone.querySelectorAll('input, textarea, select, option, script, style').forEach(node => node.remove());
+      collectDeep(clone, 'input, textarea, select, option, script, style').forEach(node => node.remove());
       const nearby = text(clone.innerText || clone.textContent);
       if (nearby) return { label: nearby, strategy: 'nearby_text' };
     }
@@ -544,12 +560,12 @@ form => {
     const owns = element.getAttribute('aria-controls') || element.getAttribute('aria-owns') || '';
     const containers = [element];
     for (const part of owns.split(/\\s+/).filter(Boolean)) {
-      const owned = document.getElementById(part);
+      const owned = document.getElementById(part) || queryDeepFirst(form, `#${CSS.escape(part)}`);
       if (owned) containers.push(owned);
     }
     const options = [];
     for (const container of containers) {
-      for (const option of Array.from(container.querySelectorAll('[role="option"], [role="radio"]'))) {
+      for (const option of collectDeep(container, '[role="option"], [role="radio"]')) {
         const label = optionLabel(option);
         if (label) options.push({ value: option.getAttribute('data-value') || option.getAttribute('value') || label, label });
       }
@@ -608,7 +624,8 @@ form => {
     seenControlKeys.add(elementKey(element, field.label));
     if (field.type === 'radio') {
       const groupKey = name || id || field.label;
-      const legend = text(element.closest('fieldset')?.querySelector('legend')?.innerText || element.closest('fieldset')?.querySelector('legend')?.textContent);
+      const legendRoot = element.closest('fieldset');
+      const legend = text(queryDeepFirst(legendRoot, 'legend')?.innerText || queryDeepFirst(legendRoot, 'legend')?.textContent);
       const question = labelFor(element.closest('.application-question, .custom-question, .question') || element).label;
       if (!byNameRadio.has(groupKey)) {
         byNameRadio.set(groupKey, { ...field, id: groupKey, name: groupKey, label: legend || question || field.label, options: [] });

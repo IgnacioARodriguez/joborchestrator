@@ -159,9 +159,24 @@ async def _check_postcondition(surface: Any, postcondition: dict[str, Any]) -> F
           function keyFor(element) {
             return element.getAttribute('name') || element.id || element.getAttribute('aria-label') || labelFor(element);
           }
+          function collectDeep(root, selector) {
+            const found = [];
+            const visit = node => {
+              if (!node) return;
+              if (node.querySelectorAll) found.push(...Array.from(node.querySelectorAll(selector)));
+              const descendants = node.querySelectorAll ? Array.from(node.querySelectorAll('*')) : [];
+              for (const descendant of descendants) {
+                if (descendant.shadowRoot) visit(descendant.shadowRoot);
+              }
+            };
+            visit(root);
+            return found;
+          }
           const byName = `[name="${CSS.escape(fieldName)}"]`;
           const byId = `#${CSS.escape(fieldName)}`;
           const element = document.querySelector(byName) || document.querySelector(byId)
+            || collectDeep(document, 'input, textarea, select')
+              .find(item => visible(item) && normalized(item.getAttribute('name') || item.id || item.getAttribute('aria-label') || item.getAttribute('placeholder')) === normalized(fieldName))
             || Array.from(document.querySelectorAll('[role="combobox"], [role="listbox"], [role="radiogroup"], [role="checkbox"]'))
               .find(item => visible(item) && normalized(keyFor(item)) === normalized(fieldName));
           if (!element) return { ok: false, issue_type: 'control_missing', message: 'Control could not be found after actions.' };
@@ -174,10 +189,12 @@ async def _check_postcondition(surface: Any, postcondition: dict[str, Any]) -> F
           }
           if (actionType === 'choose_radio') {
             const checked = document.querySelector(`[name="${CSS.escape(fieldName)}"]:checked`);
+            const deepChecked = collectDeep(document, 'input[type="radio"]')
+              .find(item => visible(item) && normalized(item.getAttribute('name') || item.id) === normalized(fieldName) && item.checked);
             const ariaChecked = element.matches('[role="radiogroup"]')
               ? element.querySelector('[role="radio"][aria-checked="true"]')
               : null;
-            return { ok: Boolean(checked || ariaChecked), issue_type: 'postcondition_failed', message: 'Radio selection was not retained.' };
+            return { ok: Boolean(checked || deepChecked || ariaChecked), issue_type: 'postcondition_failed', message: 'Radio selection was not retained.' };
           }
           if (tag === 'select' || role === 'combobox' || role === 'listbox') {
             return { ok: Boolean(element.value || element.getAttribute('data-joborchestrator-selected-value') || element.getAttribute('aria-activedescendant')), issue_type: 'postcondition_failed', message: 'Select value was not retained.' };

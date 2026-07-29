@@ -102,6 +102,19 @@ def test_safe_dom_fill_handles_aria_custom_controls() -> None:
     assert result["fields_autofilled"] == 3
 
 
+def test_dom_schema_and_fill_traverse_open_shadow_roots() -> None:
+    result = asyncio.run(_fill_open_shadow_form())
+
+    assert result["fields"]["first_name"]["type"] == "text"
+    assert result["fields"]["location"]["type"] == "select"
+    assert result["fields"]["talent_pool"]["type"] == "checkbox"
+    assert result["first_name"] == "Synthetic Candidate"
+    assert result["location"] == "madrid"
+    assert result["talent_pool"] is True
+    assert result["validation"]["status"] == "validation_clean"
+    assert result["fields_autofilled"] == 3
+
+
 def test_greenhouse_resume_upload_uses_generated_pdf_and_cleans_temporary_file(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "resume-upload.db"
     monkeypatch.setattr("joborchestrator.storage.persistence.DB_PATH", db_path)
@@ -359,6 +372,97 @@ def _aria_custom_controls_html() -> str:
           <div id="talent-pool" role="checkbox" aria-label="Talent Pool" onclick="this.setAttribute('aria-checked', 'true')">Talent Pool</div>
           <button type="submit">Submit application</button>
         </form>
+      </body>
+    </html>
+    """
+
+
+async def _fill_open_shadow_form() -> dict:
+    adapter = GreenhouseAdapter()
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_open_shadow_form_html())
+            schema = await adapter.extract_form_schema_page(page)
+            mapping = adapter.map_answers(
+                schema,
+                {"full_name": "Synthetic Candidate"},
+                [
+                    {
+                        "canonical_key": "preferred_location",
+                        "value": "Madrid",
+                        "source": "approved",
+                        "sensitivity": "public",
+                        "requires_confirmation": False,
+                    },
+                    {
+                        "canonical_key": "talent_pool",
+                        "value": "yes",
+                        "source": "approved",
+                        "sensitivity": "public",
+                        "requires_confirmation": False,
+                    },
+                ],
+            )
+            fill = await fill_safe_fields_on_page(page, mapping, dry_run=True)
+            validation = await validate_application_surface(
+                page,
+                {
+                    "expected_postconditions": [
+                        {"field_name": "first_name", "action_type": "fill_text"},
+                        {"field_name": "location", "action_type": "select_option"},
+                        {"field_name": "talent_pool", "action_type": "check"},
+                    ]
+                },
+            )
+            values = await page.evaluate(
+                """() => {
+                  const root = document.querySelector('shadow-application').shadowRoot;
+                  return {
+                    first_name: root.querySelector('[name="first_name"]').value,
+                    location: root.querySelector('[name="location"]').value,
+                    talent_pool: root.querySelector('[name="talent_pool"]').checked,
+                  };
+                }"""
+            )
+            return {
+                **values,
+                **fill,
+                "fields": {field["name"]: field for field in schema["fields"]},
+                "validation": validation.to_dict(),
+            }
+        finally:
+            await browser.close()
+
+
+def _open_shadow_form_html() -> str:
+    return """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application_form">
+          <shadow-application></shadow-application>
+          <button type="submit">Submit application</button>
+        </form>
+        <script>
+          customElements.define('shadow-application', class extends HTMLElement {
+            connectedCallback() {
+              const root = this.attachShadow({ mode: 'open' });
+              root.innerHTML = `
+                <label for="first_name">First Name *</label>
+                <input id="first_name" name="first_name" required>
+                <label for="location">Preferred Location *</label>
+                <select id="location" name="location" required>
+                  <option value="">Select one</option>
+                  <option value="remote">Remote</option>
+                  <option value="madrid">Madrid</option>
+                </select>
+                <label><input id="talent_pool" name="talent_pool" type="checkbox" value="yes"> Talent Pool</label>
+              `;
+            }
+          });
+        </script>
       </body>
     </html>
     """
