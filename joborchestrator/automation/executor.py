@@ -1689,18 +1689,86 @@ async def upload_resume_on_page(page: Page, schema: dict[str, Any], resume_file:
         try:
             if await locator.count() > 0:
                 await locator.set_input_files(str(path), timeout=3000)
-                return {
-                    "status": "uploaded",
-                    "field_name": field_name,
-                    "filename": path.name,
-                    "extension": extension,
-                    "size_bytes": path.stat().st_size,
-                    "resume_variant_id": resume_file.get("resume_variant_id"),
-                    "cleanup_path": resume_file.get("cleanup_path"),
-                }
+                return _resume_upload_success_result(
+                    field_name=field_name,
+                    path=path,
+                    resume_file=resume_file,
+                    strategy="input_file",
+                )
         except Exception:
             continue
+    file_chooser_result = await _upload_resume_with_file_chooser(page, field_name=field_name, path=path, resume_file=resume_file)
+    if file_chooser_result.get("status") == "uploaded":
+        return file_chooser_result
     return {"status": "unresolved", "field_name": field_name, "reason": "file_input_not_found", "cleanup_path": resume_file.get("cleanup_path")}
+
+
+def _resume_upload_success_result(
+    *,
+    field_name: str,
+    path: Path,
+    resume_file: dict[str, Any],
+    strategy: str,
+) -> dict[str, Any]:
+    return {
+        "status": "uploaded",
+        "field_name": field_name,
+        "filename": path.name,
+        "extension": path.suffix.lower(),
+        "size_bytes": path.stat().st_size,
+        "resume_variant_id": resume_file.get("resume_variant_id"),
+        "cleanup_path": resume_file.get("cleanup_path"),
+        "strategy": strategy,
+    }
+
+
+async def _upload_resume_with_file_chooser(
+    page: Page,
+    *,
+    field_name: str,
+    path: Path,
+    resume_file: dict[str, Any],
+) -> dict[str, Any]:
+    selectors = [
+        f'button:has-text("{field_name}")',
+        f'[role="button"]:has-text("{field_name}")',
+        f'[aria-label*="{field_name}" i]',
+        '[data-testid*="resume" i]',
+        '[data-testid*="upload" i]',
+        '[data-testid*="file" i]',
+        '[aria-label*="resume" i]',
+        '[aria-label*="upload" i]',
+        '[aria-label*="attach" i]',
+        'button:has-text("Upload")',
+        'button:has-text("Attach")',
+        'button:has-text("Resume")',
+        'button:has-text("CV")',
+        '[role="button"]:has-text("Upload")',
+        '[role="button"]:has-text("Attach")',
+        '[role="button"]:has-text("Resume")',
+        '[role="button"]:has-text("CV")',
+        '.dropzone',
+        '[class*="dropzone"]',
+        '[class*="upload"]',
+    ]
+    for selector in selectors:
+        locator = page.locator(selector).first
+        try:
+            if await locator.count() == 0 or not await locator.is_visible(timeout=1000):
+                continue
+            async with page.expect_file_chooser(timeout=3000) as chooser_info:
+                await locator.click(timeout=3000)
+            chooser = await chooser_info.value
+            await chooser.set_files(str(path))
+            return _resume_upload_success_result(
+                field_name=field_name,
+                path=path,
+                resume_file=resume_file,
+                strategy="file_chooser",
+            )
+        except Exception:
+            continue
+    return {"status": "unresolved", "field_name": field_name, "reason": "file_chooser_not_found", "cleanup_path": resume_file.get("cleanup_path")}
 
 
 def _remove_resolved_file_unknowns(mapping: dict[str, Any]) -> None:

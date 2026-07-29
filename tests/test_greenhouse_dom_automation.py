@@ -150,6 +150,43 @@ def test_greenhouse_resume_upload_uses_generated_pdf_and_cleans_temporary_file(t
     assert not Path(result["cleanup_path"]).exists()
 
 
+def test_dom_schema_discovers_file_upload_widget_without_native_input() -> None:
+    schema = asyncio.run(_extract_schema(_file_chooser_upload_html()))
+    fields = {field["name"]: field for field in schema["fields"]}
+
+    assert fields["resume_upload"]["type"] == "file"
+    assert fields["resume_upload"]["locator_strategy"] == "file_widget"
+
+
+def test_resume_upload_uses_file_chooser_widget(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "resume-upload-widget.db"
+    monkeypatch.setattr("joborchestrator.storage.persistence.DB_PATH", db_path)
+    from joborchestrator.storage import persistence as db
+    from test_api_endpoints import make_job
+
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    db.update_job_application_materials(
+        job_id,
+        ats_cv_text=(
+            "Professional Summary\nSynthetic backend engineer.\n\n"
+            "Technical Skills\nPython, FastAPI.\n\n"
+            "Professional Experience\nBuilt reliable APIs.\n\n"
+            "Education\nSynthetic degree."
+        ),
+    )
+    job = db.get_job_posting(job_id)
+
+    result = asyncio.run(_upload_resume_with_widget(_file_chooser_upload_html(), int(job["id"]), job))
+
+    assert result["status"] == "uploaded"
+    assert result["strategy"] == "file_chooser"
+    assert result["selected_file_name"] == result["filename"]
+    assert result["selected_file_size"] > 100
+    assert not Path(result["cleanup_path"]).exists()
+
+
 def test_resume_upload_is_unresolved_without_generated_cv() -> None:
     result = resolve_resume_upload_file(1, {"company": "Acme", "title": "Backend Engineer"})
 
@@ -211,6 +248,29 @@ async def _upload_resume(html: str, job_id: int, job: dict) -> dict:
             selected = await page.evaluate(
                 """() => {
                   const file = document.querySelector('[name="resume"]').files[0];
+                  return { selected_file_name: file?.name || null, selected_file_size: file?.size || 0 };
+                }"""
+            )
+            cleanup_path = str(upload.get("cleanup_path") or "")
+            _cleanup_resume_upload_file(cleanup_path)
+            return {**upload, **selected, "cleanup_path": cleanup_path}
+        finally:
+            await browser.close()
+
+
+async def _upload_resume_with_widget(html: str, job_id: int, job: dict) -> dict:
+    adapter = GreenhouseAdapter()
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(html)
+            schema = await adapter.extract_form_schema_page(page)
+            resume_file = resolve_resume_upload_file(job_id, job)
+            upload = await upload_resume_on_page(page, schema, resume_file)
+            selected = await page.evaluate(
+                """() => {
+                  const file = document.querySelector('input[type="file"]')?.files?.[0];
                   return { selected_file_name: file?.name || null, selected_file_size: file?.size || 0 };
                 }"""
             )
@@ -463,6 +523,32 @@ def _open_shadow_form_html() -> str:
             }
           });
         </script>
+      </body>
+    </html>
+    """
+
+
+def _file_chooser_upload_html() -> str:
+    return """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application_form">
+          <button
+            id="resume_upload"
+            type="button"
+            aria-label="Upload resume"
+            onclick="
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.name = 'resume_upload';
+              input.style.display = 'none';
+              document.body.appendChild(input);
+              input.click();
+            "
+          >Upload resume</button>
+          <button type="submit">Submit application</button>
+        </form>
       </body>
     </html>
     """

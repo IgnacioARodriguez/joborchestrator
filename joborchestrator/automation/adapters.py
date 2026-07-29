@@ -469,6 +469,7 @@ form => {
   }
   const controls = collectDeep(form, 'input, textarea, select');
   const ariaControls = collectDeep(form, '[role="combobox"], [role="listbox"], [role="radiogroup"], [role="radio"], [role="checkbox"]');
+  const fileWidgets = collectDeep(form, 'button, a, [role="button"], [data-testid], [aria-label], .dropzone, [class*="dropzone"], [class*="upload"]');
   const controlledAriaIds = new Set(
     ariaControls
       .flatMap(element => String(element.getAttribute('aria-controls') || element.getAttribute('aria-owns') || '').split(/\\s+/))
@@ -615,6 +616,24 @@ form => {
     return null;
   }
 
+  function fileWidgetField(element) {
+    const labelled = labelFor(element);
+    const label = labelled.label || text(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('title'));
+    if (!/(resume|cv|curriculum|attach|upload|file|document|adjuntar|subir|curr)/i.test(label)) return null;
+    if (/(submit|send|apply|enviar|solicitar|finalizar)/i.test(label)) return null;
+    const key = elementKey(element, label);
+    if (!key || isHidden(element)) return null;
+    return {
+      id: key,
+      name: key,
+      label,
+      type: 'file',
+      required: element.getAttribute('aria-required') === 'true' || /[\\*âœ±]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
+      locator_strategy: 'file_widget',
+      options: [],
+    };
+  }
+
   for (const element of controls) {
     const name = element.getAttribute('name') || '';
     const id = element.id || '';
@@ -655,6 +674,16 @@ form => {
     if ((field.type === 'select' || field.type === 'radio') && !field.options.length) continue;
     fields.push(field);
     seenControlKeys.add(field.name);
+  }
+  if (!fields.some(field => field.type === 'file')) {
+    for (const element of fileWidgets) {
+      if (element.matches('input, textarea, select') || element.disabled || isHidden(element)) continue;
+      const field = fileWidgetField(element);
+      if (!field || seenControlKeys.has(field.name)) continue;
+      fields.push(field);
+      seenControlKeys.add(field.name);
+      break;
+    }
   }
   return fields;
 }
