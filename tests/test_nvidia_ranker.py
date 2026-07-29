@@ -1564,6 +1564,47 @@ def test_nvidia_batch_validation_accepts_reconciled_central_terms():
     assert error is None
 
 
+def test_rank_jobs_with_nvidia_reconciles_omitted_central_terms_before_save(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Senior Data Engineer",
+                "company": "Acme",
+                "description_text": "Requirements: Python, Terraform, and Snowflake.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 70, "APPLY_WITH_TAILORED_CV")
+        payload["evidence"]["central_requirements"] = ["Senior Data Engineer", "Python"]
+        payload["evidence"]["partial_matches"] = ["Python"]
+        payload["evidence"]["missing_requirements"] = []
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["saved"] == 1
+    assert summary["failed"] == 0
+    evidence_text = " ".join(
+        [
+            *[str(item) for item in saved[1].evidence.central_requirements],
+            *saved[1].evidence.missing_requirements,
+        ]
+    )
+    assert "Terraform" in evidence_text
+    assert "Snowflake" in evidence_text
+    assert saved[1].evidence.requires_llm_review is True
+    assert "evidence_central_terms_reconciled" in saved[1].evidence.llm_escalation_reasons
+
+
 def test_rank_jobs_with_nvidia_skips_inconsistent_partial_result(monkeypatch):
     jobs = pd.DataFrame(
         [{"id": 1, "title": "Backend Engineer", "company": "Acme", "description_text": "Python"}]

@@ -556,6 +556,7 @@ def _apply_nvidia_batch_result(
                 _sanitize_inferred_evidence(row, ranking)
                 _apply_ranking_safety_gate(row, ranking, safety_context)
                 _apply_profile_backed_evidence_terms(row, ranking, safety_context)
+                _reconcile_missing_central_evidence(row, ranking, safety_context)
                 _apply_evidence_consistency_gate(ranking)
                 missing_central_terms = _missing_central_terms_in_ranking(ranking, row)
                 if missing_central_terms:
@@ -905,6 +906,54 @@ def _apply_profile_backed_evidence_terms(
         target = ranking.evidence.strong_matches if level == "strong" else ranking.evidence.partial_matches
         target.append(term)
         evidence_text = _normalize_text(f"{evidence_text} {term}")
+
+
+def _reconcile_missing_central_evidence(
+    job: dict[str, Any],
+    ranking: Any,
+    safety_context: dict[str, Any],
+) -> None:
+    missing_terms = _missing_central_terms_in_ranking(ranking, job)
+    if not missing_terms:
+        return
+
+    evidence = ranking.evidence
+    reasons = list(evidence.llm_escalation_reasons or [])
+    for term in missing_terms:
+        _append_evidence_term(evidence.central_requirements, term)
+        support = _profile_support_for_term(term, safety_context)
+        if support == "strong":
+            _append_evidence_term(evidence.strong_matches, term)
+        elif support == "partial":
+            _append_evidence_term(evidence.partial_matches, term)
+        else:
+            _append_evidence_term(evidence.missing_requirements, term)
+
+    evidence.requires_llm_review = True
+    if "evidence_central_terms_reconciled" not in reasons:
+        reasons.append("evidence_central_terms_reconciled")
+    evidence.llm_escalation_reasons = reasons
+
+
+def _append_evidence_term(items: list[Any], term: str) -> None:
+    if any(_contains_term_variant(str(item), term) for item in items):
+        return
+    items.append(term)
+
+
+def _profile_support_for_term(term: str, safety_context: dict[str, Any]) -> str:
+    for skill in safety_context.get("profile_skill_labels") or []:
+        if not isinstance(skill, dict):
+            continue
+        name = str(skill.get("name") or "")
+        if not _contains_skill_marker(_normalize_text(name), term):
+            continue
+        if _normalize_skill_level(skill.get("level")) == "strong":
+            return "strong"
+        return "partial"
+    if _contains_term_variant(str(safety_context.get("profile_text") or ""), term):
+        return "partial"
+    return "missing"
 
 
 def _sanitize_inferred_evidence(job: dict[str, Any], ranking: Any) -> None:
