@@ -3,8 +3,8 @@
 Date: 2026-07-29
 Branch: `codex/chat-isolated-work`
 Remote: `https://github.com/IgnacioARodriguez/joborchestrator.git`
-Latest committed code checkpoint before adaptive-line follow-up: `36c4fee fix(evals): tolerate truthful ATS wording variants`
-Base checked against: `origin/main` at merge-base `3768845dc5f37210deeaf923e0017674ae4d4e41`
+Latest reviewed state: current `codex/chat-isolated-work` HEAD after rebase.
+Base checked against: `origin/main` after rebase; `origin/main...HEAD` is `0 behind / 26 ahead`.
 
 This packet is intentionally sanitized. Raw generated CVs, cover letters, PDFs, DOCX files, and probe JSONs contain candidate contact/profile data and remain local under ignored paths (`data/` and `output/`). Use this document for remote code review and qualitative checkpointing; use local artifacts only when a reviewer explicitly needs full generated material text.
 
@@ -15,39 +15,43 @@ Not yet a final merge recommendation by itself. The branch is in a materially be
 What is now supported by evidence:
 
 - The branch is remote-visible at `origin/codex/chat-isolated-work`.
-- The latest code is rebased on current `origin/main` merge-base listed above.
+- The latest code is rebased on current `origin/main`; the branch no longer shows unrelated deletions from application automation or branding assets when diffed against `origin/main`.
 - Deterministic materials validation now catches overcompressed ATS CVs, unparseable experience density, omitted single-role experience, unsupported years-of-experience claims, and unsupported employer/technology attribution.
 - ATS CV completeness now uses a source-aware line threshold: normal multi-role CVs still require 18+ parseable lines, while very short one-role source CVs may pass with 16-17 well-structured lines if all required sections and source-backed bullets are preserved.
 - ATS CV validation now rejects `keywords_used` items that do not appear verbatim in `ats_cv_text`, preventing keyword accounting from claiming ATS coverage that the submitted CV text does not actually contain.
 - The ATS semantic evaluator no longer false-fails truthful wording variants such as `documentation` vs `Documented`, singular/plural, and punctuation-preserving bullet rewrites.
-- Full pytest suite is green locally.
+- Full pytest suite, frontend lint, frontend typecheck, and frontend production build are green locally.
 
 ## Commits Above `origin/main`
 
-Before adding this checkpoint packet, `origin/main..HEAD` contained 21 implementation/docs commits:
+After rebase onto current `origin/main`, `origin/main..HEAD` contains 25 implementation/docs commits:
 
 ```text
-36c4fee fix(evals): tolerate truthful ATS wording variants
-544e335 fix(materials): reject unsupported experience-year claims
-ff58f64 fix(materials): align cv prompt with density gate
-812e11a fix(materials): reject omitted single-role cvs
-e2bb177 fix(materials): fail fast on unparseable cv density
-0ac99ce fix(materials): align density checks with real cv format
-75e5ad2 fix(materials): detect overcompressed ats cvs
-f058f45 fix(materials): polish ats cv export and kit gaps
-6990c24 fix(materials): enforce multiline ats cv contract
-367b1b4 fix(materials): require complete ats cv prompt
-371ce3e fix(materials): preserve metadata on request timeouts
-bdb530e fix(materials): allow bounded validation probes
-36d27ce fix(materials): add ats fit map and cautious retries
-1eb02fd fix(materials): calibrate risky application tone
-8e01695 fix(materials): constrain employer technology attribution
-3efedec fix(materials): expose avoid-overclaiming aliases
-9a3b2c0 fix(materials): block avoid-overclaiming claim families
-685bf27 docs(trust): record live materials v3 probe
-06b66e8 fix(evals): pass ranking constraints through runners
-389561a fix(evals): prioritize central materials expectations
-ab85ff5 test(materials): capture fresh v3 raw fixtures
+b80963e test(materials): capture fresh v3 raw fixtures
+620413f fix(evals): prioritize central materials expectations
+a2a4c80 fix(evals): pass ranking constraints through runners
+8da988c docs(trust): record live materials v3 probe
+f3bfe54 fix(materials): block avoid-overclaiming claim families
+6cbbdfe fix(materials): expose avoid-overclaiming aliases
+3d2873b fix(materials): constrain employer technology attribution
+718dac1 fix(materials): calibrate risky application tone
+20aa489 fix(materials): add ats fit map and cautious retries
+950dc8c fix(materials): allow bounded validation probes
+db6f9d4 fix(materials): preserve metadata on request timeouts
+21e233b fix(materials): require complete ats cv prompt
+7a14cb9 fix(materials): enforce multiline ats cv contract
+ccc3c9b fix(materials): polish ats cv export and kit gaps
+26edbda fix(materials): detect overcompressed ats cvs
+2720cd3 fix(materials): align density checks with real cv format
+2fcfb0f fix(materials): fail fast on unparseable cv density
+da2d01a fix(materials): reject omitted single-role cvs
+2e6579b fix(materials): align cv prompt with density gate
+f62fb13 fix(materials): reject unsupported experience-year claims
+3f2c820 fix(evals): tolerate truthful ATS wording variants
+cd66038 docs(materials): add v3 checkpoint packet
+00a764f fix(materials): align ATS keyword coverage with generated CV
+9394bbf docs(materials): add qualitative review packet
+1c71e70 docs(materials): record PDF render review
 ```
 
 ## Local Verification
@@ -76,6 +80,24 @@ Latest full-suite run after adaptive-line and keyword-presence follow-up:
 python -m pytest -qq --tb=short
 Result: full suite passed
 ```
+
+Post-rebase CI-equivalent local checks:
+
+```text
+python -m pytest -qq --tb=short
+Result: full suite passed
+
+npm run lint
+Result: passed
+
+npm run typecheck
+Result: passed
+
+npm run build
+Result: passed
+```
+
+GitHub CLI was available locally but not authenticated, so PR creation/check inspection could not be performed from this environment.
 
 ## Probe Artifact Map
 
