@@ -109,6 +109,13 @@ def test_report_writers_create_json_csv_and_markdown(tmp_path: Path) -> None:
                 "validation_issue_count": 0,
                 "validation_issue_types": [],
                 "verified_action_success_rate": 1.0,
+                "human_intervention_status": "submit_only",
+                "human_intervention_types": ["submit_only"],
+                "human_interventions_per_application": 1,
+                "answer_intervention_rate": 0.0,
+                "validation_intervention_rate": 0.0,
+                "widget_intervention_rate": 0.0,
+                "submit_only_intervention_rate": 1.0,
                 "dynamic_required_count": 0,
                 "steps_completed_without_human": 0,
                 "step_advance_success_rate": 0.0,
@@ -126,7 +133,7 @@ def test_report_writers_create_json_csv_and_markdown(tmp_path: Path) -> None:
     write_markdown_report(tmp_path / "audit.md", report)
 
     assert "ready_no_human_input" in (tmp_path / "audit.json").read_text(encoding="utf-8")
-    assert "provider_detected" in (tmp_path / "audit.csv").read_text(encoding="utf-8")
+    assert "human_intervention_status" in (tmp_path / "audit.csv").read_text(encoding="utf-8")
     assert "| URL | Provider | State | Score |" in (tmp_path / "audit.md").read_text(encoding="utf-8")
 
 
@@ -156,6 +163,9 @@ def test_audit_application_coverage_runs_dry_run_on_local_fixture(tmp_path: Path
     assert result["dynamic_required_count"] == 0
     assert result["steps_completed_without_human"] == 0
     assert result["submit_only_ready"] is True
+    assert result["human_intervention_status"] == "submit_only"
+    assert result["human_intervention_types"] == ["submit_only"]
+    assert result["submit_only_intervention_rate"] == 1.0
 
 
 def test_audit_application_coverage_restores_environment(tmp_path: Path, monkeypatch) -> None:

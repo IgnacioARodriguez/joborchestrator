@@ -445,6 +445,25 @@ async def run_application_execution(
     next_state = "needs_user_input" if mapping.get("unknown_fields") else "ready_for_review"
     if auto_submit_result.get("status") == "submitted":
         next_state = "submitted"
+    human_intervention = _build_human_intervention_report(
+        next_state=next_state,
+        review=review,
+        mapping=mapping,
+        validation_report=validation_report,
+        repair_report=repair_report,
+        resume_upload=resume_upload,
+        fill_result=live_fill,
+        automation_metrics=automation_metrics,
+    )
+    automation_metrics = {
+        **automation_metrics,
+        "human_interventions_per_application": human_intervention["required_count"],
+        "human_intervention_types": human_intervention["types"],
+        "answer_intervention_rate": _ratio(1 if "answer" in human_intervention["types"] else 0, 1),
+        "validation_intervention_rate": _ratio(1 if "validation" in human_intervention["types"] else 0, 1),
+        "widget_intervention_rate": _ratio(1 if "widget" in human_intervention["types"] else 0, 1),
+        "submit_only_intervention_rate": _ratio(1 if "submit_only" in human_intervention["types"] else 0, 1),
+    }
 
     _advance_to_ready_to_fill(
         session_id,
@@ -467,6 +486,7 @@ async def run_application_execution(
                 "validation": validation_report,
                 "repair": repair_report,
                 "automation_metrics": automation_metrics,
+                "human_intervention": human_intervention,
             },
         },
     )
@@ -496,6 +516,7 @@ async def run_application_execution(
         "validation": validation_report,
         "repair": repair_report,
         "automation_metrics": automation_metrics,
+        "human_intervention": human_intervention,
     }
     if next_state == "submitted":
         db.transition_application_session(
@@ -1278,6 +1299,109 @@ def _build_application_automation_metrics(
             and unresolved_count == 0
             and int(repair_report.get("dynamic_required_count") or 0) == 0
         ),
+    }
+
+
+def _build_human_intervention_report(
+    *,
+    next_state: str,
+    review: dict[str, Any],
+    mapping: dict[str, Any],
+    validation_report: dict[str, Any],
+    repair_report: dict[str, Any],
+    resume_upload: dict[str, Any],
+    fill_result: dict[str, Any] | None,
+    automation_metrics: dict[str, Any],
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    unknown_fields = [
+        field for field in (review.get("unknown_fields") or mapping.get("unknown_fields") or [])
+        if isinstance(field, dict)
+    ]
+    for field in unknown_fields:
+        field_type = str(field.get("type") or "")
+        reason = str(field.get("reason") or "")
+        if field_type == "validation":
+            items.append(
+                {
+                    "type": "validation",
+                    "field": str(field.get("name") or "validation"),
+                    "label": str(field.get("label") or "Validation failed"),
+                    "reason": "validation_failed",
+                }
+            )
+            continue
+        if reason == "dynamic_required_after_autofill":
+            items.append(
+                {
+                    "type": "dynamic_field",
+                    "field": str(field.get("name") or ""),
+                    "label": str(field.get("label") or field.get("name") or ""),
+                    "reason": reason,
+                }
+            )
+            continue
+        items.append(
+            {
+                "type": "answer",
+                "field": str(field.get("name") or field.get("id") or ""),
+                "label": str(field.get("label") or field.get("name") or ""),
+                "reason": "missing_or_unapproved_answer",
+                "required": bool(field.get("required")),
+                "sensitive": bool(field.get("sensitive")),
+            }
+        )
+    if validation_report.get("status") == "validation_failed" and not any(item["type"] == "validation" for item in items):
+        items.append({"type": "validation", "field": "validation", "label": "Validation failed", "reason": "validation_failed"})
+    if int(repair_report.get("dynamic_required_count") or 0) > 0 and not any(item["type"] == "dynamic_field" for item in items):
+        for field in repair_report.get("dynamic_required_fields") or []:
+            if isinstance(field, dict):
+                items.append(
+                    {
+                        "type": "dynamic_field",
+                        "field": str(field.get("name") or ""),
+                        "label": str(field.get("label") or field.get("name") or ""),
+                        "reason": "dynamic_required_after_autofill",
+                    }
+                )
+    if resume_upload.get("status") == "unresolved":
+        items.append(
+            {
+                "type": "resume_upload",
+                "field": str(resume_upload.get("field_name") or "resume"),
+                "label": "Resume upload",
+                "reason": str(resume_upload.get("reason") or "resume_upload_unresolved"),
+            }
+        )
+    skipped_fields = [
+        str(field) for field in (fill_result or {}).get("skipped_fields") or []
+        if str(field).strip()
+    ]
+    for field_name in skipped_fields:
+        if not any(item.get("field") == field_name for item in items):
+            items.append({"type": "widget", "field": field_name, "label": field_name, "reason": "planned_action_not_executed"})
+    if next_state == "ready_for_review" and automation_metrics.get("submit_only_ready"):
+        items.append(
+            {
+                "type": "submit_only",
+                "field": "final_submit",
+                "label": "Final review and submit",
+                "reason": "human_final_submit_boundary",
+            }
+        )
+    types = sorted({str(item["type"]) for item in items if item.get("type")})
+    counts_by_type: dict[str, int] = {}
+    for item in items:
+        item_type = str(item.get("type") or "unknown")
+        counts_by_type[item_type] = counts_by_type.get(item_type, 0) + 1
+    blocking_items = [item for item in items if item.get("type") != "submit_only"]
+    return {
+        "status": "submit_only" if types == ["submit_only"] else "needs_human" if blocking_items else "none",
+        "required_count": len(items),
+        "blocking_count": len(blocking_items),
+        "types": types,
+        "counts_by_type": counts_by_type,
+        "items": items,
     }
 
 

@@ -115,6 +115,7 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
         review = artifacts.get("review") or {}
         validation = artifacts.get("validation") or {}
         automation_metrics = artifacts.get("automation_metrics") or {}
+        human_intervention = artifacts.get("human_intervention") or {}
         repair = artifacts.get("repair") or {}
         validation_issues = [
             issue for issue in validation.get("issues") or []
@@ -164,6 +165,13 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "resume_upload_success_rate": automation_metrics.get("resume_upload_success_rate"),
             "resume_upload_strategy": automation_metrics.get("resume_upload_strategy"),
             "popup_handling_success_rate": automation_metrics.get("popup_handling_success_rate"),
+            "human_intervention_status": human_intervention.get("status"),
+            "human_intervention_types": human_intervention.get("types") or [],
+            "human_interventions_per_application": automation_metrics.get("human_interventions_per_application"),
+            "answer_intervention_rate": automation_metrics.get("answer_intervention_rate"),
+            "validation_intervention_rate": automation_metrics.get("validation_intervention_rate"),
+            "widget_intervention_rate": automation_metrics.get("widget_intervention_rate"),
+            "submit_only_intervention_rate": automation_metrics.get("submit_only_intervention_rate"),
             "dynamic_required_count": repair.get("dynamic_required_count"),
             "steps_completed_without_human": automation_metrics.get("steps_completed_without_human"),
             "step_advance_success_rate": automation_metrics.get("step_advance_success_rate"),
@@ -200,6 +208,13 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "resume_upload_success_rate": None,
             "resume_upload_strategy": None,
             "popup_handling_success_rate": None,
+            "human_intervention_status": None,
+            "human_intervention_types": [],
+            "human_interventions_per_application": 0,
+            "answer_intervention_rate": None,
+            "validation_intervention_rate": None,
+            "widget_intervention_rate": None,
+            "submit_only_intervention_rate": None,
             "dynamic_required_count": 0,
             "steps_completed_without_human": 0,
             "step_advance_success_rate": None,
@@ -331,6 +346,13 @@ def write_csv_report(path: Path, results: list[dict[str, object]]) -> None:
         "resume_upload_success_rate",
         "resume_upload_strategy",
         "popup_handling_success_rate",
+        "human_intervention_status",
+        "human_intervention_types",
+        "human_interventions_per_application",
+        "answer_intervention_rate",
+        "validation_intervention_rate",
+        "widget_intervention_rate",
+        "submit_only_intervention_rate",
         "dynamic_required_count",
         "steps_completed_without_human",
         "step_advance_success_rate",
@@ -398,6 +420,8 @@ def write_markdown_report(path: Path, report: dict[str, object]) -> None:
                 f"upload `{result.get('resume_upload_success_rate')}` "
                 f"via `{result.get('resume_upload_strategy') or ''}` / "
                 f"popup `{result.get('popup_handling_success_rate')}` / "
+                f"human `{result.get('human_intervention_status')}` "
+                f"`{json.dumps(result.get('human_intervention_types') or [])}` / "
                 f"dynamic required `{result.get('dynamic_required_count') or 0}` / "
                 f"steps `{result.get('steps_completed_without_human') or 0}` / "
                 f"submit-only `{result.get('submit_only_ready')}`"

@@ -7,6 +7,7 @@ from urllib.parse import quote
 from joborchestrator import worker
 from joborchestrator.automation.executor import (
     _build_application_automation_metrics,
+    _build_human_intervention_report,
     _detect_page_access_issue,
     _looks_blocked,
     _looks_posting_unavailable,
@@ -258,6 +259,46 @@ def test_application_metrics_track_resume_file_widget_uploads() -> None:
     assert metrics["resume_upload_success_rate"] == 1.0
     assert metrics["file_widget_success_rate"] == 1.0
     assert metrics["resume_upload_strategy"] == "file_chooser"
+
+
+def test_human_intervention_report_classifies_answer_widget_and_submit_only() -> None:
+    report = _build_human_intervention_report(
+        next_state="needs_user_input",
+        review={
+            "unknown_fields": [
+                {"name": "salary", "label": "Expected salary", "required": True, "sensitive": True},
+                {"name": "validation", "type": "validation", "label": "Validation errors"},
+            ]
+        },
+        mapping={"unknown_fields": []},
+        validation_report={"status": "validation_failed", "summary": {"issues": 1}},
+        repair_report={"dynamic_required_count": 0},
+        resume_upload={"status": "unresolved", "field_name": "resume", "reason": "missing_resume_file"},
+        fill_result={"skipped_fields": ["custom_select"]},
+        automation_metrics={"submit_only_ready": False},
+    )
+
+    assert report["status"] == "needs_human"
+    assert report["counts_by_type"]["answer"] == 1
+    assert report["counts_by_type"]["validation"] == 1
+    assert report["counts_by_type"]["resume_upload"] == 1
+    assert report["counts_by_type"]["widget"] == 1
+    assert report["blocking_count"] == 4
+
+    submit_only = _build_human_intervention_report(
+        next_state="ready_for_review",
+        review={"unknown_fields": []},
+        mapping={"unknown_fields": []},
+        validation_report={"status": "validation_clean"},
+        repair_report={"dynamic_required_count": 0},
+        resume_upload={"status": "not_applicable"},
+        fill_result={"skipped_fields": []},
+        automation_metrics={"submit_only_ready": True},
+    )
+
+    assert submit_only["status"] == "submit_only"
+    assert submit_only["types"] == ["submit_only"]
+    assert submit_only["blocking_count"] == 0
 
 
 def test_application_execution_starts_local_browser_handoff(tmp_path, monkeypatch) -> None:
@@ -752,6 +793,8 @@ def test_application_execution_detects_delayed_dynamic_required_fields_after_aut
     assert artifacts["repair"]["dynamic_required_count"] == 1
     assert artifacts["repair"]["dynamic_required_fields"][0]["name"] == "portfolio"
     assert artifacts["journey"]["steps"][0]["fill_stability"]["mutation_count"] > 0
+    assert artifacts["human_intervention"]["status"] == "needs_human"
+    assert artifacts["human_intervention"]["counts_by_type"]["dynamic_field"] == 1
 
 
 def test_application_execution_advances_safe_multistep_and_stops_at_submit(tmp_path, monkeypatch) -> None:
@@ -819,6 +862,8 @@ def test_application_execution_advances_safe_multistep_and_stops_at_submit(tmp_p
     assert artifacts["automation_metrics"]["steps_completed_without_human"] == 1
     assert artifacts["automation_metrics"]["step_advance_success_rate"] == 1.0
     assert artifacts["automation_metrics"]["submit_only_ready"] is True
+    assert artifacts["human_intervention"]["status"] == "submit_only"
+    assert artifacts["automation_metrics"]["submit_only_intervention_rate"] == 1.0
     assert artifacts["journey"]["step_transitions"][0]["result"]["status"] == "advanced"
 
 
