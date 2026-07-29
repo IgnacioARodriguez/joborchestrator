@@ -64,4 +64,4 @@ Key final live follow-up:
 ## Known Limits
 
 - Raw live artifacts and rendered PNGs are intentionally local-only because they may include candidate/contact data.
-- GitHub CLI was not authenticated in the local environment, so PR creation and remote check inspection were not performed from Codex.
+- GitHub CLI was not authenticated in the local environment; remote GitHub actions were performed through the authenticated GitHub connector when available.
