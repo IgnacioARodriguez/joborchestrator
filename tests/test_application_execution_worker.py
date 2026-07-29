@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 from joborchestrator import worker
 from joborchestrator.automation.executor import (
+    _build_application_automation_metrics,
     _detect_page_access_issue,
     _looks_blocked,
     _looks_posting_unavailable,
@@ -182,6 +183,81 @@ def test_auto_submit_blocks_lever_until_explicitly_supported(monkeypatch) -> Non
     )
 
     assert blockers == ["provider_not_supported"]
+
+
+def test_application_metrics_split_native_custom_and_shadow_controls() -> None:
+    metrics = _build_application_automation_metrics(
+        action_plan={
+            "actions": [
+                {
+                    "action_type": "fill_text",
+                    "field_name": "first_name",
+                    "control_handle": {"locator_strategies": ["label_for"]},
+                },
+                {
+                    "action_type": "select_option",
+                    "field_name": "preferred_stack",
+                    "control_handle": {"locator_strategies": ["aria_role"]},
+                },
+                {
+                    "action_type": "fill_text",
+                    "field_name": "shadow_email",
+                    "control_handle": {"locator_strategies": ["label_for", "shadow_root"]},
+                },
+            ]
+        },
+        schema={"fields": []},
+        validation_report={
+            "status": "validation_clean",
+            "checked_postconditions": 3,
+            "satisfied_postconditions": 3,
+            "summary": {"issues": 0},
+        },
+        fill_result={"filled_fields": ["first_name", "preferred_stack", "shadow_email"]},
+        resume_upload={"status": "not_applicable"},
+        repair_report={"dynamic_required_count": 0, "rescans": 1},
+        mapping={"unknown_fields": []},
+        step_transitions=[],
+    )
+
+    assert metrics["native_control_success_rate"] == 1.0
+    assert metrics["custom_control_success_rate"] == 1.0
+    assert metrics["shadow_control_success_rate"] == 1.0
+    assert metrics["control_strategy_counts"]["planned"] == {
+        "native_control": 1,
+        "custom_control": 1,
+        "shadow_control": 1,
+    }
+
+
+def test_application_metrics_track_resume_file_widget_uploads() -> None:
+    metrics = _build_application_automation_metrics(
+        action_plan={"actions": []},
+        schema={
+            "fields": [
+                {
+                    "name": "resume_upload",
+                    "type": "file",
+                    "locator_strategy": "file_widget",
+                }
+            ]
+        },
+        validation_report={
+            "status": "validation_clean",
+            "checked_postconditions": 0,
+            "satisfied_postconditions": 0,
+            "summary": {"issues": 0},
+        },
+        fill_result={"filled_fields": ["resume_upload"]},
+        resume_upload={"status": "uploaded", "field_name": "resume_upload", "strategy": "file_chooser"},
+        repair_report={"dynamic_required_count": 0, "rescans": 1},
+        mapping={"unknown_fields": []},
+        step_transitions=[],
+    )
+
+    assert metrics["resume_upload_success_rate"] == 1.0
+    assert metrics["file_widget_success_rate"] == 1.0
+    assert metrics["resume_upload_strategy"] == "file_chooser"
 
 
 def test_application_execution_starts_local_browser_handoff(tmp_path, monkeypatch) -> None:

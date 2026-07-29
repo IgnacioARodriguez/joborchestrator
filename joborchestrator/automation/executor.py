@@ -326,6 +326,7 @@ async def run_application_execution(
                 transition = await detect_safe_step_transition_controls(browser_surface)
                 automation_metrics = _build_application_automation_metrics(
                     action_plan=journey_step.get("action_plan") or {},
+                    schema=schema,
                     validation_report=validation_report,
                     fill_result=live_fill,
                     resume_upload=resume_upload,
@@ -367,6 +368,7 @@ async def run_application_execution(
         journey_step = {**journey_step, "steps": journey_steps, "step_transitions": step_transitions}
         automation_metrics = _build_application_automation_metrics(
             action_plan=journey_step.get("action_plan") or {},
+            schema=schema,
             validation_report=validation_report,
             fill_result=live_fill,
             resume_upload=resume_upload,
@@ -1085,6 +1087,7 @@ def _build_repair_report(
 def _build_application_automation_metrics(
     *,
     action_plan: dict[str, Any],
+    schema: dict[str, Any] | None = None,
     validation_report: dict[str, Any],
     fill_result: dict[str, Any] | None,
     resume_upload: dict[str, Any],
@@ -1101,11 +1104,24 @@ def _build_application_automation_metrics(
     }
     executed = len(executed_fields)
     upload_planned = any(str(action.get("action_type") or "") == "upload_file" for action in actions)
-    upload_verified = upload_planned and resume_upload.get("status") == "uploaded"
+    file_fields = [
+        field for field in (schema or {}).get("fields") or []
+        if isinstance(field, dict) and str(field.get("type") or "").lower() == "file"
+    ]
+    resume_upload_planned = upload_planned or bool(file_fields)
+    resume_upload_verified = resume_upload_planned and resume_upload.get("status") == "uploaded"
+    strategy_counts = _control_strategy_action_counts(actions, executed_fields)
+    file_widget_planned = any(
+        str(field.get("locator_strategy") or "") == "file_widget"
+        for field in file_fields
+    ) or strategy_counts["planned"].get("file_widget", 0) > 0
+    file_widget_executed = resume_upload_verified and (
+        file_widget_planned or str(resume_upload.get("strategy") or "") == "file_chooser"
+    )
     checked_postconditions = int(validation_report.get("checked_postconditions") or 0)
     satisfied_postconditions = int(validation_report.get("satisfied_postconditions") or 0)
-    verifiable = checked_postconditions + (1 if upload_planned else 0)
-    verified = satisfied_postconditions + (1 if upload_verified else 0)
+    verifiable = checked_postconditions + (1 if resume_upload_planned else 0)
+    verified = satisfied_postconditions + (1 if resume_upload_verified else 0)
     unresolved_count = len(mapping.get("unknown_fields") or [])
     transitions = step_transitions or []
     advanced_steps = [
@@ -1116,8 +1132,15 @@ def _build_application_automation_metrics(
         "planned_action_count": planned,
         "executed_action_count": executed,
         "verified_action_count": verified,
+        "control_strategy_counts": strategy_counts,
         "action_success_rate": _ratio(executed, planned),
         "verified_action_success_rate": _ratio(verified, verifiable),
+        "native_control_success_rate": _strategy_success_rate(strategy_counts, "native_control"),
+        "custom_control_success_rate": _strategy_success_rate(strategy_counts, "custom_control"),
+        "shadow_control_success_rate": _strategy_success_rate(strategy_counts, "shadow_control"),
+        "file_widget_success_rate": _ratio(1 if file_widget_executed else 0, 1 if file_widget_planned else 0),
+        "resume_upload_success_rate": _ratio(1 if resume_upload_verified else 0, 1 if resume_upload_planned else 0),
+        "resume_upload_strategy": resume_upload.get("strategy"),
         "validation_clean": validation_report.get("status") == "validation_clean",
         "validation_issue_count": int((validation_report.get("summary") or {}).get("issues") or len(validation_report.get("issues") or [])),
         "unresolved_required_count": unresolved_count,
@@ -1132,6 +1155,42 @@ def _build_application_automation_metrics(
             and int(repair_report.get("dynamic_required_count") or 0) == 0
         ),
     }
+
+
+def _control_strategy_action_counts(actions: list[dict[str, Any]], executed_fields: set[str]) -> dict[str, dict[str, int]]:
+    planned: dict[str, int] = {}
+    executed: dict[str, int] = {}
+    for action in actions:
+        bucket = _control_strategy_bucket(action)
+        planned[bucket] = planned.get(bucket, 0) + 1
+        field_name = str(action.get("field_name") or "")
+        if field_name in executed_fields:
+            executed[bucket] = executed.get(bucket, 0) + 1
+    return {"planned": planned, "executed": executed}
+
+
+def _control_strategy_bucket(action: dict[str, Any]) -> str:
+    strategies = {
+        str(strategy)
+        for strategy in ((action.get("control_handle") or {}).get("locator_strategies") or [])
+        if str(strategy).strip()
+    }
+    if str(action.get("action_type") or "") == "upload_file":
+        return "file_widget" if "file_widget" in strategies else "native_file"
+    if "shadow_root" in strategies:
+        return "shadow_control"
+    if "aria_role" in strategies:
+        return "custom_control"
+    if "file_widget" in strategies:
+        return "file_widget"
+    return "native_control"
+
+
+def _strategy_success_rate(strategy_counts: dict[str, dict[str, int]], bucket: str) -> float:
+    return _ratio(
+        int(strategy_counts.get("executed", {}).get(bucket, 0)),
+        int(strategy_counts.get("planned", {}).get(bucket, 0)),
+    )
 
 
 def _ratio(numerator: int, denominator: int) -> float:

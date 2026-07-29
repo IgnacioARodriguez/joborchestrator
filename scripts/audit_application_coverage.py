@@ -157,6 +157,12 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "validation_issue_count": len(validation_issues),
             "validation_issue_types": sorted({str(issue.get("issue_type") or "") for issue in validation_issues if issue.get("issue_type")}),
             "verified_action_success_rate": automation_metrics.get("verified_action_success_rate"),
+            "native_control_success_rate": automation_metrics.get("native_control_success_rate"),
+            "custom_control_success_rate": automation_metrics.get("custom_control_success_rate"),
+            "shadow_control_success_rate": automation_metrics.get("shadow_control_success_rate"),
+            "file_widget_success_rate": automation_metrics.get("file_widget_success_rate"),
+            "resume_upload_success_rate": automation_metrics.get("resume_upload_success_rate"),
+            "resume_upload_strategy": automation_metrics.get("resume_upload_strategy"),
             "dynamic_required_count": repair.get("dynamic_required_count"),
             "steps_completed_without_human": automation_metrics.get("steps_completed_without_human"),
             "step_advance_success_rate": automation_metrics.get("step_advance_success_rate"),
@@ -186,6 +192,12 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "validation_issue_count": 0,
             "validation_issue_types": [],
             "verified_action_success_rate": None,
+            "native_control_success_rate": None,
+            "custom_control_success_rate": None,
+            "shadow_control_success_rate": None,
+            "file_widget_success_rate": None,
+            "resume_upload_success_rate": None,
+            "resume_upload_strategy": None,
             "dynamic_required_count": 0,
             "steps_completed_without_human": 0,
             "step_advance_success_rate": None,
@@ -310,6 +322,12 @@ def write_csv_report(path: Path, results: list[dict[str, object]]) -> None:
         "validation_issue_count",
         "validation_issue_types",
         "verified_action_success_rate",
+        "native_control_success_rate",
+        "custom_control_success_rate",
+        "shadow_control_success_rate",
+        "file_widget_success_rate",
+        "resume_upload_success_rate",
+        "resume_upload_strategy",
         "dynamic_required_count",
         "steps_completed_without_human",
         "step_advance_success_rate",
@@ -371,6 +389,11 @@ def write_markdown_report(path: Path, report: dict[str, object]) -> None:
         if result.get("verified_action_success_rate") is not None:
             lines.append(
                 f"  - Automation: verified rate `{result.get('verified_action_success_rate')}` / "
+                f"native `{result.get('native_control_success_rate')}` / "
+                f"custom `{result.get('custom_control_success_rate')}` / "
+                f"shadow `{result.get('shadow_control_success_rate')}` / "
+                f"upload `{result.get('resume_upload_success_rate')}` "
+                f"via `{result.get('resume_upload_strategy') or ''}` / "
                 f"dynamic required `{result.get('dynamic_required_count') or 0}` / "
                 f"steps `{result.get('steps_completed_without_human') or 0}` / "
                 f"submit-only `{result.get('submit_only_ready')}`"

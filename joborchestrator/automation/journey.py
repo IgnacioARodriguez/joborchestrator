@@ -440,6 +440,8 @@ def _control_handle_for_field(field: dict[str, Any], surface_id: str, index: int
     }.get(native_type, "text")
     locator_strategy = str(field.get("locator_strategy") or "")
     strategies = [locator_strategy] if locator_strategy else []
+    if field.get("in_shadow_root"):
+        strategies.append("shadow_root")
     fingerprint = f"{surface_id}:{name}:{native_type}:{bool(field.get('required'))}"
     return ControlHandle(
         surface_id=surface_id,

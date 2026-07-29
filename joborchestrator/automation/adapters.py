@@ -439,6 +439,7 @@ def _normalize_dom_field(field: dict[str, Any]) -> dict[str, Any]:
         "sensitive": classification == "sensitive",
         "confidence": confidence,
         "locator_strategy": str(field.get("locator_strategy") or "unknown"),
+        "in_shadow_root": bool(field.get("in_shadow_root")),
         "options": field.get("options") or [],
     }
 
@@ -466,6 +467,9 @@ form => {
   }
   function queryDeepFirst(root, selector) {
     return collectDeep(root, selector)[0] || null;
+  }
+  function inShadowRoot(element) {
+    return Boolean(element.getRootNode && window.ShadowRoot && element.getRootNode() instanceof ShadowRoot);
   }
   const controls = collectDeep(form, 'input, textarea, select');
   const ariaControls = collectDeep(form, '[role="combobox"], [role="listbox"], [role="radiogroup"], [role="radio"], [role="checkbox"]');
@@ -545,6 +549,7 @@ form => {
       type,
       required: element.required || element.getAttribute('aria-required') === 'true' || /[\\*✱]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
       locator_strategy: labelled.strategy,
+      in_shadow_root: inShadowRoot(element),
       options: [],
     };
   }
@@ -588,6 +593,7 @@ form => {
         type: 'select',
         required: element.getAttribute('aria-required') === 'true' || /[\\*âœ±]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
         locator_strategy: 'aria_role',
+        in_shadow_root: inShadowRoot(element),
         options: ariaOptions(element),
       };
     }
@@ -599,6 +605,7 @@ form => {
         type: 'radio',
         required: element.getAttribute('aria-required') === 'true' || /[\\*âœ±]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
         locator_strategy: 'aria_role',
+        in_shadow_root: inShadowRoot(element),
         options: ariaOptions(element),
       };
     }
@@ -610,6 +617,7 @@ form => {
         type: 'checkbox',
         required: element.getAttribute('aria-required') === 'true' || /[\\*âœ±]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
         locator_strategy: 'aria_role',
+        in_shadow_root: inShadowRoot(element),
         options: [{ value: element.getAttribute('data-value') || 'checked', label }],
       };
     }
@@ -630,6 +638,7 @@ form => {
       type: 'file',
       required: element.getAttribute('aria-required') === 'true' || /[\\*âœ±]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
       locator_strategy: 'file_widget',
+      in_shadow_root: inShadowRoot(element),
       options: [],
     };
   }
