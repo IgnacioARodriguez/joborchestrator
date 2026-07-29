@@ -258,3 +258,20 @@ def test_compute_metrics_counts_non_active_prompt_versions(monkeypatch):
             "prompt_version": "v2",
         }
     ]
+
+
+def test_resolve_ranking_version_prefers_explicit_argument():
+    assert (
+        metrics.resolve_ranking_version(ranking_job_id=123, ranking_version="probe-version")
+        == "probe-version"
+    )
+
+
+def test_resolve_ranking_version_uses_default_without_job_id():
+    assert metrics.resolve_ranking_version(ranking_job_id=None, ranking_version=None) == metrics.NVIDIA_RANKING_VERSION
+
+
+def test_resolve_ranking_version_reads_ranking_job(monkeypatch):
+    monkeypatch.setattr(metrics.db, "get_ranking_job", lambda job_id: {"ranking_version": "job-version"})
+
+    assert metrics.resolve_ranking_version(ranking_job_id=123, ranking_version=None) == "job-version"

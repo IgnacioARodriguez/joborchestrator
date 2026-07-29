@@ -20,9 +20,20 @@ from joborchestrator.storage import persistence as db  # noqa: E402
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compute autoloop safety metrics over persisted rankings.")
     parser.add_argument("--ranking-job-id", type=int)
-    parser.add_argument("--ranking-version", default=NVIDIA_RANKING_VERSION)
+    parser.add_argument("--ranking-version")
     parser.add_argument("--output", type=Path)
     return parser.parse_args(argv)
+
+
+def resolve_ranking_version(*, ranking_job_id: int | None, ranking_version: str | None) -> str:
+    if ranking_version:
+        return str(ranking_version)
+    if ranking_job_id is None:
+        return NVIDIA_RANKING_VERSION
+    job = db.get_ranking_job(ranking_job_id)
+    if not job:
+        raise ValueError(f"Ranking job not found: {ranking_job_id}")
+    return str(job["ranking_version"] or NVIDIA_RANKING_VERSION)
 
 
 def fetch_ranking_rows(*, ranking_job_id: int | None, ranking_version: str) -> list[dict[str, Any]]:
@@ -336,7 +347,11 @@ def int_or_zero(value: Any) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    metrics = compute_metrics(fetch_ranking_rows(ranking_job_id=args.ranking_job_id, ranking_version=args.ranking_version))
+    ranking_version = resolve_ranking_version(
+        ranking_job_id=args.ranking_job_id,
+        ranking_version=args.ranking_version,
+    )
+    metrics = compute_metrics(fetch_ranking_rows(ranking_job_id=args.ranking_job_id, ranking_version=ranking_version))
     payload = json.dumps(metrics, ensure_ascii=False, indent=2)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
