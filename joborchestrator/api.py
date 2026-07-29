@@ -27,6 +27,7 @@ from joborchestrator.intelligence.cv_profile_extractor import (
 )
 from joborchestrator.intelligence.llm_application_materials import (
     DEFAULT_MATERIALS_MODEL,
+    DEFAULT_NVIDIA_MATERIALS_MODEL,
     LLMMaterialsError,
     export_ats_cv_docx_bytes,
     export_ats_cv_pdf_bytes,
@@ -249,7 +250,7 @@ class LinkedInEnrichmentPayload(BaseModel):
 class MaterialsPayload(BaseModel):
     use_llm: bool = False
     provider: Literal["heuristic", "openai", "nvidia"] | None = None
-    model: str = DEFAULT_MATERIALS_MODEL
+    model: str | None = None
     api_key: str | None = None
     shortlist: bool = True
 
@@ -1079,13 +1080,14 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
     keywords = parse_json_value(ranking.get("cv_keywords_to_emphasize_json"), []) if ranking else []
     try:
         provider = payload.provider or ("openai" if payload.use_llm else "heuristic")
+        selected_model = _materials_model_for_provider(provider, payload.model)
         if provider in {"openai", "nvidia"}:
             operation_id = db.create_operation(
                 "application_materials_generation",
                 {
                     "job_id": job_id,
                     "provider": provider,
-                    "model": payload.model,
+                    "model": selected_model,
                     "shortlist": payload.shortlist,
                 },
                 f"Queued {provider} application materials generation.",
@@ -1114,6 +1116,16 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
     fresh = db.get_job_posting(job_id)
     rankings = latest_rankings_by_job_id()
     return {"job": job_dto(fresh, rankings.get(job_id))}
+
+
+def _materials_model_for_provider(provider: str, model: str | None) -> str:
+    if model:
+        return model
+    if provider == "nvidia":
+        return DEFAULT_NVIDIA_MATERIALS_MODEL
+    if provider == "openai":
+        return DEFAULT_MATERIALS_MODEL
+    return "heuristic"
 
 
 @app.get("/api/jobs/{job_id}/materials/ats-cv.{file_format}")

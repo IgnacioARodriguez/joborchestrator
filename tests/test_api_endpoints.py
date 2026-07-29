@@ -755,6 +755,20 @@ def test_generate_materials_queues_nvidia_provider(tmp_path, monkeypatch):
     assert operation["type"] == "application_materials_generation"
     assert operation["input_json"]["job_id"] == job_id
     assert operation["input_json"]["provider"] == "nvidia"
+    assert operation["input_json"]["model"].startswith("nvidia/")
+
+
+def test_generate_materials_queues_openai_provider_with_openai_model(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    job_id = save_job_with_rankings()
+    client.put("/api/profile", json={"profile": profile_payload()})
+
+    response = client.post(f"/api/jobs/{job_id}/materials", json={"provider": "openai", "shortlist": True})
+
+    assert response.status_code == 200
+    operation = db.get_operation(response.json()["operation_id"])
+    assert operation["input_json"]["provider"] == "openai"
+    assert operation["input_json"]["model"].startswith("gpt-")
 
 
 def test_download_optimized_cv_materials(tmp_path, monkeypatch):

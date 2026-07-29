@@ -6,6 +6,7 @@ from joborchestrator.env import load_local_env
 
 
 def test_load_local_env_reads_key_values_without_overriding(tmp_path, monkeypatch):
+    monkeypatch.delenv("JOB_ORCHESTRATOR_SKIP_ENV_FILE", raising=False)
     monkeypatch.delenv("TURSO_DATABASE_URL", raising=False)
     monkeypatch.delenv("TURSO_AUTH_TOKEN", raising=False)
     env_path = tmp_path / ".env"
