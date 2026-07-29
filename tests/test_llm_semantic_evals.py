@@ -236,6 +236,45 @@ Software engineering coursework and ongoing professional development in backend 
     assert result.issues == []
 
 
+def test_ats_cv_eval_accepts_supported_keyword_variants_and_punctuation():
+    case = {
+        "candidate": {
+            "required_experience_terms": [
+                "Built Python API integrations for operations teams.",
+                "Documented deployment and support workflows.",
+            ],
+            "forbidden_claims": [],
+        },
+        "ats_cv_expectations": {
+            "required_keywords": ["API integrations", "documentation", "operations workflows"],
+            "required_sections": ["summary", "skills", "experience", "education"],
+            "min_chars": 200,
+        },
+    }
+    ats_cv = """
+Ignacio Rodriguez
+
+Professional Summary
+Backend developer focused on API integrations, documentation, and operations workflow support.
+
+Technical Skills
+Python, REST APIs, API integrations, deployment documentation, operations workflow support.
+
+Professional Experience
+Backend Developer | Example Co
+- Built Python API integrations for operations teams, enhancing workflow efficiency.
+- Documented deployment and support workflows to improve team onboarding.
+
+Education
+Software engineering coursework.
+""".strip()
+
+    result = evaluate_ats_cv_result(case, {"ats_cv_text": ats_cv})
+
+    assert result.passed is True
+    assert result.issues == []
+
+
 def test_ats_cv_eval_rejects_internal_notes_and_hallucinated_claims():
     case = _cases()["backend-fastapi-strong-fit"]
     result = evaluate_ats_cv_result(

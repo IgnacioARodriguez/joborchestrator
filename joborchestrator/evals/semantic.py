@@ -785,7 +785,48 @@ def _normalize(text: Any) -> str:
 
 
 def _contains_phrase(normalized_text: str, phrase: str) -> bool:
-    return _normalize(phrase) in normalized_text
+    normalized_phrase = _normalize(phrase)
+    if not normalized_phrase:
+        return True
+    if normalized_phrase in normalized_text:
+        return True
+
+    text_tokens = [_canonical_match_token(token) for token in _match_tokens(normalized_text)]
+    phrase_tokens = [_canonical_match_token(token) for token in _match_tokens(normalized_phrase)]
+    if not phrase_tokens:
+        return True
+    if len(phrase_tokens) > len(text_tokens):
+        return False
+
+    window_size = len(phrase_tokens)
+    return any(
+        text_tokens[index : index + window_size] == phrase_tokens
+        for index in range(len(text_tokens) - window_size + 1)
+    )
+
+
+def _match_tokens(text: Any) -> list[str]:
+    return re.findall(r"[a-z0-9+#]+", _normalize(text))
+
+
+def _canonical_match_token(token: str) -> str:
+    value = token.strip("'")
+    if len(value) > 4 and value.endswith("ies"):
+        value = f"{value[:-3]}y"
+    elif len(value) > 4 and value.endswith("es"):
+        value = value[:-2]
+    elif len(value) > 3 and value.endswith("s") and not value.endswith("ss"):
+        value = value[:-1]
+
+    if value.startswith("document"):
+        return "document"
+    if value.startswith("automat"):
+        return "automat"
+    if value.startswith("integrat"):
+        return "integrat"
+    if value.startswith("operat"):
+        return "operat"
+    return value
 
 
 def _int_or_none(value: Any) -> int | None:
