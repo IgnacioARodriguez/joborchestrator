@@ -1,16 +1,60 @@
 # LLM Trust Progress Review For Claude
 
-Last updated: 2026-07-27
+Last updated: 2026-07-29
 
 Purpose: give Claude or another external reviewer enough context to decide whether the HuntPilot/joborchestrator LLM trust work is converging or looping.
+
+## 2026-07-29 Ranking Checkpoint Addendum
+
+New code-state facts since the 2026-07-27 review:
+
+- Active ranking prompt is now `ranking/nvidia_response_contract` v9.
+- v8/v9 introduced central-term reconciliation and clearer SKIP-vs-AVOID policy.
+- NVIDIA rankings now reconcile omitted central evidence both before validation retry and before save. Missing central terms are added as `missing_requirements` unless the candidate profile supports them; this preserves auditability without inflating fit.
+- The ranking worker now retries transient item failures up to `RANKING_WORKER_ITEM_MAX_ATTEMPTS` before marking an item terminally failed.
+- `scripts/compute_autoloop_metrics.py` now infers a job's actual `ranking_version` when `--ranking-job-id` is provided, avoiding false metrics caused by reading the default production ranking version for probe jobs.
+- Relevant commits on `main` include:
+  - `5dd0a66 fix(ranking): cap offsite workmode mismatches`
+  - `4023814 fix(ranking): reconcile omitted central evidence`
+  - `06b6f6e fix(ranking): reconcile central evidence before retry`
+  - `a8e05ae fix(ranking): retry transient worker item failures`
+  - `d961f37 fix(evals): infer ranking version for job metrics`
+- Full `python -m pytest -q` passed after each commit and again after syncing with latest `origin/main`.
+
+Fresh live v9 probe:
+
+- Ranking job `#27`, version `ranking_v1.1.0-nvidia-probe`.
+- 30 selected cases, batch size 1, max concurrency 1.
+- Final status: 30/30 completed, 30 saved, 0 failed.
+- Prompt trace: v9 for all 30 rows.
+- Item attempts: 22 completed on attempt 1, 5 on attempt 2, 3 on attempt 3.
+- Metrics:
+  - `unsafe_apply_now_count=0`
+  - `critical_failures=0`
+  - `stale_completion_count=0`
+  - `non_active_prompt_count=0`
+  - `soft_dealbreaker_count=0`
+  - `soft_central_gap_count=0`
+  - `soft_location_review_count=0`
+- Decision distribution: 2 APPLY_NOW, 1 APPLY_WITH_TAILORED_CV, 20 SKIP, 7 AVOID.
+- Both APPLY_NOW rows are synthetic Acme strong-fit cases.
+- The only real positive recommendation is job 86 as APPLY_WITH_TAILORED_CV, with review flags for React/Next.js depth and borderline years.
+- Previously concerning Bjak Malaysia job 401 now ranks SKIP with score 45.
+
+Current interpretation:
+
+- Ranking is now strong enough for supervised personal use: read the top recommendations, trust that obvious hard blockers are being downgraded, and review flagged positives.
+- Ranking is not yet "blind auto-apply" quality because there is no full 419-job active-v9 production rerank and no second independent live v9 probe.
+- The next highest-leverage quality work is materials/ATS CV, not more ranking case patches, unless a new ranking probe exposes a fresh class of failure.
+- If production prompt freshness matters more than time, run a full v9 rerank. If time matters more, use current rankings as supervised draft signals and only rerank targeted jobs before applying.
 
 ## 2026-07-27 Checkpoint Addendum
 
 New code-state facts since the original review:
 
-- Active ranking prompt is now `ranking/nvidia_response_contract` v7.
+- Active ranking prompt is now `ranking/nvidia_response_contract` v9.
 - v6 removes the prompt ambiguity that allowed a single bare ranking object. The NVIDIA ranking path always sends `Context.jobs`, even for one job, so the contract now always requires one top-level `rankings` array.
-- v7 adds explicit evidence completeness for central job terms and domain acronyms such as RabbitMQ, EPC, VFD, and STATCOM.
+- v7 added explicit evidence completeness for central job terms and domain acronyms such as RabbitMQ, EPC, VFD, and STATCOM; v8/v9 then added central-term reconciliation plus clearer SKIP-vs-AVOID calibration.
 - The NVIDIA batch validator now returns explicit feedback when `rankings` is missing for `Context.jobs`, and this is covered by tests.
 - Commits pushed to `main` include the stale-item recovery fix, ranking stale-timeout config documentation, high item-attempt autoloop flagging, v5 evidence-contract tightening, v6 `rankings` array contract, and the validator-feedback test.
 - Full pytest after the latest committed ranking changes passed: 325/325.
@@ -39,7 +83,7 @@ Updated interpretation:
 
 - We are no longer stuck at the old official 5/22 ranking baseline; persisted/revalidated ranking outputs now pass 22/22.
 - Fresh active-v6 generation was reliable at the transport/schema level in the 50-job probe: no failed items, no high-attempt items, no schema retries, and no unsafe `APPLY_NOW`.
-- Targeted active-v7 triage closed the reviewed ranking set at 22/22, but this is still not full blind trust because only 2 rows were freshly regenerated with v7.
+- Targeted active-v7/v8 triage closed the reviewed ranking set at 22/22, and live v9 probe `#27` added fresh 30-job runtime proof. This is still not full blind trust because there is no full 419-job active-v9 production rerank and no second independent v9 probe.
 - Materials/ATS remain under-measured and should be the next main surface after documenting this ranking checkpoint.
 
 ## Executive Verdict
@@ -61,7 +105,7 @@ Evidence that we must pause and re-measure soon:
 - That gap was triaged to 22/22 after evaluator synonym support, one expectation alignment, and a targeted v7 rerank of the two real prompt omissions.
 - Materials and ATS CV do not yet have enough DB-backed reviewed cases; current seed fixtures are reviewed but synthetic and skipped by persisted golden baseline.
 
-Bottom line: the direction is rational. The next ranking step is broader active-v7 proof only if needed; the next broader trust step should shift to materials/ATS proof.
+Bottom line: the direction is rational. Ranking is strong enough for supervised personal use; the next broader trust step should shift to materials/ATS proof unless a new ranking probe exposes a fresh class of failure.
 
 ## Current System State
 
@@ -72,19 +116,20 @@ Bottom line: the direction is rational. The next ranking step is broader active-
 - Latest full rerank job: `#9`, NVIDIA provider, status `completed`, 419 queued, 419 processed, 419 saved, 0 failed.
 - Latest live v6 probe job: `#12`, NVIDIA provider, status `completed`, 50 queued, 50 processed, 50 saved, 0 failed.
 - Latest targeted v7 rerank job: `#13`, NVIDIA provider, status `completed`, 2 queued, 2 processed, 2 saved, 0 failed.
-- Active ranking prompt: `ranking/nvidia_response_contract` v7.
+- Latest live v9 probe job: `#27`, NVIDIA provider, status `completed`, 30 queued, 30 processed, 30 saved, 0 failed.
+- Active ranking prompt: `ranking/nvidia_response_contract` v9.
 - Active materials prompts: `materials/nvidia_cv_contract` v3 and `materials/nvidia_kit_contract` v3.
 - Active judge prompt: `judge/semantic_rubric` v1.
-- Current trust score in docs: 7.7/10.
-- Current posture: operational draft quality, not blind trust.
+- Current trust score in docs: 7.9/10.
+- Current posture: ranking is supervised-use ready; the full product is still operational draft quality until materials/ATS are measured on real DB-backed cases.
 
 ## Important Constraint
 
-The full rerank jobs happened before the newest v7 ranking prompt proof. Therefore:
+The full rerank jobs happened before the newest v9 ranking prompt proof. Therefore:
 
-- The 419-job production set still mixes older prompt traces and should not be treated as full active-v7 quality proof.
-- The 50-job v6 probe is a good schema/reliability proof and the 2-job v7 rerank is a targeted fix proof, but neither is a full production rerank.
-- Current 22/22 reviewed ranking quality is a strong checkpoint, not proof of blind trust at production scale.
+- The 419-job production set still mixes older prompt traces and should not be treated as full active-v9 quality proof.
+- The 50-job v6 probe, targeted v7/v8 reranks, and 30-job v9 probe are good schema/runtime/quality proof, but they are not a full production rerank.
+- Current 22/22 reviewed ranking quality plus probe `#27` is a strong supervised-use checkpoint, not proof of blind auto-apply at production scale.
 
 ## What Was Broken Or Risky
 
@@ -254,6 +299,7 @@ Current post-triage ranking baseline:
 - 100% pass rate.
 - 0 critical failures.
 - Targeted v7 rerank job `#13` regenerated only jobs 40 and 358, with 2/2 saved, 0 failed items, 0 schema retries, and prompt traces v7.
+- Live v9 probe job `#27` completed 30/30 saved, 0 failed items, 0 critical metrics failures, 0 unsafe APPLY_NOW, and 0 soft-dealbreaker/central-gap/location-review metrics.
 
 Critical caveat:
 
@@ -271,7 +317,7 @@ How the fresh-v6 failures were resolved:
 Likely next ranking action:
 
 - Do not add more ranking guardrails for these cases.
-- Use a broader v7 probe only if ranking becomes the active priority again.
+- Use a broader v9 probe or full v9 rerank only if ranking becomes the active priority again or production-wide prompt freshness matters.
 - Shift immediate quality work to materials/ATS because ranking reviewed baseline is currently green.
 
 ## Materials And ATS CV Work
@@ -361,7 +407,7 @@ Signs this is not a loop:
 - Each major change was tied to a concrete failed case, missing gate, or observability gap.
 - Tests were added with each behavior change.
 - The official baseline failure was not hidden; it was documented.
-- Measurement moved from 5/22 stale persisted baseline to 22/22 persisted/revalidated, then to a more honest 18/22 fresh-v6 probe, and finally to 22/22 after targeted v7 triage.
+- Measurement moved from 5/22 stale persisted baseline to 22/22 persisted/revalidated, then to a more honest 18/22 fresh-v6 probe, 22/22 after targeted v7/v8 triage, and finally a 30/30 saved live v9 probe with 0 critical metrics failures.
 - Verification is repeatable through `npm run verify`.
 
 Signs this could become a loop:
@@ -375,7 +421,7 @@ Signs this could become a loop:
 Recommendation to avoid looping:
 
 1. Freeze broad ranking guardrail changes for now.
-2. Avoid full 419 v7 rerank unless the user explicitly wants production-wide prompt freshness or ranking becomes the immediate bottleneck again.
+2. Avoid full 419 v9 rerank unless the user explicitly wants production-wide prompt freshness or ranking becomes the immediate bottleneck again.
 3. Build at least 6-10 real reviewed DB-backed materials/ATS cases from the review packet.
 4. Generate fresh materials/ATS for those cases and baseline them.
 
@@ -384,8 +430,8 @@ Recommendation to avoid looping:
 Ask Claude to review these points:
 
 - Are the ranking safety gates too specific to the 22 reviewed cases, or are they valid general product rules?
-- Is the current 22/22 ranking checkpoint enough to pivot to materials/ATS, given only 2 rows were freshly regenerated with v7?
-- Is the trust score 7.7/10 fair given ranking reviewed quality is green but materials/ATS remain under-measured?
+- Is the current 22/22 reviewed checkpoint plus 30-job v9 probe enough to pivot to materials/ATS, given there is still no full 419-job active-v9 rerank?
+- Is the trust score 7.9/10 fair given ranking reviewed quality is green but materials/ATS remain under-measured?
 - Should materials/ATS coverage become the immediate priority before more ranking work?
 - Are there any hidden ways the judge/eval loop could approve prompt changes that are not actually wired into production?
 
@@ -394,7 +440,7 @@ Ask Claude to review these points:
 The next best action is materials/ATS measurement:
 
 - Convert real materials/ATS outputs into DB-backed reviewed cases and run fresh baselines.
-- Keep ranking frozen except for broader v7 proof if explicitly needed.
+- Keep ranking frozen except for broader v9 proof if explicitly needed.
 - Do not add more ranking safety gates until that result is known.
 
 Parallel non-LLM action:

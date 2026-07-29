@@ -1,6 +1,6 @@
 # LLM Trust Compliance Matrix
 
-Last assessed: 2026-07-28
+Last assessed: 2026-07-29
 
 This matrix tracks HuntPilot against the trust bar defined in `docs/LLM_TRUST_DEFINITION_OF_DONE.md`.
 
@@ -12,9 +12,9 @@ Status values:
 
 ## Executive Summary
 
-Current trust posture: Yellow, approximately 7.7/10.
+Current trust posture: Yellow, approximately 7.9/10.
 
-HuntPilot is currently suitable as an operational copilot for job discovery, ranking review, and draft generation. It is not suitable for near-blind trust yet. Ranking now uses prompt v9 after the v6/v7/v8 probes exposed evidence omissions and SKIP-vs-AVOID calibration ambiguity. The reviewed ranking baseline now measures 22/22 with 0 critical failures after central-term evidence validation and explicit SKIP/AVOID policy alignment. Materials/ATS CV still need measured quality work.
+HuntPilot is currently suitable as an operational copilot for job discovery, ranking review, and draft generation. It is not suitable for near-blind trust across the whole product yet. Ranking now uses prompt v9 after the v6/v7/v8 probes exposed evidence omissions and SKIP-vs-AVOID calibration ambiguity. The reviewed ranking baseline measures 22/22 with 0 critical failures, and fresh v9 probe job `#27` completed 30/30 with 0 failed items and 0 critical metrics failures. Materials/ATS CV still need measured quality work.
 
 ## Current Evidence Snapshot
 
@@ -41,6 +41,9 @@ HuntPilot is currently suitable as an operational copilot for job discovery, ran
 - Live v6 probe follow-up: ranking job `#12` completed a 50-job representative sample including all 22 real reviewed ranking fixtures. Results: 50/50 processed, 50 saved, 0 failed, 0 high item attempts, max item attempts 1, 50/50 prompt trace v6, `schema_failure_retry_rate` 0.0, `non_active_prompt_rate` 0.0, `unsafe_apply_now_count` 0. Reviewed-fixture baseline over these fresh v6 outputs measured 18/22 passing, 81.8% pass rate, and 4 critical failures. Failures were jobs 80 (`REST APIs` evidence wording), 358 (`EPC` evidence wording), 40 (`RabbitMQ` evidence omission), and 222 (`AVOID` stricter than expected `APPLY_WITH_TAILORED_CV`/`MAYBE`).
 - Post-Claude checkpoint follow-up: ranking evidence-term evaluation now supports reviewed synonyms, job 222 now accepts conservative `AVOID` when evidence names the direct Security/AppSec/DevSecOps gap, and active ranking prompt v7 requires exact central job terms such as RabbitMQ/EPC/VFD/STATCOM in evidence. Targeted v7 rerank job `#13` processed jobs 40 and 358 only: 2/2 saved, 0 failed, 0 schema retries, prompt trace v7 for both rows. Ranking golden baseline saved on 2026-07-27 measured 22/22 passing, 100% pass rate, and 0 critical failures.
 - Ranking v8/v9 closure follow-up: v8 added `central_terms_to_reconcile` plus validator feedback/retry for missing central evidence. Targeted reranks corrected Lemon.io (#188), CrowdStrike (#212), and MLB Security (#222) evidence gaps, with retries triggered when central terms were omitted. v9 defines `SKIP` as low hiring probability for adjacent-but-truthful software/domain roles and reserves `AVOID` for hard blockers, explicit ineligibility, unsafe/untruthful application risk, or non-recoverable domain mismatch. The MLB Security fixture now accepts `SKIP` and no longer treats `AVOID` as the normal expectation for that adjacent security role. Ranking golden baseline saved on 2026-07-28 measured 22/22 passing, 100% pass rate, and 0 critical failures.
+- Ranking v9 live probe closure: probe ranking job `#27` completed 30/30 saved, 0 failed, prompt trace v9 for all rows, max item attempts 3, and 0 high-attempt items. Metrics over the correct job ranking version measured `unsafe_apply_now_count=0`, `critical_failures=0`, `stale_completion_count=0`, `non_active_prompt_count=0`, `soft_dealbreaker_count=0`, `soft_central_gap_count=0`, and `soft_location_review_count=0`. Decision distribution was 2 APPLY_NOW, 1 APPLY_WITH_TAILORED_CV, 20 SKIP, and 7 AVOID. Both APPLY_NOW rows were synthetic Acme strong-fit cases; the only real positive was job 86 as APPLY_WITH_TAILORED_CV with review flags and explicit gaps.
+- Ranking runtime hardening follow-up: worker item failures are now retried up to `RANKING_WORKER_ITEM_MAX_ATTEMPTS` before becoming terminal. Probe `#27` recovered real NVIDIA `ReadTimeout` failures and still completed 30/30 saved. Central evidence omitted by NVIDIA is reconciled before retry/validation and before save, preserving auditability without inflating unsupported terms into strong matches.
+- Metrics hardening follow-up: `scripts/compute_autoloop_metrics.py` now infers a ranking job's actual `ranking_version` when `--ranking-job-id` is provided, preventing false stale/non-active metrics caused by accidentally reading the default production version for a probe job.
 - Autoloop hardening follow-up: prompt freshness, case regressions, failed item count, schema retry rate, runtime limits, halt reports, checkpoint tags, and non-active prompt requeue tooling are implemented and covered by tests. A halt no longer overwrites the accepted baseline with rejected metrics.
 - Materials follow-up: application kit validation now rejects recruiter messages over the same 320-character limit used by golden evals. Persisted golden baseline currently evaluates 0 materials/ATS cases because the reviewed seed fixtures are synthetic and not DB-backed.
 - Reviewed golden fixtures: 34 cases under `evals/fixtures/golden` (12 synthetic seed cases plus 22 human-reviewed real ranking cases).
@@ -61,8 +64,8 @@ HuntPilot is currently suitable as an operational copilot for job discovery, ran
 | Area | DoD Target | Current Status | Evidence | Gap |
 | --- | --- | --- | --- | --- |
 | Prompt registry | Active prompt versions are explicit and shared | Green | Registry points ranking to v9, materials to v3, and judge to v1 | Need a full v9 production rerank and fresh materials v3 generation proof before stored outputs match the active registry |
-| Ranking schema | Output validates against structured contract | Green | Live v6 50-job probe had 50/50 saved, 0 failed items, 0 validation retries, and `schema_failure_retry_rate` 0.0 | Continue monitoring on larger runs |
-| Ranking quality | >= 90% pass rate, 0 critical failures | Green-Yellow | Reviewed ranking baseline now passes 22/22 after evaluator synonym support, central-term validation, targeted v7/v8 reranks, and SKIP/AVOID policy alignment | Need a broader v9 proof set before raising ranking to near-blind trust |
+| Ranking schema | Output validates against structured contract | Green | Live v9 probe `#27` had 30/30 saved, 0 failed items, prompt trace v9 for all rows, and no stale/non-active prompt rows | Continue monitoring on full production reranks |
+| Ranking quality | >= 90% pass rate, 0 critical failures | Green | Reviewed ranking baseline passes 22/22 and live v9 probe `#27` measured 0 critical failures, 0 unsafe APPLY_NOW, and 0 soft-dealbreaker/central-gap/location-review critical metrics | Need full production v9 rerank or a second independent live probe before treating ranking as near-blind |
 | Materials quality | >= 90% pass rate, 0 critical failures | Red | Stored evals show 0/3 passing; generation validation now enforces the 320-character recruiter-message limit, and active v3 receives ranking-derived overclaiming constraints | Need fresh v3 generation proof and DB-backed reviewed materials fixtures |
 | ATS CV quality | >= 95% pass rate, 0 critical failures | Red-Yellow | Internal-note validation exists, complete-CV validation preserves base experience, and active v3 receives ranking-derived overclaiming constraints | Need current ATS CV v3 generation proof and DB-backed reviewed ATS CV cases |
 | Golden set | 30-50 reviewed cases | Green-Yellow | 34 reviewed fixtures exist across ranking/materials/ATS CV, including 22 human-reviewed real ranking cases; local trust gate requires at least 3 cases per surface | Need more real materials/ATS CV cases to balance beyond synthetic coverage |
@@ -70,8 +73,8 @@ HuntPilot is currently suitable as an operational copilot for job discovery, ran
 | Case regressions | 0 regressions on promotion | Green-Yellow | `compare_summaries` regressions are wired into promotion gate and autoloop guard values handle list/dict case regression payloads | Needs fresh runs to prove effectiveness at scale |
 | Judge rubric | Versioned judge prompt and issue codes | Green-Yellow | Judge rubric v1, issue code normalization, multi-model support | Need stronger calibration against human review |
 | Multi-model judge | Disputed/high-risk evals can use two models | Yellow | NVIDIA secondary model support exists | Not yet used as routine gate |
-| Production ranking | Rankings persist model, version, score, evidence | Green-Yellow | `job_rankings` stores version, decision, confidence, scores/evidence JSON, provider, model, prompt version, validation attempts/errors, and candidate profile snapshot hash for new NVIDIA rows; API/UI expose ranking review status | Finish job `#9` and requeue stale prompt-version rows until non-active prompt rate is 0 before trusting the baseline |
-| Production confidence gates | Uncertain outputs become review-required drafts | Yellow | Ranking safety gates set `requires_llm_review`; ranking API/UI marks low confidence, validation retry, thin positive evidence, and missing central requirements for review; deterministic caps were added for three unsafe post-baseline patterns | Need fresh reranking proof and additional caps or prompt fixes for remaining explicit dealbreakers and adjacent-role mismatches |
+| Production ranking | Rankings persist model, version, score, evidence | Green-Yellow | `job_rankings` stores version, decision, confidence, scores/evidence JSON, provider, model, prompt version, validation attempts/errors, and candidate profile snapshot hash for new NVIDIA rows; probe `#27` proves this on fresh v9 rows | A full 419-job v9 production rerank is still needed if prompt freshness across all persisted production rows is required |
+| Production confidence gates | Uncertain outputs become review-required drafts | Green-Yellow | Ranking safety gates set `requires_llm_review`; ranking API/UI marks low confidence, validation retry, thin positive evidence, and missing central requirements for review; probe `#27` showed 0 unsafe APPLY_NOW and 24/30 rows review-required where uncertainty existed | Keep monitoring broader production outputs; ranking looks ready for supervised personal use, not unreviewed auto-apply |
 | Observability | Outputs trace prompt/model/evidence/status | Green | Ranking rows now support provider, model, prompt version, validation attempts/errors, and candidate profile snapshot hash for new NVIDIA rankings; ranking review status is exposed in API/UI; materials persist provider, model, prompt versions, generated timestamp, validation attempts/errors, and candidate profile snapshot hash; eval rows preserve payloads/results; LLM output feedback is stored and summarized by job/artifact/action | Need to use captured traces to debug failed ranking cases |
 | Production health | App/API/DB smokes are green | Green | Vercel backend and UI smokes passed against Turso on 2026-07-19; local trust gate runs offline e2e, scan, guardrail, and golden-fixture coverage checks; smoke now summarizes recent scan error samples; HTTP providers retry transient timeout/network/5xx/429 failures once by default | Historical `themuse`/`remotive` timeout rate should be monitored after deploy |
 
@@ -79,21 +82,21 @@ HuntPilot is currently suitable as an operational copilot for job discovery, ran
 
 | Surface | Score | Rationale |
 | --- | ---: | --- |
-| Ranking | 8.2 | Productive flow works, traceability is present, job `#9` completed 419/419 saved, v6 solved the observed schema retry issue in a 50-job live probe, and targeted v7 triage moved the reviewed ranking baseline to 22/22. The proof set is still small and no full v7 production rerank exists, so rankings are strong review inputs, not blindly trusted decisions. |
+| Ranking | 8.6 | Productive flow works, traceability is present, job `#9` completed 419/419 saved historically, reviewed ranking baseline is 22/22, and fresh v9 probe `#27` completed 30/30 saved with 0 critical metrics failures. The proof set is still not a full 419-job active-v9 production rerank, so rankings are strong supervised inputs rather than blind auto-apply decisions. |
 | Application materials | 6.3 | Prompt v3 receives ranking-derived overclaiming constraints, recruiter specificity/length gates match the 320-character golden limit, materials review status is exposed, and generation/retry/profile trace metadata is persisted; stored eval evidence still needs a fresh pass. |
 | ATS CV | 6.1 | Internal notes, incomplete CVs, omitted base experiences, and unsupported ranking avoid-overclaiming terms now have deterministic gates and prompt-level constraints; needs fresh v3 proof. |
 | Judge/evals | 7.8 | Strong framework, offline trust gate, feedback records, saved ranking eval runs, summary analytics, autoloop dry-run orchestration, halt reports, checkpoints, prompt freshness guards, and stale prompt requeue tooling are available; dataset is still small outside ranking and judge calibration remains limited. |
 | Production operations | 7.8 | Vercel/Turso/smokes are healthy; `npm run verify` is repeatable, materials/ranking outputs are traceable for new writes, retry/profile metadata is stored, ranking/material review status is visible, and user feedback can be captured/summarized; remaining risk is quality gating rather than uptime. |
 
-Overall: 7.7/10, weighted toward production ranking while materials/ATS remain under-measured.
+Overall: 7.9/10, weighted toward production ranking while materials/ATS remain under-measured.
 
 ## Immediate Blockers To High Trust
 
-1. Ranking improved from the stale 5/22 baseline to 22/22 on reviewed outputs after targeted v7 triage, but the proof set is still only 22 real reviewed ranking cases plus a 2-job v7 targeted rerank.
+1. Ranking improved from the stale 5/22 baseline to 22/22 on reviewed outputs and now has a fresh 30-job v9 live probe with 0 critical metrics failures, but it still lacks a full active-v9 production rerank over all 419 jobs.
 2. Materials and ATS CV still need fresh generation proof against known historical quality failures; current reviewed seed fixtures are not DB-backed, so persisted golden baseline skips them.
 3. Golden coverage is above the minimum count, but real materials/ATS CV coverage is still thin.
-4. Ranking needs broader v7 coverage before it can be treated as near-blind trustworthy.
-5. Review gates need to catch or downgrade the remaining unsafe positive recommendations before ranking can be treated as high trust.
+4. Ranking needs either a full active-v9 production rerank or a second independent live probe before it can be treated as near-blind.
+5. Ranking review gates currently catch/downgrade the observed unsafe positives; continue monitoring for new profile/job distributions.
 
 ## Recommended Next Gates
 
@@ -138,7 +141,7 @@ Goal: measure active prompts, not stale historical outputs.
 
 Done when:
 
-- Ranking baseline is run. Current measured result after targeted v7 triage: passed, 22/22 passed, 0 critical failures. A full v7 production rerank is still required before calling active-v7 ranking quality proven at production scale.
+- Ranking baseline is run. Current measured result after targeted v7/v8 triage and live v9 probe: reviewed baseline passed 22/22 with 0 critical failures, and probe `#27` completed 30/30 saved with 0 critical metrics failures. A full v9 production rerank is still required before calling active-v9 ranking quality proven across all 419 production jobs.
 - Materials v3 baseline is run.
 - ATS CV v3 baseline is run.
 - Results are compared to prior summaries.

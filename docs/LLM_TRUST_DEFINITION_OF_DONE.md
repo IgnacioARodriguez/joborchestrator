@@ -180,7 +180,8 @@ Known gaps to close:
 - The golden set is still small.
 - Materials and ATS CV need a fresh v2 baseline run.
 - Historical eval summaries showed failures around missing required terms, recruiter message length, and internal notes in ATS CV output.
-- Ranking still relies on retry for some malformed NVIDIA first responses.
+- Ranking still relies on retry for some transient NVIDIA responses, but worker item retries now recover temporary timeouts before terminal failure.
+- Ranking has fresh v9 supervised-use evidence from a 30-job probe, but a full active-v9 production rerank is still optional/unfinished.
 - Production ranking does not run judge automatically, by design.
 
 ## Done Means
