@@ -21,8 +21,20 @@ def test_load_prompt_uses_registry_active_version():
     assert "avoid_overclaiming_aliases" in load_prompt("materials", "nvidia_cv_contract")
     assert "experience_claim_constraints" in load_prompt("materials", "nvidia_cv_contract")
     assert "ats_fit_analysis" in load_prompt("materials", "nvidia_cv_contract")
-    assert "Minimum: 700 characters and 18 non-empty lines" in load_prompt("materials", "nvidia_cv_contract")
-    assert "Target 20-35 non-empty lines" in load_prompt("materials", "nvidia_cv_contract")
+    assert "Minimum: 700 characters and normally 18 non-empty lines" in load_prompt(
+        "materials", "nvidia_cv_contract"
+    )
+    assert "very short one-role base CV may use 16-17 well-structured lines" in load_prompt(
+        "materials", "nvidia_cv_contract"
+    )
+    assert "Every item in keywords_used must appear as a normalized literal, token-aware phrase in ats_cv_text" in load_prompt(
+        "materials", "nvidia_cv_contract"
+    )
+    assert "Target at least 20 well-structured lines" in load_prompt("materials", "nvidia_cv_contract")
+    assert "the most recent role normally needs 4-6 truthful bullets" in load_prompt(
+        "materials", "nvidia_cv_contract"
+    )
+    assert "maximum 320 characters" in load_prompt("materials", "nvidia_kit_contract")
     assert "application_tone_constraints" in load_prompt("materials", "nvidia_kit_contract")
     assert "exploratory-review mode" in load_prompt("materials", "nvidia_kit_contract")
     assert "Do not name unsupported avoid-overclaiming terms or aliases even as gaps" in load_prompt(

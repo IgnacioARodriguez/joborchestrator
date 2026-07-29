@@ -118,6 +118,39 @@ def test_answer_bank_uses_explicitly_approved_sensitive_answers() -> None:
     ]
 
 
+def test_answer_bank_requires_human_confirmation_for_legal_consent_even_when_approved() -> None:
+    mapping = map_answers(
+        {
+            "fields": [
+                {
+                    "name": "privacy_consent",
+                    "label": "I agree to the privacy policy and certify my answers are accurate",
+                    "type": "checkbox",
+                    "required": True,
+                }
+            ]
+        },
+        {},
+        [
+            {
+                "canonical_key": "privacy_consent",
+                "question_patterns": ["I agree to the privacy policy and certify my answers are accurate"],
+                "answer_type": "checkbox",
+                "value": "yes",
+                "source": "approved",
+                "status": "approved",
+                "sensitivity": "public",
+                "requires_confirmation": False,
+            }
+        ],
+    )
+
+    answer = mapping["answers"][0]
+    assert answer["source"] == "approved_answer"
+    assert answer["requires_confirmation"] is True
+    assert mapping["unknown_fields"][0]["name"] == "privacy_consent"
+
+
 def test_answer_bank_uses_question_patterns_for_unknown_safe_fields() -> None:
     mapping = map_answers(
         {"fields": [{"name": "remote_pref", "label": "Where would you prefer to work from?", "required": True}]},
@@ -142,6 +175,58 @@ def test_answer_bank_uses_question_patterns_for_unknown_safe_fields() -> None:
     assert answer["source"] == "approved_answer"
     assert answer["match_strategy"] == "question_pattern_exact"
     assert mapping["unknown_fields"] == []
+
+
+def test_answer_bank_prefers_question_pattern_over_canonical_guess() -> None:
+    mapping = map_answers(
+        {
+            "fields": [
+                {
+                    "name": "require_work_auth",
+                    "label": "Do you require work authorization?",
+                    "type": "select",
+                    "required": True,
+                    "options": [{"value": "yes", "label": "Yes"}, {"value": "no", "label": "No"}],
+                }
+            ]
+        },
+        {},
+        [
+            {
+                "canonical_key": "work_authorization",
+                "question_patterns": ["Do you have permanent authorization to work?"],
+                "answer_type": "select",
+                "value": "No",
+                "source": "approved",
+                "status": "approved",
+                "sensitivity": "sensitive",
+                "requires_confirmation": False,
+            },
+            {
+                "canonical_key": "sponsorship",
+                "question_patterns": ["Do you require work authorization?"],
+                "answer_type": "select",
+                "value": "Yes",
+                "source": "approved",
+                "status": "approved",
+                "sensitivity": "sensitive",
+                "requires_confirmation": False,
+            },
+        ],
+    )
+
+    answer = mapping["answers"][0]
+    assert answer["canonical_key"] == "sponsorship"
+    assert answer["value"] == "Yes"
+    assert answer["match_strategy"] == "question_pattern_exact"
+    assert safe_fill_plan(mapping) == [
+        {
+            "field_name": "require_work_auth",
+            "value": "yes",
+            "canonical_key": "sponsorship",
+            "action_type": "select_option",
+        }
+    ]
 
 
 def test_answer_bank_does_not_use_generated_or_expired_answers() -> None:
@@ -221,6 +306,12 @@ def test_adapter_registry_uses_generic_form_for_apply_landing_page() -> None:
     assert AdapterRegistry().detect(html, {"apply_url": "https://careers.example.test/jobs/backend"}).provider == "generic_form"
 
 
+def test_adapter_registry_can_fetch_executable_adapter_by_provider() -> None:
+    registry = AdapterRegistry()
+
+    assert registry.get("generic_form").provider == "generic_form"
+
+
 def test_provider_capabilities_are_explicit_and_do_not_claim_submit() -> None:
     registry = AdapterRegistry()
     greenhouse = registry.capabilities("greenhouse")
@@ -264,6 +355,7 @@ def test_external_apply_intermediate_links_are_detected() -> None:
         <a href="/jobs/123">Job details</a>
         <a href="/jobs/123/apply">Apply now</a>
         <a href="https://boards.greenhouse.io/acme/jobs/123" aria-label="Apply for this role">Continue</a>
+        <a href="https://jobs.smartrecruiters.com/oneclick-ui/company/acme/publication/abc">I'm interested</a>
       </body>
     </html>
     """
@@ -273,6 +365,7 @@ def test_external_apply_intermediate_links_are_detected() -> None:
     assert links == [
         {"url": "https://careers.example.com/jobs/123/apply", "text": "Apply now"},
         {"url": "https://boards.greenhouse.io/acme/jobs/123", "text": "Continue Apply for this role"},
+        {"url": "https://jobs.smartrecruiters.com/oneclick-ui/company/acme/publication/abc", "text": "I'm interested"},
     ]
 
 
@@ -282,6 +375,15 @@ def test_safe_fill_plan_only_includes_non_sensitive_confirmed_answers() -> None:
             {"field_name": "first_name", "canonical_key": "full_name", "value": "Ignacio Rodriguez", "requires_confirmation": False},
             {"field_name": "email", "canonical_key": "email", "value": "me@example.com", "requires_confirmation": False},
             {"field_name": "salary", "canonical_key": "salary", "value": "100000", "requires_confirmation": True},
+            {
+                "field_name": "privacy_consent",
+                "label": "I agree to the privacy policy",
+                "canonical_key": "privacy_consent",
+                "field_type": "checkbox",
+                "value": "yes",
+                "source": "approved_answer",
+                "requires_confirmation": False,
+            },
             {"field_name": "custom", "canonical_key": None, "value": "something", "requires_confirmation": False},
         ]
     }

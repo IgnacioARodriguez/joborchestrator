@@ -33,6 +33,7 @@ DEFAULT_MATERIALS_VALIDATION_RETRIES = int(
     or os.getenv("OPENAI_MATERIALS_VALIDATION_RETRIES", "3")
 )
 MAX_MATERIALS_VALIDATION_RETRIES = int(os.getenv("MAX_MATERIALS_VALIDATION_RETRIES", "6"))
+RECRUITER_MESSAGE_MAX_CHARS = 320
 logger = logging.getLogger(__name__)
 ROLE_ATTRIBUTION_TECH_TERMS = [
     "Python",
@@ -70,6 +71,10 @@ EXPERIENCE_DENSITY_BULLET_RULES = [
     {"ratio": 0.35, "floor": 3, "cap": 5},
     {"ratio": 0.25, "floor": 1, "cap": 3},
 ]
+EXPERIENCE_DENSITY_PARSE_FAILURE = (
+    "ats_cv_text density validation was not applied because base CV experience roles could not be parsed. "
+    "Review the base CV experience headings/date format before trusting compression checks."
+)
 
 
 class LLMMaterialsError(RuntimeError):
@@ -210,18 +215,18 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "Use application_tone_constraints to calibrate confidence; risky or skip decisions must be cautious and must not sound like an automatic strong fit.",
             "Use ats_fit_analysis as the ATS keyword map: emphasize supported_keywords, frame adjacent_or_review_keywords cautiously, and never claim avoid_keywords as direct experience.",
             "Recruiter_message must be a short LinkedIn connection note to a recruiter or hiring contact, not a cover letter and not multiple variants.",
-            "Recruiter_message must fit a LinkedIn invite: under 300 characters when possible, one paragraph, no formal letter salutation, no cover-letter body.",
+            f"Recruiter_message must fit a LinkedIn invite: maximum {RECRUITER_MESSAGE_MAX_CHARS} characters, one paragraph, no formal letter salutation, no cover-letter body.",
             "Recruiter_message should say why this specific role matches the CV and that the candidate would like to send/share the CV.",
             "Output language should match the job posting language unless the user profile clearly indicates otherwise.",
             "ATS CV text should be ready to copy, export to DOCX/PDF, and submit after human review.",
-            "Cover letter can be empty only when application context clearly does not need one; otherwise provide a concise tailored letter.",
+            "Cover letter is required and must be substantive; when constraints are risky, write it cautiously instead of leaving it empty.",
             "Autofill notes should include copy-paste answers for common portal questions and caveats for claims to avoid.",
             "List risk_flags for unsupported claims, adjacency framing, or user facts to double-check.",
             "Return only JSON matching the schema.",
         ],
         "output_shape": {
             "recruiter_message": "short recruiter connection note, ready to paste into LinkedIn invite/InMail/email",
-            "cover_letter": "concise tailored cover letter or empty string",
+            "cover_letter": "concise tailored cover letter",
             "ats_cv_text": "complete ATS-optimized CV only; no notes or internal instructions",
             "autofill_notes": "structured copy-paste application workflow",
             "risk_flags": ["unsupported or review-needed claims"],
@@ -315,7 +320,10 @@ def _build_ats_fit_analysis(
     for term in job_terms:
         if _term_matches_any_avoid_alias(term, avoid_aliases):
             avoid.append(term)
-        elif _contains_phrase_for_materials(source_text, term):
+        elif _contains_phrase_for_materials(source_text, term) or _contains_supported_keyword_variant_for_materials(
+            source_text,
+            term,
+        ):
             supported.append(term)
         else:
             adjacent_or_review.append(term)
@@ -450,10 +458,50 @@ def _coerce_validation_retry_limit(validation_retry_limit: int | None, payload: 
 
 
 def _validation_failure_metadata(attempt: int, validation_errors: list[str], validation_feedback: str) -> dict[str, Any]:
-    return {
+    metadata = {
         "validation_attempts": attempt + 1,
         "validation_errors": [*validation_errors, validation_feedback],
     }
+    if _is_unrecoverable_validation_feedback(validation_feedback):
+        metadata["human_review_required"] = True
+    return metadata
+
+
+def _is_unrecoverable_validation_feedback(validation_feedback: str | None) -> bool:
+    normalized = _normalize_for_match(validation_feedback or "")
+    return _normalize_for_match(EXPERIENCE_DENSITY_PARSE_FAILURE) in normalized
+
+
+def _split_validation_feedback(validation_feedback: str | None) -> list[str]:
+    return [part.strip() for part in str(validation_feedback or "").split("; ") if part.strip()]
+
+
+def _degraded_validation_feedbacks(validation_feedback: str | None) -> list[str]:
+    parse_failure = _normalize_for_match(EXPERIENCE_DENSITY_PARSE_FAILURE)
+    return [part for part in _split_validation_feedback(validation_feedback) if parse_failure in _normalize_for_match(part)]
+
+
+def _blocking_validation_feedback(validation_feedback: str | None) -> str | None:
+    parse_failure = _normalize_for_match(EXPERIENCE_DENSITY_PARSE_FAILURE)
+    blocking = [
+        part for part in _split_validation_feedback(validation_feedback) if parse_failure not in _normalize_for_match(part)
+    ]
+    return "; ".join(blocking) if blocking else None
+
+
+def _accepted_generation_metadata(
+    attempt: int,
+    validation_errors: list[str],
+    degraded_feedbacks: list[str] | None = None,
+) -> dict[str, Any]:
+    metadata = {
+        "validation_attempts": attempt + 1,
+        "validation_errors": [*validation_errors, *(degraded_feedbacks or [])],
+    }
+    if degraded_feedbacks:
+        metadata["human_review_required"] = True
+        metadata["experience_density_validation"] = "skipped"
+    return metadata
 
 
 def _request_failure_metadata(attempt: int, validation_errors: list[str], exc: Exception) -> dict[str, Any]:
@@ -759,19 +807,19 @@ def _call_openai(
                 generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
             ) from exc
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
-        if not validation_feedback:
-            parsed["_generation_metadata"] = {
-                "validation_attempts": attempt + 1,
-                "validation_errors": validation_errors,
-            }
+        degraded_feedbacks = _degraded_validation_feedbacks(validation_feedback)
+        blocking_feedback = _blocking_validation_feedback(validation_feedback)
+        if not blocking_feedback:
+            parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors, degraded_feedbacks)
             return parsed
         if attempt < retry_limit:
-            validation_errors.append(validation_feedback)
-            logger.warning("Retrying OpenAI materials generation after invalid response: %s", validation_feedback)
+            validation_errors.extend(degraded_feedbacks)
+            validation_errors.append(blocking_feedback)
+            logger.warning("Retrying OpenAI materials generation after invalid response: %s", blocking_feedback)
             continue
         raise LLMMaterialsError(
-            f"OpenAI materials response was incomplete: {validation_feedback}",
-            generation_metadata=_validation_failure_metadata(attempt, validation_errors, validation_feedback),
+            f"OpenAI materials response was incomplete: {blocking_feedback}",
+            generation_metadata=_validation_failure_metadata(attempt, validation_errors + degraded_feedbacks, blocking_feedback),
         )
     raise LLMMaterialsError("OpenAI materials response did not produce a usable application kit.")
 
@@ -796,19 +844,19 @@ def _call_nvidia(
                 generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
             ) from exc
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
-        if not validation_feedback:
-            parsed["_generation_metadata"] = {
-                "validation_attempts": attempt + 1,
-                "validation_errors": validation_errors,
-            }
+        degraded_feedbacks = _degraded_validation_feedbacks(validation_feedback)
+        blocking_feedback = _blocking_validation_feedback(validation_feedback)
+        if not blocking_feedback:
+            parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors, degraded_feedbacks)
             return parsed
         if attempt < retry_limit:
-            validation_errors.append(validation_feedback)
-            logger.warning("Retrying NVIDIA materials generation after invalid response: %s", validation_feedback)
+            validation_errors.extend(degraded_feedbacks)
+            validation_errors.append(blocking_feedback)
+            logger.warning("Retrying NVIDIA materials generation after invalid response: %s", blocking_feedback)
             continue
         raise LLMMaterialsError(
-            f"NVIDIA materials response was incomplete: {validation_feedback}",
-            generation_metadata=_validation_failure_metadata(attempt, validation_errors, validation_feedback),
+            f"NVIDIA materials response was incomplete: {blocking_feedback}",
+            generation_metadata=_validation_failure_metadata(attempt, validation_errors + degraded_feedbacks, blocking_feedback),
         )
     raise LLMMaterialsError("NVIDIA materials response did not produce a usable application kit.")
 
@@ -840,23 +888,23 @@ def _call_nvidia_cv(
                 generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
             ) from exc
         validation_feedback = _ats_cv_response_validation_error(parsed, _base_cv_text(payload), payload)
-        if not validation_feedback:
-            parsed["_generation_metadata"] = {
-                "validation_attempts": attempt + 1,
-                "validation_errors": validation_errors,
-            }
+        degraded_feedbacks = _degraded_validation_feedbacks(validation_feedback)
+        blocking_feedback = _blocking_validation_feedback(validation_feedback)
+        if not blocking_feedback:
+            parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors, degraded_feedbacks)
             return parsed
         if attempt < retry_limit:
-            validation_errors.append(validation_feedback)
+            validation_errors.extend(degraded_feedbacks)
+            validation_errors.append(blocking_feedback)
             logger.warning(
                 "Retrying NVIDIA ATS CV generation after invalid response: %s received_keys=%s",
-                validation_feedback,
+                blocking_feedback,
                 sorted(parsed.keys()),
             )
             continue
         raise LLMMaterialsError(
-            f"NVIDIA ATS CV response was incomplete: {validation_feedback}",
-            generation_metadata=_validation_failure_metadata(attempt, validation_errors, validation_feedback),
+            f"NVIDIA ATS CV response was incomplete: {blocking_feedback}",
+            generation_metadata=_validation_failure_metadata(attempt, validation_errors + degraded_feedbacks, blocking_feedback),
         )
     raise LLMMaterialsError("NVIDIA ATS CV response did not produce a usable CV.")
 
@@ -894,7 +942,7 @@ def _call_nvidia_kit(
                 "validation_errors": validation_errors,
             }
             return parsed
-        if attempt < retry_limit:
+        if attempt < retry_limit and not _is_unrecoverable_validation_feedback(validation_feedback):
             validation_errors.append(validation_feedback)
             logger.warning(
                 "Retrying NVIDIA kit generation after invalid response: %s received_keys=%s",
@@ -1069,7 +1117,14 @@ def _materials_repair_instruction(validation_feedback: str) -> str:
         instructions.append(
             "Rewrite ats_cv_text as a complete ATS CV, not a summary. Include contact/header, Professional Summary, "
             "Technical Skills, Professional Experience with every base CV employer, and Education. Use at least "
-            "700 characters and 18 non-empty lines while preserving only truthful source-backed facts."
+            "700 characters and normally 18 non-empty lines while preserving only truthful source-backed facts. "
+            "For a very short one-role base CV, 16-17 well-structured lines can be enough."
+        )
+    if "keywords_used contains terms not present" in normalized:
+        instructions.append(
+            "For every item in keywords_used, add that truthful normalized phrase to ats_cv_text as a standalone "
+            "token-aware phrase in Summary, Technical Skills, or a matching Experience bullet. If a phrase cannot "
+            "be stated truthfully, remove it from keywords_used."
         )
     if "overcompressed" in normalized:
         instructions.append(
@@ -1197,7 +1252,7 @@ def _kit_response_validation_error(
             problems.append(f"{field} is required")
     recruiter_message = str(payload.get("recruiter_message") or "")
     cover_letter = str(payload.get("cover_letter") or "").strip()
-    if len(recruiter_message) > 320:
+    if len(recruiter_message) > RECRUITER_MESSAGE_MAX_CHARS:
         problems.append("recruiter_message is too long")
     if cover_letter and len(cover_letter) < 120:
         problems.append("cover_letter is too short to be substantive")
@@ -1207,6 +1262,7 @@ def _kit_response_validation_error(
     problems.extend(_unsupported_hedge_problems(kit_text))
     problems.extend(_materials_internal_note_problems(kit_text))
     problems.extend(_application_tone_problems(payload, source_payload))
+    problems.extend(_unsupported_experience_years_problems(kit_text, source_payload, field_name="application_materials"))
     return "; ".join(problems) if problems else None
 
 
@@ -1295,11 +1351,13 @@ def _ats_cv_response_validation_error(
     for field in ["risk_flags", "keywords_used"]:
         if not isinstance(payload.get(field), list):
             problems.append(f"{field} must be an array")
-    problems.extend(_ats_cv_quality_problems(ats_cv_text))
+    problems.extend(_ats_cv_quality_problems(ats_cv_text, base_cv_text=str(base_cv_text or "")))
+    problems.extend(_ats_cv_keywords_used_presence_problems(payload, ats_cv_text))
     problems.extend(_experience_coverage_problems(str(base_cv_text or ""), ats_cv_text))
     problems.extend(_experience_density_problems(str(base_cv_text or ""), ats_cv_text))
     problems.extend(_experience_technology_attribution_problems(str(base_cv_text or ""), ats_cv_text))
     problems.extend(_avoid_overclaiming_problems(ats_cv_text, source_payload, field_name="ats_cv_text"))
+    problems.extend(_unsupported_experience_years_problems(ats_cv_text, source_payload, field_name="ats_cv_text"))
     return "; ".join(problems) if problems else None
 
 
@@ -1324,7 +1382,7 @@ def _base_cv_text(payload: dict[str, Any]) -> str:
     return ""
 
 
-def _ats_cv_quality_problems(text: str) -> list[str]:
+def _ats_cv_quality_problems(text: str, *, base_cv_text: str = "") -> list[str]:
     cleaned = _clean_cv_text_for_export(text)
     normalized = cleaned.lower()
     raw_normalized = str(text or "").lower()
@@ -1332,8 +1390,9 @@ def _ats_cv_quality_problems(text: str) -> list[str]:
     if len(cleaned) < 700:
         problems.append("ats_cv_text is too short to be a complete ATS CV")
     line_count = len([line for line in cleaned.splitlines() if line.strip()])
-    if line_count < 18:
-        problems.append(f"ats_cv_text has too few parseable lines for a complete CV: {line_count}/18")
+    minimum_lines = _minimum_ats_cv_lines(base_cv_text)
+    if line_count < minimum_lines:
+        problems.append(f"ats_cv_text has too few parseable lines for a complete CV: {line_count}/{minimum_lines}")
 
     section_patterns = {
         "summary": ["summary", "profile", "professional summary", "perfil", "resumen"],
@@ -1366,6 +1425,37 @@ def _ats_cv_quality_problems(text: str) -> list[str]:
     return problems
 
 
+def _minimum_ats_cv_lines(base_cv_text: str) -> int:
+    if not str(base_cv_text or "").strip():
+        return 18
+    entries = _extract_base_experience_entries(base_cv_text)
+    source_bullets = _cv_bullet_count(_experience_section(base_cv_text) or base_cv_text)
+    if len(entries) == 1 and source_bullets <= 3:
+        return 16
+    if len(entries) == 1:
+        return 17
+    return 18
+
+
+def _ats_cv_keywords_used_presence_problems(payload: dict[str, Any], ats_cv_text: str) -> list[str]:
+    keywords = payload.get("keywords_used")
+    if not isinstance(keywords, list):
+        return []
+    missing = [
+        str(keyword).strip()
+        for keyword in keywords
+        if str(keyword or "").strip()
+        and not _contains_phrase_for_materials(_normalize_for_match(ats_cv_text), str(keyword))
+    ]
+    if not missing:
+        return []
+    return [
+        "keywords_used contains terms not present as normalized token-aware phrases in ats_cv_text: "
+        + ", ".join(missing[:8])
+        + ". Add the truthful keyword phrase to ats_cv_text or remove it from keywords_used."
+    ]
+
+
 def _contains_section_heading(normalized_text: str, heading: str) -> bool:
     for line in normalized_text.splitlines():
         stripped = line.strip(" :-\t")
@@ -1376,7 +1466,7 @@ def _contains_section_heading(normalized_text: str, heading: str) -> bool:
 
 def _experience_coverage_problems(base_cv_text: str, ats_cv_text: str) -> list[str]:
     entries = _extract_base_experience_entries(base_cv_text)
-    if len(entries) < 2:
+    if not entries:
         return []
     normalized_cv = _normalize_for_match(ats_cv_text)
     missing = []
@@ -1392,16 +1482,13 @@ def _experience_coverage_problems(base_cv_text: str, ats_cv_text: str) -> list[s
 def _experience_density_problems(base_cv_text: str, ats_cv_text: str) -> list[str]:
     entries = _extract_base_experience_entries(base_cv_text)
     source_section = _experience_section(base_cv_text)
-    if len(entries) < 2:
-        if len(_normalize_whitespace_for_materials(source_section)) >= 1400:
-            return [
-                "ats_cv_text density validation was not applied because base CV experience roles could not be "
-                "parsed. Review the base CV experience headings/date format before trusting compression checks."
-            ]
+    if not entries:
+        if _looks_like_unparsed_experience_text(base_cv_text, source_section):
+            return [EXPERIENCE_DENSITY_PARSE_FAILURE]
         return []
     generated_section = _experience_section(ats_cv_text) or ats_cv_text
     if not source_section or not generated_section:
-        return []
+        return [EXPERIENCE_DENSITY_PARSE_FAILURE]
 
     problems: list[str] = []
     base_chars = len(_normalize_whitespace_for_materials(source_section))
@@ -1416,11 +1503,14 @@ def _experience_density_problems(base_cv_text: str, ats_cv_text: str) -> list[st
     for index, entry in enumerate(entries):
         source_block = _experience_block_for_entry(source_section, entry, entries)
         generated_block = _experience_block_for_entry(generated_section, entry, entries)
-        if not source_block or not generated_block:
+        if not source_block:
+            continue
+        if not generated_block:
+            compressed_roles.append(f"{entry['company']} is missing from generated experience")
             continue
         source_bullets = _cv_bullet_count(source_block)
         generated_bullets = _cv_bullet_count(generated_block)
-        if source_bullets < 3:
+        if source_bullets < 1:
             continue
         required_bullets = _minimum_bullets_for_role(index, source_bullets)
         if generated_bullets < required_bullets:
@@ -1441,11 +1531,67 @@ def _minimum_bullets_for_role(index: int, source_bullets: int) -> int:
 
     rule = EXPERIENCE_DENSITY_BULLET_RULES[min(index, len(EXPERIENCE_DENSITY_BULLET_RULES) - 1)]
     proportional = math.ceil(source_bullets * float(rule["ratio"]))
-    return min(int(rule["cap"]), max(int(rule["floor"]), proportional))
+    floor = min(int(rule["floor"]), source_bullets)
+    return min(source_bullets, int(rule["cap"]), max(floor, proportional))
 
 
 def _cv_bullet_count(block: str) -> int:
     return sum(1 for line in str(block or "").splitlines() if line.strip().startswith(BULLET_PREFIXES))
+
+
+def _looks_like_unparsed_experience_text(base_cv_text: str, source_section: str) -> bool:
+    candidate = source_section or base_cv_text
+    normalized = _normalize_whitespace_for_materials(candidate)
+    if source_section:
+        return len(normalized) >= 1400
+    date_ranges = len([line for line in str(candidate or "").splitlines() if _date_range_match(line)])
+    bullets = _cv_bullet_count(candidate)
+    role_terms = len(
+        re.findall(
+            r"(?i)\b(developer|engineer|consultant|architect|manager|analyst|specialist|lead|desarrollador|ingeniero)\b",
+            candidate,
+        )
+    )
+    if date_ranges >= 1 and bullets >= 3:
+        return True
+    if len(normalized) >= 1400 and date_ranges >= 1 and role_terms >= 2:
+        return True
+    return False
+
+
+def _contains_supported_keyword_variant_for_materials(normalized_source_text: str, term: str) -> bool:
+    term_tokens = [_canonical_materials_keyword_token(token) for token in _materials_keyword_tokens(term)]
+    if not term_tokens or len(term_tokens) > 4:
+        return False
+    source_tokens = {
+        _canonical_materials_keyword_token(token)
+        for token in _materials_keyword_tokens(normalized_source_text)
+    }
+    return all(token in source_tokens for token in term_tokens)
+
+
+def _materials_keyword_tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9+#]+", _normalize_for_match(text))
+
+
+def _canonical_materials_keyword_token(token: str) -> str:
+    value = token.strip("'")
+    if len(value) > 4 and value.endswith("ies"):
+        value = f"{value[:-3]}y"
+    elif len(value) > 4 and value.endswith("es"):
+        value = value[:-2]
+    elif len(value) > 3 and value.endswith("s") and not value.endswith("ss"):
+        value = value[:-1]
+
+    if value.startswith("document"):
+        return "document"
+    if value.startswith("automat"):
+        return "automat"
+    if value.startswith("integrat"):
+        return "integrat"
+    if value.startswith("operat"):
+        return "operat"
+    return value
 
 
 def _normalize_whitespace_for_materials(text: str) -> str:
@@ -1680,6 +1826,57 @@ def _avoid_overclaiming_problems(
     ]
 
 
+def _unsupported_experience_years_problems(
+    text: str,
+    source_payload: dict[str, Any] | None,
+    *,
+    field_name: str,
+) -> list[str]:
+    if not source_payload:
+        return []
+    claims = _experience_year_claims(text)
+    if not claims:
+        return []
+    supported_source = _supported_materials_source_text(source_payload)
+    supported_normalized = _normalize_for_match(supported_source)
+    profile = source_payload.get("candidate_profile") if isinstance(source_payload.get("candidate_profile"), dict) else {}
+    real_years = _float_or_none(profile.get("real_experience_years"))
+    unsupported: list[str] = []
+    for claim in claims:
+        if _contains_phrase_for_materials(supported_normalized, claim):
+            continue
+        claim_years = _experience_year_value(claim)
+        if claim_years is not None and real_years is not None and claim_years <= real_years:
+            continue
+        unsupported.append(claim)
+    if not unsupported:
+        return []
+    return [
+        f"{field_name} contains unsupported years-of-experience claims: "
+        + ", ".join(unsupported[:4])
+        + ". Remove or lower years claims unless Context.base_cv or candidate_profile.real_experience_years supports them."
+    ]
+
+
+def _experience_year_claims(text: str) -> list[str]:
+    return _dedupe_strings(
+        match.group(0)
+        for match in re.finditer(r"\b\d{1,2}\+?\s*(?:years|years'|anos|años)\b", str(text or ""), flags=re.IGNORECASE)
+    )
+
+
+def _experience_year_value(claim: str) -> float | None:
+    match = re.search(r"\b(\d{1,2})", str(claim or ""))
+    return float(match.group(1)) if match else None
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _avoid_overclaiming_aliases(term: str) -> list[str]:
     normalized = _normalize_for_match(term)
     aliases = [str(term or "").strip()]
@@ -1767,8 +1964,36 @@ def _extract_base_experience_entries(base_cv_text: str) -> list[dict[str, Any]]:
 
 
 def _experience_section(text: str) -> str:
+    headings = (
+        "experience",
+        "professional experience",
+        "work experience",
+        "employment history",
+        "employment experience",
+        "career history",
+        "professional background",
+        "relevant experience",
+        "experiencia",
+        "experiencia profesional",
+        "historial laboral",
+        "trayectoria profesional",
+    )
+    stop_headings = (
+        "projects?",
+        "technical skills",
+        "skills",
+        "education",
+        r"formaci[oó]n",
+        "certifications?",
+        "languages?",
+        "idiomas",
+        "awards?",
+        "publications?",
+        "volunteer experience",
+        "additional information",
+    )
     match = re.search(
-        r"(?ims)^\s*(experience|professional experience|work experience|employment history|experiencia|historial laboral)\s*$([\s\S]*?)(?=^\s*(projects?|technical skills|skills|education|formaci[oó]n|certifications?)\s*$|\Z)",
+        rf"(?ims)^\s*({'|'.join(headings)})\s*$([\s\S]*?)(?=^\s*({'|'.join(stop_headings)})\s*$|\Z)",
         text,
     )
     return match.group(2) if match else ""
@@ -1782,10 +2007,12 @@ def _date_range_match(line: str) -> re.Match[str] | None:
         r"ago(?:sto)?|sep(?:tiembre)?|sept(?:iembre)?|oct(?:ubre)?|nov(?:iembre)?|dic(?:iembre)?"
     )
     month_year = rf"(?:{month})\.?\s+\d{{4}}"
+    numeric_month_year = r"(?:0?[1-9]|1[0-2])[/.-]\d{4}"
     year_only = r"\d{4}"
     separator = r"\s*[-–—]\s*"
-    end = rf"(?:{month_year}|{year_only}|present|current|actualidad|presente)"
-    return re.search(rf"(?i)\b(?:{month_year}|{year_only}){separator}{end}\b", line)
+    dated_start = rf"(?:{month_year}|{numeric_month_year}|{year_only})"
+    end = rf"(?:{month_year}|{numeric_month_year}|{year_only}|present|current|actualidad|presente)"
+    return re.search(rf"(?i)\b{dated_start}{separator}{end}\b", line)
 
 
 def _next_company_line(lines: list[str], start: int) -> str:
@@ -1836,10 +2063,12 @@ def _normalize_for_match(text: str) -> str:
 
 
 def _contains_phrase_for_materials(normalized_text: str, phrase: str) -> bool:
+    normalized_text = _normalize_for_match(normalized_text)
     normalized_phrase = _normalize_for_match(phrase)
     if not normalized_phrase:
         return False
-    return normalized_phrase in normalized_text
+    pattern = rf"(?<![a-z0-9+#]){re.escape(normalized_phrase)}(?![a-z0-9+#])"
+    return re.search(pattern, normalized_text) is not None
 
 
 def _to_dict(value: Any) -> dict[str, Any]:

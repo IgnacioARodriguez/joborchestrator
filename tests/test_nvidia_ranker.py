@@ -451,6 +451,56 @@ def test_rank_jobs_with_nvidia_caps_onsite_outside_preferred_location(monkeypatc
     assert "safety_cap_location_review" in ranking.evidence.llm_escalation_reasons
 
 
+def test_rank_jobs_with_nvidia_caps_hybrid_outside_preferences_to_skip(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Applied AI Engineer",
+                "company": "Bjak",
+                "location": "Malaysia",
+                "workplace_type": "remote",
+                "description_text": (
+                    "Remote-friendly AI Engineer role with Python and backend APIs, "
+                    "but hybrid work requires at least 3 days per week in the Malaysia office."
+                ),
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 82, "APPLY_WITH_TAILORED_CV")
+        payload["evidence"]["central_requirements"] = ["AI Engineer", "Python", "backend APIs"]
+        payload["evidence"]["strong_matches"] = ["Python", "backend APIs"]
+        payload["evidence"]["red_flags"] = [
+            "Hybrid role requiring at least 3 days/week in Malaysia office"
+        ]
+        payload["evidence"]["central_requirement_coverage"] = 0.82
+        payload["scores"]["central_requirement_coverage"] = 82
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(
+        nvidia_ranker.db,
+        "save_job_ranking",
+        lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking),
+    )
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    ranking = saved[1]
+    assert summary["APPLY_WITH_TAILORED_CV"] == 0
+    assert summary["SKIP"] == 1
+    assert ranking.decision == "SKIP"
+    assert ranking.final_score == 45
+    assert ranking.evidence.requires_llm_review is True
+    assert any("onsite/hybrid" in item for item in ranking.evidence.red_flags)
+    assert "safety_cap_location_review" in ranking.evidence.llm_escalation_reasons
+
+
 def test_nvidia_ranking_flags_brazil_power_systems_tnd_gap(monkeypatch):
     jobs = pd.DataFrame(
         [
@@ -725,7 +775,7 @@ def test_nvidia_ranking_caps_low_coverage_maybe_with_dealbreaker_to_skip(monkeyp
                 "title": "Applied AI Engineer",
                 "company": "Bjak",
                 "location": "Malaysia",
-                "description_text": "Hybrid role requiring 3 days/week in Malaysia office. Python and LLM APIs required.",
+                "description_text": "Remote role with country eligibility to verify. Python and LLM APIs required.",
             }
         ]
     )
@@ -751,6 +801,107 @@ def test_nvidia_ranking_caps_low_coverage_maybe_with_dealbreaker_to_skip(monkeyp
     assert saved[1].decision == "SKIP"
     assert saved[1].final_score == 45
     assert "evidence_dealbreaker_low_coverage_cap_skip" in saved[1].evidence.llm_escalation_reasons
+
+
+def test_nvidia_ranking_caps_soft_decision_with_many_central_gaps_to_skip(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Backend Engineer",
+                "company": "Acme",
+                "location": "Remote",
+                "workplace_type": "remote",
+                "description_text": (
+                    "Backend role requiring distributed systems, production message queues, "
+                    "container orchestration, and a typed backend framework."
+                ),
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 58, "MAYBE")
+        payload["evidence"]["central_requirements"] = [
+            "distributed systems",
+            "production message queues",
+            "container orchestration",
+            "typed backend framework",
+        ]
+        payload["evidence"]["missing_requirements"] = [
+            "production message queues",
+            "container orchestration",
+            "typed backend framework",
+        ]
+        payload["evidence"]["central_requirement_coverage"] = 0.55
+        payload["scores"]["central_requirement_coverage"] = 55
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["MAYBE"] == 0
+    assert summary["SKIP"] == 1
+    assert saved[1].decision == "SKIP"
+    assert saved[1].final_score == 45
+    assert "evidence_central_gap_cap_skip" in saved[1].evidence.llm_escalation_reasons
+
+
+def test_nvidia_ranking_caps_tailored_with_many_central_gaps_to_maybe(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Data Engineer",
+                "company": "Acme",
+                "location": "Remote",
+                "workplace_type": "remote",
+                "description_text": (
+                    "Data role requiring Python, SQL, production data pipelines, orchestration, "
+                    "and deployment ownership."
+                ),
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 72, "APPLY_WITH_TAILORED_CV")
+        payload["evidence"]["strong_matches"] = ["Python", "SQL"]
+        payload["evidence"]["central_requirements"] = [
+            "Data Engineer",
+            "Python",
+            "SQL",
+            "production data pipelines",
+            "orchestration",
+            "deployment ownership",
+        ]
+        payload["evidence"]["missing_requirements"] = [
+            "production data pipelines",
+            "orchestration",
+            "deployment ownership",
+        ]
+        payload["evidence"]["central_requirement_coverage"] = 0.68
+        payload["scores"]["central_requirement_coverage"] = 68
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["APPLY_WITH_TAILORED_CV"] == 0
+    assert summary["MAYBE"] == 1
+    assert saved[1].decision == "MAYBE"
+    assert saved[1].final_score == 58
+    assert "evidence_central_gap_cap_maybe" in saved[1].evidence.llm_escalation_reasons
 
 
 def test_nvidia_ranking_blocks_industrial_automation_mismatch(monkeypatch):
@@ -1386,6 +1537,38 @@ def test_nvidia_batch_validation_rejects_missing_central_term_evidence():
     assert "Snowflake" in error
 
 
+def test_nvidia_payload_reconciliation_satisfies_central_term_validation():
+    payload = _ranking_payload(1, 70, "APPLY_WITH_TAILORED_CV")
+    payload["evidence"]["central_requirements"] = ["Python"]
+    payload["evidence"]["partial_matches"] = ["Python"]
+    payload["evidence"]["missing_requirements"] = []
+    result = {"rankings": [payload]}
+    jobs = [
+        {
+            "id": 1,
+            "title": "Senior Data Engineer",
+            "description_text": "Requirements: Python, Terraform, and Snowflake.",
+        }
+    ]
+
+    nvidia_ranker._reconcile_missing_central_evidence_payload(
+        result,
+        jobs,
+        {"profile_skill_labels": [{"name": "Python", "level": "strong"}], "profile_text": "python"},
+    )
+
+    error = nvidia_ranker._nvidia_batch_validation_error(result, jobs)
+
+    assert error is None
+    evidence = result["rankings"][0]["evidence"]
+    assert "Terraform" in evidence["central_requirements"]
+    assert "Snowflake" in evidence["central_requirements"]
+    assert "Terraform" in evidence["missing_requirements"]
+    assert "Snowflake" in evidence["missing_requirements"]
+    assert evidence["requires_llm_review"] is True
+    assert "evidence_central_terms_reconciled" in evidence["llm_escalation_reasons"]
+
+
 def test_nvidia_batch_validation_accepts_reconciled_central_terms():
     payload = _ranking_payload(1, 70, "APPLY_WITH_TAILORED_CV")
     payload["evidence"]["central_requirements"] = [
@@ -1411,6 +1594,47 @@ def test_nvidia_batch_validation_accepts_reconciled_central_terms():
     )
 
     assert error is None
+
+
+def test_rank_jobs_with_nvidia_reconciles_omitted_central_terms_before_save(monkeypatch):
+    jobs = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "title": "Senior Data Engineer",
+                "company": "Acme",
+                "description_text": "Requirements: Python, Terraform, and Snowflake.",
+            }
+        ]
+    )
+    saved = {}
+
+    async def fake_call(batch, **kwargs):
+        payload = _ranking_payload(1, 70, "APPLY_WITH_TAILORED_CV")
+        payload["evidence"]["central_requirements"] = ["Senior Data Engineer", "Python"]
+        payload["evidence"]["partial_matches"] = ["Python"]
+        payload["evidence"]["missing_requirements"] = []
+        return {"rankings": [payload]}
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(nvidia_ranker.db, "get_candidate_profile_payload", profile_payload)
+    monkeypatch.setattr(nvidia_ranker, "_call_nvidia_batch_async", fake_call)
+    monkeypatch.setattr(nvidia_ranker.db, "save_job_ranking", lambda job_id, ranking, **kwargs: saved.setdefault(job_id, ranking))
+
+    summary = rank_jobs_with_nvidia(jobs, request_batch_size=1)
+
+    assert summary["saved"] == 1
+    assert summary["failed"] == 0
+    evidence_text = " ".join(
+        [
+            *[str(item) for item in saved[1].evidence.central_requirements],
+            *saved[1].evidence.missing_requirements,
+        ]
+    )
+    assert "Terraform" in evidence_text
+    assert "Snowflake" in evidence_text
+    assert saved[1].evidence.requires_llm_review is True
+    assert "evidence_central_terms_reconciled" in saved[1].evidence.llm_escalation_reasons
 
 
 def test_rank_jobs_with_nvidia_skips_inconsistent_partial_result(monkeypatch):

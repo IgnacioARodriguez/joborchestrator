@@ -383,6 +383,7 @@ def _call_nvidia_batch(
             presence_penalty=0,
         )
         parsed = _extract_json_object(response.text)
+        _reconcile_missing_central_evidence_payload(parsed, jobs, _active_profile_safety_context())
         validation_feedback = _nvidia_batch_validation_error(parsed, jobs)
         if not validation_feedback:
             parsed["_generation_metadata"] = {
@@ -484,6 +485,7 @@ async def _call_nvidia_batch_async(
             presence_penalty=0,
         )
         parsed = _extract_json_object(response.text)
+        _reconcile_missing_central_evidence_payload(parsed, jobs, _active_profile_safety_context())
         validation_feedback = _nvidia_batch_validation_error(parsed, jobs)
         if not validation_feedback:
             parsed["_generation_metadata"] = {
@@ -556,6 +558,7 @@ def _apply_nvidia_batch_result(
                 _sanitize_inferred_evidence(row, ranking)
                 _apply_ranking_safety_gate(row, ranking, safety_context)
                 _apply_profile_backed_evidence_terms(row, ranking, safety_context)
+                _reconcile_missing_central_evidence(row, ranking, safety_context)
                 _apply_evidence_consistency_gate(ranking)
                 missing_central_terms = _missing_central_terms_in_ranking(ranking, row)
                 if missing_central_terms:
@@ -701,6 +704,55 @@ def _nvidia_central_term_evidence_errors(rankings: list[Any], jobs: list[dict[st
         if missing:
             errors.append(f"{_ranking_item_label(item, index)} missing central term evidence {missing[:5]}")
     return errors
+
+
+def _reconcile_missing_central_evidence_payload(
+    result: dict[str, Any],
+    jobs: list[dict[str, Any]],
+    safety_context: dict[str, Any],
+) -> None:
+    rankings = result.get("rankings")
+    if not isinstance(rankings, list):
+        return
+    jobs_by_id = {int(row.get("id") or row.get("job_id")): row for row in jobs if row.get("id") or row.get("job_id")}
+    for item in rankings:
+        if not isinstance(item, dict) or item.get("job_id") is None:
+            continue
+        job = jobs_by_id.get(int(item["job_id"]))
+        if not job:
+            continue
+        missing_terms = _missing_central_terms_in_evidence(item, job)
+        if not missing_terms:
+            continue
+        evidence = item.setdefault("evidence", {})
+        if not isinstance(evidence, dict):
+            continue
+        reasons = evidence.setdefault("llm_escalation_reasons", [])
+        if not isinstance(reasons, list):
+            reasons = []
+            evidence["llm_escalation_reasons"] = reasons
+        for term in missing_terms:
+            _append_payload_evidence_term(evidence, "central_requirements", term)
+            support = _profile_support_for_term(term, safety_context)
+            if support == "strong":
+                _append_payload_evidence_term(evidence, "strong_matches", term)
+            elif support == "partial":
+                _append_payload_evidence_term(evidence, "partial_matches", term)
+            else:
+                _append_payload_evidence_term(evidence, "missing_requirements", term)
+        evidence["requires_llm_review"] = True
+        if "evidence_central_terms_reconciled" not in reasons:
+            reasons.append("evidence_central_terms_reconciled")
+
+
+def _append_payload_evidence_term(evidence: dict[str, Any], key: str, term: str) -> None:
+    value = evidence.setdefault(key, [])
+    if not isinstance(value, list):
+        value = []
+        evidence[key] = value
+    if any(_contains_term_variant(str(item), term) for item in value):
+        return
+    value.append(term)
 
 
 def _missing_central_terms_in_evidence(item: dict[str, Any], job: dict[str, Any]) -> list[str]:
@@ -907,6 +959,54 @@ def _apply_profile_backed_evidence_terms(
         evidence_text = _normalize_text(f"{evidence_text} {term}")
 
 
+def _reconcile_missing_central_evidence(
+    job: dict[str, Any],
+    ranking: Any,
+    safety_context: dict[str, Any],
+) -> None:
+    missing_terms = _missing_central_terms_in_ranking(ranking, job)
+    if not missing_terms:
+        return
+
+    evidence = ranking.evidence
+    reasons = list(evidence.llm_escalation_reasons or [])
+    for term in missing_terms:
+        _append_evidence_term(evidence.central_requirements, term)
+        support = _profile_support_for_term(term, safety_context)
+        if support == "strong":
+            _append_evidence_term(evidence.strong_matches, term)
+        elif support == "partial":
+            _append_evidence_term(evidence.partial_matches, term)
+        else:
+            _append_evidence_term(evidence.missing_requirements, term)
+
+    evidence.requires_llm_review = True
+    if "evidence_central_terms_reconciled" not in reasons:
+        reasons.append("evidence_central_terms_reconciled")
+    evidence.llm_escalation_reasons = reasons
+
+
+def _append_evidence_term(items: list[Any], term: str) -> None:
+    if any(_contains_term_variant(str(item), term) for item in items):
+        return
+    items.append(term)
+
+
+def _profile_support_for_term(term: str, safety_context: dict[str, Any]) -> str:
+    for skill in safety_context.get("profile_skill_labels") or []:
+        if not isinstance(skill, dict):
+            continue
+        name = str(skill.get("name") or "")
+        if not _contains_skill_marker(_normalize_text(name), term):
+            continue
+        if _normalize_skill_level(skill.get("level")) == "strong":
+            return "strong"
+        return "partial"
+    if _contains_term_variant(str(safety_context.get("profile_text") or ""), term):
+        return "partial"
+    return "missing"
+
+
 def _sanitize_inferred_evidence(job: dict[str, Any], ranking: Any) -> None:
     job_text = _normalized_job_text(job)
     evidence = ranking.evidence
@@ -1010,7 +1110,53 @@ def _apply_evidence_consistency_gate(ranking: Any) -> None:
         if "evidence_requires_review" not in reasons:
             reasons.append("evidence_requires_review")
 
+    central_gap_cap = _central_gap_consistency_cap(ranking, coverage_percent)
+    if central_gap_cap and ranking.decision in {"APPLY_WITH_TAILORED_CV", "MAYBE"}:
+        cap_decision, max_score, risk_penalty, reason = central_gap_cap
+        if _DECISION_SEVERITY[ranking.decision] < _DECISION_SEVERITY[cap_decision]:
+            ranking.decision = cap_decision
+        ranking.final_score = min(int(ranking.final_score), max_score)
+        ranking.scores.risk_penalty = max(int(ranking.scores.risk_penalty), risk_penalty)
+        evidence.requires_llm_review = True
+        if reason not in reasons:
+            reasons.append(reason)
+        if "evidence_requires_review" not in reasons:
+            reasons.append("evidence_requires_review")
+
     evidence.llm_escalation_reasons = reasons
+
+
+def _central_gap_consistency_cap(
+    ranking: Any,
+    coverage_percent: float,
+) -> tuple[Decision, int, int, str] | None:
+    evidence = ranking.evidence
+    missing_count = _material_evidence_count(evidence.missing_requirements)
+    if missing_count == 0:
+        return None
+    central_count = _material_evidence_count(evidence.central_requirements)
+    high_missing_pressure = missing_count >= 3 or (
+        central_count >= 4 and missing_count / max(central_count, 1) >= 0.45
+    )
+    if coverage_percent < 50 and missing_count >= 2:
+        return cast(Decision, "SKIP"), 45, 30, "evidence_central_gap_cap_skip"
+    if coverage_percent < 60 and high_missing_pressure:
+        return cast(Decision, "SKIP"), 45, 30, "evidence_central_gap_cap_skip"
+    if coverage_percent < 70 and high_missing_pressure:
+        return cast(Decision, "MAYBE"), 58, 25, "evidence_central_gap_cap_maybe"
+    return None
+
+
+def _material_evidence_count(items: list[Any]) -> int:
+    count = 0
+    for item in items:
+        if isinstance(item, dict):
+            text = _normalize_text(" ".join(str(value) for value in item.values()))
+        else:
+            text = _normalize_text(str(item))
+        if text:
+            count += 1
+    return count
 
 
 def _dealbreaker_consistency_cap(
@@ -1110,12 +1256,17 @@ def _ranking_safety_signals(
 
     onsite_label = _onsite_or_hybrid_outside_preferred_location(job_text, safety_context)
     if onsite_label:
+        onsite_decision_cap = (
+            cast(Decision, "SKIP")
+            if _is_actionable_outside_preferred_location_label(onsite_label)
+            else cast(Decision, "APPLY_WITH_TAILORED_CV")
+        )
         signals.append(
             RankingSafetySignal(
                 label=onsite_label,
-                decision_cap=cast(Decision, "APPLY_WITH_TAILORED_CV"),
-                max_score=75,
-                risk_penalty=20,
+                decision_cap=onsite_decision_cap,
+                max_score=45 if onsite_decision_cap == "SKIP" else 75,
+                risk_penalty=30 if onsite_decision_cap == "SKIP" else 20,
                 reason="safety_cap_location_review",
             )
         )
@@ -1412,6 +1563,8 @@ def _onsite_or_hybrid_outside_preferred_location(
         return None
     if _has_clear_remote_option(job_text) and not has_onsite and not _hybrid_with_specific_site(job_text):
         return None
+    if not _has_specific_onsite_or_hybrid_site(job_text):
+        return "onsite/hybrid location requires review"
     preferred_locations = [
         _normalize_text(str(item))
         for item in safety_context.get("preferred_locations") or []
@@ -1420,11 +1573,26 @@ def _onsite_or_hybrid_outside_preferred_location(
     if not preferred_locations:
         return "onsite/hybrid location requires review"
     if any(location and location in job_text for location in preferred_locations):
+        if _requires_work_mode_review(job_text, safety_context):
+            return "onsite/hybrid location requires review"
         return None
     preferred_cities = [location.split(",", 1)[0].strip() for location in preferred_locations]
     if any(city and city in job_text for city in preferred_cities):
+        if _requires_work_mode_review(job_text, safety_context):
+            return "onsite/hybrid location requires review"
+        return None
+    if "spain" in preferred_locations and _mentions_spain_location(job_text):
+        if _requires_work_mode_review(job_text, safety_context):
+            return "onsite/hybrid location requires review"
         return None
     return "onsite/hybrid location is not clearly within preferred locations"
+
+
+def _is_actionable_outside_preferred_location_label(label: str) -> bool:
+    normalized = _normalize_text(label)
+    return normalized in {
+        "onsite/hybrid location is not clearly within preferred locations",
+    }
 
 
 def _has_actionable_onsite_or_hybrid_restriction(job_text: str) -> bool:
@@ -1432,7 +1600,63 @@ def _has_actionable_onsite_or_hybrid_restriction(job_text: str) -> bool:
         return False
     if _has_clear_remote_option(job_text) and not _hybrid_with_specific_site(job_text):
         return False
-    return True
+    return _has_specific_onsite_or_hybrid_site(job_text)
+
+
+def _requires_work_mode_review(job_text: str, safety_context: dict[str, Any]) -> bool:
+    preferred_work_modes = {
+        _normalize_text(str(item))
+        for item in safety_context.get("preferred_work_modes") or []
+        if str(item).strip()
+    }
+    if not preferred_work_modes:
+        return False
+    if "remote" not in preferred_work_modes:
+        return False
+    has_onsite = _contains_any(job_text, ["onsite", "on site", "presencial"])
+    has_hybrid = _contains_any(job_text, ["hybrid", "hibrido"])
+    return has_onsite or has_hybrid
+
+
+def _has_specific_onsite_or_hybrid_site(job_text: str) -> bool:
+    if _hybrid_with_specific_site(job_text):
+        return True
+    return _contains_any(
+        job_text,
+        [
+            "hub de",
+            "office",
+            "oficina",
+            "barcelona",
+            "madrid",
+            "malaga",
+            "málaga",
+            "munich",
+            "berlin",
+            "malaysia",
+            "brazil",
+            "india",
+        ],
+    )
+
+
+def _mentions_spain_location(job_text: str) -> bool:
+    return _contains_any(
+        job_text,
+        [
+            "spain",
+            "espana",
+            "españa",
+            "barcelona",
+            "madrid",
+            "malaga",
+            "málaga",
+            "valencia",
+            "sevilla",
+            "bilbao",
+            "valladolid",
+        ],
+    )
 
 
 def _has_clear_remote_option(job_text: str) -> bool:
@@ -1459,6 +1683,8 @@ def _hybrid_with_specific_site(job_text: str) -> bool:
             "hybrid in",
             "hibrido en",
             "hybrid setting in",
+            "days/week",
+            "days per week",
             "days onsite",
             "days on site",
             "dias presencial",

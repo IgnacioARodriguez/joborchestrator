@@ -8,6 +8,8 @@ from joborchestrator.intelligence.llm_application_materials import (
     LLMMaterialsError,
     _call_openai,
     _call_nvidia_kit,
+    _ats_cv_response_validation_error,
+    _build_ats_fit_analysis,
     _experience_coverage_problems,
     _experience_density_problems,
     _experience_technology_attribution_problems,
@@ -410,8 +412,148 @@ def test_materials_repair_instruction_expands_short_ats_cv():
 
     assert "complete ATS CV" in instruction
     assert "700 characters" in instruction
-    assert "18 non-empty lines" in instruction
+    assert "normally 18 non-empty lines" in instruction
+    assert "16-17 well-structured lines" in instruction
     assert "every base CV employer" in instruction
+
+
+def test_llm_application_kit_validation_accepts_short_single_role_complete_ats_cv():
+    base_cv = """
+Ignacio Rodriguez
+Madrid, Spain | ignacio@example.com
+
+Professional Experience
+Backend Developer 2024 - 2026
+LeanOps
+- Built Python API integrations for operations teams.
+- Documented deployment and support workflows.
+
+Education
+Software Engineering.
+""".strip()
+    ats_cv_text = """
+Ignacio Rodriguez
+Madrid, Spain | ignacio@example.com
+Professional Summary
+Backend developer focused on Python API integrations and operations workflows.
+Experienced documenting deployment and support workflows with careful delivery.
+Technical Skills
+Languages: Python
+Backend: REST APIs, API integrations
+Tools: Django, Docker, documentation
+Professional Experience
+Backend Developer | LeanOps | 2024 - 2026
+- Built Python API integrations for operations teams, supporting reliable operations workflows.
+- Documented deployment and support workflows so teams could operate integrations consistently.
+Education
+Software Engineering.
+Additional Development
+Ongoing practice in backend delivery, API documentation, and operations support.
+""".strip()
+
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi LeanOps, my Python API integration background may fit this role.",
+            "cover_letter": (
+                "I can support LeanOps through source-backed Python API integration experience, including "
+                "building integrations for operations teams and documenting deployment and support workflows. "
+                "The attached CV keeps the scope concise because the base source is intentionally short."
+            ),
+            "ats_cv_text": ats_cv_text,
+            "autofill_notes": "Use the API integrations and documentation angle.",
+            "risk_flags": [],
+            "keywords_used": ["API integrations", "documentation", "operations workflows"],
+        },
+        source_payload={
+            "base_cv": {"text": base_cv},
+            "candidate_profile": {"real_experience_years": 2},
+            "ranking_constraints": {"avoid_overclaiming_terms": []},
+        },
+    )
+
+    assert error is None
+
+
+def test_ats_fit_analysis_treats_truthful_keyword_variants_as_supported():
+    analysis = _build_ats_fit_analysis(
+        {
+            "title": "API Integration Developer",
+            "description_text": "Develop API integrations, write documentation, and support operations workflows.",
+        },
+        {
+            "strong_skills": ["Python", "REST APIs"],
+            "medium_skills": [],
+            "weak_skills": [],
+        },
+        """
+Professional Experience
+Backend Developer 2024 - 2026
+LeanOps
+- Built Python API integrations for operations teams.
+- Documented deployment and support workflows.
+""",
+        {
+            "cv_keywords_to_emphasize": ["API integrations", "documentation", "operations workflows"],
+            "cv_keywords_to_avoid_overclaiming": [],
+        },
+    )
+
+    assert "API integrations" in analysis["supported_keywords"]
+    assert "documentation" in analysis["supported_keywords"]
+    assert "operations workflows" in analysis["supported_keywords"]
+    assert "operations workflows" not in analysis["adjacent_or_review_keywords"]
+
+
+def test_llm_application_kit_validation_rejects_keywords_used_not_in_ats_cv_text():
+    base_cv = """
+Professional Experience
+Backend Developer 2024 - 2026
+LeanOps
+- Built Python API integrations for operations teams.
+- Documented deployment and support workflows.
+""".strip()
+    ats_cv_text = """
+Ignacio Rodriguez
+Madrid, Spain | ignacio@example.com
+Professional Summary
+Backend developer with 2 years of Python API integrations experience.
+Experienced documenting deployment workflows and supporting operations teams.
+Technical Skills
+Languages: Python
+Backend: REST APIs, API integrations
+Tools: Django, Docker, documentation
+Professional Experience
+Backend Developer | LeanOps | 2024 - 2026
+- Built Python API integrations for operations teams to enhance workflow automation.
+- Documented deployment and support workflows for operational clarity.
+Education
+Software Engineering.
+Additional Development
+Ongoing backend delivery practice.
+""".strip()
+
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi LeanOps, my Python API integration background may fit this role.",
+            "cover_letter": (
+                "I can support LeanOps through source-backed Python API integration experience, including "
+                "building integrations and documenting deployment workflows for operations teams."
+            ),
+            "ats_cv_text": ats_cv_text,
+            "autofill_notes": "Use the API integrations and documentation angle.",
+            "risk_flags": [],
+            "keywords_used": ["API integrations", "documentation", "operations workflows"],
+        },
+        source_payload={
+            "base_cv": {"text": base_cv},
+            "candidate_profile": {"real_experience_years": 2},
+            "ranking_constraints": {"avoid_overclaiming_terms": []},
+        },
+    )
+
+    assert error is not None
+    assert "keywords_used contains terms not present as normalized token-aware phrases in ats_cv_text" in error
+    assert "operations workflows" in error
 
 
 def test_materials_repair_instruction_expands_overcompressed_ats_cv():
@@ -771,6 +913,51 @@ def test_nvidia_kit_validation_rejects_serverless_aliases_from_cover_letter():
     assert error is not None
     assert "application_materials contains unsupported ranking avoid-overclaiming terms" in error
     assert "AWS Lambda" in error
+
+
+def test_materials_validation_rejects_unsupported_years_of_experience_claims():
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi Datosur, my Python API background may fit the Backend role.",
+            "cover_letter": "My Python API and SQL reporting experience maps to the role.",
+            "ats_cv_text": _complete_ats_cv_text().replace("with 4+ years of experience", "with backend experience"),
+            "autofill_notes": "Backend developer with 4+ years of experience in Python APIs.",
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        },
+        source_payload={
+            "base_cv": {"text": "Professional Experience\nBackend Developer 04/2022 - 03/2026\nAcme\n- Built APIs."},
+            "candidate_profile": {"skills": [{"name": "Python"}]},
+            "ranking": {},
+            "job": {"title": "Backend Developer", "company": "Datosur"},
+        },
+    )
+
+    assert error is not None
+    assert "unsupported years-of-experience claims" in error
+    assert "4+ years" in error
+
+
+def test_materials_validation_allows_declared_years_of_experience_claims():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Acme, my Python API background may fit the Backend role.",
+            "cover_letter": (
+                "I bring 4+ years of backend experience with Python APIs and reporting workflows. "
+                "That background maps to the role through practical backend delivery, documentation, "
+                "and collaboration with product and operations teams."
+            ),
+            "autofill_notes": "Use the Python API angle.",
+        },
+        {
+            "base_cv": {"text": "Professional Experience\nBackend Developer\n- Built APIs."},
+            "candidate_profile": {"real_experience_years": 4, "skills": [{"name": "Python"}]},
+            "ranking": {},
+            "job": {"title": "Backend Developer", "company": "Acme"},
+        },
+    )
+
+    assert error is None
 
 
 def test_materials_payload_exposes_avoid_overclaiming_aliases(monkeypatch):
@@ -1231,6 +1418,201 @@ def test_ats_cv_density_warns_when_long_base_experience_cannot_be_parsed():
 
     assert problems
     assert "density validation was not applied" in problems[0]
+
+
+def test_ats_cv_density_warns_when_experience_heading_is_unknown():
+    base_cv = "Career Journey\n" + "\n".join(
+        f"Backend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API, reporting, data, and dashboard workflows for team {index}."
+        for index in range(16)
+    )
+
+    problems = _experience_density_problems(base_cv, "Professional Experience\n- Short generated CV.")
+
+    assert problems
+    assert "density validation was not applied" in problems[0]
+
+
+def test_ats_cv_density_warns_for_short_unknown_experience_heading():
+    base_cv = """
+Career Journey
+Backend Developer 04/2022 - 03/2025
+Acme Systems
+- Built APIs.
+- Built reports.
+- Built dashboards.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, "Professional Experience\n- Short generated CV.")
+
+    assert problems
+    assert "density validation was not applied" in problems[0]
+
+
+def test_ats_cv_density_does_not_require_more_bullets_than_source():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+Education
+Software Engineering.
+""".strip()
+    generated_cv = """
+Professional Summary
+Backend developer focused on Python APIs, reporting, and product data workflows.
+Technical Skills
+Python, SQL, MongoDB, APIs, dashboards, documentation.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+Education
+Software Engineering.
+""".strip()
+
+    assert _experience_density_problems(base_cv, generated_cv) == []
+
+
+def test_ats_cv_density_validates_single_experience_role():
+    base_cv = """
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+- Collaborated with product managers on backend requirements.
+Education
+Software Engineering.
+""".strip()
+    generated_cv = """
+Professional Summary
+Backend developer.
+Technical Skills
+Python, SQL.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, generated_cv)
+
+    assert problems
+    assert "Fiction Express" in problems[-1]
+
+
+def test_ats_cv_rejects_omitted_single_experience_role():
+    base_cv = """
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+Education
+Software Engineering.
+""".strip()
+    generated_cv = """
+Professional Summary
+Backend developer focused on Python APIs and product data workflows.
+Technical Skills
+Python, SQL, MongoDB.
+Professional Experience
+Project Consultant | Independent | 2022 - 2025
+- Supported internal reporting workflows.
+Education
+Software Engineering.
+""".strip()
+
+    coverage = _experience_coverage_problems(base_cv, generated_cv)
+    density = _experience_density_problems(base_cv, generated_cv)
+
+    assert coverage
+    assert "Fiction Express" in coverage[0]
+    assert density
+    assert "missing from generated experience" in density[-1]
+
+
+def test_ats_cv_density_requires_at_least_one_bullet_for_short_source_role():
+    base_cv = """
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+Education
+Software Engineering.
+""".strip()
+    generated_cv = """
+Professional Summary
+Backend developer focused on API delivery.
+Technical Skills
+Python, SQL.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+Backend services and analytics workflows.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, generated_cv)
+
+    assert problems
+    assert "expected at least 1" in problems[-1]
+
+
+def test_nvidia_cv_density_parse_failure_returns_degraded_review_cv(monkeypatch):
+    calls = []
+    base_cv = "Career Journey\n" + "\n".join(
+        f"Backend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API, reporting, data, and dashboard workflows for team {index}."
+        for index in range(16)
+    )
+
+    def fake_contract_once(contract, payload, api_key, model, timeout, validation_feedback=None):
+        calls.append(validation_feedback)
+        return {
+            "ats_cv_text": _complete_ats_cv_text(),
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        }
+
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(llm_application_materials, "_call_nvidia_contract_once", fake_contract_once)
+
+    result = llm_application_materials._call_nvidia_cv(
+        {"job": {"title": "Backend Engineer", "company": "Acme"}, "base_cv": {"text": base_cv}},
+        "test-key",
+        "test-model",
+        1.0,
+        validation_retry_limit=3,
+    )
+    metadata = result["_generation_metadata"]
+
+    assert calls == [None]
+    assert metadata["validation_attempts"] == 1
+    assert metadata["human_review_required"] is True
+    assert metadata["experience_density_validation"] == "skipped"
+    assert "density validation was not applied" in metadata["validation_errors"][0]
+
+
+def test_ats_cv_keywords_used_presence_is_token_aware():
+    payload = {
+        "ats_cv_text": _complete_ats_cv_text().replace("SQL", "NoSQL").replace("APIs", "API integrations"),
+        "risk_flags": [],
+        "keywords_used": ["SQL"],
+    }
+
+    error = _ats_cv_response_validation_error(payload, base_cv_text="")
+
+    assert error
+    assert "keywords_used contains terms not present" in error
 
 
 def test_ats_cv_validation_accepts_reasonable_experience_compression():

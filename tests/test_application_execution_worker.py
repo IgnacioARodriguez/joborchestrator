@@ -5,7 +5,16 @@ from pathlib import Path
 from urllib.parse import quote
 
 from joborchestrator import worker
-from joborchestrator.automation.executor import _looks_blocked, auto_submit_blockers, run_application_execution
+from joborchestrator.automation.executor import (
+    _build_application_automation_metrics,
+    _build_human_intervention_report,
+    _detect_page_access_issue,
+    _looks_blocked,
+    _looks_posting_unavailable,
+    auto_submit_blockers,
+    detect_safe_step_transition_controls,
+    run_application_execution,
+)
 from joborchestrator.automation import local_browser_agent
 from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.normalization import compute_content_hash
@@ -62,6 +71,68 @@ def test_application_challenge_copy_is_not_human_verification() -> None:
         '<script src="https://www.gstatic.com/recaptcha/releases/x/recaptcha__es.js"></script>',
     ) is False
     assert _looks_blocked("https://example.test", "<h1>Verify you are human</h1>") is True
+    assert _looks_blocked(
+        "https://jobs.smartrecruiters.com/oneclick-ui",
+        '<script src="https://ct.captcha-delivery.com/c.js"></script>',
+    ) is True
+
+
+def test_safe_step_transition_detection_excludes_final_submit() -> None:
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form>
+          <button type="button">Next</button>
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    transition = asyncio.run(_detect_step_transition_for_html(html))
+
+    assert transition["status"] == "available"
+    assert transition["control"]["text"] == "Next"
+    assert transition["blocked_controls"][0]["reason"] == "final_submit"
+
+
+def test_safe_step_transition_blocks_continue_application_boundary() -> None:
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form>
+          <button type="button">Continue application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    transition = asyncio.run(_detect_step_transition_for_html(html))
+
+    assert transition["status"] == "not_available"
+    assert transition["blocked_controls"][0]["reason"] == "application_boundary"
+
+
+def test_posting_unavailable_copy_is_detected() -> None:
+    html = """
+    <h1>Sorry, we couldn't find anything here</h1>
+    <p>The job posting you're looking for might have closed, or it has been removed. (404 error).</p>
+    """
+
+    assert _looks_posting_unavailable("https://jobs.lever.co/acme/closed/apply", html) is True
+
+
+def test_access_issue_detection_checks_captcha_frames() -> None:
+    html = """
+    <!doctype html>
+    <html><body>
+      <iframe srcdoc="<h1>Please complete the CAPTCHA</h1>"></iframe>
+    </body></html>
+    """
+
+    assert asyncio.run(_detect_access_issue_for_html(html)) == "challenge_detected"
 
 
 def test_auto_submit_blocks_placeholder_resume_on_real_url(monkeypatch) -> None:
@@ -113,6 +184,121 @@ def test_auto_submit_blocks_lever_until_explicitly_supported(monkeypatch) -> Non
     )
 
     assert blockers == ["provider_not_supported"]
+
+
+def test_application_metrics_split_native_custom_and_shadow_controls() -> None:
+    metrics = _build_application_automation_metrics(
+        action_plan={
+            "actions": [
+                {
+                    "action_type": "fill_text",
+                    "field_name": "first_name",
+                    "control_handle": {"locator_strategies": ["label_for"]},
+                },
+                {
+                    "action_type": "select_option",
+                    "field_name": "preferred_stack",
+                    "control_handle": {"locator_strategies": ["aria_role"]},
+                },
+                {
+                    "action_type": "fill_text",
+                    "field_name": "shadow_email",
+                    "control_handle": {"locator_strategies": ["label_for", "shadow_root"]},
+                },
+            ]
+        },
+        schema={"fields": []},
+        validation_report={
+            "status": "validation_clean",
+            "checked_postconditions": 3,
+            "satisfied_postconditions": 3,
+            "summary": {"issues": 0},
+        },
+        fill_result={"filled_fields": ["first_name", "preferred_stack", "shadow_email"]},
+        resume_upload={"status": "not_applicable"},
+        repair_report={"dynamic_required_count": 0, "rescans": 1},
+        mapping={"unknown_fields": []},
+        step_transitions=[],
+    )
+
+    assert metrics["native_control_success_rate"] == 1.0
+    assert metrics["custom_control_success_rate"] == 1.0
+    assert metrics["shadow_control_success_rate"] == 1.0
+    assert metrics["control_strategy_counts"]["planned"] == {
+        "native_control": 1,
+        "custom_control": 1,
+        "shadow_control": 1,
+    }
+
+
+def test_application_metrics_track_resume_file_widget_uploads() -> None:
+    metrics = _build_application_automation_metrics(
+        action_plan={"actions": []},
+        schema={
+            "fields": [
+                {
+                    "name": "resume_upload",
+                    "type": "file",
+                    "locator_strategy": "file_widget",
+                }
+            ]
+        },
+        validation_report={
+            "status": "validation_clean",
+            "checked_postconditions": 0,
+            "satisfied_postconditions": 0,
+            "summary": {"issues": 0},
+        },
+        fill_result={"filled_fields": ["resume_upload"]},
+        resume_upload={"status": "uploaded", "field_name": "resume_upload", "strategy": "file_chooser"},
+        repair_report={"dynamic_required_count": 0, "rescans": 1},
+        mapping={"unknown_fields": []},
+        step_transitions=[],
+    )
+
+    assert metrics["resume_upload_success_rate"] == 1.0
+    assert metrics["file_widget_success_rate"] == 1.0
+    assert metrics["resume_upload_strategy"] == "file_chooser"
+
+
+def test_human_intervention_report_classifies_answer_widget_and_submit_only() -> None:
+    report = _build_human_intervention_report(
+        next_state="needs_user_input",
+        review={
+            "unknown_fields": [
+                {"name": "salary", "label": "Expected salary", "required": True, "sensitive": True},
+                {"name": "validation", "type": "validation", "label": "Validation errors"},
+            ]
+        },
+        mapping={"unknown_fields": []},
+        validation_report={"status": "validation_failed", "summary": {"issues": 1}},
+        repair_report={"dynamic_required_count": 0},
+        resume_upload={"status": "unresolved", "field_name": "resume", "reason": "missing_resume_file"},
+        fill_result={"skipped_fields": ["custom_select"]},
+        automation_metrics={"submit_only_ready": False},
+    )
+
+    assert report["status"] == "needs_human"
+    assert report["counts_by_type"]["answer"] == 1
+    assert report["counts_by_type"]["validation"] == 1
+    assert report["counts_by_type"]["resume_upload"] == 1
+    assert report["counts_by_type"]["widget"] == 1
+    assert report["blocking_count"] == 4
+
+    submit_only = _build_human_intervention_report(
+        next_state="ready_for_review",
+        review={"unknown_fields": []},
+        mapping={"unknown_fields": []},
+        validation_report={"status": "validation_clean"},
+        repair_report={"dynamic_required_count": 0},
+        resume_upload={"status": "not_applicable"},
+        fill_result={"skipped_fields": []},
+        automation_metrics={"submit_only_ready": True},
+    )
+
+    assert submit_only["status"] == "submit_only"
+    assert submit_only["types"] == ["submit_only"]
+    assert submit_only["blocking_count"] == 0
 
 
 def test_application_execution_starts_local_browser_handoff(tmp_path, monkeypatch) -> None:
@@ -228,6 +414,8 @@ def test_application_execution_handles_lever_review_before_submit(tmp_path, monk
         {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
     ]
     assert updated["state"] == "ready_for_review"
+    assert updated["artifacts_json"]["action_plan"]["provider"] == "lever"
+    assert updated["artifacts_json"]["action_plan"]["summary"]["actions"] >= 4
 
 
 def test_application_execution_handles_generic_form_review_before_submit(tmp_path, monkeypatch) -> None:
@@ -299,6 +487,467 @@ def test_application_execution_handles_generic_form_review_before_submit(tmp_pat
         {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
     ]
     assert updated["state"] == "ready_for_review"
+    assert updated["artifacts_json"]["journey"]["phase"] == "actions_planned"
+    assert updated["artifacts_json"]["action_plan"]["provider"] == "generic_form"
+    assert updated["artifacts_json"]["action_plan"]["summary"]["actions"] >= 3
+
+
+def test_application_execution_does_not_check_legal_consent_even_with_approved_answer(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate", "email": "candidate@example.test"})
+    apply_url = "https://careers.example.test/apply"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="consent-review-job",
+            source="company_page",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Build APIs with Python and FastAPI.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Build APIs with Python and FastAPI.", apply_url),
+            raw_payload={"id": "consent-review-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    db.update_job_application_materials(
+        job_id,
+        ats_cv_text=(
+            "Professional Summary\nSynthetic backend engineer.\n\n"
+            "Technical Skills\nPython, FastAPI.\n\n"
+            "Professional Experience\nBuilt reliable APIs.\n\n"
+            "Education\nSynthetic degree."
+        ),
+    )
+    db.upsert_answer_definition(
+        {
+            "canonical_key": "privacy_consent",
+            "question_patterns": ["I agree to the privacy policy and certify my answers are accurate"],
+            "value": "yes",
+            "source": "approved",
+            "sensitivity": "public",
+            "requires_confirmation": False,
+        }
+    )
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application">
+          <label for="name">Full name *</label>
+          <input id="name" name="name" required>
+          <label for="email">Email *</label>
+          <input id="email" name="email" type="email" required>
+          <label for="resume">Resume *</label>
+          <input id="resume" name="resume" type="file" required>
+          <label for="privacy_consent">I agree to the privacy policy and certify my answers are accurate</label>
+          <input id="privacy_consent" name="privacy_consent" type="checkbox" required>
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    unknown_fields = updated["unknown_fields_json"]
+    action_plan = updated["artifacts_json"]["action_plan"]
+    human_intervention = updated["artifacts_json"]["human_intervention"]
+
+    assert result["fields_autofilled"] == 3
+    assert result["unknown_fields"] >= 1
+    assert updated["state"] == "needs_user_input"
+    assert "privacy_consent" not in {action["field_name"] for action in action_plan["actions"]}
+    assert any(field.get("name") == "privacy_consent" for field in unknown_fields)
+    assert any(item["field"] == "privacy_consent" and item["type"] == "answer" for item in human_intervention["items"])
+
+
+def test_application_execution_handles_form_inside_accessible_iframe(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate", "email": "candidate@example.test"})
+    apply_url = "https://careers.example.test/jobs/backend"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="iframe-application-job",
+            source="company_page",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Build APIs with Python and FastAPI.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Build APIs with Python and FastAPI.", apply_url),
+            raw_payload={"id": "iframe-application-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    db.update_job_application_materials(
+        job_id,
+        ats_cv_text=(
+            "Professional Summary\nSynthetic backend engineer.\n\n"
+            "Technical Skills\nPython, FastAPI.\n\n"
+            "Professional Experience\nBuilt reliable APIs.\n\n"
+            "Education\nSynthetic degree."
+        ),
+    )
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <h1>Job details</h1>
+        <iframe srcdoc='
+          <form id="application">
+            <label for="name">Full name *</label>
+            <input id="name" name="name" required>
+            <label for="email">Email *</label>
+            <input id="email" name="email" type="email" required>
+            <label for="resume">Resume *</label>
+            <input id="resume" name="resume" type="file" required>
+            <button type="submit">Submit application</button>
+          </form>
+        '></iframe>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+
+    assert result["provider"] == "generic_form"
+    assert result["fields_detected"] == 3
+    assert result["fields_autofilled"] == 3
+    assert result["resume_upload"]["status"] == "uploaded"
+    assert result["unknown_fields"] == 0
+    assert updated["state"] == "ready_for_review"
+    assert updated["artifacts_json"]["journey"]["surface"]["kind"] == "frame"
+    assert updated["artifacts_json"]["action_plan"]["actions"][0]["surface_id"].startswith("frame:")
+
+
+def test_application_execution_blocks_ready_when_validation_fails(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate", "email": "candidate@example.test"})
+    apply_url = "https://careers.example.test/apply"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="validation-error-job",
+            source="company_page",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Build APIs with Python and FastAPI.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Build APIs with Python and FastAPI.", apply_url),
+            raw_payload={"id": "validation-error-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    db.update_job_application_materials(
+        job_id,
+        ats_cv_text=(
+            "Professional Summary\nSynthetic backend engineer.\n\n"
+            "Technical Skills\nPython, FastAPI.\n\n"
+            "Professional Experience\nBuilt reliable APIs.\n\n"
+            "Education\nSynthetic degree."
+        ),
+    )
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application">
+          <label for="name">Full name *</label>
+          <input id="name" name="name" required>
+          <label for="email">Email *</label>
+          <input id="email" name="email" type="email" required aria-invalid="true">
+          <input id="resume" name="resume" type="file" required>
+          <div role="alert">Email domain is not accepted.</div>
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+
+    assert result["fields_autofilled"] == 3
+    assert result["unknown_fields"] == 1
+    assert updated["state"] == "needs_user_input"
+    assert updated["artifacts_json"]["validation"]["status"] == "validation_failed"
+    assert updated["unknown_fields_json"][0]["type"] == "validation"
+    assert any(issue["issue_type"] == "aria_invalid" for issue in updated["artifacts_json"]["validation"]["issues"])
+
+
+def test_application_execution_detects_dynamic_required_fields_after_autofill(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate"})
+    apply_url = "https://careers.example.test/apply"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="dynamic-required-job",
+            source="company_page",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Build APIs with Python and FastAPI.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Build APIs with Python and FastAPI.", apply_url),
+            raw_payload={"id": "dynamic-required-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application">
+          <label for="name">Full name *</label>
+          <input id="name" name="name" required oninput="document.getElementById('dynamic').style.display = 'block'">
+          <div id="dynamic" style="display:none">
+            <label for="portfolio">Portfolio URL *</label>
+            <input id="portfolio" name="portfolio" required>
+          </div>
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    artifacts = updated["artifacts_json"]
+
+    assert result["fields_autofilled"] == 1
+    assert result["unknown_fields"] == 1
+    assert updated["state"] == "needs_user_input"
+    assert artifacts["validation"]["status"] == "validation_clean"
+    assert artifacts["repair"]["dynamic_required_count"] == 1
+    assert artifacts["repair"]["dynamic_required_fields"][0]["name"] == "portfolio"
+    assert artifacts["automation_metrics"]["dynamic_required_count"] == 1
+    assert artifacts["automation_metrics"]["submit_only_ready"] is False
+
+
+def test_application_execution_waits_for_delayed_spa_application_form(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate", "email": "candidate@example.test"})
+    db.upsert_job_posting(make_job(external_id="delayed-spa-form-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <main id="app">
+          <h1>Backend Engineer</h1>
+          <button onclick="
+            setTimeout(() => {
+              document.getElementById('app').innerHTML = `
+                <form id='application'>
+                  <label for='name'>Full name *</label>
+                  <input id='name' name='name' required>
+                  <label for='email'>Email *</label>
+                  <input id='email' name='email' type='email' required>
+                  <button type='submit'>Submit application</button>
+                </form>
+              `;
+            }, 250);
+          ">Apply now</button>
+        </main>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+
+    assert result["fields_autofilled"] == 2
+    assert result["unknown_fields"] == 0
+    assert updated["state"] == "ready_for_review"
+    assert any(step["action"] == "clicked_control" for step in result["navigation"])
+    assert any(step.get("stability_status") == "stable" for step in result["navigation"])
+
+
+def test_application_execution_detects_delayed_dynamic_required_fields_after_autofill(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate"})
+    db.upsert_job_posting(make_job(external_id="delayed-dynamic-required-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application">
+          <label for="name">Full name *</label>
+          <input id="name" name="name" required oninput="
+            setTimeout(() => {
+              document.getElementById('dynamic').innerHTML = `
+                <label for='portfolio'>Portfolio URL *</label>
+                <input id='portfolio' name='portfolio' required>
+              `;
+            }, 250);
+          ">
+          <div id="dynamic"></div>
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    artifacts = updated["artifacts_json"]
+
+    assert result["fields_autofilled"] == 1
+    assert result["unknown_fields"] == 1
+    assert artifacts["repair"]["dynamic_required_count"] == 1
+    assert artifacts["repair"]["dynamic_required_fields"][0]["name"] == "portfolio"
+    assert artifacts["journey"]["steps"][0]["fill_stability"]["mutation_count"] > 0
+    assert artifacts["human_intervention"]["status"] == "needs_human"
+    assert artifacts["human_intervention"]["counts_by_type"]["dynamic_field"] == 1
+
+
+def test_application_execution_advances_safe_multistep_and_stops_at_submit(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    monkeypatch.setenv("APPLICATION_MAX_AUTO_STEPS", "3")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate", "email": "candidate@example.test"})
+    apply_url = "https://careers.example.test/apply"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="multistep-job",
+            source="company_page",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Build APIs with Python and FastAPI.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Build APIs with Python and FastAPI.", apply_url),
+            raw_payload={"id": "multistep-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application">
+          <section id="step-1">
+            <label for="name">Full name *</label>
+            <input id="name" name="name" required>
+            <button type="button" onclick="document.getElementById('step-1').style.display='none';document.getElementById('step-2').style.display='block'">Next</button>
+          </section>
+          <section id="step-2" style="display:none">
+            <label for="email">Email *</label>
+            <input id="email" name="email" type="email" required>
+            <button type="submit">Submit application</button>
+          </section>
+        </form>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    artifacts = updated["artifacts_json"]
+
+    assert result["fields_autofilled"] == 2
+    assert result["unknown_fields"] == 0
+    assert updated["state"] == "ready_for_review"
+    assert artifacts["forbidden_submit_controls"] == [
+        {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
+    ]
+    assert artifacts["automation_metrics"]["steps_completed_without_human"] == 1
+    assert artifacts["automation_metrics"]["step_advance_success_rate"] == 1.0
+    assert artifacts["automation_metrics"]["submit_only_ready"] is True
+    assert artifacts["human_intervention"]["status"] == "submit_only"
+    assert artifacts["automation_metrics"]["submit_only_intervention_rate"] == 1.0
+    assert artifacts["journey"]["step_transitions"][0]["result"]["status"] == "advanced"
 
 
 def test_application_execution_opens_generic_apply_cta_before_form_fill(tmp_path, monkeypatch) -> None:
@@ -393,6 +1042,53 @@ def test_application_execution_blocks_when_generic_form_fields_are_not_detected(
     assert updated["unknown_fields_json"][0]["label"] == "No application form fields were detected."
 
 
+def test_application_execution_marks_closed_posting_unavailable(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    apply_url = "https://jobs.lever.co/acme/closed/apply"
+    db.upsert_job_posting(
+        JobPosting(
+            external_id="closed-lever-job",
+            source="lever",
+            company="Acme",
+            title="Backend Engineer",
+            location="Remote",
+            apply_url=apply_url,
+            description_text="Closed job.",
+            content_hash=compute_content_hash("Backend Engineer", "Acme", "Remote", "Closed job.", apply_url),
+            raw_payload={"id": "closed-lever-job"},
+        ),
+        seen_at="2026-01-01T10:00:00",
+    )
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "lever", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html><body>
+      <h1>Sorry, we couldn't find anything here</h1>
+      <p>The job posting you're looking for might have closed, or it has been removed. (404 error).</p>
+    </body></html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="lever",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+
+    assert result["reason"] == "posting_unavailable"
+    assert result["blocked"] is False
+    assert updated["state"] == "needs_user_input"
+    assert updated["last_error"] == "Posting unavailable."
+
+
 def test_application_execution_auto_submits_when_preconditions_pass(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
     monkeypatch.setenv("ENABLE_AUTO_SUBMIT_APPROVED", "1")
@@ -483,6 +1179,52 @@ def test_application_execution_auto_submit_blocks_unknown_sensitive_required_fie
     assert updated["state"] == "needs_user_input"
 
 
+def test_application_execution_fills_application_form_opened_in_popup(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate", "email": "candidate@example.test"})
+    db.upsert_job_posting(make_job(external_id="popup-apply-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic", "mode": "review_before_submit"})
+    popup_html = (
+        "<!doctype html><html><body><form id='application'>"
+        "<label for='name'>Full name *</label><input id='name' name='name' required>"
+        "<label for='email'>Email *</label><input id='email' name='email' type='email' required>"
+        "<button type='submit'>Submit application</button></form></body></html>"
+    )
+    launcher_html = f"""
+    <!doctype html>
+    <html>
+      <body>
+        <h1>Backend Engineer</h1>
+        <button onclick="const popup = window.open('about:blank', '_blank'); popup.document.write(`{popup_html}`); popup.document.close();">Apply now</button>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(launcher_html)}",
+            provider_hint="generic",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    artifacts = updated["artifacts_json"]
+
+    assert any(step["action"] == "opened_popup" for step in result["navigation"])
+    assert result["fields_autofilled"] == 2
+    assert result["unknown_fields"] == 0
+    assert updated["state"] == "ready_for_review"
+    assert artifacts["journey"]["surface"]["kind"] == "popup"
+    assert artifacts["automation_metrics"]["submit_only_ready"] is True
+    assert artifacts["automation_metrics"]["popup_handling_success_rate"] == 1.0
+
+
 async def _run_handoff_once(session_id: int, job_id: int, html: str) -> dict:
     result = await run_application_execution(
         session_id=session_id,
@@ -499,6 +1241,33 @@ async def _run_handoff_once(session_id: int, job_id: int, html: str) -> dict:
         return result
     finally:
         await local_browser_agent.close_session(ref)
+
+
+async def _detect_access_issue_for_html(html: str) -> str | None:
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(html)
+            await page.wait_for_timeout(500)
+            return await _detect_page_access_issue(page, page.url, await page.content())
+        finally:
+            await browser.close()
+
+
+async def _detect_step_transition_for_html(html: str) -> dict:
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(html)
+            return await detect_safe_step_transition_controls(page)
+        finally:
+            await browser.close()
 
 
 async def _run_handoff_twice(session_id: int, job_id: int, html: str) -> dict:

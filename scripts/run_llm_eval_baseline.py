@@ -51,7 +51,8 @@ def run_baseline(args: argparse.Namespace) -> dict[str, Any]:
 
     records = []
     for row in ranked.head(args.limit).to_dict(orient="records"):
-        case = build_auto_eval_case(_job_from_ranked_row(row), profile)
+        ranking = _ranking_output_from_row(row)
+        case = build_auto_eval_case(_job_from_ranked_row(row), profile, ranking)
         if args.artifact in {"ranking", "both", "all"}:
             records.append(_evaluate_ranking_row(row, case, args))
         if args.artifact in {"application_materials", "both", "all"} and _has_materials(row):
@@ -73,7 +74,13 @@ def main() -> int:
 
 
 def _evaluate_ranking_row(row: dict[str, Any], case: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    output = {
+    output = _ranking_output_from_row(row)
+    result = evaluate_ranking_result(case, output)
+    return _record(row, case, "ranking", output, result, args)
+
+
+def _ranking_output_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
         "final_score": int(row["final_score"]),
         "decision": row["decision"],
         "confidence": float(row.get("confidence") or 0),
@@ -84,8 +91,6 @@ def _evaluate_ranking_row(row: dict[str, Any], case: dict[str, Any], args: argpa
         "cv_keywords_to_emphasize": _loads_json(row.get("cv_keywords_to_emphasize_json"), []),
         "cv_keywords_to_avoid_overclaiming": _loads_json(row.get("cv_keywords_to_avoid_overclaiming_json"), []),
     }
-    result = evaluate_ranking_result(case, output)
-    return _record(row, case, "ranking", output, result, args)
 
 
 def _evaluate_materials_row(row: dict[str, Any], case: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:

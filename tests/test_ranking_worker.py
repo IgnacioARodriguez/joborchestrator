@@ -134,6 +134,7 @@ def test_worker_recovers_stale_running_items(tmp_path, monkeypatch):
 def test_worker_failed_item_overwrites_stale_requeue_error(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     monkeypatch.setattr(worker, "DEFAULT_STALE_SECONDS", 1)
+    monkeypatch.setattr(worker, "DEFAULT_ITEM_MAX_ATTEMPTS", 1)
     db.init_db()
     db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
     job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
@@ -184,8 +185,52 @@ def test_worker_failed_item_overwrites_stale_requeue_error(tmp_path, monkeypatch
     )
 
 
+def test_worker_requeues_transient_failed_item_before_attempt_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    monkeypatch.setattr(worker, "DEFAULT_ITEM_MAX_ATTEMPTS", 3)
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+    ranking_version = "worker-transient-retry-test-v1"
+    ranking_job_id = db.create_ranking_job(
+        provider="nvidia",
+        model="nvidia/test",
+        ranking_version=ranking_version,
+        job_ids=[job_id],
+        request_batch_size=1,
+        max_concurrency=1,
+    )
+
+    def fake_rank_jobs_with_nvidia(jobs, **kwargs):
+        return {"processed": len(jobs), "saved": 0, "failed": len(jobs)}
+
+    monkeypatch.setattr(worker, "rank_jobs_with_nvidia", fake_rank_jobs_with_nvidia)
+
+    assert worker.run_worker_once(ranking_job_id=ranking_job_id, chunk_size=10) is True
+
+    job = db.get_ranking_job(ranking_job_id)
+    assert job["status"] == "running"
+    assert job["processed_items"] == 0
+    assert job["failed_items"] == 0
+
+    conn = db._conn()
+    try:
+        item = conn.execute(
+            "SELECT status, attempts, error, finished_at FROM ranking_job_items WHERE ranking_job_id = ?",
+            (ranking_job_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert item["status"] == "queued"
+    assert item["attempts"] == 1
+    assert item["finished_at"] is None
+    assert str(item["error"]).startswith("Requeued after transient ranking failure:")
+
+
 def test_worker_does_not_complete_item_from_stale_existing_ranking(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    monkeypatch.setattr(worker, "DEFAULT_ITEM_MAX_ATTEMPTS", 1)
     db.init_db()
     db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
     job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])

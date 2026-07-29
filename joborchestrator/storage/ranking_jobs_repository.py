@@ -414,6 +414,7 @@ def sync_ranking_items_from_rankings(
     ranking_version: str,
     job_ids: list[int] | None = None,
     missing_error: str = "NVIDIA did not save a ranking for this job.",
+    max_attempts: int = 1,
 ) -> dict[str, int]:
     now = datetime.now().isoformat(timespec="seconds")
     conn = connect()
@@ -426,12 +427,13 @@ def sync_ranking_items_from_rankings(
             params.extend(int(job_id) for job_id in job_ids)
 
         items = conn.execute(
-            f"""SELECT job_posting_id
+            f"""SELECT job_posting_id, attempts
                 FROM ranking_job_items
                 WHERE ranking_job_id = ?{job_filter}""",
             params,
         ).fetchall()
         item_job_ids = [int(row["job_posting_id"]) for row in items]
+        attempts_by_job_id = {int(row["job_posting_id"]): int(row["attempts"] or 0) for row in items}
         ranked_job_ids: set[int] = set()
         if item_job_ids:
             placeholders = ",".join("?" for _ in item_job_ids)
@@ -449,7 +451,9 @@ def sync_ranking_items_from_rankings(
             ranked_job_ids = {int(row["job_id"]) for row in ranked_rows}
 
         completed_ids = [job_id for job_id in item_job_ids if job_id in ranked_job_ids]
-        failed_ids = [job_id for job_id in item_job_ids if job_id not in ranked_job_ids]
+        missing_ids = [job_id for job_id in item_job_ids if job_id not in ranked_job_ids]
+        retryable_ids = [job_id for job_id in missing_ids if attempts_by_job_id.get(job_id, 0) < max(1, int(max_attempts))]
+        failed_ids = [job_id for job_id in missing_ids if job_id not in retryable_ids]
 
         if completed_ids:
             placeholders = ",".join("?" for _ in completed_ids)
@@ -472,6 +476,17 @@ def sync_ranking_items_from_rankings(
                         updated_at = ?
                     WHERE ranking_job_id = ? AND job_posting_id IN ({placeholders})""",
                 [missing_error[:2000], now, now, ranking_job_id, *failed_ids],
+            )
+        if retryable_ids:
+            placeholders = ",".join("?" for _ in retryable_ids)
+            conn.execute(
+                f"""UPDATE ranking_job_items
+                    SET status = 'queued',
+                        error = ?,
+                        finished_at = NULL,
+                        updated_at = ?
+                    WHERE ranking_job_id = ? AND job_posting_id IN ({placeholders})""",
+                [f"Requeued after transient ranking failure: {missing_error}"[:2000], now, ranking_job_id, *retryable_ids],
             )
 
         counts = _ranking_job_item_counts(conn, ranking_job_id)

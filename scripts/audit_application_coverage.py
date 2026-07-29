@@ -23,6 +23,17 @@ SYNTHETIC_PROFILE = {
     "portfolio_url": "https://example.test",
 }
 
+AUDIT_ENV_KEYS = (
+    "JOB_ORCHESTRATOR_SKIP_ENV_FILE",
+    "TURSO_DATABASE_URL",
+    "TURSO_AUTH_TOKEN",
+    "JOB_ORCHESTRATOR_DB_PATH",
+    "ENABLE_AUTO_SUBMIT_APPROVED",
+    "APPLICATION_BROWSER_HEADLESS",
+    "APPLICATION_BROWSER_HANDOFF",
+    "APPLICATION_BROWSER_TIMEOUT_MS",
+)
+
 
 def _prepare_environment(db_path: Path, *, headful: bool, timeout_ms: int) -> None:
     os.environ["JOB_ORCHESTRATOR_SKIP_ENV_FILE"] = "1"
@@ -56,14 +67,21 @@ def read_urls(*, urls: list[str], urls_file: Path | None, limit: int | None) -> 
     return deduped
 
 
-async def audit_application_url(url: str, *, provider: str, index: int) -> dict[str, object]:
+async def audit_application_url(
+    url: str,
+    *,
+    provider: str,
+    index: int,
+    provider_override: str | None = None,
+    external_id_prefix: str = "coverage-audit",
+) -> dict[str, object]:
     from joborchestrator.automation.executor import run_application_execution
     from joborchestrator.scanning.models import JobPosting
     from joborchestrator.scanning.normalization import compute_content_hash
     from joborchestrator.storage import persistence as db
 
     started = time.monotonic()
-    external_id = f"coverage-audit-{index}"
+    external_id = f"{external_id_prefix}-{index}"
     job = JobPosting(
         external_id=external_id,
         source=provider,
@@ -97,11 +115,20 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             job_id=job_id,
             apply_url=url,
             provider_hint=provider,
+            provider_override=provider_override,
             dry_run=True,
         )
         updated = db.get_application_session(int(session["id"])) or {}
         artifacts = updated.get("artifacts_json") or {}
         review = artifacts.get("review") or {}
+        validation = artifacts.get("validation") or {}
+        automation_metrics = artifacts.get("automation_metrics") or {}
+        human_intervention = artifacts.get("human_intervention") or {}
+        repair = artifacts.get("repair") or {}
+        validation_issues = [
+            issue for issue in validation.get("issues") or []
+            if isinstance(issue, dict)
+        ]
         unknown_fields = [
             str(field.get("label") or field.get("name") or "").strip()
             for field in review.get("unknown_fields") or []
@@ -111,8 +138,10 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
         fields_detected = int(execution.get("fields_detected") or 0)
         unknown_count = int(execution.get("unknown_fields") or len(unknown_fields))
         state = str(updated.get("state") or "")
+        reason = str(execution.get("reason") or "")
         score = coverage_score(
             state=state,
+            reason=reason,
             fields_detected=fields_detected,
             fields_autofilled=int(execution.get("fields_autofilled") or 0),
             unknown_fields=unknown_count,
@@ -122,6 +151,7 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
         return {
             "url": url,
             "provider_hint": provider,
+            "provider_override": provider_override,
             "provider_detected": execution.get("provider"),
             "state": state,
             "coverage_score": score,
@@ -133,8 +163,30 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "submit_controls_count": len(submit_controls),
             "submit_control_texts": [str(control.get("text") or "") for control in submit_controls if isinstance(control, dict)],
             "auto_submit_status": (execution.get("auto_submit") or {}).get("status"),
+            "validation_status": validation.get("status"),
+            "validation_issue_count": len(validation_issues),
+            "validation_issue_types": sorted({str(issue.get("issue_type") or "") for issue in validation_issues if issue.get("issue_type")}),
+            "verified_action_success_rate": automation_metrics.get("verified_action_success_rate"),
+            "native_control_success_rate": automation_metrics.get("native_control_success_rate"),
+            "custom_control_success_rate": automation_metrics.get("custom_control_success_rate"),
+            "shadow_control_success_rate": automation_metrics.get("shadow_control_success_rate"),
+            "file_widget_success_rate": automation_metrics.get("file_widget_success_rate"),
+            "resume_upload_success_rate": automation_metrics.get("resume_upload_success_rate"),
+            "resume_upload_strategy": automation_metrics.get("resume_upload_strategy"),
+            "popup_handling_success_rate": automation_metrics.get("popup_handling_success_rate"),
+            "human_intervention_status": human_intervention.get("status"),
+            "human_intervention_types": human_intervention.get("types") or [],
+            "human_interventions_per_application": automation_metrics.get("human_interventions_per_application"),
+            "answer_intervention_rate": automation_metrics.get("answer_intervention_rate"),
+            "validation_intervention_rate": automation_metrics.get("validation_intervention_rate"),
+            "widget_intervention_rate": automation_metrics.get("widget_intervention_rate"),
+            "submit_only_intervention_rate": automation_metrics.get("submit_only_intervention_rate"),
+            "dynamic_required_count": repair.get("dynamic_required_count"),
+            "steps_completed_without_human": automation_metrics.get("steps_completed_without_human"),
+            "step_advance_success_rate": automation_metrics.get("step_advance_success_rate"),
+            "submit_only_ready": automation_metrics.get("submit_only_ready"),
             "blocked": bool(execution.get("blocked")),
-            "reason": execution.get("reason"),
+            "reason": reason or None,
             "last_error": updated.get("last_error"),
             "final_url": artifacts.get("final_url"),
             "duration_seconds": round(time.monotonic() - started, 2),
@@ -143,6 +195,7 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
         return {
             "url": url,
             "provider_hint": provider,
+            "provider_override": provider_override,
             "provider_detected": None,
             "state": "failed",
             "coverage_score": "failed",
@@ -154,6 +207,28 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "submit_controls_count": 0,
             "submit_control_texts": [],
             "auto_submit_status": None,
+            "validation_status": None,
+            "validation_issue_count": 0,
+            "validation_issue_types": [],
+            "verified_action_success_rate": None,
+            "native_control_success_rate": None,
+            "custom_control_success_rate": None,
+            "shadow_control_success_rate": None,
+            "file_widget_success_rate": None,
+            "resume_upload_success_rate": None,
+            "resume_upload_strategy": None,
+            "popup_handling_success_rate": None,
+            "human_intervention_status": None,
+            "human_intervention_types": [],
+            "human_interventions_per_application": 0,
+            "answer_intervention_rate": None,
+            "validation_intervention_rate": None,
+            "widget_intervention_rate": None,
+            "submit_only_intervention_rate": None,
+            "dynamic_required_count": 0,
+            "steps_completed_without_human": 0,
+            "step_advance_success_rate": None,
+            "submit_only_ready": False,
             "blocked": True,
             "reason": exc.__class__.__name__,
             "last_error": str(exc),
@@ -165,12 +240,15 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
 def coverage_score(
     *,
     state: str,
+    reason: str = "",
     fields_detected: int,
     fields_autofilled: int,
     unknown_fields: int,
     submit_controls_count: int,
     blocked: bool,
 ) -> str:
+    if reason == "posting_unavailable":
+        return "posting_unavailable"
     if blocked or state == "failed":
         return "blocked"
     if fields_detected == 0:
@@ -187,36 +265,60 @@ async def audit_application_coverage(
     *,
     db_path: Path,
     provider: str,
+    answers_file: Path | None,
     headful: bool,
     timeout_ms: int,
     keep_db: bool,
+    compare_generic: bool = False,
 ) -> dict[str, object]:
+    original_env = {key: os.environ.get(key) for key in AUDIT_ENV_KEYS}
     _remove_db(db_path)
     _prepare_environment(db_path, headful=headful, timeout_ms=timeout_ms)
+    try:
+        from joborchestrator.storage import db_connection
+        from joborchestrator.storage import persistence as db
 
-    from joborchestrator.storage import db_connection
-    from joborchestrator.storage import persistence as db
+        db.init_db()
+        db.save_candidate_profile_payload(SYNTHETIC_PROFILE)
+        if answers_file:
+            for answer in json.loads(answers_file.read_text(encoding="utf-8")):
+                if isinstance(answer, dict):
+                    db.upsert_answer_definition(answer)
 
-    db.init_db()
-    db.save_candidate_profile_payload(SYNTHETIC_PROFILE)
+        results: list[dict[str, object]] = []
+        for index, url in enumerate(urls, start=1):
+            result = await audit_application_url(url, provider=provider, index=index)
+            if compare_generic:
+                generic_result = await audit_application_url(
+                    url,
+                    provider=provider,
+                    index=index,
+                    provider_override="generic_form",
+                    external_id_prefix="coverage-audit-generic",
+                )
+                result["generic_engine_result"] = generic_result
+                result["adapter_uplift"] = adapter_uplift(generic_result, result)
+            results.append(result)
 
-    results: list[dict[str, object]] = []
-    for index, url in enumerate(urls, start=1):
-        results.append(await audit_application_url(url, provider=provider, index=index))
-
-    summary = summarize_results(results)
-    report = {
-        "db_mode": db_connection.connection_mode(),
-        "db_path": str(db_path),
-        "dry_run": True,
-        "auto_submit_enabled": False,
-        "urls_requested": len(urls),
-        "summary": summary,
-        "results": results,
-    }
-    if not keep_db:
-        _remove_db(db_path)
-    return report
+        summary = summarize_results(results)
+        report = {
+            "db_mode": db_connection.connection_mode(),
+            "db_path": str(db_path),
+            "dry_run": True,
+            "auto_submit_enabled": False,
+            "urls_requested": len(urls),
+            "summary": summary,
+            "results": results,
+        }
+        if not keep_db:
+            _remove_db(db_path)
+        return report
+    finally:
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def summarize_results(results: list[dict[str, object]]) -> dict[str, object]:
@@ -235,7 +337,50 @@ def summarize_results(results: list[dict[str, object]]) -> dict[str, object]:
         "low_friction_ratio": round(low_friction / total, 3) if total else 0,
         "by_score": by_score,
         "by_provider": by_provider,
+        "average_adapter_uplift": _average_adapter_uplift(results),
     }
+
+
+def adapter_uplift(generic_result: dict[str, object], adapter_result: dict[str, object]) -> dict[str, object]:
+    generic_score = automation_score(generic_result)
+    adapter_score = automation_score(adapter_result)
+    return {
+        "generic_score": generic_score,
+        "adapter_score": adapter_score,
+        "delta": round(adapter_score - generic_score, 3),
+        "generic_coverage_score": generic_result.get("coverage_score"),
+        "adapter_coverage_score": adapter_result.get("coverage_score"),
+        "generic_provider": generic_result.get("provider_detected"),
+        "adapter_provider": adapter_result.get("provider_detected"),
+    }
+
+
+def automation_score(result: dict[str, object]) -> float:
+    score_weights = {
+        "failed": 0.0,
+        "blocked": 0.0,
+        "posting_unavailable": 0.0,
+        "no_form_detected": 0.1,
+        "manual": 0.2,
+        "partial_needs_answers": 0.55,
+        "ready_no_human_input": 1.0,
+    }
+    score = score_weights.get(str(result.get("coverage_score") or ""), 0.0)
+    verified = result.get("verified_action_success_rate")
+    if isinstance(verified, int | float):
+        score = max(score, min(float(verified), 1.0) * 0.8)
+    return round(score, 3)
+
+
+def _average_adapter_uplift(results: list[dict[str, object]]) -> float | None:
+    deltas = [
+        float((result.get("adapter_uplift") or {}).get("delta"))
+        for result in results
+        if isinstance(result.get("adapter_uplift"), dict) and (result.get("adapter_uplift") or {}).get("delta") is not None
+    ]
+    if not deltas:
+        return None
+    return round(sum(deltas) / len(deltas), 3)
 
 
 def write_json_report(path: Path, report: dict[str, object]) -> None:
@@ -255,6 +400,32 @@ def write_csv_report(path: Path, results: list[dict[str, object]]) -> None:
         "unknown_fields",
         "resume_upload_status",
         "submit_controls_count",
+        "validation_status",
+        "validation_issue_count",
+        "validation_issue_types",
+        "verified_action_success_rate",
+        "native_control_success_rate",
+        "custom_control_success_rate",
+        "shadow_control_success_rate",
+        "file_widget_success_rate",
+        "resume_upload_success_rate",
+        "resume_upload_strategy",
+        "popup_handling_success_rate",
+        "human_intervention_status",
+        "human_intervention_types",
+        "human_interventions_per_application",
+        "answer_intervention_rate",
+        "validation_intervention_rate",
+        "widget_intervention_rate",
+        "submit_only_intervention_rate",
+        "dynamic_required_count",
+        "steps_completed_without_human",
+        "step_advance_success_rate",
+        "submit_only_ready",
+        "adapter_uplift_delta",
+        "generic_engine_score",
+        "adapter_engine_score",
+        "generic_engine_coverage_score",
         "reason",
         "last_error",
         "final_url",
@@ -264,7 +435,16 @@ def write_csv_report(path: Path, results: list[dict[str, object]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         for result in results:
-            writer.writerow({column: result.get(column) for column in columns})
+            uplift = result.get("adapter_uplift") if isinstance(result.get("adapter_uplift"), dict) else {}
+            writer.writerow(
+                {
+                    **{column: result.get(column) for column in columns},
+                    "adapter_uplift_delta": uplift.get("delta"),
+                    "generic_engine_score": uplift.get("generic_score"),
+                    "adapter_engine_score": uplift.get("adapter_score"),
+                    "generic_engine_coverage_score": uplift.get("generic_coverage_score"),
+                }
+            )
 
 
 def write_markdown_report(path: Path, report: dict[str, object]) -> None:
@@ -280,6 +460,7 @@ def write_markdown_report(path: Path, report: dict[str, object]) -> None:
         f"- Low-friction ready: `{summary.get('low_friction_count')}` (`{summary.get('low_friction_ratio')}`)",
         f"- By score: `{json.dumps(summary.get('by_score'), sort_keys=True)}`",
         f"- By provider: `{json.dumps(summary.get('by_provider'), sort_keys=True)}`",
+        f"- Average adapter uplift: `{summary.get('average_adapter_uplift')}`",
         "",
         "| URL | Provider | State | Score | Fields | Filled | Unknown | Resume | Submit controls |",
         "| --- | --- | --- | --- | ---: | ---: | ---: | --- | ---: |",
@@ -303,6 +484,34 @@ def write_markdown_report(path: Path, report: dict[str, object]) -> None:
             )
             + " |"
         )
+        if result.get("validation_status"):
+            lines.append(
+                f"  - Validation: `{result.get('validation_status')}` / "
+                f"`{result.get('validation_issue_count') or 0}` issues / "
+                f"`{json.dumps(result.get('validation_issue_types') or [])}`"
+            )
+        if result.get("verified_action_success_rate") is not None:
+            lines.append(
+                f"  - Automation: verified rate `{result.get('verified_action_success_rate')}` / "
+                f"native `{result.get('native_control_success_rate')}` / "
+                f"custom `{result.get('custom_control_success_rate')}` / "
+                f"shadow `{result.get('shadow_control_success_rate')}` / "
+                f"upload `{result.get('resume_upload_success_rate')}` "
+                f"via `{result.get('resume_upload_strategy') or ''}` / "
+                f"popup `{result.get('popup_handling_success_rate')}` / "
+                f"human `{result.get('human_intervention_status')}` "
+                f"`{json.dumps(result.get('human_intervention_types') or [])}` / "
+                f"dynamic required `{result.get('dynamic_required_count') or 0}` / "
+                f"steps `{result.get('steps_completed_without_human') or 0}` / "
+                f"submit-only `{result.get('submit_only_ready')}`"
+            )
+        if isinstance(result.get("adapter_uplift"), dict):
+            uplift = result["adapter_uplift"]
+            assert isinstance(uplift, dict)
+            lines.append(
+                f"  - Adapter uplift: `{uplift.get('delta')}` "
+                f"(generic `{uplift.get('generic_coverage_score')}` -> adapter `{uplift.get('adapter_coverage_score')}`)"
+            )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -324,6 +533,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--url", action="append", default=[], help="Application URL to audit. Can be provided more than once.")
     parser.add_argument("--urls-file", type=Path, help="Text file with one application URL per line.")
     parser.add_argument("--provider", default="generic", help="Provider hint passed to the automation registry.")
+    parser.add_argument("--answers-file", type=Path, help="JSON file with approved answer definitions to seed into the isolated audit DB.")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--db-path", type=Path, default=PROJECT_ROOT / "logs" / "application-coverage-audit.db")
     parser.add_argument("--json-out", type=Path, default=PROJECT_ROOT / "logs" / "application-coverage-audit.json")
@@ -331,6 +541,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--md-out", type=Path, default=PROJECT_ROOT / "logs" / "application-coverage-audit.md")
     parser.add_argument("--headful", action="store_true", help="Show Chromium while the audit runs.")
     parser.add_argument("--keep-db", action="store_true")
+    parser.add_argument("--compare-generic", action="store_true", help="Also run each URL with the generic_form engine and report adapter uplift.")
     parser.add_argument("--timeout-ms", type=int, default=30_000)
     args = parser.parse_args(argv)
 
@@ -344,9 +555,11 @@ def main(argv: list[str] | None = None) -> int:
             urls,
             db_path=args.db_path,
             provider=args.provider,
+            answers_file=args.answers_file,
             headful=args.headful,
             timeout_ms=args.timeout_ms,
             keep_db=args.keep_db,
+            compare_generic=args.compare_generic,
         )
     )
     write_json_report(args.json_out, report)

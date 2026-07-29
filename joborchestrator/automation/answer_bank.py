@@ -26,6 +26,7 @@ SENSITIVE_KEYS = {
 @dataclass(frozen=True)
 class FieldAnswer:
     field_name: str
+    label: str
     canonical_key: str | None
     value: str | None
     field_type: str
@@ -63,6 +64,27 @@ def classify_field(label: str, field_type: str = "text") -> tuple[str | None, st
     return None, "unknown"
 
 
+def requires_explicit_human_consent(*parts: str) -> bool:
+    text = normalize_question(" ".join(str(part or "") for part in parts))
+    consent_markers = {
+        "consent",
+        "agree",
+        "agreement",
+        "terms",
+        "privacy",
+        "policy",
+        "declaration",
+        "certify",
+        "accurate",
+        "accuracy",
+        "signature",
+        "acknowledge",
+        "acknowledgement",
+        "background check",
+    }
+    return any(marker in text for marker in consent_markers)
+
+
 def map_answers(schema: dict[str, Any], profile: dict[str, Any], answer_bank: list[dict[str, Any]]) -> dict[str, Any]:
     usable_answers = [_normalize_answer_definition(answer) for answer in answer_bank if _answer_is_usable(answer)]
     fields = schema.get("fields") or []
@@ -83,9 +105,14 @@ def map_answers(schema: dict[str, Any], profile: dict[str, Any], answer_bank: li
                 classification = "sensitive" if sensitivity == "sensitive" else "safe"
             source = "approved_answer"
             match_strategy = str(answer.get("_match_strategy") or "answer_bank")
-        requires_confirmation = not value or (classification == "sensitive" and source != "approved_answer")
+        requires_confirmation = (
+            not value
+            or (classification == "sensitive" and source != "approved_answer")
+            or requires_explicit_human_consent(label, str(field.get("name") or field.get("id") or ""))
+        )
         result = FieldAnswer(
             field_name=str(field.get("name") or field.get("id") or label),
+            label=label,
             canonical_key=canonical,
             value=value,
             field_type=str(field.get("type") or "text"),
@@ -133,10 +160,6 @@ def _normalize_answer_definition(answer: dict[str, Any]) -> dict[str, Any]:
 def _match_answer_definition(label: str, canonical: str | None, answers: list[dict[str, Any]]) -> dict[str, Any] | None:
     normalized_label = normalize_question(label)
     normalized_canonical = normalize_question(canonical or "")
-    if normalized_canonical:
-        for answer in answers:
-            if answer.get("_normalized_key") == normalized_canonical:
-                return {**answer, "_match_strategy": "canonical_key"}
     exact_matches = [
         answer for answer in answers
         if normalized_label and normalized_label in set(answer.get("_normalized_patterns") or [])
@@ -151,6 +174,10 @@ def _match_answer_definition(label: str, canonical: str | None, answers: list[di
                 break
     if len(regex_matches) == 1:
         return {**regex_matches[0], "_match_strategy": "question_pattern_regex"}
+    if normalized_canonical:
+        for answer in answers:
+            if answer.get("_normalized_key") == normalized_canonical:
+                return {**answer, "_match_strategy": "canonical_key"}
     return None
 
 

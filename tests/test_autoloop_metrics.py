@@ -188,7 +188,49 @@ def test_compute_metrics_flags_soft_dealbreakers_and_generic_review_signals():
     assert summary["soft_dealbreaker_rate"] == 0.5
     assert summary["inferred_language_signal_count"] == 1
     assert summary["generic_location_signal_count"] == 1
+    assert summary["soft_location_review_count"] == 1
+    assert summary["soft_location_review_rate"] == 0.5
     assert summary["soft_dealbreaker_examples"][0]["job_id"] == 1
+    assert summary["soft_location_review_examples"][0]["job_id"] == 1
+
+
+def test_compute_metrics_flags_soft_decisions_with_many_central_gaps():
+    rows = [
+        _row(
+            1,
+            decision="APPLY_WITH_TAILORED_CV",
+            final_score=58,
+            evidence_json=json.dumps(
+                {
+                    "dealbreakers": [],
+                    "red_flags": [],
+                    "missing_requirements": ["pipelines", "orchestration", "deployment"],
+                    "requires_llm_review": True,
+                    "central_requirement_coverage": 0.68,
+                }
+            ),
+        ),
+        _row(
+            2,
+            decision="SKIP",
+            final_score=42,
+            evidence_json=json.dumps(
+                {
+                    "dealbreakers": [],
+                    "red_flags": [],
+                    "missing_requirements": ["pipelines", "orchestration", "deployment"],
+                    "requires_llm_review": True,
+                    "central_requirement_coverage": 0.45,
+                }
+            ),
+        ),
+    ]
+
+    summary = metrics.compute_metrics(rows)
+
+    assert summary["soft_central_gap_count"] == 1
+    assert summary["soft_central_gap_rate"] == 0.5
+    assert summary["soft_central_gap_examples"][0]["job_id"] == 1
 
 
 def test_compute_metrics_counts_non_active_prompt_versions(monkeypatch):
@@ -216,3 +258,20 @@ def test_compute_metrics_counts_non_active_prompt_versions(monkeypatch):
             "prompt_version": "v2",
         }
     ]
+
+
+def test_resolve_ranking_version_prefers_explicit_argument():
+    assert (
+        metrics.resolve_ranking_version(ranking_job_id=123, ranking_version="probe-version")
+        == "probe-version"
+    )
+
+
+def test_resolve_ranking_version_uses_default_without_job_id():
+    assert metrics.resolve_ranking_version(ranking_job_id=None, ranking_version=None) == metrics.NVIDIA_RANKING_VERSION
+
+
+def test_resolve_ranking_version_reads_ranking_job(monkeypatch):
+    monkeypatch.setattr(metrics.db, "get_ranking_job", lambda job_id: {"ranking_version": "job-version"})
+
+    assert metrics.resolve_ranking_version(ranking_job_id=123, ranking_version=None) == "job-version"

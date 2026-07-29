@@ -21,6 +21,7 @@ def _job() -> dict:
 def _profile() -> dict:
     return {
         "base_cv_text": "Ignacio Rodriguez\nExperience\nFiction Express\nPython FastAPI PostgreSQL APIs",
+        "contact": "igrodriguez.ar@gmail.com | +34 663 626 601 | linkedin.com/in/ignacio-a-rodriguez",
         "skills": [
             {"name": "Python", "level": "strong"},
             {"name": "FastAPI", "level": "strong"},
@@ -45,6 +46,9 @@ def test_capture_fixture_marks_expectations_for_human_review(monkeypatch):
     assert fixture["raw_input"]["source"] == "linkedin"
     assert fixture["raw_input"]["easy_apply"] is True
     assert fixture["current_output"]["ats_cv_text"].startswith("Professional Summary")
+    assert fixture["candidate_profile_snapshot"]["profile"]["contact"] == (
+        "[redacted-email] | [redacted-phone] | [redacted-linkedin]"
+    )
     assert {"Python", "FastAPI", "PostgreSQL"}.issubset(set(fixture["expected"]["required_keywords"]))
     assert "Review and edit" in fixture["human_review_instructions"]
 
@@ -74,6 +78,33 @@ def test_capture_fixture_drops_ranking_avoid_terms_from_materials_expectations(m
 
     assert "AWS" in fixture["expected"]["required_keywords"]
     assert "Serverless" not in fixture["expected"]["required_keywords"]
+
+
+def test_capture_fixture_falls_back_to_yaml_profile(monkeypatch):
+    monkeypatch.setattr(capture.db, "get_job_posting", lambda job_id: _job())
+    monkeypatch.setattr(capture.db, "get_candidate_profile_payload", lambda: None)
+    monkeypatch.setattr(capture.db, "get_rankings_for_job_ids", lambda ranking_version, job_ids: _empty_rows())
+    monkeypatch.setenv(
+        "CANDIDATE_PROFILE_YAML",
+        """
+strong_skills:
+  - Python
+  - FastAPI
+medium_skills:
+  - PostgreSQL
+notes: Backend engineer, igrodriguez.ar@gmail.com
+""",
+    )
+
+    fixture = capture.build_capture_fixture(
+        job_id=105,
+        artifact="ats_cv",
+        label="yaml-profile",
+    )
+
+    assert fixture["candidate_profile_snapshot"]["source"] == "candidate_profile.yml"
+    assert fixture["candidate_profile_snapshot"]["profile"]["notes"] == "Backend engineer, [redacted-email]"
+    assert {"Python", "FastAPI", "PostgreSQL"}.issubset(set(fixture["expected"]["required_keywords"]))
 
 
 def test_capture_fixture_writes_under_surface_directory(tmp_path):

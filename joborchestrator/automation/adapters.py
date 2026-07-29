@@ -136,10 +136,13 @@ class BrowserFormAdapter(GenericAssistedAdapter):
         return await page.locator(self.form_selector).count() > 0
 
     async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]:
-        form = page.locator(self.form_selector).first
-        fields = await form.evaluate(_APPLICATION_FORM_DISCOVERY_JS) if await form.count() > 0 else []
-        normalized = [_normalize_dom_field(field) for field in fields]
-        return {"provider": self.provider, "fields": normalized}
+        candidate = await _extract_best_form_candidate(page, self.form_selector)
+        return {
+            "provider": self.provider,
+            "fields": candidate["fields"],
+            "form_candidates": candidate["form_candidates"],
+            "selected_form_index": candidate["selected_form_index"],
+        }
 
     def extract_form_schema_html(self, html: str) -> dict[str, Any]:
         fields: list[dict[str, Any]] = []
@@ -220,8 +223,7 @@ class LeverAdapter(BrowserFormAdapter):
         return await page.locator('[data-qa="btn-apply"], .lever-application-form').count() > 0
 
     async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]:
-        form = page.locator("form").first
-        if await form.count() == 0:
+        if await page.locator("form").count() == 0:
             apply_button = page.locator('[data-qa="btn-apply"], a[href$="/apply"], a:has-text("Apply")').first
             try:
                 if await apply_button.count() > 0 and await apply_button.is_visible(timeout=1000):
@@ -229,10 +231,13 @@ class LeverAdapter(BrowserFormAdapter):
                     await page.wait_for_load_state("domcontentloaded", timeout=3000)
             except Exception:
                 pass
-            form = page.locator("form").first
-        fields = await form.evaluate(_APPLICATION_FORM_DISCOVERY_JS) if await form.count() > 0 else []
-        normalized = [_normalize_dom_field(field) for field in fields]
-        return {"provider": self.provider, "fields": normalized}
+        candidate = await _extract_best_form_candidate(page, "form")
+        return {
+            "provider": self.provider,
+            "fields": candidate["fields"],
+            "form_candidates": candidate["form_candidates"],
+            "selected_form_index": candidate["selected_form_index"],
+        }
 
 
 class GenericFormAdapter(BrowserFormAdapter):
@@ -245,8 +250,8 @@ class GenericFormAdapter(BrowserFormAdapter):
         )
 
     async def extract_form_schema_page(self, page: "Page") -> dict[str, Any]:
-        form = page.locator(self.form_selector).first
-        if await form.count() == 0:
+        schema = await super().extract_form_schema_page(page)
+        if not schema.get("fields"):
             cta = page.locator("a, button").filter(
                 has_text=re.compile(
                     r"\b(apply|apply now|i'?m interested|start application|aplicar|solicitar)\b",
@@ -260,7 +265,8 @@ class GenericFormAdapter(BrowserFormAdapter):
                     await page.wait_for_timeout(1000)
             except Exception:
                 pass
-        return await super().extract_form_schema_page(page)
+            schema = await super().extract_form_schema_page(page)
+        return schema
 
 
 class AdapterRegistry:
@@ -300,6 +306,12 @@ class AdapterRegistry:
                 return adapter
         return self._adapters[-1]
 
+    def get(self, provider: str) -> ApplicationAdapter:
+        for adapter in self._adapters:
+            if adapter.provider == provider:
+                return adapter
+        raise KeyError(f"Unknown executable application adapter: {provider}")
+
     def capabilities(self, provider: str | None = None) -> list[ProviderCapabilities] | ProviderCapabilities:
         if provider:
             return self._declared.get(provider, self._declared["generic"])
@@ -325,6 +337,65 @@ def _recognition_only_capabilities(provider: str, *, requires_login: bool = Fals
         can_observe_submission=False,
         can_submit=False,
     )
+
+
+async def _extract_best_form_candidate(page: "Page", selector: str) -> dict[str, Any]:
+    forms = page.locator(selector)
+    count = await forms.count()
+    candidates: list[dict[str, Any]] = []
+    best: dict[str, Any] | None = None
+    for index in range(count):
+        form = forms.nth(index)
+        try:
+            raw_fields = await form.evaluate(_APPLICATION_FORM_DISCOVERY_JS)
+            metadata = await form.evaluate(_FORM_METADATA_JS)
+        except Exception:
+            continue
+        normalized_fields = [_normalize_dom_field(field) for field in raw_fields]
+        score = _score_form_candidate(normalized_fields, metadata)
+        candidate = {
+            "index": index,
+            "score": score,
+            "fields": normalized_fields,
+            "field_count": len(normalized_fields),
+            "submit_controls": int(metadata.get("submit_controls") or 0),
+            "text": str(metadata.get("text") or "")[:160],
+        }
+        candidates.append({key: value for key, value in candidate.items() if key != "fields"})
+        if best is None or score > int(best["score"]):
+            best = candidate
+    if best is None:
+        return {"fields": [], "form_candidates": [], "selected_form_index": None}
+    return {
+        "fields": best["fields"],
+        "form_candidates": candidates,
+        "selected_form_index": best["index"],
+    }
+
+
+def _score_form_candidate(fields: list[dict[str, Any]], metadata: dict[str, Any]) -> int:
+    if not fields:
+        return 0
+    score = len(fields)
+    score += min(int(metadata.get("submit_controls") or 0), 2) * 3
+    labels = " ".join(str(field.get("label") or field.get("name") or "") for field in fields).lower()
+    names = " ".join(str(field.get("name") or "") for field in fields).lower()
+    field_text = f"{labels} {names}"
+    for marker in ("resume", "cv", "curriculum"):
+        if marker in field_text:
+            score += 6
+            break
+    for marker in ("email", "phone", "linkedin", "portfolio", "cover letter"):
+        if marker in field_text:
+            score += 2
+    if any(str(field.get("type") or "") == "file" for field in fields):
+        score += 8
+    if int(metadata.get("password_fields") or 0):
+        score -= 8
+    text = str(metadata.get("text") or "").lower()
+    if any(marker in text for marker in ("newsletter", "search jobs", "job alert", "sign up", "log in", "login")):
+        score -= 4
+    return score
 
 
 def _attr(tag: str, name: str) -> str | None:
@@ -374,6 +445,7 @@ def _normalize_dom_field(field: dict[str, Any]) -> dict[str, Any]:
         "sensitive": classification == "sensitive",
         "confidence": confidence,
         "locator_strategy": str(field.get("locator_strategy") or "unknown"),
+        "in_shadow_root": bool(field.get("in_shadow_root")),
         "options": field.get("options") or [],
     }
 
@@ -386,9 +458,36 @@ def _safe_key(value: str) -> str:
 _APPLICATION_FORM_DISCOVERY_JS = """
 form => {
   const TECHNICAL_RE = /(^_|^hp_|csrf|token|utf8|captcha|g-recaptcha|h-captcha|honeypot|bot-field|website_url)/i;
-  const controls = Array.from(form.querySelectorAll('input, textarea, select'));
+  function collectDeep(root, selector) {
+    const found = [];
+    const visit = node => {
+      if (!node) return;
+      if (node.querySelectorAll) found.push(...Array.from(node.querySelectorAll(selector)));
+      const descendants = node.querySelectorAll ? Array.from(node.querySelectorAll('*')) : [];
+      for (const descendant of descendants) {
+        if (descendant.shadowRoot) visit(descendant.shadowRoot);
+      }
+    };
+    visit(root);
+    return found;
+  }
+  function queryDeepFirst(root, selector) {
+    return collectDeep(root, selector)[0] || null;
+  }
+  function inShadowRoot(element) {
+    return Boolean(element.getRootNode && window.ShadowRoot && element.getRootNode() instanceof ShadowRoot);
+  }
+  const controls = collectDeep(form, 'input, textarea, select');
+  const ariaControls = collectDeep(form, '[role="combobox"], [role="listbox"], [role="radiogroup"], [role="radio"], [role="checkbox"]');
+  const fileWidgets = collectDeep(form, 'button, a, [role="button"], [data-testid], [aria-label], .dropzone, [class*="dropzone"], [class*="upload"]');
+  const controlledAriaIds = new Set(
+    ariaControls
+      .flatMap(element => String(element.getAttribute('aria-controls') || element.getAttribute('aria-owns') || '').split(/\\s+/))
+      .filter(Boolean)
+  );
   const byNameRadio = new Map();
   const fields = [];
+  const seenControlKeys = new Set();
 
   function text(value) {
     return String(value || '').replace(/\\s+/g, ' ').trim().replace(/\\s*\\*\\s*$/, '').trim();
@@ -399,6 +498,7 @@ form => {
     const style = window.getComputedStyle(element);
     return inputType === 'hidden'
       || element.hidden
+      || !element.getClientRects().length
       || style.display === 'none'
       || style.visibility === 'hidden'
       || element.getAttribute('aria-hidden') === 'true';
@@ -409,13 +509,13 @@ form => {
       const question = element.closest('.application-question, .custom-question, .question, .posting-field, .field-group');
       if (!question) return '';
       const clone = question.cloneNode(true);
-      clone.querySelectorAll('input, textarea, select, option, script, style, label').forEach(node => node.remove());
+      collectDeep(clone, 'input, textarea, select, option, script, style, label').forEach(node => node.remove());
       return text(clone.innerText || clone.textContent);
     }
 
     const id = element.id;
     if (id) {
-      const explicit = form.querySelector(`label[for="${CSS.escape(id)}"]`) || document.querySelector(`label[for="${CSS.escape(id)}"]`);
+      const explicit = queryDeepFirst(form, `label[for="${CSS.escape(id)}"]`) || document.querySelector(`label[for="${CSS.escape(id)}"]`);
       if (explicit) return { label: text(explicit.innerText || explicit.textContent), strategy: 'label_for' };
     }
     const wrapping = element.closest('label');
@@ -424,7 +524,7 @@ form => {
     if (aria) return { label: text(aria), strategy: 'aria_label' };
     const labelledBy = element.getAttribute('aria-labelledby');
     if (labelledBy) {
-      const label = labelledBy.split(/\\s+/).map(part => document.getElementById(part)?.innerText || document.getElementById(part)?.textContent || '').join(' ');
+      const label = labelledBy.split(/\\s+/).map(part => document.getElementById(part)?.innerText || document.getElementById(part)?.textContent || queryDeepFirst(form, `#${CSS.escape(part)}`)?.innerText || queryDeepFirst(form, `#${CSS.escape(part)}`)?.textContent || '').join(' ');
       if (text(label)) return { label: text(label), strategy: 'aria_labelledby' };
     }
     const placeholder = text(element.getAttribute('placeholder'));
@@ -432,7 +532,7 @@ form => {
     const container = element.closest('.field, .field-group, .application-field, .question, div, li');
     if (container) {
       const clone = container.cloneNode(true);
-      clone.querySelectorAll('input, textarea, select, option, script, style').forEach(node => node.remove());
+      collectDeep(clone, 'input, textarea, select, option, script, style').forEach(node => node.remove());
       const nearby = text(clone.innerText || clone.textContent);
       if (nearby) return { label: nearby, strategy: 'nearby_text' };
     }
@@ -455,6 +555,96 @@ form => {
       type,
       required: element.required || element.getAttribute('aria-required') === 'true' || /[\\*✱]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
       locator_strategy: labelled.strategy,
+      in_shadow_root: inShadowRoot(element),
+      options: [],
+    };
+  }
+
+  function elementKey(element, fallbackLabel) {
+    return element.getAttribute('name') || element.id || element.getAttribute('aria-label') || element.getAttribute('data-testid') || fallbackLabel || '';
+  }
+
+  function optionLabel(element) {
+    return text(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('data-value') || element.getAttribute('value'));
+  }
+
+  function ariaOptions(element) {
+    const owns = element.getAttribute('aria-controls') || element.getAttribute('aria-owns') || '';
+    const containers = [element];
+    for (const part of owns.split(/\\s+/).filter(Boolean)) {
+      const owned = document.getElementById(part) || queryDeepFirst(form, `#${CSS.escape(part)}`);
+      if (owned) containers.push(owned);
+    }
+    const options = [];
+    for (const container of containers) {
+      for (const option of collectDeep(container, '[role="option"], [role="radio"]')) {
+        const label = optionLabel(option);
+        if (label) options.push({ value: option.getAttribute('data-value') || option.getAttribute('value') || label, label });
+      }
+    }
+    return options;
+  }
+
+  function ariaField(element) {
+    const role = String(element.getAttribute('role') || '').toLowerCase();
+    const labelled = labelFor(element);
+    const label = labelled.label || text(element.getAttribute('aria-label'));
+    const key = elementKey(element, label);
+    if (!key || isHidden(element)) return null;
+    if (role === 'combobox' || role === 'listbox') {
+      return {
+        id: key,
+        name: key,
+        label,
+        type: 'select',
+        required: element.getAttribute('aria-required') === 'true' || /[\\*âœ±]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
+        locator_strategy: 'aria_role',
+        in_shadow_root: inShadowRoot(element),
+        options: ariaOptions(element),
+      };
+    }
+    if (role === 'radiogroup') {
+      return {
+        id: key,
+        name: key,
+        label,
+        type: 'radio',
+        required: element.getAttribute('aria-required') === 'true' || /[\\*âœ±]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
+        locator_strategy: 'aria_role',
+        in_shadow_root: inShadowRoot(element),
+        options: ariaOptions(element),
+      };
+    }
+    if (role === 'checkbox') {
+      return {
+        id: key,
+        name: key,
+        label,
+        type: 'checkbox',
+        required: element.getAttribute('aria-required') === 'true' || /[\\*âœ±]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
+        locator_strategy: 'aria_role',
+        in_shadow_root: inShadowRoot(element),
+        options: [{ value: element.getAttribute('data-value') || 'checked', label }],
+      };
+    }
+    return null;
+  }
+
+  function fileWidgetField(element) {
+    const labelled = labelFor(element);
+    const label = labelled.label || text(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('title'));
+    if (!/(resume|cv|curriculum|attach|upload|file|document|adjuntar|subir|curr)/i.test(label)) return null;
+    if (/(submit|send|apply|enviar|solicitar|finalizar)/i.test(label)) return null;
+    const key = elementKey(element, label);
+    if (!key || isHidden(element)) return null;
+    return {
+      id: key,
+      name: key,
+      label,
+      type: 'file',
+      required: element.getAttribute('aria-required') === 'true' || /[\\*âœ±]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
+      locator_strategy: 'file_widget',
+      in_shadow_root: inShadowRoot(element),
       options: [],
     };
   }
@@ -465,9 +655,11 @@ form => {
     if (element.disabled || isHidden(element) || TECHNICAL_RE.test(name) || TECHNICAL_RE.test(id)) continue;
     const field = baseField(element);
     if (!field.label && !field.name) continue;
+    seenControlKeys.add(elementKey(element, field.label));
     if (field.type === 'radio') {
       const groupKey = name || id || field.label;
-      const legend = text(element.closest('fieldset')?.querySelector('legend')?.innerText || element.closest('fieldset')?.querySelector('legend')?.textContent);
+      const legendRoot = element.closest('fieldset');
+      const legend = text(queryDeepFirst(legendRoot, 'legend')?.innerText || queryDeepFirst(legendRoot, 'legend')?.textContent);
       const question = labelFor(element.closest('.application-question, .custom-question, .question') || element).label;
       if (!byNameRadio.has(groupKey)) {
         byNameRadio.set(groupKey, { ...field, id: groupKey, name: groupKey, label: legend || question || field.label, options: [] });
@@ -487,7 +679,46 @@ form => {
     fields.push(field);
   }
   fields.push(...Array.from(byNameRadio.values()));
+  for (const element of ariaControls) {
+    const role = String(element.getAttribute('role') || '').toLowerCase();
+    if (element.matches('input, textarea, select') || element.disabled || isHidden(element)) continue;
+    if (role === 'listbox' && element.id && controlledAriaIds.has(element.id)) continue;
+    if (role === 'radio' && element.closest('[role="radiogroup"]')) continue;
+    const field = ariaField(element);
+    if (!field || seenControlKeys.has(field.name)) continue;
+    if ((field.type === 'select' || field.type === 'radio') && !field.options.length) continue;
+    fields.push(field);
+    seenControlKeys.add(field.name);
+  }
+  if (!fields.some(field => field.type === 'file')) {
+    for (const element of fileWidgets) {
+      if (element.matches('input, textarea, select') || element.disabled || isHidden(element)) continue;
+      const field = fileWidgetField(element);
+      if (!field || seenControlKeys.has(field.name)) continue;
+      fields.push(field);
+      seenControlKeys.add(field.name);
+      break;
+    }
+  }
   return fields;
+}
+"""
+
+_FORM_METADATA_JS = """
+form => {
+  function text(value) {
+    return String(value || '').replace(/\\s+/g, ' ').trim();
+  }
+  const controls = Array.from(form.querySelectorAll('button, input[type="submit"], input[type="button"]'));
+  const submitControls = controls.filter(element => {
+    const label = text(element.innerText || element.textContent || element.getAttribute('value') || element.getAttribute('aria-label') || element.getAttribute('type'));
+    return /submit|send|apply|enviar|solicitar|finalizar/i.test(label);
+  }).length;
+  return {
+    text: text(form.innerText || form.textContent).slice(0, 500),
+    submit_controls: submitControls,
+    password_fields: form.querySelectorAll('input[type="password"]').length,
+  };
 }
 """
 

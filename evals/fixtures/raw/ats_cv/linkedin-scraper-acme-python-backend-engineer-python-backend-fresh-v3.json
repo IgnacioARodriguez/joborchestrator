@@ -1,0 +1,335 @@
+{
+  "case_id": "linkedin-scraper-acme-python-backend-engineer-python-backend-fresh-v3",
+  "surface": "ats_cv",
+  "critical": false,
+  "review_status": "needs_human_review",
+  "created_at": "2026-07-27T10:56:50+00:00",
+  "source": {
+    "job_id": 21,
+    "artifact": "ats_cv",
+    "ranking_version": null,
+    "label": "python-backend-fresh-v3"
+  },
+  "raw_input": {
+    "job_html_or_text": "Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.",
+    "source": "linkedin_scraper",
+    "title": "Python Backend Engineer",
+    "company": "Acme",
+    "location": "Remote",
+    "url": "https://www.linkedin.com/jobs/view/789/",
+    "apply_url": "https://www.linkedin.com/jobs/view/789/",
+    "easy_apply": null,
+    "raw_payload": "{\"descripcion\": \"Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.Requirements: Python, FastAPI, AWS. Responsibilities: build APIs.\", \"empresa\": \"Acme\", \"extraccion_ok\": true, \"id\": \"li-3\", \"source_adapter\": \"linkedin_scraper\", \"titulo\": \"Python Backend Engineer\", \"ubicacion\": \"Remote\", \"url\": \"https://www.linkedin.com/jobs/view/789/\"}"
+  },
+  "candidate_profile_snapshot": {
+    "source": "db.current_candidate_profile",
+    "profile": {
+      "schema_version": 1,
+      "headline": "Backend & Full Stack Developer with AI Automation Expertise",
+      "target_roles": [
+        "Backend Developer",
+        "Full Stack Developer",
+        "SaaS Product Developer",
+        "Automation Specialist (Tech)"
+      ],
+      "secondary_roles": [
+        "Technical Product Owner",
+        "DevOps Engineer (Backend Focus)",
+        "API Architect"
+      ],
+      "role_aliases": {},
+      "skills": [
+        {
+          "name": "API Integrations",
+          "category": "Backend",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Django",
+          "category": "Backend",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Django REST Framework",
+          "category": "Backend",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "FastAPI",
+          "category": "Backend",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Flask",
+          "category": "Backend",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Microservices",
+          "category": "Backend",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "REST APIs",
+          "category": "Backend",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "EC2",
+          "category": "Cloud",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Serverless",
+          "category": "Cloud",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "LLM",
+          "category": "Data",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Database Management (SQL & NoSQL)",
+          "category": "Data Management",
+          "level": "strong",
+          "evidence": "SQL, MongoDB, MySQL, Redis used across multiple projects"
+        },
+        {
+          "name": "MongoDB",
+          "category": "Database",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "MySQL",
+          "category": "Database",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "PostgreSQL",
+          "category": "Database",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "SQLite",
+          "category": "Database",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "CI/CD",
+          "category": "DevOps",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Docker",
+          "category": "DevOps",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Kubernetes",
+          "category": "DevOps",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Monitoring",
+          "category": "DevOps",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "AI Automation",
+          "category": "Emerging Technologies",
+          "level": "medium",
+          "evidence": "Prototypes with LLM APIs (Claude, OpenAI, Google Cloud AI)"
+        },
+        {
+          "name": "CSS",
+          "category": "Frontend",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "HTML",
+          "category": "Frontend",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "React",
+          "category": "Frontend",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Cloud Computing (AWS)",
+          "category": "Infrastructure",
+          "level": "strong",
+          "evidence": "AWS used in EdTech and Tigo LATAM projects"
+        },
+        {
+          "name": "English",
+          "category": "Languages",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Spanish",
+          "category": "Languages",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Agile",
+          "category": "Leadership",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Code Review",
+          "category": "Leadership",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "JavaScript",
+          "category": "Programming",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Python",
+          "category": "Programming",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "SQL",
+          "category": "Programming",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "TypeScript",
+          "category": "Programming",
+          "level": "medium",
+          "evidence": "Added manually."
+        },
+        {
+          "name": "Python Development",
+          "category": "Programming Languages",
+          "level": "strong",
+          "evidence": "Used in multiple projects (EdTech, Cepsa, Tigo LATAM, Balloon Group)"
+        },
+        {
+          "name": "Agile Methodologies",
+          "category": "Project Management",
+          "level": "medium",
+          "evidence": "Mentioned in Cepsa project context"
+        },
+        {
+          "name": "API Design & Integration",
+          "category": "Software Development",
+          "level": "strong",
+          "evidence": "REST APIs in EdTech, Cepsa, Tigo LATAM; API integrations in various projects"
+        },
+        {
+          "name": "Backend Development",
+          "category": "Software Development",
+          "level": "strong",
+          "evidence": "Primary role in Fiction Express, Cepsa, Tigo LATAM, and Balloon Group"
+        },
+        {
+          "name": "Frontend Development (React, JS, TypeScript)",
+          "category": "Software Development",
+          "level": "medium",
+          "evidence": "Used in Cepsa and Balloon Group projects"
+        }
+      ],
+      "industries": [
+        "EdTech",
+        "Energy",
+        "Telecommunications",
+        "Logistics",
+        "Fintech"
+      ],
+      "preferred_locations": [
+        "Málaga, Spain"
+      ],
+      "preferred_work_modes": [],
+      "dealbreakers": [],
+      "avoid_roles": [
+        "Pure Frontend Developer",
+        "Data Scientist (No evidence of advanced data analysis)"
+      ],
+      "real_experience_years": 4.0,
+      "notes": "Versatile developer with a strong backend focus and growing AI automation capabilities. Best suited for roles combining technical development with process automation.",
+      "suggested_roles_reasoning": "Direct experience in backend and full-stack development, strong technical skill set, and expressed interest in AI automation and SaaS products.",
+      "extraction_notes": [
+        "Clarify preference for remote/hybrid/on-site work",
+        "Verify the depth of experience with 'AI Automation' for stronger positioning"
+      ],
+      "confidence": "high",
+      "base_cv_text": "Ignacio Rodriguez\nMálaga, Spain  |  [redacted-phone]  |  [redacted-email]  |  [redacted-linkedin]\nSUMMARY\nBackend / Full Stack Developer with over 4 years of professional experience developing backend services, APIs, \ninternal platforms, dashboards, data pipelines, integrations, automation workflows, and production systems across \nEdTech, energy, telecommunications, logistics, fintech-related projects, and international environments.\nStrong background in Python, Flask, Django, FastAPI, REST APIs, SQL, MongoDB, Redis, Docker, AWS, PHP, \nJavaScript, TypeScript, React, CI/CD, reporting platforms, and business-oriented software solutions.\nExperienced building software that automates manual processes, transforms business data into useful workflows, \nintegrates multiple systems through APIs, and supports internal teams with reliable SaaS-like products. Practical \ninterest in AI-powered automation, LLM API integrations, prototyping, and turning ideas into production-ready tools.\nEDUCATION\nUniversidad Tecnológica Nacional\nProgramming Technician in Software Engineering 2022 – 2024\nPlataforma 5\nFull Stack Developer Bootcamp 2021\nUniversidad de Buenos Aires\nArchitecture Studies 2017 – 2020\nEXPERIENCE\nBackend Developer April 2025 – March 2026\nFiction Express Málaga, Spain\nBackend Developer working on analytics, product metrics, internal APIs, and user activity data systems for an EdTech \nSaaS platform used by students, teachers, and education teams.\n• Developed backend services in Python for analytics, reporting, user activity tracking, and product metrics.\n• Built data pipelines to record reading activity from thousands of students and classrooms.\n• Developed backend workflows to transform user activity events into engagement, progress, and product usage \nmetrics.\n• Worked with APIs, data models, and internal systems used by product and education teams.\n• Improved analytics infrastructure to strengthen traceability, scalability, maintainability, and data reliability.\n• Collaborated directly with product managers and stakeholders to define technical and functional requirements.\n• Worked with SQL and NoSQL databases for querying, persistence, and data analysis.\n• Participated in debugging, incident analysis, and continuous improvement of existing backend systems.\n• Documented technical flows, data behavior, backend processes, and internal platform logic.\n• Supported product development by turning business needs into backend features and production-ready \nfunctionality.\n• Technologies: Python, Django, REST APIs, SQL, MongoDB, Docker, Redis, AWS, data pipelines, reporting, \nbackend services.\nFull Stack Developer October 2022 – April 2025\nTalan Consulting Client: Cepsa · Málaga, Spain\nFull Stack Developer working on backend services, automation tools, financial dashboards, market data tools, and \nreporting platforms for Cepsa, supporting finance, logistics, and operations teams.\n• Developed backend services in Python and internal tools to support financial and operational decision-making.\n• Built and maintained dashboards for finance teams, enabling visualization of business, operational, and market \nmetrics.\n• Developed reporting tools connected to gas and oil market values, supporting price evolution analysis and \nbusiness impact assessment.\n• Contributed to predictive tools and internal models related to gas and oil market behavior, helping anticipate \ntrends and compare scenarios.\n• Designed SQL queries, data flows, and backend integrations to transform operational and financial data into \nclear business metrics.\n• Developed APIs and backend logic to connect internal data sources, reporting systems, and dashboard \ninterfaces.\n• Automated manual reporting and data-processing workflows for business users.\n• Built frontend features with React, JavaScript, and TypeScript for business-oriented internal tools.\n• Worked on existing applications, performing maintenance, debugging, refactoring, and continuous \nimprovement.\n• Collaborated directly with finance, operations, and business stakeholders to understand requirements and turn \nthem into technical solutions.\n• Presented dashboards, metrics, and technical insights to non-technical users.\n• Identified improvements in performance, data quality, usability, automation, and maintainability across internal \nplatforms.\n• Worked in Agile/Scrum teams using Git, Docker, and collaborative delivery workflows.\n• Technologies: Python, Flask, React, JavaScript, TypeScript, SQL, MySQL, Docker, Redis, Git, REST APIs, \nPower BI, dashboards, reporting platforms, financial tools, market data, predictive tools.\nBackend Developer August 2022 – October 2022\nGlobant Client: Tigo LATAM · Buenos Aires, Argentina\nBackend Developer contributing to an AWS-based microservices architecture for Tigo Telecommunications, \nsupporting the processing of business and user data across Latin America.\n• Developed and optimized backend services for large-scale data processing.\n• Contributed to the design of services within a distributed microservices architecture.\n• Worked in AWS cloud environments with a focus on scalability, reliability, and service communication.\n• Collaborated with distributed engineering teams in an international environment.\n• Supported backend systems managing business and user data across different markets.\n• Worked with REST APIs, backend services, distributed systems, and cloud-based development practices.\n• Technologies: Python, AWS, microservices, REST APIs, backend services, distributed systems, cloud \nenvironments.\nFull Stack Developer November 2021 – August 2022\nBalloon Group Buenos Aires, Argentina\nFull Stack Developer developing web applications and backend services for international clients, including Toyota, \nAbbott, and Citelis.\n• Developed web applications and backend services based on client requirements.\n• Built a vehicle rental management platform used across multiple cities in Puerto Rico.\n• Designed backend services, database structures, and business logic.\n• Developed frontend and backend features for end users.\n• Integrated APIs, persistence layers, and business workflows.\n• Worked on international projects with varied functional and technical requirements.\n• Used Python, PHP, JavaScript, SQL, APIs, backend services, and frontend development to deliver client-facing \nweb applications.\n• Technologies: Python, PHP, JavaScript, SQL, APIs, backend services, frontend development, web applications.\nPROJECTS\nAI-Powered Automation Prototypes\n• Designed and tested AI-assisted workflows focused on reducing manual work, improving information \nextraction, and supporting real-time decision-making.\n• Explored integrations with LLM APIs such as Claude, OpenAI, and Google Cloud AI services for practical \nautomation use cases.\n• Worked on prototypes involving document context, user prompts, structured outputs, workflow automation, and \nAPI-based AI interactions.\n• Focused on turning AI ideas into usable product features rather than isolated experiments.\nSaaS and Internal Product Development\n• Built backend functionality for internal platforms, reporting tools, dashboards, analytics systems, and data-\ndriven applications.\n• Worked on product features that required understanding business processes, designing technical flows, \nintegrating systems, and delivering production-ready functionality.\n• Developed tools that improved visibility, reduced manual analysis, and helped teams work with operational, \nfinancial, or user activity data.\nAPI Integrations and Automation Workflows\n• Designed and maintained REST APIs connecting frontend applications, databases, dashboards, reporting \nsystems, and internal tools.\n• Worked with structured payloads, data transformation, validation, error handling, persistence layers, and \ndebugging.\n• Built backend logic to automate repetitive business processes and improve reliability across internal workflows.\nTECHNICAL SKILLS\nBackend Development\nFull Stack Development\nPython\nPHP\nJavaScript\nTypeScript\nFlask\nDjango\nFastAPI\nREST APIs\nAPI Integrations\nWebhooks\nService-Oriented Architecture\nSaaS Products\nAutomation\nAI Automation\nLLM APIs\nClaude API\nGoogle Cloud AI\nOpenAI API\nData Pipelines\nSQL\nMySQL\nMongoDB\nRedis\nDocker\nAWS\nCI/CD\nInternal Tools\nDashboards\nReporting Platforms\nProduct Development\nPrototyping\nProduction Systems\nAgile\nScrum\nGit\nTechnical Documentation\nBusiness Process Automation\nTECHNICAL SKILLS\nBackend: Python, Flask, Django, FastAPI, PHP, REST APIs, backend services, service-oriented architecture, \nmicroservices, API integrations Frontend: React, JavaScript, TypeScript, HTML, CSS Databases: SQL, MySQL, \nMongoDB, NoSQL databases, data modeling, queries, joins, views, persistence layers Automation & AI: AI \nautomation, LLM API integration, Claude API, Google Cloud AI APIs, OpenAI API, prompt-based workflows, \nautomation of manual tasks, prototyping AI-powered tools Cloud & DevOps: AWS, Docker, Git, CI/CD, Redis, cloud \nenvironments Data & Products: SaaS products, internal platforms, dashboards, reporting tools, data pipelines, business \nmetrics, operational tools Ways of Working: Agile, Scrum, sprint planning, requirements analysis, stakeholder \ncollaboration, technical documentation Languages: Spanish native, English B2+ / professional working proficiency\nLANGUAGES\nSpanish — Native English — B2+ / Professional working proficiency\nADDITIONAL INFORMATION\nBased in Málaga, Spain. Interested in LegalTech, SaaS, AI automation, backend systems, APIs, and product \ndevelopment. Strong fit for roles involving backend development, AI API integrations, automation workflows, SaaS \nfeatures, and prototyping new solutions.",
+      "base_cv_filename": "Ignacio Rodriguez.pdf"
+    }
+  },
+  "current_output": {
+    "ats_cv_text": "Ignacio Rodriguez\nMálaga, Spain | [redacted-phone] | [redacted-email] | [redacted-linkedin]\n\nProfessional Summary\nHighly versatile Backend Developer with 4+ years of experience in Python, FastAPI, and AWS, specializing in building scalable APIs, backend services, and automation workflows for EdTech, Energy, and Telecommunications sectors.\n\nTechnical Skills\n• Python • FastAPI • AWS • API Design • Backend Development • Database Management (SQL, NoSQL) • Cloud Computing • CI/CD • Docker • REST APIs\n\nProfessional Experience\nBackend Developer\nFiction Express, Málaga, Spain (April 2025 – March 2026)\n• Developed Python backend services for analytics and product metrics using FastAPI and REST APIs.\n• Designed data pipelines with AWS for large-scale student activity data.\n• Collaborated with product teams to define technical requirements for EdTech SaaS platform.\n\nFull Stack Developer\nTalan Consulting (Client: Cepsa), Málaga, Spain (October 2022 – April 2025)\n• Built backend services in Python (Flask) and integrated with React frontend for financial dashboards.\n• Utilized AWS and Docker for scalable deployment of logistics and finance tools.\n• Automated reporting workflows, reducing manual processes for operations teams.\n\nBackend Developer\nGlobant (Client: Tigo LATAM), Buenos Aires, Argentina (August 2022 – October 2022)\n• Contributed to AWS-based microservices architecture for telecommunications data processing.\n• Optimized backend services in Python for high scalability and reliability.\n\nFull Stack Developer\nBalloon Group, Buenos Aires, Argentina (November 2021 – August 2022)\n• Developed web applications with Python, PHP, and JavaScript for international clients.\n• Designed backend logic and database structures for a vehicle rental platform.\n\nEducation\nUniversidad Tecnológica Nacional, Programming Technician in Software Engineering (2022 – 2024)\nPlataforma 5, Full Stack Developer Bootcamp (2021)\nUniversidad de Buenos Aires, Architecture Studies (2017 – 2020)\n"
+  },
+  "expected": {
+    "required_keywords": [
+      "FastAPI",
+      "Python",
+      "AWS",
+      "API"
+    ],
+    "required_sections": [
+      "summary",
+      "skills",
+      "experience",
+      "education"
+    ]
+  },
+  "human_review_instructions": "Review and edit `expected` before treating this fixture as frozen. Do not promote fixtures with review_status=needs_human_review into gatekeeping evals.",
+  "generation": {
+    "mode": "fresh_in_memory_regeneration",
+    "provider": "nvidia",
+    "prompt_versions": {
+      "materials/nvidia_cv_contract": "v3",
+      "materials/nvidia_kit_contract": "v3"
+    },
+    "persisted_to_db": false,
+    "redacted_candidate_pii": true
+  },
+  "fresh_eval": {
+    "passed": true,
+    "score": 100,
+    "issues": [],
+    "metrics": {
+      "unsupported_claims": [],
+      "missing_required_keywords": [],
+      "missing_parseable_sections": [],
+      "ats_cv_chars": 1986,
+      "ats_cv_parseable_lines": 29,
+      "omitted_base_experience": [],
+      "ats_cv_internal_markers": []
+    }
+  }
+}

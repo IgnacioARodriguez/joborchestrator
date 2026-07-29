@@ -20,20 +20,13 @@ class SemanticEvalResult:
 def build_auto_eval_case(
     job: Any,
     profile_payload: dict[str, Any] | None = None,
-    ranking_payload: dict[str, Any] | None = None,
+    ranking: Any | None = None,
 ) -> dict[str, Any]:
     job_payload = _to_dict(job)
     profile_payload = profile_payload or {}
-    ranking_payload = ranking_payload or {}
+    ranking_payload = _to_dict(ranking) if ranking is not None else {}
     base_cv_text = str(profile_payload.get("base_cv_text") or "").strip()
-    supported_terms = _supported_profile_terms(profile_payload)
-    job_text = _normalize(
-        " ".join(
-            str(job_payload.get(key) or "")
-            for key in ["title", "company", "description_text", "description", "location"]
-        )
-    )
-    required_terms = [term for term in supported_terms if _contains_phrase(job_text, term)][:6]
+    required_terms = _required_supported_terms(job_payload, profile_payload, ranking_payload)
     return {
         "id": f"auto-job-{job_payload.get('id') or job_payload.get('job_id') or 'unknown'}",
         "job": {
@@ -327,6 +320,8 @@ def _supported_profile_terms(profile_payload: dict[str, Any]) -> list[str]:
     for skill in profile_payload.get("skills") or []:
         if isinstance(skill, dict) and str(skill.get("name") or "").strip():
             terms.append(str(skill["name"]).strip())
+    for key in ["strong_skills", "medium_skills", "weak_skills"]:
+        terms.extend(str(term).strip() for term in profile_payload.get(key) or [] if str(term or "").strip())
     base_cv = str(profile_payload.get("base_cv_text") or "")
     fallback_terms = [
         "Python",
@@ -350,6 +345,143 @@ def _supported_profile_terms(profile_payload: dict[str, Any]) -> list[str]:
         if _contains_phrase(_normalize(base_cv), term):
             terms.append(term)
     return _unique_terms(terms)
+
+
+def _required_supported_terms(
+    job_payload: dict[str, Any],
+    profile_payload: dict[str, Any],
+    ranking_payload: dict[str, Any],
+) -> list[str]:
+    supported_terms = _supported_profile_terms(profile_payload)
+    if not supported_terms:
+        return []
+    full_job_text = _normalize(
+        " ".join(
+            str(job_payload.get(key) or "")
+            for key in ["title", "company", "description_text", "description", "location"]
+        )
+    )
+    avoid_terms = _normalized_terms(ranking_payload.get("cv_keywords_to_avoid_overclaiming"))
+    emphasize_terms = _normalized_terms(ranking_payload.get("cv_keywords_to_emphasize"))
+    scored = [
+        (term, _required_term_score(term, job_payload, profile_payload, emphasize_terms))
+        for term in supported_terms
+        if _contains_phrase(full_job_text, term) and not _term_overlaps(term, avoid_terms)
+    ]
+    scored = [(term, score) for term, score in scored if score >= 2]
+    supported_order = {_normalize(term): index for index, term in enumerate(supported_terms)}
+    scored.sort(key=lambda item: (-item[1], supported_order.get(_normalize(item[0]), len(supported_order)), item[0].lower()))
+    return [term for term, _score in scored[: _required_terms_limit(ranking_payload)]]
+
+
+def _required_term_score(
+    term: str,
+    job_payload: dict[str, Any],
+    profile_payload: dict[str, Any],
+    emphasize_terms: list[str],
+) -> int:
+    title = _normalize(job_payload.get("title") or "")
+    description = _normalize(job_payload.get("description_text") or job_payload.get("description") or "")
+    normalized_term = _normalize(term)
+    score = 0
+    if _contains_phrase(title, term):
+        score += 5
+    score += min(len(re.findall(rf"\b{re.escape(normalized_term)}\b", description)), 3)
+    if _term_in_requirement_context(term, description):
+        score += 3
+    if _term_overlaps(term, emphasize_terms):
+        score += 2
+    if _contains_phrase(_normalize(_profile_claim_source_text(profile_payload)), term):
+        score += 1
+    level = _profile_skill_level(term, profile_payload)
+    if level == "strong":
+        score += 2
+    elif level == "medium":
+        score += 1
+    if _is_secondary_process_term(term):
+        score -= 2
+    return score
+
+
+def _term_in_requirement_context(term: str, normalized_description: str) -> bool:
+    if not normalized_description:
+        return False
+    markers = [
+        "required",
+        "requirements",
+        "required skills",
+        "qualifications",
+        "must have",
+        "imprescindible",
+        "requisitos",
+        "necesitamos",
+        "experiencia",
+        "knowledge of",
+        "hands-on experience",
+        "solid experience",
+        "strong understanding",
+    ]
+    for marker in markers:
+        marker_index = normalized_description.find(marker)
+        while marker_index >= 0:
+            window = normalized_description[marker_index : marker_index + 800]
+            if _contains_phrase(window, term):
+                return True
+            marker_index = normalized_description.find(marker, marker_index + len(marker))
+    return False
+
+
+def _profile_skill_level(term: str, profile_payload: dict[str, Any]) -> str:
+    normalized_term = _normalize(term)
+    for skill in profile_payload.get("skills") or []:
+        if not isinstance(skill, dict):
+            continue
+        if _normalize(skill.get("name") or "") == normalized_term:
+            return str(skill.get("level") or "").strip().lower()
+    for level, key in [("strong", "strong_skills"), ("medium", "medium_skills"), ("weak", "weak_skills")]:
+        if any(_normalize(skill) == normalized_term for skill in profile_payload.get(key) or []):
+            return level
+    return ""
+
+
+def _required_terms_limit(ranking_payload: dict[str, Any]) -> int:
+    decision = str(ranking_payload.get("decision") or "").strip().upper()
+    score = _int_or_none(ranking_payload.get("final_score"))
+    if decision in {"SKIP", "AVOID"} or (score is not None and score < 55):
+        return 3
+    if decision in {"MAYBE", "APPLY_WITH_TAILORED_CV"} or (score is not None and score < 80):
+        return 4
+    return 5
+
+
+def _normalized_terms(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw_terms = [value]
+    elif isinstance(value, list):
+        raw_terms = [str(item) for item in value]
+    else:
+        raw_terms = []
+    return [_normalize(term) for term in raw_terms if str(term or "").strip()]
+
+
+def _term_overlaps(term: str, normalized_terms: list[str]) -> bool:
+    normalized_term = _normalize(term)
+    return any(normalized_term == item or normalized_term in item or item in normalized_term for item in normalized_terms)
+
+
+def _is_secondary_process_term(term: str) -> bool:
+    return _normalize(term) in {
+        "code review",
+        "monitoring",
+        "documentation",
+        "testing",
+        "debugging",
+        "troubleshooting",
+        "agile",
+        "scrum",
+        "git",
+        "ci/cd",
+    }
 
 
 def _derive_profile_forbidden_claims(profile_payload: dict[str, Any], job_payload: dict[str, Any]) -> list[str]:
@@ -389,6 +521,9 @@ def _profile_claim_source_text(profile_payload: dict[str, Any]) -> str:
             parts.extend([skill.get("name"), skill.get("evidence")])
         else:
             parts.append(skill)
+    parts.extend(profile_payload.get("strong_skills") or [])
+    parts.extend(profile_payload.get("medium_skills") or [])
+    parts.extend(profile_payload.get("weak_skills") or [])
     return "\n".join(_string_values(parts))
 
 
@@ -457,10 +592,6 @@ def _sensitive_claim_supported(claim: str, supported_text: str, real_experience_
 
 
 def _extract_likely_employers(base_cv_text: str) -> list[str]:
-    known = ["Fiction Express", "Talan Consulting", "Globant", "Balloon Group"]
-    found = [term for term in known if _contains_phrase(_normalize(base_cv_text), term)]
-    if found:
-        return found
     section = re.search(
         r"(?ims)^\s*(experience|professional experience|experiencia)\s*$([\s\S]*?)(?=^\s*(projects|skills|education|formaci[oó]n)\s*$|\Z)",
         base_cv_text,
@@ -468,11 +599,35 @@ def _extract_likely_employers(base_cv_text: str) -> list[str]:
     if not section:
         return []
     employers: list[str] = []
+    tech_only_terms = {
+        "api",
+        "apis",
+        "aws",
+        "django",
+        "docker",
+        "fastapi",
+        "flask",
+        "javascript",
+        "mongodb",
+        "nosql",
+        "php",
+        "postgresql",
+        "python",
+        "react",
+        "redis",
+        "sql",
+        "typescript",
+    }
     for line in section.group(2).splitlines():
+        if line.lstrip().startswith(("-", "*")):
+            continue
         stripped = line.strip(" -\t")
         if not stripped or len(stripped) > 80:
             continue
         if re.search(r"(?i)\b(developer|engineer|consultant|manager|specialist)\b", stripped):
+            continue
+        tokens = _match_tokens(stripped)
+        if tokens and all(token in tech_only_terms for token in tokens):
             continue
         if re.search(r"[A-Z][a-z]+", stripped):
             employers.append(stripped)
@@ -650,7 +805,47 @@ def _normalize(text: Any) -> str:
 
 
 def _contains_phrase(normalized_text: str, phrase: str) -> bool:
-    return _normalize(phrase) in normalized_text
+    normalized_text = _normalize(normalized_text)
+    normalized_phrase = _normalize(phrase)
+    if not normalized_phrase:
+        return True
+
+    text_tokens = [_canonical_match_token(token) for token in _match_tokens(normalized_text)]
+    phrase_tokens = [_canonical_match_token(token) for token in _match_tokens(normalized_phrase)]
+    if not phrase_tokens:
+        return True
+    if len(phrase_tokens) > len(text_tokens):
+        return False
+
+    window_size = len(phrase_tokens)
+    return any(
+        text_tokens[index : index + window_size] == phrase_tokens
+        for index in range(len(text_tokens) - window_size + 1)
+    )
+
+
+def _match_tokens(text: Any) -> list[str]:
+    return re.findall(r"[a-z0-9+#]+", _normalize(text))
+
+
+def _canonical_match_token(token: str) -> str:
+    value = token.strip("'")
+    if len(value) > 4 and value.endswith("ies"):
+        value = f"{value[:-3]}y"
+    elif len(value) > 4 and value.endswith("es"):
+        value = value[:-2]
+    elif len(value) > 3 and value.endswith("s") and not value.endswith("ss"):
+        value = value[:-1]
+
+    if value.startswith("document"):
+        return "document"
+    if value.startswith("automat"):
+        return "automat"
+    if value.startswith("integrat"):
+        return "integrat"
+    if value.startswith("operat"):
+        return "operat"
+    return value
 
 
 def _int_or_none(value: Any) -> int | None:
