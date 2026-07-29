@@ -49,6 +49,7 @@ Live/local probe evidence is summarized in:
 
 - `docs/MATERIALS_V3_CHECKPOINT.md`
 - `docs/MATERIALS_V3_QUALITATIVE_REVIEW.md`
+- `docs/MATERIALS_V3_GENERATED_REVIEW_PACKET.md`
 
 Key final live follow-up:
 
@@ -71,5 +72,5 @@ Key final live follow-up:
 
 - Raw live artifacts and rendered PNGs are intentionally local-only because they may include candidate/contact data.
 - GitHub CLI was not authenticated in the local environment.
-- The GitHub connector confirmed the remote branch diff, but PR creation returned `403 Resource not accessible by integration`.
+- The GitHub connector confirmed the remote branch diff, but PR creation returned `403 Resource not accessible by integration` again after the generated review packet was pushed.
 - Open the compare URL above or run `gh pr create --draft --base main --head codex/chat-isolated-work --title "Harden Materials v3 ATS generation guardrails" --body-file docs/MATERIALS_V3_PR_BRIEF.md` from an authenticated shell.
