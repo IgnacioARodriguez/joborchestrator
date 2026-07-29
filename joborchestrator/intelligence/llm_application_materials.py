@@ -320,7 +320,10 @@ def _build_ats_fit_analysis(
     for term in job_terms:
         if _term_matches_any_avoid_alias(term, avoid_aliases):
             avoid.append(term)
-        elif _contains_phrase_for_materials(source_text, term):
+        elif _contains_phrase_for_materials(source_text, term) or _contains_supported_keyword_variant_for_materials(
+            source_text,
+            term,
+        ):
             supported.append(term)
         else:
             adjacent_or_review.append(term)
@@ -1082,7 +1085,14 @@ def _materials_repair_instruction(validation_feedback: str) -> str:
         instructions.append(
             "Rewrite ats_cv_text as a complete ATS CV, not a summary. Include contact/header, Professional Summary, "
             "Technical Skills, Professional Experience with every base CV employer, and Education. Use at least "
-            "700 characters and 18 non-empty lines while preserving only truthful source-backed facts."
+            "700 characters and normally 18 non-empty lines while preserving only truthful source-backed facts. "
+            "For a very short one-role base CV, 16-17 well-structured lines can be enough."
+        )
+    if "keywords_used contains terms not present" in normalized:
+        instructions.append(
+            "For every item in keywords_used, add that exact truthful phrase to ats_cv_text in Summary, Technical "
+            "Skills, or a matching Experience bullet. If a phrase cannot be stated truthfully, remove it from "
+            "keywords_used."
         )
     if "overcompressed" in normalized:
         instructions.append(
@@ -1309,7 +1319,8 @@ def _ats_cv_response_validation_error(
     for field in ["risk_flags", "keywords_used"]:
         if not isinstance(payload.get(field), list):
             problems.append(f"{field} must be an array")
-    problems.extend(_ats_cv_quality_problems(ats_cv_text))
+    problems.extend(_ats_cv_quality_problems(ats_cv_text, base_cv_text=str(base_cv_text or "")))
+    problems.extend(_ats_cv_keywords_used_presence_problems(payload, ats_cv_text))
     problems.extend(_experience_coverage_problems(str(base_cv_text or ""), ats_cv_text))
     problems.extend(_experience_density_problems(str(base_cv_text or ""), ats_cv_text))
     problems.extend(_experience_technology_attribution_problems(str(base_cv_text or ""), ats_cv_text))
@@ -1339,7 +1350,7 @@ def _base_cv_text(payload: dict[str, Any]) -> str:
     return ""
 
 
-def _ats_cv_quality_problems(text: str) -> list[str]:
+def _ats_cv_quality_problems(text: str, *, base_cv_text: str = "") -> list[str]:
     cleaned = _clean_cv_text_for_export(text)
     normalized = cleaned.lower()
     raw_normalized = str(text or "").lower()
@@ -1347,8 +1358,9 @@ def _ats_cv_quality_problems(text: str) -> list[str]:
     if len(cleaned) < 700:
         problems.append("ats_cv_text is too short to be a complete ATS CV")
     line_count = len([line for line in cleaned.splitlines() if line.strip()])
-    if line_count < 18:
-        problems.append(f"ats_cv_text has too few parseable lines for a complete CV: {line_count}/18")
+    minimum_lines = _minimum_ats_cv_lines(base_cv_text)
+    if line_count < minimum_lines:
+        problems.append(f"ats_cv_text has too few parseable lines for a complete CV: {line_count}/{minimum_lines}")
 
     section_patterns = {
         "summary": ["summary", "profile", "professional summary", "perfil", "resumen"],
@@ -1379,6 +1391,37 @@ def _ats_cv_quality_problems(text: str) -> list[str]:
         problems.append(f"ats_cv_text contains internal/non-CV notes: {', '.join(found_markers[:3])}")
     problems.extend(_unsupported_hedge_problems(text))
     return problems
+
+
+def _minimum_ats_cv_lines(base_cv_text: str) -> int:
+    if not str(base_cv_text or "").strip():
+        return 18
+    entries = _extract_base_experience_entries(base_cv_text)
+    source_bullets = _cv_bullet_count(_experience_section(base_cv_text) or base_cv_text)
+    if len(entries) == 1 and source_bullets <= 3:
+        return 16
+    if len(entries) == 1:
+        return 17
+    return 18
+
+
+def _ats_cv_keywords_used_presence_problems(payload: dict[str, Any], ats_cv_text: str) -> list[str]:
+    keywords = payload.get("keywords_used")
+    if not isinstance(keywords, list):
+        return []
+    missing = [
+        str(keyword).strip()
+        for keyword in keywords
+        if str(keyword or "").strip()
+        and not _contains_phrase_for_materials(_normalize_for_match(ats_cv_text), str(keyword))
+    ]
+    if not missing:
+        return []
+    return [
+        "keywords_used contains terms not present verbatim in ats_cv_text: "
+        + ", ".join(missing[:8])
+        + ". Add the exact truthful keyword to ats_cv_text or remove it from keywords_used."
+    ]
 
 
 def _contains_section_heading(normalized_text: str, heading: str) -> bool:
@@ -1482,6 +1525,41 @@ def _looks_like_unparsed_experience_text(base_cv_text: str, source_section: str)
     if len(normalized) >= 1400 and date_ranges >= 1 and role_terms >= 2:
         return True
     return False
+
+
+def _contains_supported_keyword_variant_for_materials(normalized_source_text: str, term: str) -> bool:
+    term_tokens = [_canonical_materials_keyword_token(token) for token in _materials_keyword_tokens(term)]
+    if not term_tokens or len(term_tokens) > 4:
+        return False
+    source_tokens = {
+        _canonical_materials_keyword_token(token)
+        for token in _materials_keyword_tokens(normalized_source_text)
+    }
+    return all(token in source_tokens for token in term_tokens)
+
+
+def _materials_keyword_tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9+#]+", _normalize_for_match(text))
+
+
+def _canonical_materials_keyword_token(token: str) -> str:
+    value = token.strip("'")
+    if len(value) > 4 and value.endswith("ies"):
+        value = f"{value[:-3]}y"
+    elif len(value) > 4 and value.endswith("es"):
+        value = value[:-2]
+    elif len(value) > 3 and value.endswith("s") and not value.endswith("ss"):
+        value = value[:-1]
+
+    if value.startswith("document"):
+        return "document"
+    if value.startswith("automat"):
+        return "automat"
+    if value.startswith("integrat"):
+        return "integrat"
+    if value.startswith("operat"):
+        return "operat"
+    return value
 
 
 def _normalize_whitespace_for_materials(text: str) -> str:

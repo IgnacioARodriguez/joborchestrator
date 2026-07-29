@@ -8,6 +8,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     LLMMaterialsError,
     _call_openai,
     _call_nvidia_kit,
+    _build_ats_fit_analysis,
     _experience_coverage_problems,
     _experience_density_problems,
     _experience_technology_attribution_problems,
@@ -410,8 +411,148 @@ def test_materials_repair_instruction_expands_short_ats_cv():
 
     assert "complete ATS CV" in instruction
     assert "700 characters" in instruction
-    assert "18 non-empty lines" in instruction
+    assert "normally 18 non-empty lines" in instruction
+    assert "16-17 well-structured lines" in instruction
     assert "every base CV employer" in instruction
+
+
+def test_llm_application_kit_validation_accepts_short_single_role_complete_ats_cv():
+    base_cv = """
+Ignacio Rodriguez
+Madrid, Spain | ignacio@example.com
+
+Professional Experience
+Backend Developer 2024 - 2026
+LeanOps
+- Built Python API integrations for operations teams.
+- Documented deployment and support workflows.
+
+Education
+Software Engineering.
+""".strip()
+    ats_cv_text = """
+Ignacio Rodriguez
+Madrid, Spain | ignacio@example.com
+Professional Summary
+Backend developer focused on Python API integrations and operations workflows.
+Experienced documenting deployment and support workflows with careful delivery.
+Technical Skills
+Languages: Python
+Backend: REST APIs, API integrations
+Tools: Django, Docker, documentation
+Professional Experience
+Backend Developer | LeanOps | 2024 - 2026
+- Built Python API integrations for operations teams, supporting reliable operations workflows.
+- Documented deployment and support workflows so teams could operate integrations consistently.
+Education
+Software Engineering.
+Additional Development
+Ongoing practice in backend delivery, API documentation, and operations support.
+""".strip()
+
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi LeanOps, my Python API integration background may fit this role.",
+            "cover_letter": (
+                "I can support LeanOps through source-backed Python API integration experience, including "
+                "building integrations for operations teams and documenting deployment and support workflows. "
+                "The attached CV keeps the scope concise because the base source is intentionally short."
+            ),
+            "ats_cv_text": ats_cv_text,
+            "autofill_notes": "Use the API integrations and documentation angle.",
+            "risk_flags": [],
+            "keywords_used": ["API integrations", "documentation", "operations workflows"],
+        },
+        source_payload={
+            "base_cv": {"text": base_cv},
+            "candidate_profile": {"real_experience_years": 2},
+            "ranking_constraints": {"avoid_overclaiming_terms": []},
+        },
+    )
+
+    assert error is None
+
+
+def test_ats_fit_analysis_treats_truthful_keyword_variants_as_supported():
+    analysis = _build_ats_fit_analysis(
+        {
+            "title": "API Integration Developer",
+            "description_text": "Develop API integrations, write documentation, and support operations workflows.",
+        },
+        {
+            "strong_skills": ["Python", "REST APIs"],
+            "medium_skills": [],
+            "weak_skills": [],
+        },
+        """
+Professional Experience
+Backend Developer 2024 - 2026
+LeanOps
+- Built Python API integrations for operations teams.
+- Documented deployment and support workflows.
+""",
+        {
+            "cv_keywords_to_emphasize": ["API integrations", "documentation", "operations workflows"],
+            "cv_keywords_to_avoid_overclaiming": [],
+        },
+    )
+
+    assert "API integrations" in analysis["supported_keywords"]
+    assert "documentation" in analysis["supported_keywords"]
+    assert "operations workflows" in analysis["supported_keywords"]
+    assert "operations workflows" not in analysis["adjacent_or_review_keywords"]
+
+
+def test_llm_application_kit_validation_rejects_keywords_used_not_in_ats_cv_text():
+    base_cv = """
+Professional Experience
+Backend Developer 2024 - 2026
+LeanOps
+- Built Python API integrations for operations teams.
+- Documented deployment and support workflows.
+""".strip()
+    ats_cv_text = """
+Ignacio Rodriguez
+Madrid, Spain | ignacio@example.com
+Professional Summary
+Backend developer with 2 years of Python API integrations experience.
+Experienced documenting deployment workflows and supporting operations teams.
+Technical Skills
+Languages: Python
+Backend: REST APIs, API integrations
+Tools: Django, Docker, documentation
+Professional Experience
+Backend Developer | LeanOps | 2024 - 2026
+- Built Python API integrations for operations teams to enhance workflow automation.
+- Documented deployment and support workflows for operational clarity.
+Education
+Software Engineering.
+Additional Development
+Ongoing backend delivery practice.
+""".strip()
+
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi LeanOps, my Python API integration background may fit this role.",
+            "cover_letter": (
+                "I can support LeanOps through source-backed Python API integration experience, including "
+                "building integrations and documenting deployment workflows for operations teams."
+            ),
+            "ats_cv_text": ats_cv_text,
+            "autofill_notes": "Use the API integrations and documentation angle.",
+            "risk_flags": [],
+            "keywords_used": ["API integrations", "documentation", "operations workflows"],
+        },
+        source_payload={
+            "base_cv": {"text": base_cv},
+            "candidate_profile": {"real_experience_years": 2},
+            "ranking_constraints": {"avoid_overclaiming_terms": []},
+        },
+    )
+
+    assert error is not None
+    assert "keywords_used contains terms not present verbatim in ats_cv_text" in error
+    assert "operations workflows" in error
 
 
 def test_materials_repair_instruction_expands_overcompressed_ats_cv():

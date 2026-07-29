@@ -3,7 +3,7 @@
 Date: 2026-07-29
 Branch: `codex/chat-isolated-work`
 Remote: `https://github.com/IgnacioARodriguez/joborchestrator.git`
-Latest code commit at checkpoint time: `36c4fee fix(evals): tolerate truthful ATS wording variants`
+Latest committed code checkpoint before adaptive-line follow-up: `36c4fee fix(evals): tolerate truthful ATS wording variants`
 Base checked against: `origin/main` at merge-base `3768845dc5f37210deeaf923e0017674ae4d4e41`
 
 This packet is intentionally sanitized. Raw generated CVs, cover letters, PDFs, DOCX files, and probe JSONs contain candidate contact/profile data and remain local under ignored paths (`data/` and `output/`). Use this document for remote code review and qualitative checkpointing; use local artifacts only when a reviewer explicitly needs full generated material text.
@@ -17,6 +17,8 @@ What is now supported by evidence:
 - The branch is remote-visible at `origin/codex/chat-isolated-work`.
 - The latest code is rebased on current `origin/main` merge-base listed above.
 - Deterministic materials validation now catches overcompressed ATS CVs, unparseable experience density, omitted single-role experience, unsupported years-of-experience claims, and unsupported employer/technology attribution.
+- ATS CV completeness now uses a source-aware line threshold: normal multi-role CVs still require 18+ parseable lines, while very short one-role source CVs may pass with 16-17 well-structured lines if all required sections and source-backed bullets are preserved.
+- ATS CV validation now rejects `keywords_used` items that do not appear verbatim in `ats_cv_text`, preventing keyword accounting from claiming ATS coverage that the submitted CV text does not actually contain.
 - The ATS semantic evaluator no longer false-fails truthful wording variants such as `documentation` vs `Documented`, singular/plural, and punctuation-preserving bullet rewrites.
 - Full pytest suite is green locally.
 
@@ -68,6 +70,13 @@ Result: full suite passed
 
 Full-suite warnings observed are pre-existing FastAPI/Starlette deprecation warnings.
 
+Latest full-suite run after adaptive-line and keyword-presence follow-up:
+
+```text
+python -m pytest -qq --tb=short
+Result: full suite passed
+```
+
 ## Probe Artifact Map
 
 Raw artifacts are local-only and intentionally ignored by git.
@@ -83,6 +92,7 @@ Raw artifacts are local-only and intentionally ignored by git.
 | `synthetic_short_unknown_heading` | Backend Developer at Acme Labs | `data/materials_live_probe/20260729_112824_synthetic_short_unknown_heading.json` | failed as expected | completed | CV 1, kit 1 | unrecoverable density parse failure, `human_review_required` |
 | `synthetic_spanish_numeric_dates` | Desarrollador Backend Python at Datosur | `data/materials_live_probe/20260729_112907_synthetic_spanish_numeric_dates.json` | completed | completed | CV 1, kit 1 | old semantic flagged unsupported `4+ years`; now deterministically rejected by commit `544e335` |
 | `synthetic_short_source_role` | API Integration Developer at LeanOps | `data/materials_live_probe/20260729_113102_synthetic_short_source_role.json` | completed | completed | CV 2, kit 1 | old semantic false-failed wording variants; recalculated after `36c4fee` as materials 100, ATS 100 |
+| `synthetic_short_source_role_keywords_presence` | API Integration Developer at LeanOps | `data/materials_live_probe/20260729_120305_synthetic_short_source_role_keywords_presence.json` | completed | completed | CV 2, kit 1 | fresh live follow-up passed materials 100, ATS 100; first CV attempt was rejected for short text and `keywords_used` claiming `operations workflows` before the phrase appeared in `ats_cv_text` |
 
 ## Export Verification
 
@@ -118,7 +128,8 @@ Focus review on whether the final behavior is structurally acceptable, not only 
 Suggested review questions:
 
 - Are the deterministic guards general enough, or do they still encode examples too tightly?
-- Is the ATS CV density threshold appropriate for real CVs with detailed multi-role history?
+- Is the source-aware ATS CV density threshold appropriate for both detailed multi-role CVs and very short one-role source CVs?
+- Is requiring `keywords_used` to appear verbatim in `ats_cv_text` the right level of ATS strictness?
 - Is failing fast on unparseable base-CV experience headings the right product behavior, or should the UI surface a guided fix?
 - Is the new semantic wording matcher appropriately conservative?
 - Should sanitized review packets be generated automatically by a script instead of maintained manually?
@@ -127,6 +138,5 @@ Suggested review questions:
 
 Likely remaining before merge:
 
-- Optional: run a fresh small live probe after `36c4fee` so the stored semantic eval in new artifacts reflects the latest evaluator.
 - Optional: visually inspect exported PDFs using a working renderer or manual PDF viewer.
 - Recommended: qualitative human review of at least the four real-case generated materials before merging.
