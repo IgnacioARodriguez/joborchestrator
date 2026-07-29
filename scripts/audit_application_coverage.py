@@ -163,6 +163,7 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "file_widget_success_rate": automation_metrics.get("file_widget_success_rate"),
             "resume_upload_success_rate": automation_metrics.get("resume_upload_success_rate"),
             "resume_upload_strategy": automation_metrics.get("resume_upload_strategy"),
+            "popup_handling_success_rate": automation_metrics.get("popup_handling_success_rate"),
             "dynamic_required_count": repair.get("dynamic_required_count"),
             "steps_completed_without_human": automation_metrics.get("steps_completed_without_human"),
             "step_advance_success_rate": automation_metrics.get("step_advance_success_rate"),
@@ -198,6 +199,7 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             "file_widget_success_rate": None,
             "resume_upload_success_rate": None,
             "resume_upload_strategy": None,
+            "popup_handling_success_rate": None,
             "dynamic_required_count": 0,
             "steps_completed_without_human": 0,
             "step_advance_success_rate": None,
@@ -328,6 +330,7 @@ def write_csv_report(path: Path, results: list[dict[str, object]]) -> None:
         "file_widget_success_rate",
         "resume_upload_success_rate",
         "resume_upload_strategy",
+        "popup_handling_success_rate",
         "dynamic_required_count",
         "steps_completed_without_human",
         "step_advance_success_rate",
@@ -394,6 +397,7 @@ def write_markdown_report(path: Path, report: dict[str, object]) -> None:
                 f"shadow `{result.get('shadow_control_success_rate')}` / "
                 f"upload `{result.get('resume_upload_success_rate')}` "
                 f"via `{result.get('resume_upload_strategy') or ''}` / "
+                f"popup `{result.get('popup_handling_success_rate')}` / "
                 f"dynamic required `{result.get('dynamic_required_count') or 0}` / "
                 f"steps `{result.get('steps_completed_without_human') or 0}` / "
                 f"submit-only `{result.get('submit_only_ready')}`"

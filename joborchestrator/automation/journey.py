@@ -126,12 +126,14 @@ class ApplicationJourneyEngine:
         html: str,
         profile: dict[str, Any],
         answer_bank: list[dict[str, Any]],
+        root_surface_kind: Literal["page", "popup"] = "page",
     ) -> JourneyStep:
         candidates = await self._discover_candidate_schemas(
             page=page,
             adapter=adapter,
             capabilities=capabilities,
             html=html,
+            root_surface_kind=root_surface_kind,
         )
         selected = _select_schema_candidate(candidates)
         surface = selected["surface"]
@@ -200,10 +202,11 @@ class ApplicationJourneyEngine:
         adapter: Any,
         capabilities: Any,
         html: str,
+        root_surface_kind: Literal["page", "popup"] = "page",
     ) -> list[dict[str, Any]]:
         main_surface = InteractionSurface(
             surface_id="main",
-            kind="page",
+            kind=root_surface_kind,
             origin=_origin_from_url(str(getattr(page, "url", "") or "")),
             accessible=True,
         )

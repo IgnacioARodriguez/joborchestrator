@@ -951,6 +951,52 @@ def test_application_execution_auto_submit_blocks_unknown_sensitive_required_fie
     assert updated["state"] == "needs_user_input"
 
 
+def test_application_execution_fills_application_form_opened_in_popup(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate", "email": "candidate@example.test"})
+    db.upsert_job_posting(make_job(external_id="popup-apply-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic", "mode": "review_before_submit"})
+    popup_html = (
+        "<!doctype html><html><body><form id='application'>"
+        "<label for='name'>Full name *</label><input id='name' name='name' required>"
+        "<label for='email'>Email *</label><input id='email' name='email' type='email' required>"
+        "<button type='submit'>Submit application</button></form></body></html>"
+    )
+    launcher_html = f"""
+    <!doctype html>
+    <html>
+      <body>
+        <h1>Backend Engineer</h1>
+        <button onclick="const popup = window.open('about:blank', '_blank'); popup.document.write(`{popup_html}`); popup.document.close();">Apply now</button>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(launcher_html)}",
+            provider_hint="generic",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    artifacts = updated["artifacts_json"]
+
+    assert any(step["action"] == "opened_popup" for step in result["navigation"])
+    assert result["fields_autofilled"] == 2
+    assert result["unknown_fields"] == 0
+    assert updated["state"] == "ready_for_review"
+    assert artifacts["journey"]["surface"]["kind"] == "popup"
+    assert artifacts["automation_metrics"]["submit_only_ready"] is True
+    assert artifacts["automation_metrics"]["popup_handling_success_rate"] == 1.0
+
+
 async def _run_handoff_once(session_id: int, job_id: int, html: str) -> dict:
     result = await run_application_execution(
         session_id=session_id,

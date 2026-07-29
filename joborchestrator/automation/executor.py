@@ -94,7 +94,9 @@ async def run_application_execution(
                 page = await browser.new_page()
             await page.goto(apply_url, wait_until="domcontentloaded", timeout=timeout_ms)
             await _safe_network_idle(page, timeout_ms)
-            navigation = await _follow_apply_hops(page, timeout_ms=timeout_ms, max_hops=2, progress=progress)
+            hop_result = await _follow_apply_hops(page, timeout_ms=timeout_ms, max_hops=2, progress=progress)
+            navigation = hop_result["steps"]
+            page = hop_result["page"]
             html = await page.content()
             url = page.url
             live_page = page
@@ -161,7 +163,9 @@ async def run_application_execution(
         if login_result["ok"]:
             navigation.append({"action": "auto_login", "url": live_page.url, "text": str(login_result["username"])})
             await _safe_network_idle(live_page, timeout_ms)
-            navigation.extend(await _follow_apply_hops(live_page, timeout_ms=timeout_ms, max_hops=2, progress=progress))
+            hop_result = await _follow_apply_hops(live_page, timeout_ms=timeout_ms, max_hops=2, progress=progress)
+            navigation.extend(hop_result["steps"][1:])
+            live_page = hop_result["page"]
             html = await live_page.content()
             url = live_page.url
             if _looks_login_required(html):
@@ -255,6 +259,7 @@ async def run_application_execution(
             html=html,
             profile=profile,
             answer_bank=answer_bank,
+            root_surface_kind=_root_surface_kind_from_navigation(navigation),
         )
         live_fill = {"dry_run": dry_run, "fields_autofilled": 0, "filled_fields": [], "skipped_fields": []}
         journey_steps: list[dict[str, Any]] = []
@@ -327,6 +332,8 @@ async def run_application_execution(
                 automation_metrics = _build_application_automation_metrics(
                     action_plan=journey_step.get("action_plan") or {},
                     schema=schema,
+                    surface=journey_step.get("surface") or {},
+                    navigation=navigation,
                     validation_report=validation_report,
                     fill_result=live_fill,
                     resume_upload=resume_upload,
@@ -362,6 +369,7 @@ async def run_application_execution(
                     html=html,
                     profile=profile,
                     answer_bank=answer_bank,
+                    root_surface_kind=_root_surface_kind_from_navigation(navigation),
                 )
                 continue
             break
@@ -369,6 +377,8 @@ async def run_application_execution(
         automation_metrics = _build_application_automation_metrics(
             action_plan=journey_step.get("action_plan") or {},
             schema=schema,
+            surface=journey_step.get("surface") or {},
+            navigation=navigation,
             validation_report=validation_report,
             fill_result=live_fill,
             resume_upload=resume_upload,
@@ -602,35 +612,44 @@ async def _follow_apply_hops(
     timeout_ms: int,
     max_hops: int,
     progress: Progress | None,
-) -> list[dict[str, str]]:
+) -> dict[str, Any]:
     steps: list[dict[str, str]] = [{"action": "opened", "url": page.url}]
+    active_page = page
     for hop in range(max_hops):
-        html = await page.content()
-        if _looks_blocked(page.url, html) or _looks_login_required(html):
-            steps.append({"action": "blocked", "url": page.url})
+        html = await active_page.content()
+        if _looks_blocked(active_page.url, html) or _looks_login_required(html):
+            steps.append({"action": "blocked", "url": active_page.url})
             break
         if _has_form(html):
-            steps.append({"action": "form_detected", "url": page.url})
+            steps.append({"action": "form_detected", "url": active_page.url})
             break
-        link = _best_apply_link(html, page.url)
+        link = _best_apply_link(html, active_page.url)
         if link:
             _progress(progress, f"Following intermediate apply link: {link['text']}.")
-            await page.goto(link["url"], wait_until="domcontentloaded", timeout=timeout_ms)
-            await _safe_network_idle(page, timeout_ms)
-            steps.append({"action": "followed_link", "url": page.url, "text": link["text"]})
+            await active_page.goto(link["url"], wait_until="domcontentloaded", timeout=timeout_ms)
+            await _safe_network_idle(active_page, timeout_ms)
+            steps.append({"action": "followed_link", "url": active_page.url, "text": link["text"]})
             continue
-        clicked = await _click_apply_control(page, timeout_ms=timeout_ms)
-        if clicked:
+        click_result = await _click_apply_control(active_page, timeout_ms=timeout_ms)
+        if click_result:
+            clicked = str(click_result["text"])
+            active_page = click_result["page"]
             _progress(progress, f"Clicked intermediate apply control: {clicked}.")
-            await _safe_network_idle(page, timeout_ms)
-            steps.append({"action": "clicked_control", "url": page.url, "text": clicked})
+            await _safe_network_idle(active_page, timeout_ms)
+            steps.append(
+                {
+                    "action": "opened_popup" if click_result.get("opened_popup") else "clicked_control",
+                    "url": active_page.url,
+                    "text": clicked,
+                }
+            )
             continue
-        steps.append({"action": "no_apply_control", "url": page.url})
+        steps.append({"action": "no_apply_control", "url": active_page.url})
         break
-    return steps
+    return {"steps": steps, "page": active_page}
 
 
-async def _click_apply_control(page: Page, *, timeout_ms: int) -> str | None:
+async def _click_apply_control(page: Page, *, timeout_ms: int) -> dict[str, Any] | None:
     labels = [
         "Apply now",
         "Apply",
@@ -646,13 +665,23 @@ async def _click_apply_control(page: Page, *, timeout_ms: int) -> str | None:
         locator = page.get_by_role("button", name=re.compile(re.escape(label), re.IGNORECASE)).first
         try:
             if await locator.count() > 0:
-                await locator.click(timeout=min(timeout_ms, 5000))
-                return label
+                try:
+                    async with page.context.expect_page(timeout=min(timeout_ms, 2000)) as popup_info:
+                        await locator.click(timeout=min(timeout_ms, 5000))
+                    popup = await popup_info.value
+                    await popup.wait_for_load_state("domcontentloaded", timeout=min(timeout_ms, 5000))
+                    return {"text": label, "page": popup, "opened_popup": True}
+                except PlaywrightTimeoutError:
+                    return {"text": label, "page": page, "opened_popup": False}
         except PlaywrightTimeoutError:
             continue
         except Exception:
             continue
     return None
+
+
+def _root_surface_kind_from_navigation(navigation: list[dict[str, Any]]) -> str:
+    return "popup" if any(step.get("action") == "opened_popup" for step in navigation) else "page"
 
 
 async def _safe_network_idle(page: Page, timeout_ms: int) -> None:
@@ -1088,6 +1117,8 @@ def _build_application_automation_metrics(
     *,
     action_plan: dict[str, Any],
     schema: dict[str, Any] | None = None,
+    surface: dict[str, Any] | None = None,
+    navigation: list[dict[str, Any]] | None = None,
     validation_report: dict[str, Any],
     fill_result: dict[str, Any] | None,
     resume_upload: dict[str, Any],
@@ -1124,6 +1155,8 @@ def _build_application_automation_metrics(
     verified = satisfied_postconditions + (1 if resume_upload_verified else 0)
     unresolved_count = len(mapping.get("unknown_fields") or [])
     transitions = step_transitions or []
+    popup_opened = any(step.get("action") == "opened_popup" for step in navigation or [])
+    popup_surface_selected = popup_opened and str((surface or {}).get("kind") or "") == "popup"
     advanced_steps = [
         transition for transition in transitions
         if (transition.get("result") or {}).get("status") == "advanced"
@@ -1141,6 +1174,8 @@ def _build_application_automation_metrics(
         "file_widget_success_rate": _ratio(1 if file_widget_executed else 0, 1 if file_widget_planned else 0),
         "resume_upload_success_rate": _ratio(1 if resume_upload_verified else 0, 1 if resume_upload_planned else 0),
         "resume_upload_strategy": resume_upload.get("strategy"),
+        "popup_handling_success_rate": _ratio(1 if popup_surface_selected else 0, 1 if popup_opened else 0),
+        "popup_surface_selected": popup_surface_selected,
         "validation_clean": validation_report.get("status") == "validation_clean",
         "validation_issue_count": int((validation_report.get("summary") or {}).get("issues") or len(validation_report.get("issues") or [])),
         "unresolved_required_count": unresolved_count,
