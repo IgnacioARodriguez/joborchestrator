@@ -74,17 +74,14 @@ Current DB/eval facts:
 - The final two failures were resolved by reviewed expectation alignment, not by weakening production ranking logic. Job 93 now accepts `SKIP` for contract AI training/verification risk. Job 217 now accepts `MAYBE` for a plausible but non-direct Solutions Architect/presales pivot when the evidence names the pivot and missing direct experience.
 - A final persisted golden ranking baseline on 2026-07-27 measured 22 passed, 0 failed, 100% pass rate, and 0 critical failures over the 22 real reviewed ranking cases.
 - A fresh live-v6 golden baseline over probe job `#12` measured 18 passed, 4 failed, 81.8% pass rate, and 4 critical failures over those same 22 reviewed ranking cases.
-- The 4 fresh-v6 failures were: job 80 missing expected `REST APIs` wording in evidence despite using `API REST`; job 358 missing expected `EPC`; job 40 missing `RabbitMQ` in evidence; and job 222 choosing conservative `AVOID` where the reviewed fixture expected `APPLY_WITH_TAILORED_CV` or `MAYBE`.
-- After the Claude checkpoint, ranking evidence-term evals gained synonym support, job 222's fixture was aligned to accept conservative `AVOID` when evidence names the direct Security/AppSec/DevSecOps gap, and v7 was activated to require exact central job terms in evidence.
-- Targeted v7 rerank job `#13` processed only jobs 40 and 358: 2/2 saved, 0 failed, 0 schema retries, all prompt traces v7.
-- The latest ranking golden baseline on 2026-07-27 measured 22 passed, 0 failed, 100% pass rate, and 0 critical failures over the 22 real reviewed ranking cases.
+- The 4 fresh-v6 failures were: job 80 missing expected `REST APIs` wording in evidence despite using `API REST`; job 358 missing expected `EPC` wording despite naming Engineering Procurement and Construction; job 40 missing `RabbitMQ` in evidence; and job 222 choosing conservative `AVOID` where the reviewed fixture expects `APPLY_WITH_TAILORED_CV` or `MAYBE`.
 
 Updated interpretation:
 
 - We are no longer stuck at the old official 5/22 ranking baseline; persisted/revalidated ranking outputs now pass 22/22.
 - Fresh active-v6 generation was reliable at the transport/schema level in the 50-job probe: no failed items, no high-attempt items, no schema retries, and no unsafe `APPLY_NOW`.
 - Targeted active-v7/v8 triage closed the reviewed ranking set at 22/22, and live v9 probe `#27` added fresh 30-job runtime proof. This is still not full blind trust because there is no full 419-job active-v9 production rerank and no second independent v9 probe.
-- Materials/ATS remain under-measured and should be the next main surface after documenting this ranking checkpoint.
+- Materials/ATS remain under-measured and should be the next main surface after documenting this ranking checkpoint. Current local materials work has moved to CV v14 / kit v13 with canonical employer technology preservation, an explicit ATS fit analysis payload, cautious-tone repair hardening, adaptive validation retry budgets, fail-closed validation metadata, polished parseable PDF/DOCX exports, and deterministic overcompression checks.
 
 ## Executive Verdict
 
@@ -101,8 +98,8 @@ Evidence that this is good progress:
 Evidence that we must pause and re-measure soon:
 
 - The persisted/revalidated ranking baseline is now clean at 22/22, but this measures stored outputs after deterministic revalidation and expectation alignment.
-- The fresh active-v6 probe was reliable but initially not quality-complete: 18/22 reviewed cases passed, with 4 critical failures.
-- That gap was triaged to 22/22 after evaluator synonym support, one expectation alignment, and a targeted v7 rerank of the two real prompt omissions.
+- The fresh active-v6 probe is reliable but not quality-complete: 18/22 reviewed cases passed, with 4 critical failures.
+- The gap is now concrete enough for targeted triage instead of broad speculation.
 - Materials and ATS CV do not yet have enough DB-backed reviewed cases; current seed fixtures are reviewed but synthetic and skipped by persisted golden baseline.
 
 Bottom line: the direction is rational. Ranking is strong enough for supervised personal use; the next broader trust step should shift to materials/ATS proof unless a new ranking probe exposes a fresh class of failure.
@@ -118,9 +115,9 @@ Bottom line: the direction is rational. Ranking is strong enough for supervised 
 - Latest targeted v7 rerank job: `#13`, NVIDIA provider, status `completed`, 2 queued, 2 processed, 2 saved, 0 failed.
 - Latest live v9 probe job: `#27`, NVIDIA provider, status `completed`, 30 queued, 30 processed, 30 saved, 0 failed.
 - Active ranking prompt: `ranking/nvidia_response_contract` v9.
-- Active materials prompts: `materials/nvidia_cv_contract` v3 and `materials/nvidia_kit_contract` v3.
+- Active materials prompts: `materials/nvidia_cv_contract` v14 and `materials/nvidia_kit_contract` v13.
 - Active judge prompt: `judge/semantic_rubric` v1.
-- Current trust score in docs: 7.9/10.
+- Current trust score in docs: 7.8/10.
 - Current posture: ranking is supervised-use ready; the full product is still operational draft quality until materials/ATS are measured on real DB-backed cases.
 
 ## Important Constraint
@@ -279,14 +276,14 @@ Historical in-memory replay after safety gates, applied to persisted outputs wit
 - 72.7% estimated pass rate.
 - 4 estimated critical failures.
 
-Historical persisted/revalidated baseline:
+Current persisted/revalidated baseline:
 
 - 22/22 passed.
 - 100% pass rate.
 - 0 critical failures.
-- This was useful product-state evidence, but not fresh active-v6 generation proof.
+- This is useful product-state evidence, but not fresh active-v6 generation proof.
 
-Historical fresh active-v6 probe baseline:
+Current fresh active-v6 probe baseline:
 
 - 18/22 passed.
 - 81.8% pass rate.
@@ -305,14 +302,13 @@ Critical caveat:
 
 - Persisted/revalidated quality and fresh generation quality are different signals.
 - The v6 probe showed the prompt shape was stable, but quality initially missed the DoD.
-- The remaining failures were classified before changing prompts or fixtures.
+- The remaining failures were classified before changing prompts or fixtures; later v7/v8 triage and v9 probing are the current ranking evidence.
 
-How the fresh-v6 failures were resolved:
+Remaining ranking failures in fresh v6:
 
-- Job 80 was an evaluator synonym issue: `API REST` should satisfy reviewed expectation `REST APIs`.
-- Job 358 was a prompt evidence omission: v6 omitted exact `EPC`; v7 fixed this in targeted rerank.
-- Job 40 was a prompt evidence omission: v6 omitted exact `RabbitMQ`; v7 fixed this in targeted rerank.
-- Job 222 was a policy/fixture mismatch: conservative `AVOID` is acceptable when evidence names the direct Security/AppSec/DevSecOps gap.
+- Jobs 80 and 358 look like evidence wording/synonym failures.
+- Job 40 looks like a genuine evidence omission: RabbitMQ should be named when materially relevant.
+- Job 222 looks like a policy/fixture mismatch: v6 conservatively chose `AVOID` for a security-focused role.
 
 Likely next ranking action:
 
@@ -336,11 +332,12 @@ Fix implemented:
 - Generation validation now rejects recruiter messages over 320 characters, matching the golden eval limit.
 - Internal-note validation already exists for ATS CV generation.
 - Complete-CV validation and avoid-overclaiming validation already exist.
+- A 2026-07-27 live NVIDIA materials v3 probe regenerated the 4 raw real-job materials-ready cases in memory and passed 4/4 application-materials evals plus 4/4 ATS CV evals automatically. External qualitative review then found a false positive: the PSS/serverless case avoided the exact phrase `Serverless Architecture` but still claimed AWS Lambda/DynamoDB/API Gateway in generated materials. Materials v4 made validation reject avoid-overclaiming terms as claim families and expanded serverless aliases/components across ATS CV and non-CV materials. A PSS-only v4 rerun failed closed by catching AWS Lambda/DynamoDB claims in generated output. Materials v5 exposed expanded alias lists directly in the generation payload/NVIDIA contracts, expanded slash-separated avoid families such as `Terraform/AWS CDK/CloudFormation`, and used clearer retry feedback. A follow-up qualitative pass found employer-specific technology drift, so materials v7 exposed per-employer supported technologies and validates role-specific technology attribution. External review of v7 then found a blank-cover-letter false positive and weak SKIP tone calibration. Materials v10 requires substantive cover letters, passes ranking-derived tone constraints into materials, rejects overconfident SKIP/risky-role language, rejects internal evaluator language in user-facing materials, rejects ATS-opaque hedges such as `implied through experience`, and adds constructive repair feedback. A consolidated 4-case v10 live probe on 2026-07-28 passed 4/4 application materials, 4/4 ATS CV, 4/4 substantive cover letters, 4/4 forbidden-alias-free, 4/4 drift-free, 4/4 hedge-free, and 4/4 internal-note-free. External review of v10 found two harness/quality gaps: list checks could become `None` in a consolidated failure path, and historical employer technologies could still drift across target jobs. Materials v11 closes those with canonical employer technology preservation and list-shaped harness checks. A v11 full probe then failed closed on job 105 because NVIDIA kept using overconfident tone for a cautious `APPLY_WITH_TAILORED_CV` case. Materials v12 adds explicit ATS fit analysis (`supported_keywords`, `adjacent_or_review_keywords`, `avoid_keywords`), stricter exploratory-review tone instructions, adaptive retry budgeting for constrained cases, and validation metadata on fail-closed errors. Materials CV v14 makes the complete multi-line CV contract explicit; kit v13 forbids naming unsupported avoid-overclaiming aliases even as gaps. The current branch also adds a deterministic overcompression validator using relative experience length and per-role bullet ratios, plus parseable but polished PDF/DOCX exports. Live job-105 probes remain mixed and should not be counted as high-trust proof yet.
 
 Remaining gap:
 
-- Need fresh generation proof for materials and ATS CV.
 - Need DB-backed reviewed real cases for materials/ATS, not only synthetic seed fixtures.
+- Need a larger materials v14/v13 sample and DB-backed reviewed fixtures before treating automatic pass rates as high-trust coverage.
 
 Generated review packet:
 
@@ -431,13 +428,13 @@ Ask Claude to review these points:
 
 - Are the ranking safety gates too specific to the 22 reviewed cases, or are they valid general product rules?
 - Is the current 22/22 reviewed checkpoint plus 30-job v9 probe enough to pivot to materials/ATS, given there is still no full 419-job active-v9 rerank?
-- Is the trust score 7.9/10 fair given ranking reviewed quality is green but materials/ATS remain under-measured?
+- Is the trust score 7.8/10 fair given ranking reviewed quality is green but materials/ATS remain under-measured?
 - Should materials/ATS coverage become the immediate priority before more ranking work?
 - Are there any hidden ways the judge/eval loop could approve prompt changes that are not actually wired into production?
 
 ## Recommended Next Action
 
-The next best action is materials/ATS measurement:
+The next best action is focused ranking triage plus materials/ATS measurement:
 
 - Convert real materials/ATS outputs into DB-backed reviewed cases and run fresh baselines.
 - Keep ranking frozen except for broader v9 proof if explicitly needed.

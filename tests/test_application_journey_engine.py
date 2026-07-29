@@ -88,6 +88,72 @@ def test_action_plan_requires_review_when_choice_option_does_not_match() -> None
     assert plan.to_dict()["summary"]["actions"] == 0
 
 
+def test_action_plan_requires_review_for_legal_consent_even_with_approved_answer() -> None:
+    plan = build_action_plan(
+        provider="generic_form",
+        schema={
+            "fields": [
+                {
+                    "name": "privacy_consent",
+                    "label": "I agree to the privacy policy and certify my answers are accurate",
+                    "type": "checkbox",
+                    "required": True,
+                }
+            ]
+        },
+        mapping={
+            "answers": [
+                {
+                    "field_name": "privacy_consent",
+                    "label": "I agree to the privacy policy and certify my answers are accurate",
+                    "canonical_key": "privacy_consent",
+                    "field_type": "checkbox",
+                    "value": "yes",
+                    "source": "approved_answer",
+                    "requires_confirmation": False,
+                }
+            ],
+            "unknown_fields": [],
+        },
+    )
+
+    assert plan.actions == []
+    assert plan.to_dict()["summary"]["actions"] == 0
+
+
+def test_action_plan_allows_approved_work_authorization_without_consent_false_positive() -> None:
+    plan = build_action_plan(
+        provider="generic_form",
+        schema={
+            "fields": [
+                {
+                    "name": "work_authorization",
+                    "label": "Do you have permanent authorization to work in the United States?",
+                    "type": "checkbox",
+                    "required": True,
+                }
+            ]
+        },
+        mapping={
+            "answers": [
+                {
+                    "field_name": "work_authorization",
+                    "label": "Do you have permanent authorization to work in the United States?",
+                    "canonical_key": "work_authorization",
+                    "field_type": "checkbox",
+                    "value": "yes",
+                    "source": "approved_answer",
+                    "requires_confirmation": False,
+                }
+            ],
+            "unknown_fields": [],
+        },
+    )
+
+    assert [action.action_type for action in plan.actions] == ["check"]
+    assert plan.to_dict()["summary"]["actions"] == 1
+
+
 def test_journey_engine_prepares_initial_generic_step() -> None:
     html = Path("tests/fixtures/generic_application.html").read_text(encoding="utf-8")
     step = asyncio.run(_prepare_step(html))

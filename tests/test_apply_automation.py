@@ -118,6 +118,39 @@ def test_answer_bank_uses_explicitly_approved_sensitive_answers() -> None:
     ]
 
 
+def test_answer_bank_requires_human_confirmation_for_legal_consent_even_when_approved() -> None:
+    mapping = map_answers(
+        {
+            "fields": [
+                {
+                    "name": "privacy_consent",
+                    "label": "I agree to the privacy policy and certify my answers are accurate",
+                    "type": "checkbox",
+                    "required": True,
+                }
+            ]
+        },
+        {},
+        [
+            {
+                "canonical_key": "privacy_consent",
+                "question_patterns": ["I agree to the privacy policy and certify my answers are accurate"],
+                "answer_type": "checkbox",
+                "value": "yes",
+                "source": "approved",
+                "status": "approved",
+                "sensitivity": "public",
+                "requires_confirmation": False,
+            }
+        ],
+    )
+
+    answer = mapping["answers"][0]
+    assert answer["source"] == "approved_answer"
+    assert answer["requires_confirmation"] is True
+    assert mapping["unknown_fields"][0]["name"] == "privacy_consent"
+
+
 def test_answer_bank_uses_question_patterns_for_unknown_safe_fields() -> None:
     mapping = map_answers(
         {"fields": [{"name": "remote_pref", "label": "Where would you prefer to work from?", "required": True}]},
@@ -342,6 +375,15 @@ def test_safe_fill_plan_only_includes_non_sensitive_confirmed_answers() -> None:
             {"field_name": "first_name", "canonical_key": "full_name", "value": "Ignacio Rodriguez", "requires_confirmation": False},
             {"field_name": "email", "canonical_key": "email", "value": "me@example.com", "requires_confirmation": False},
             {"field_name": "salary", "canonical_key": "salary", "value": "100000", "requires_confirmation": True},
+            {
+                "field_name": "privacy_consent",
+                "label": "I agree to the privacy policy",
+                "canonical_key": "privacy_consent",
+                "field_type": "checkbox",
+                "value": "yes",
+                "source": "approved_answer",
+                "requires_confirmation": False,
+            },
             {"field_name": "custom", "canonical_key": None, "value": "something", "requires_confirmation": False},
         ]
     }

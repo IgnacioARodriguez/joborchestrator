@@ -125,7 +125,8 @@ def _load_case(args: argparse.Namespace) -> dict[str, Any]:
         job = db.get_job_posting(int(args.job_id))
         if not job:
             raise SystemExit(f"Job id {args.job_id} was not found.")
-        return build_auto_eval_case(job, db.get_candidate_profile_payload() or {})
+        ranking = _load_ranking_output(int(args.job_id), args.ranking_version)
+        return build_auto_eval_case(job, db.get_candidate_profile_payload() or {}, ranking)
     cases = _load_cases(args.cases)
     if args.case_id not in cases:
         available = ", ".join(sorted(cases))
@@ -155,6 +156,17 @@ def _load_candidate_output(args: argparse.Namespace) -> dict[str, Any]:
     if rows.empty:
         raise SystemExit(f"No ranking found for job id {args.job_id} and version {args.ranking_version!r}.")
     row = rows.iloc[0].to_dict()
+    return _ranking_output_from_row(row)
+
+
+def _load_ranking_output(job_id: int, ranking_version: str) -> dict[str, Any] | None:
+    rows = db.get_rankings_for_job_ids(ranking_version, [job_id])
+    if rows.empty:
+        return None
+    return _ranking_output_from_row(rows.iloc[0].to_dict())
+
+
+def _ranking_output_from_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "final_score": int(row["final_score"]),
         "decision": row["decision"],

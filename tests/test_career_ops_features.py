@@ -5,13 +5,23 @@ from joborchestrator.intelligence.cover_letter_generator import (
 )
 from joborchestrator.intelligence.ats_autofill import build_autofill_plan
 from joborchestrator.intelligence.llm_application_materials import (
+    LLMMaterialsError,
     _call_openai,
+    _call_nvidia_kit,
+    _ats_cv_response_validation_error,
+    _build_ats_fit_analysis,
     _experience_coverage_problems,
+    _experience_density_problems,
+    _experience_technology_attribution_problems,
     _kit_from_response,
+    _kit_validation_error,
     _materials_validation_error,
     _materials_payload,
+    _materials_repair_instruction,
+    _materials_validation_retry_limit,
     _openai_materials_messages,
     build_application_kit_with_llm,
+    build_application_kit_with_nvidia,
     estimate_materials_cost,
     export_ats_cv_docx_bytes,
     export_ats_cv_pdf_bytes,
@@ -159,7 +169,7 @@ def test_llm_application_kit_uses_structured_payload(monkeypatch):
         },
     )
 
-    def fake_call(payload, api_key, model, timeout):
+    def fake_call(payload, api_key, model, timeout, **kwargs):
         assert payload["candidate_profile"]
         assert "Ignacio Rodriguez" in payload["base_cv"]["text"]
         assert payload["job"]["title"] == "Backend Engineer"
@@ -220,10 +230,9 @@ def test_llm_materials_payload_accepts_ranking_dict(monkeypatch):
 
     assert payload["ranking"]["final_score"] == 82
     assert payload["ranking"]["decision"] == "APPLY_NOW"
-    assert payload["ranking_constraints"] == {
-        "avoid_overclaiming_terms": ["Serverless Architecture"],
-        "keywords_to_emphasize": ["Python"],
-    }
+    assert payload["ranking_constraints"]["avoid_overclaiming_terms"] == ["Serverless Architecture"]
+    assert payload["ranking_constraints"]["keywords_to_emphasize"] == ["Python"]
+    assert "AWS Lambda" in payload["ranking_constraints"]["avoid_overclaiming_aliases"]["Serverless Architecture"]
 
 
 def test_application_kit_flattens_nested_recruiter_message():
@@ -302,7 +311,7 @@ def test_recruiter_message_validation_accepts_company_or_role_specific_message()
     error = _materials_validation_error(
         {
             "recruiter_message": "Hi Acme Labs, my Python API work maps well to the Backend Engineer role.",
-            "cover_letter": "",
+            "cover_letter": "Dear Acme Labs team,\n\nMy Python API background maps well to the Backend Engineer role, with practical experience building backend services, collaborating with product teams, and delivering reliable application workflows.",
             "ats_cv_text": _complete_ats_cv_text(),
             "autofill_notes": "Use tailored answers.",
             "risk_flags": [],
@@ -365,6 +374,7 @@ def test_llm_application_kit_validation_rejects_empty_required_sections():
 
     assert error is not None
     assert "recruiter_message is required" in error
+    assert "cover_letter is required" in error
     assert "autofill_notes is required" in error
     assert "risk_flags must be an array" in error
     assert "ats_cv_text is too short" in error
@@ -392,6 +402,166 @@ def test_llm_application_kit_validation_requires_complete_ats_cv():
     assert "too short to be a complete ATS CV" in error
     assert "missing standard ATS sections" in error
     assert "internal/non-CV notes" in error
+    assert "/18" in error
+
+
+def test_materials_repair_instruction_expands_short_ats_cv():
+    instruction = _materials_repair_instruction(
+        "ats_cv_text is too short to be a complete ATS CV; ats_cv_text has too few parseable lines for a complete CV"
+    )
+
+    assert "complete ATS CV" in instruction
+    assert "700 characters" in instruction
+    assert "normally 18 non-empty lines" in instruction
+    assert "16-17 well-structured lines" in instruction
+    assert "every base CV employer" in instruction
+
+
+def test_llm_application_kit_validation_accepts_short_single_role_complete_ats_cv():
+    base_cv = """
+Ignacio Rodriguez
+Madrid, Spain | ignacio@example.com
+
+Professional Experience
+Backend Developer 2024 - 2026
+LeanOps
+- Built Python API integrations for operations teams.
+- Documented deployment and support workflows.
+
+Education
+Software Engineering.
+""".strip()
+    ats_cv_text = """
+Ignacio Rodriguez
+Madrid, Spain | ignacio@example.com
+Professional Summary
+Backend developer focused on Python API integrations and operations workflows.
+Experienced documenting deployment and support workflows with careful delivery.
+Technical Skills
+Languages: Python
+Backend: REST APIs, API integrations
+Tools: Django, Docker, documentation
+Professional Experience
+Backend Developer | LeanOps | 2024 - 2026
+- Built Python API integrations for operations teams, supporting reliable operations workflows.
+- Documented deployment and support workflows so teams could operate integrations consistently.
+Education
+Software Engineering.
+Additional Development
+Ongoing practice in backend delivery, API documentation, and operations support.
+""".strip()
+
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi LeanOps, my Python API integration background may fit this role.",
+            "cover_letter": (
+                "I can support LeanOps through source-backed Python API integration experience, including "
+                "building integrations for operations teams and documenting deployment and support workflows. "
+                "The attached CV keeps the scope concise because the base source is intentionally short."
+            ),
+            "ats_cv_text": ats_cv_text,
+            "autofill_notes": "Use the API integrations and documentation angle.",
+            "risk_flags": [],
+            "keywords_used": ["API integrations", "documentation", "operations workflows"],
+        },
+        source_payload={
+            "base_cv": {"text": base_cv},
+            "candidate_profile": {"real_experience_years": 2},
+            "ranking_constraints": {"avoid_overclaiming_terms": []},
+        },
+    )
+
+    assert error is None
+
+
+def test_ats_fit_analysis_treats_truthful_keyword_variants_as_supported():
+    analysis = _build_ats_fit_analysis(
+        {
+            "title": "API Integration Developer",
+            "description_text": "Develop API integrations, write documentation, and support operations workflows.",
+        },
+        {
+            "strong_skills": ["Python", "REST APIs"],
+            "medium_skills": [],
+            "weak_skills": [],
+        },
+        """
+Professional Experience
+Backend Developer 2024 - 2026
+LeanOps
+- Built Python API integrations for operations teams.
+- Documented deployment and support workflows.
+""",
+        {
+            "cv_keywords_to_emphasize": ["API integrations", "documentation", "operations workflows"],
+            "cv_keywords_to_avoid_overclaiming": [],
+        },
+    )
+
+    assert "API integrations" in analysis["supported_keywords"]
+    assert "documentation" in analysis["supported_keywords"]
+    assert "operations workflows" in analysis["supported_keywords"]
+    assert "operations workflows" not in analysis["adjacent_or_review_keywords"]
+
+
+def test_llm_application_kit_validation_rejects_keywords_used_not_in_ats_cv_text():
+    base_cv = """
+Professional Experience
+Backend Developer 2024 - 2026
+LeanOps
+- Built Python API integrations for operations teams.
+- Documented deployment and support workflows.
+""".strip()
+    ats_cv_text = """
+Ignacio Rodriguez
+Madrid, Spain | ignacio@example.com
+Professional Summary
+Backend developer with 2 years of Python API integrations experience.
+Experienced documenting deployment workflows and supporting operations teams.
+Technical Skills
+Languages: Python
+Backend: REST APIs, API integrations
+Tools: Django, Docker, documentation
+Professional Experience
+Backend Developer | LeanOps | 2024 - 2026
+- Built Python API integrations for operations teams to enhance workflow automation.
+- Documented deployment and support workflows for operational clarity.
+Education
+Software Engineering.
+Additional Development
+Ongoing backend delivery practice.
+""".strip()
+
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi LeanOps, my Python API integration background may fit this role.",
+            "cover_letter": (
+                "I can support LeanOps through source-backed Python API integration experience, including "
+                "building integrations and documenting deployment workflows for operations teams."
+            ),
+            "ats_cv_text": ats_cv_text,
+            "autofill_notes": "Use the API integrations and documentation angle.",
+            "risk_flags": [],
+            "keywords_used": ["API integrations", "documentation", "operations workflows"],
+        },
+        source_payload={
+            "base_cv": {"text": base_cv},
+            "candidate_profile": {"real_experience_years": 2},
+            "ranking_constraints": {"avoid_overclaiming_terms": []},
+        },
+    )
+
+    assert error is not None
+    assert "keywords_used contains terms not present as normalized token-aware phrases in ats_cv_text" in error
+    assert "operations workflows" in error
+
+
+def test_materials_repair_instruction_expands_overcompressed_ats_cv():
+    instruction = _materials_repair_instruction("ats_cv_text is overcompressed for base CV experience roles")
+
+    assert "more source-backed detail" in instruction
+    assert "recent and substantial roles" in instruction
+    assert "Do not add unsupported new claims" in instruction
 
 
 def test_llm_application_kit_validation_accepts_complete_parseable_ats_cv():
@@ -424,7 +594,7 @@ Computer Science coursework and continuing professional development in backend e
     error = _materials_validation_error(
         {
             "recruiter_message": "Hi team",
-            "cover_letter": "",
+            "cover_letter": "Dear hiring team,\n\nMy backend engineering background maps well to this role through Python API work, database collaboration, and reliable product delivery across cross-functional teams.",
             "ats_cv_text": ats_cv_text,
             "autofill_notes": "Paste the recruiter note.",
             "risk_flags": [],
@@ -443,7 +613,7 @@ def test_openai_materials_call_reports_validation_retry_metadata(monkeypatch):
         if validation_feedback:
             return {
                 "recruiter_message": "Hi Acme Labs, my backend API work maps well to the Backend Engineer role.",
-                "cover_letter": "",
+                "cover_letter": "Dear Acme Labs team,\n\nMy backend API experience maps well to the Backend Engineer role through Python services, product collaboration, and reliable delivery practices.",
                 "ats_cv_text": _complete_ats_cv_text(),
                 "autofill_notes": "Paste the recruiter note.",
                 "risk_flags": [],
@@ -476,6 +646,205 @@ def test_openai_materials_call_reports_validation_retry_metadata(monkeypatch):
     assert response["_generation_metadata"]["validation_errors"]
 
 
+def test_materials_validation_retry_limit_scales_for_constrained_cases(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(llm_application_materials, "DEFAULT_MATERIALS_VALIDATION_RETRIES", 3)
+    monkeypatch.setattr(llm_application_materials, "MAX_MATERIALS_VALIDATION_RETRIES", 6)
+
+    retry_limit = _materials_validation_retry_limit(
+        {
+            "ranking_constraints": {
+                "avoid_overclaiming_terms": [
+                    "Serverless Architecture",
+                    "Terraform/AWS CDK/CloudFormation",
+                ]
+            },
+            "application_tone_constraints": {"tone": "cautious_review"},
+            "experience_claim_constraints": [
+                {"canonical_role_technologies": ["Python", "PHP", "JavaScript", "SQL", "APIs"]}
+            ],
+        }
+    )
+
+    assert retry_limit == 6
+
+
+def test_openai_materials_call_allows_explicit_validation_retry_limit(monkeypatch):
+    calls = []
+
+    def fake_call_once(payload, api_key, model, timeout, validation_feedback=None):
+        calls.append(validation_feedback)
+        return {
+            "recruiter_message": "",
+            "cover_letter": "",
+            "ats_cv_text": "Tiny",
+            "autofill_notes": "",
+            "risk_flags": [],
+            "keywords_used": [],
+        }
+
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(llm_application_materials, "DEFAULT_MATERIALS_VALIDATION_RETRIES", 6)
+    monkeypatch.setattr(llm_application_materials, "_call_openai_once", fake_call_once)
+
+    try:
+        _call_openai(
+            {"job": {"title": "Backend Engineer", "company": "Acme Labs"}, "base_cv": {"text": _complete_ats_cv_text()}},
+            "test-key",
+            "test-model",
+            1.0,
+            validation_retry_limit=0,
+        )
+    except LLMMaterialsError as exc:
+        metadata = exc.generation_metadata
+    else:
+        raise AssertionError("Expected LLMMaterialsError")
+
+    assert len(calls) == 1
+    assert metadata["validation_attempts"] == 1
+    assert metadata["validation_errors"]
+
+
+def test_nvidia_kit_failure_reports_validation_metadata(monkeypatch):
+    calls = []
+
+    def fake_contract_once(contract, payload, api_key, model, timeout, validation_feedback=None):
+        calls.append(validation_feedback)
+        return {
+            "recruiter_message": "Hi PSS, I would treat this as an exploratory conversation about fit.",
+            "cover_letter": (
+                "Dear hiring team,\n\n"
+                "I am excited about this backend opportunity and eager to discuss how my Python API experience "
+                "could support the team while we review the exact cloud scope together."
+            ),
+            "autofill_notes": "I am excited to discuss the role.",
+        }
+
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(llm_application_materials, "DEFAULT_MATERIALS_VALIDATION_RETRIES", 1)
+    monkeypatch.setattr(llm_application_materials, "MAX_MATERIALS_VALIDATION_RETRIES", 1)
+    monkeypatch.setattr(llm_application_materials, "_call_nvidia_contract_once", fake_contract_once)
+
+    payload = {
+        "job": {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
+        "base_cv": {"text": _complete_ats_cv_text()},
+        "ranking": {"decision": "APPLY_WITH_TAILORED_CV"},
+        "application_tone_constraints": {
+            "ranking_decision": "APPLY_WITH_TAILORED_CV",
+            "tone": "cautious_review",
+            "forbidden_phrases": ["excited about", "excited to", "eager to"],
+        },
+    }
+
+    try:
+        _call_nvidia_kit(payload, "test-key", "test-model", 1.0, validation_retry_limit=1)
+    except LLMMaterialsError as exc:
+        metadata = exc.generation_metadata
+    else:
+        raise AssertionError("Expected LLMMaterialsError")
+
+    assert calls[0] is None
+    assert calls[1]
+    assert metadata["validation_attempts"] == 2
+    assert len(metadata["validation_errors"]) == 2
+    assert "overconfident tone" in metadata["validation_errors"][-1]
+
+
+def test_nvidia_cv_request_failure_preserves_prior_validation_metadata(monkeypatch):
+    calls = []
+
+    def fake_contract_once(contract, payload, api_key, model, timeout, validation_feedback=None):
+        calls.append(validation_feedback)
+        if validation_feedback:
+            raise LLMMaterialsError("NVIDIA materials request failed: ReadTimeout")
+        return {
+            "ats_cv_text": "Tiny",
+            "risk_flags": [],
+            "keywords_used": [],
+        }
+
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(llm_application_materials, "_call_nvidia_contract_once", fake_contract_once)
+
+    try:
+        llm_application_materials._call_nvidia_cv(
+            {"job": {"title": "AWS Backend / Cloud Developer", "company": "PSS"}, "base_cv": {"text": _complete_ats_cv_text()}},
+            "test-key",
+            "test-model",
+            1.0,
+            validation_retry_limit=1,
+        )
+    except LLMMaterialsError as exc:
+        metadata = exc.generation_metadata
+    else:
+        raise AssertionError("Expected LLMMaterialsError")
+
+    assert calls[0] is None
+    assert calls[1]
+    assert metadata["validation_attempts"] == 2
+    assert len(metadata["validation_errors"]) == 2
+    assert "ats_cv_text is too short" in metadata["validation_errors"][0]
+    assert "request failed during validation attempt 2" in metadata["validation_errors"][1]
+    assert "ReadTimeout" in metadata["validation_errors"][1]
+
+
+def test_nvidia_application_kit_failure_combines_partial_generation_metadata(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(
+        llm_application_materials,
+        "_materials_payload",
+        lambda job, ranking: {"job": {"title": "AWS Backend / Cloud Developer", "company": "PSS"}},
+    )
+    monkeypatch.setattr(
+        llm_application_materials,
+        "_call_nvidia_cv",
+        lambda payload, api_key, model, timeout, **kwargs: {
+            "ats_cv_text": _complete_ats_cv_text(),
+            "_generation_metadata": {
+                "validation_attempts": 2,
+                "validation_errors": ["ats_cv_text initially missed canonical technologies"],
+            },
+        },
+    )
+
+    def fail_kit(payload, api_key, model, timeout, **kwargs):
+        raise LLMMaterialsError(
+            "NVIDIA kit response was incomplete: application materials use overconfident tone",
+            generation_metadata={
+                "validation_attempts": 2,
+                "validation_errors": [
+                    "application materials use overconfident tone",
+                    "application materials use overconfident tone",
+                ],
+            },
+        )
+
+    monkeypatch.setattr(llm_application_materials, "_call_nvidia_kit", fail_kit)
+
+    try:
+        build_application_kit_with_nvidia(
+            {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
+            {"decision": "APPLY_WITH_TAILORED_CV"},
+            api_key="test-key",
+        )
+    except LLMMaterialsError as exc:
+        metadata = exc.generation_metadata
+    else:
+        raise AssertionError("Expected LLMMaterialsError")
+
+    assert metadata["validation_attempts"] == 4
+    assert metadata["validation_errors"] == [
+        "ats_cv_text initially missed canonical technologies",
+        "application materials use overconfident tone",
+        "application materials use overconfident tone",
+    ]
+
+
 def test_ats_cv_validation_rejects_ranking_avoid_overclaiming_terms_without_source_support():
     ats_cv_text = _complete_ats_cv_text() + "\n- Kubernetes platform ownership for production clusters."
 
@@ -500,6 +869,316 @@ def test_ats_cv_validation_rejects_ranking_avoid_overclaiming_terms_without_sour
     assert "avoid-overclaiming terms: Kubernetes" in error
 
 
+def test_materials_validation_rejects_serverless_aliases_from_avoid_overclaiming_terms():
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi PSS, my Python API work maps well to the AWS Backend role.",
+            "cover_letter": "My experience with API Gateway, AWS Lambda, and DynamoDB fits this role.",
+            "ats_cv_text": _complete_ats_cv_text()
+            + "\nTechnical Skills\nAWS (EC2, Lambda, API Gateway, S3)",
+            "autofill_notes": "Lead with Python APIs and AWS-adjacent backend experience.",
+            "risk_flags": [],
+            "keywords_used": ["Python", "AWS"],
+        },
+        source_payload={
+            "base_cv": {"text": _complete_ats_cv_text() + "\n- Built Python APIs on AWS EC2."},
+            "candidate_profile": {"skills": [{"name": "Python"}, {"name": "AWS"}, {"name": "EC2"}]},
+            "ranking": {"cv_keywords_to_avoid_overclaiming": ["Serverless Architecture"]},
+            "job": {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
+        },
+    )
+
+    assert error is not None
+    assert "application_materials contains unsupported ranking avoid-overclaiming terms" in error
+    assert "ats_cv_text contains unsupported ranking avoid-overclaiming terms" in error
+    assert "AWS Lambda" in error
+    assert "DynamoDB" in error
+
+
+def test_nvidia_kit_validation_rejects_serverless_aliases_from_cover_letter():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi PSS, my Python API work maps well to the AWS Backend role.",
+            "cover_letter": "My experience with API Gateway, AWS Lambda, and DynamoDB fits this role.",
+            "autofill_notes": "Use the Python API angle.",
+        },
+        {
+            "base_cv": {"text": _complete_ats_cv_text() + "\n- Built Python APIs on AWS EC2."},
+            "candidate_profile": {"skills": [{"name": "Python"}, {"name": "AWS"}, {"name": "EC2"}]},
+            "ranking": {"cv_keywords_to_avoid_overclaiming": ["Serverless Architecture"]},
+            "job": {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
+        },
+    )
+
+    assert error is not None
+    assert "application_materials contains unsupported ranking avoid-overclaiming terms" in error
+    assert "AWS Lambda" in error
+
+
+def test_materials_validation_rejects_unsupported_years_of_experience_claims():
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi Datosur, my Python API background may fit the Backend role.",
+            "cover_letter": "My Python API and SQL reporting experience maps to the role.",
+            "ats_cv_text": _complete_ats_cv_text().replace("with 4+ years of experience", "with backend experience"),
+            "autofill_notes": "Backend developer with 4+ years of experience in Python APIs.",
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        },
+        source_payload={
+            "base_cv": {"text": "Professional Experience\nBackend Developer 04/2022 - 03/2026\nAcme\n- Built APIs."},
+            "candidate_profile": {"skills": [{"name": "Python"}]},
+            "ranking": {},
+            "job": {"title": "Backend Developer", "company": "Datosur"},
+        },
+    )
+
+    assert error is not None
+    assert "unsupported years-of-experience claims" in error
+    assert "4+ years" in error
+
+
+def test_materials_validation_allows_declared_years_of_experience_claims():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Acme, my Python API background may fit the Backend role.",
+            "cover_letter": (
+                "I bring 4+ years of backend experience with Python APIs and reporting workflows. "
+                "That background maps to the role through practical backend delivery, documentation, "
+                "and collaboration with product and operations teams."
+            ),
+            "autofill_notes": "Use the Python API angle.",
+        },
+        {
+            "base_cv": {"text": "Professional Experience\nBackend Developer\n- Built APIs."},
+            "candidate_profile": {"real_experience_years": 4, "skills": [{"name": "Python"}]},
+            "ranking": {},
+            "job": {"title": "Backend Developer", "company": "Acme"},
+        },
+    )
+
+    assert error is None
+
+
+def test_materials_payload_exposes_avoid_overclaiming_aliases(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(
+        llm_application_materials.db,
+        "get_candidate_profile_payload",
+        lambda: {
+            "base_cv_text": _complete_ats_cv_text() + "\n- Built Python APIs on AWS EC2.",
+            "skills": [{"name": "Python"}, {"name": "AWS"}, {"name": "EC2"}],
+            "experience": [],
+            "education": [],
+        },
+    )
+
+    payload = _materials_payload(
+        {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
+        {"cv_keywords_to_avoid_overclaiming": ["Serverless Architecture"]},
+    )
+
+    aliases = payload["ranking_constraints"]["avoid_overclaiming_aliases"]["Serverless Architecture"]
+    assert "AWS Lambda" in aliases
+    assert "DynamoDB" in aliases
+    assert "API Gateway" in aliases
+
+
+def test_materials_payload_exposes_experience_claim_constraints(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(
+        llm_application_materials.db,
+        "get_candidate_profile_payload",
+        lambda: {
+            "base_cv_text": """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs with Python, REST APIs, SQL, and MongoDB.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+- Built dashboards with Python, Flask, React, SQL, and Docker.
+TECHNICAL SKILLS
+Django
+AWS
+""".strip(),
+            "skills": [{"name": "Python"}, {"name": "Django"}, {"name": "AWS"}],
+            "experience": [],
+            "education": [],
+        },
+    )
+
+    payload = _materials_payload({"title": "Backend Engineer", "company": "Acme"})
+
+    fiction = payload["experience_claim_constraints"][0]
+    assert fiction["employer"] == "Fiction Express Malaga, Spain"
+    assert "MongoDB" in fiction["supported_role_technologies"]
+    assert fiction["canonical_role_technologies"] == []
+    assert "Django" not in fiction["supported_role_technologies"]
+    assert "AWS" not in fiction["supported_role_technologies"]
+
+
+def test_materials_payload_exposes_cautious_tone_constraints(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(
+        llm_application_materials.db,
+        "get_candidate_profile_payload",
+        lambda: {
+            "base_cv_text": _complete_ats_cv_text(),
+            "skills": [{"name": "Python"}],
+            "experience": [],
+            "education": [],
+        },
+    )
+
+    payload = _materials_payload(
+        {"title": "Python Developer", "company": "Hire Feed"},
+        {
+            "decision": "SKIP",
+            "evidence": {"dealbreakers": ["contract AI training/verification work"], "red_flags": []},
+        },
+    )
+
+    assert payload["application_tone_constraints"]["ranking_decision"] == "SKIP"
+    assert payload["application_tone_constraints"]["tone"] == "cautious_review"
+    assert "immediate impact" in payload["application_tone_constraints"]["forbidden_phrases"]
+    assert "worth discussing if the contract context fits" in payload["application_tone_constraints"]["allowed_phrases"]
+    assert payload["application_tone_constraints"]["rewrite_strategy"].startswith("exploratory_review")
+
+
+def test_materials_payload_exposes_ats_fit_analysis(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(
+        llm_application_materials.db,
+        "get_candidate_profile_payload",
+        lambda: {
+            "base_cv_text": _complete_ats_cv_text(),
+            "skills": [{"name": "Python"}, {"name": "FastAPI"}, {"name": "AWS"}],
+            "experience": [],
+            "education": [],
+        },
+    )
+
+    payload = _materials_payload(
+        {
+            "title": "AWS Backend / Cloud Developer",
+            "company": "PSS",
+            "description_text": "Build Python and FastAPI services with Kubernetes and Terraform.",
+        },
+        {
+            "cv_keywords_to_emphasize": ["Python", "FastAPI", "Kubernetes"],
+            "cv_keywords_to_avoid_overclaiming": ["Terraform/AWS CDK/CloudFormation"],
+        },
+    )
+
+    analysis = payload["ats_fit_analysis"]
+    assert "Python" in analysis["supported_keywords"]
+    assert "FastAPI" in analysis["supported_keywords"]
+    assert "Terraform" in analysis["avoid_keywords"]
+    assert "Kubernetes" in analysis["adjacent_or_review_keywords"]
+    assert analysis["rules"]
+
+
+def test_kit_validation_rejects_empty_or_degenerate_cover_letter():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Acme Labs, my Python API work maps well to the Backend Engineer role.",
+            "cover_letter": "",
+            "autofill_notes": "Use the Python API angle.",
+        },
+        {"job": {"title": "Backend Engineer", "company": "Acme Labs"}},
+    )
+
+    assert error is not None
+    assert "cover_letter is required" in error
+
+
+def test_kit_validation_rejects_overconfident_tone_for_skip_ranking():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Hire Feed, my Python work may be relevant to review for the Python Developer role.",
+            "cover_letter": (
+                "Dear Hire Feed team,\n\nI'm confident my skills will make an immediate impact on the role, "
+                "and I am eager to enhance next-generation AI systems through this work."
+            ),
+            "autofill_notes": "Position as a strong fit with immediate impact.",
+        },
+        {
+            "job": {"title": "Python Developer", "company": "Hire Feed"},
+            "ranking": {
+                "decision": "SKIP",
+                "evidence": {"dealbreakers": ["contract AI training/verification work"]},
+            },
+        },
+    )
+
+    assert error is not None
+    assert "overconfident tone for SKIP ranking" in error
+    assert "immediate impact" in error
+
+
+def test_kit_validation_rejects_internal_review_language():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Hire Feed, my Python backend work may be relevant to review for the role.",
+            "cover_letter": (
+                "Dear Hire Feed team,\n\nMy Python backend background may be relevant to review for this role, "
+                "although I understand the safety gate concern highlighted in your system."
+            ),
+            "autofill_notes": "Mention the dealbreaker only if asked.",
+        },
+        {"job": {"title": "Python Developer", "company": "Hire Feed"}},
+    )
+
+    assert error is not None
+    assert "internal review/evaluation language" in error
+    assert "safety gate" in error
+
+
+def test_materials_validation_rejects_ats_opaque_implied_hedges():
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi Hire Feed, my Python backend work may be relevant to review for the role.",
+            "cover_letter": (
+                "Dear Hire Feed team,\n\nMy Python backend background may be relevant to review for this role, "
+                "with supported experience around APIs, data workflows, and practical automation."
+            ),
+            "ats_cv_text": _complete_ats_cv_text() + "\nTechnical Skills\nAWS (EC2, implied through experience)",
+            "autofill_notes": "If asked about Next.js, adaptability can be implied from React experience.",
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        },
+        source_payload={"job": {"title": "Python Developer", "company": "Hire Feed"}},
+    )
+
+    assert error is not None
+    assert "ATS-opaque unsupported hedge language" in error
+
+
+def test_materials_validation_rejects_slash_separated_avoid_aliases():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi PSS, my Python API work maps well to the AWS Backend role.",
+            "cover_letter": "",
+            "autofill_notes": "Mention Terraform as a target-stack gap, not as direct experience.",
+        },
+        {
+            "base_cv": {"text": _complete_ats_cv_text() + "\n- Built Python APIs on AWS EC2."},
+            "candidate_profile": {"skills": [{"name": "Python"}, {"name": "AWS"}, {"name": "EC2"}]},
+            "ranking": {"cv_keywords_to_avoid_overclaiming": ["Terraform/AWS CDK/CloudFormation"]},
+            "job": {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
+        },
+    )
+
+    assert error is not None
+    assert "Terraform/AWS CDK/CloudFormation" in error
+    assert "Terraform" in error
+
+
 def test_ats_cv_validation_allows_ranking_avoid_term_when_source_supports_it():
     source_cv = _complete_ats_cv_text() + "\n- Supported Kubernetes-adjacent deployment work."
     ats_cv_text = _complete_ats_cv_text() + "\n- Supported Kubernetes-adjacent deployment work."
@@ -507,7 +1186,7 @@ def test_ats_cv_validation_allows_ranking_avoid_term_when_source_supports_it():
     error = _materials_validation_error(
         {
             "recruiter_message": "Hi Acme Labs, my backend API work maps well to the Backend Engineer role.",
-            "cover_letter": "",
+            "cover_letter": "Dear Acme Labs team,\n\nMy backend API background maps well to this Backend Engineer role through Python delivery, Kubernetes-adjacent deployment support, and reliable collaboration.",
             "ats_cv_text": ats_cv_text,
             "autofill_notes": "Paste the recruiter note.",
             "risk_flags": [],
@@ -603,6 +1282,482 @@ Software Engineering.
     assert _experience_coverage_problems(base_cv, complete_cv) == []
 
 
+def test_ats_cv_validation_rejects_overcompressed_experience_detail():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+- Collaborated with product managers on backend requirements.
+- Documented backend processes and runbooks.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+- Built dashboards for finance teams.
+- Developed reporting tools for market data.
+- Automated manual reporting workflows.
+- Designed SQL queries and backend integrations.
+- Connected internal data sources and dashboards.
+Backend Developer August 2022 - October 2022
+Globant Client: Tigo LATAM Buenos Aires, Argentina
+- Built AWS microservices.
+- Optimized backend APIs.
+PROJECTS
+AI Automation
+""".strip()
+    compressed_cv = """
+Professional Summary
+Backend developer focused on Python APIs and dashboards.
+Technical Skills
+Python, SQL, MongoDB, AWS.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | October 2022 - April 2025
+- Built dashboards.
+Backend Developer | Globant (Client: Tigo LATAM) | August 2022 - October 2022
+- Built AWS microservices.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, compressed_cv)
+
+    assert problems
+    assert "overcompressed" in problems[-1]
+    assert "Fiction Express" in problems[-1]
+    assert "Talan" in problems[-1]
+
+
+def test_ats_cv_validation_counts_real_cv_unicode_bullets():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+• Built analytics APIs for product workflows.
+• Developed reporting pipelines for student activity.
+• Improved SQL and MongoDB queries for product metrics.
+• Collaborated with product managers on backend requirements.
+• Documented backend processes and runbooks.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+• Built dashboards for finance teams.
+• Developed reporting tools for market data.
+• Automated manual reporting workflows.
+• Designed SQL queries and backend integrations.
+• Connected internal data sources and dashboards.
+PROJECTS
+AI Automation
+""".strip()
+    compressed_cv = """
+Professional Summary
+Backend developer focused on Python APIs and dashboards.
+Technical Skills
+Python, SQL, MongoDB, AWS.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | October 2022 - April 2025
+- Built dashboards.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, compressed_cv)
+
+    assert problems
+    assert "Fiction Express" in problems[-1]
+    assert "Talan" in problems[-1]
+
+
+def test_ats_cv_density_parser_handles_common_experience_headings_and_dates():
+    base_cv = """
+Work Experience
+Backend Developer Apr 2025 - Mar 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+Full Stack Developer 2022 - 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+- Built dashboards for finance teams.
+- Developed reporting tools for market data.
+- Automated manual reporting workflows.
+Education
+Software Engineering.
+""".strip()
+    compressed_cv = """
+Professional Summary
+Backend developer.
+Technical Skills
+Python, SQL.
+Professional Experience
+Backend Developer | Fiction Express | Apr 2025 - Mar 2026
+- Built analytics APIs.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | 2022 - 2025
+- Built dashboards.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, compressed_cv)
+
+    assert problems
+    assert "density validation was not applied" not in problems[0]
+    assert "overcompressed" in problems[-1]
+
+
+def test_ats_cv_density_warns_when_long_base_experience_cannot_be_parsed():
+    base_cv = "EXPERIENCE\n" + "\n".join(
+        f"Long unparseable role detail line {index} with backend APIs, reporting, data pipelines, dashboards, and operations."
+        for index in range(30)
+    )
+
+    problems = _experience_density_problems(base_cv, "Professional Experience\n- Short generated CV.")
+
+    assert problems
+    assert "density validation was not applied" in problems[0]
+
+
+def test_ats_cv_density_warns_when_experience_heading_is_unknown():
+    base_cv = "Career Journey\n" + "\n".join(
+        f"Backend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API, reporting, data, and dashboard workflows for team {index}."
+        for index in range(16)
+    )
+
+    problems = _experience_density_problems(base_cv, "Professional Experience\n- Short generated CV.")
+
+    assert problems
+    assert "density validation was not applied" in problems[0]
+
+
+def test_ats_cv_density_warns_for_short_unknown_experience_heading():
+    base_cv = """
+Career Journey
+Backend Developer 04/2022 - 03/2025
+Acme Systems
+- Built APIs.
+- Built reports.
+- Built dashboards.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, "Professional Experience\n- Short generated CV.")
+
+    assert problems
+    assert "density validation was not applied" in problems[0]
+
+
+def test_ats_cv_density_does_not_require_more_bullets_than_source():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+Education
+Software Engineering.
+""".strip()
+    generated_cv = """
+Professional Summary
+Backend developer focused on Python APIs, reporting, and product data workflows.
+Technical Skills
+Python, SQL, MongoDB, APIs, dashboards, documentation.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+Education
+Software Engineering.
+""".strip()
+
+    assert _experience_density_problems(base_cv, generated_cv) == []
+
+
+def test_ats_cv_density_validates_single_experience_role():
+    base_cv = """
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+- Collaborated with product managers on backend requirements.
+Education
+Software Engineering.
+""".strip()
+    generated_cv = """
+Professional Summary
+Backend developer.
+Technical Skills
+Python, SQL.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, generated_cv)
+
+    assert problems
+    assert "Fiction Express" in problems[-1]
+
+
+def test_ats_cv_rejects_omitted_single_experience_role():
+    base_cv = """
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+Education
+Software Engineering.
+""".strip()
+    generated_cv = """
+Professional Summary
+Backend developer focused on Python APIs and product data workflows.
+Technical Skills
+Python, SQL, MongoDB.
+Professional Experience
+Project Consultant | Independent | 2022 - 2025
+- Supported internal reporting workflows.
+Education
+Software Engineering.
+""".strip()
+
+    coverage = _experience_coverage_problems(base_cv, generated_cv)
+    density = _experience_density_problems(base_cv, generated_cv)
+
+    assert coverage
+    assert "Fiction Express" in coverage[0]
+    assert density
+    assert "missing from generated experience" in density[-1]
+
+
+def test_ats_cv_density_requires_at_least_one_bullet_for_short_source_role():
+    base_cv = """
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+Education
+Software Engineering.
+""".strip()
+    generated_cv = """
+Professional Summary
+Backend developer focused on API delivery.
+Technical Skills
+Python, SQL.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+Backend services and analytics workflows.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_density_problems(base_cv, generated_cv)
+
+    assert problems
+    assert "expected at least 1" in problems[-1]
+
+
+def test_nvidia_cv_density_parse_failure_returns_degraded_review_cv(monkeypatch):
+    calls = []
+    base_cv = "Career Journey\n" + "\n".join(
+        f"Backend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API, reporting, data, and dashboard workflows for team {index}."
+        for index in range(16)
+    )
+
+    def fake_contract_once(contract, payload, api_key, model, timeout, validation_feedback=None):
+        calls.append(validation_feedback)
+        return {
+            "ats_cv_text": _complete_ats_cv_text(),
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        }
+
+    from joborchestrator.intelligence import llm_application_materials
+
+    monkeypatch.setattr(llm_application_materials, "_call_nvidia_contract_once", fake_contract_once)
+
+    result = llm_application_materials._call_nvidia_cv(
+        {"job": {"title": "Backend Engineer", "company": "Acme"}, "base_cv": {"text": base_cv}},
+        "test-key",
+        "test-model",
+        1.0,
+        validation_retry_limit=3,
+    )
+    metadata = result["_generation_metadata"]
+
+    assert calls == [None]
+    assert metadata["validation_attempts"] == 1
+    assert metadata["human_review_required"] is True
+    assert metadata["experience_density_validation"] == "skipped"
+    assert "density validation was not applied" in metadata["validation_errors"][0]
+
+
+def test_ats_cv_keywords_used_presence_is_token_aware():
+    payload = {
+        "ats_cv_text": _complete_ats_cv_text().replace("SQL", "NoSQL").replace("APIs", "API integrations"),
+        "risk_flags": [],
+        "keywords_used": ["SQL"],
+    }
+
+    error = _ats_cv_response_validation_error(payload, base_cv_text="")
+
+    assert error
+    assert "keywords_used contains terms not present" in error
+
+
+def test_ats_cv_validation_accepts_reasonable_experience_compression():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+- Collaborated with product managers on backend requirements.
+- Documented backend processes and runbooks.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+- Built dashboards for finance teams.
+- Developed reporting tools for market data.
+- Automated manual reporting workflows.
+- Designed SQL queries and backend integrations.
+- Connected internal data sources and dashboards.
+PROJECTS
+AI Automation
+""".strip()
+    compressed_cv = """
+Professional Summary
+Backend developer focused on Python APIs, data workflows, and internal dashboards.
+Technical Skills
+Python, SQL, MongoDB, APIs, dashboards, documentation.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs for product workflows.
+- Developed reporting pipelines for student activity.
+- Improved SQL and MongoDB queries for product metrics.
+- Collaborated with product managers on backend requirements.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | October 2022 - April 2025
+- Built dashboards for finance teams.
+- Developed reporting tools for market data.
+- Automated manual reporting workflows.
+Education
+Software Engineering.
+""".strip()
+
+    assert _experience_density_problems(base_cv, compressed_cv) == []
+
+
+def test_ats_cv_validation_rejects_role_specific_technology_drift():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs with Python, REST APIs, SQL, and MongoDB.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+- Built dashboards with Python, Flask, React, SQL, and Docker.
+PROJECTS
+AI Automation
+TECHNICAL SKILLS
+Django
+FastAPI
+AWS
+""".strip()
+    ats_cv = """
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs with Python and REST APIs.
+- Technologies: Python, Django, FastAPI, AWS, SQL, MongoDB.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | October 2022 - April 2025
+- Built dashboards with Python, Flask, React, SQL, and Docker.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_technology_attribution_problems(base_cv, ats_cv)
+
+    assert problems
+    assert "Fiction Express" in problems[0]
+    assert "Django" in problems[0]
+    assert "FastAPI" in problems[0]
+    assert "AWS" in problems[0]
+
+
+def test_ats_cv_validation_allows_global_skills_outside_role_blocks():
+    base_cv = """
+EXPERIENCE
+Backend Developer April 2025 - March 2026
+Fiction Express Malaga, Spain
+- Built analytics APIs with Python, REST APIs, SQL, and MongoDB.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting Client: Cepsa Malaga, Spain
+- Built dashboards with Python, Flask, React, SQL, and Docker.
+PROJECTS
+AI Automation
+TECHNICAL SKILLS
+Django
+FastAPI
+AWS
+""".strip()
+    ats_cv = """
+Professional Summary
+Backend developer with Django, FastAPI, and AWS exposure.
+Technical Skills
+Python, Django, FastAPI, AWS, SQL, MongoDB.
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs with Python and REST APIs.
+Full Stack Developer | Talan Consulting (Client: Cepsa) | October 2022 - April 2025
+- Built dashboards with Python, Flask, React, SQL, and Docker.
+Education
+Software Engineering.
+""".strip()
+
+    assert _experience_technology_attribution_problems(base_cv, ats_cv) == []
+
+
+def test_ats_cv_validation_rejects_missing_canonical_role_technologies():
+    base_cv = """
+EXPERIENCE
+Full Stack Developer November 2021 - August 2022
+Balloon Group Buenos Aires, Argentina
+- Developed web applications and backend services for international clients.
+- Technologies: Python, PHP, JavaScript, SQL, APIs.
+Backend Developer August 2022 - October 2022
+Globant Client: Tigo LATAM Buenos Aires, Argentina
+- Technologies: Python, AWS, REST APIs.
+""".strip()
+    ats_cv = """
+Professional Experience
+Full Stack Developer | Balloon Group | November 2021 - August 2022
+- Developed web applications and backend services for international clients.
+- Technologies: PHP.
+Backend Developer | Globant (Client: Tigo LATAM) | August 2022 - October 2022
+- Technologies: Python, AWS, REST APIs.
+Education
+Software Engineering.
+""".strip()
+
+    problems = _experience_technology_attribution_problems(base_cv, ats_cv)
+
+    assert problems
+    assert "Balloon Group" in problems[0]
+    assert "missing canonical role technologies" in problems[0]
+    assert "Python" in problems[0]
+    assert "JavaScript" in problems[0]
+    assert "SQL" in problems[0]
+
+
 def test_ats_cv_docx_export_returns_document_bytes():
     content = export_ats_cv_docx_bytes(
         {"title": "Backend Engineer", "company": "Acme"},
@@ -613,14 +1768,48 @@ def test_ats_cv_docx_export_returns_document_bytes():
     assert len(content) > 1000
 
 
+def test_ats_cv_docx_export_keeps_parseable_text():
+    content = export_ats_cv_docx_bytes(
+        {"title": "Backend Engineer", "company": "Acme"},
+        _complete_ats_cv_text(),
+    )
+
+    from docx import Document
+    from io import BytesIO
+
+    document = Document(BytesIO(content))
+    text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert "PROFESSIONAL SUMMARY" in text
+    assert "Fiction Express" in text
+    assert "PROFESSIONAL EXPERIENCE" in text
+    assert "EDUCATION" in text
+
+
 def test_ats_cv_pdf_export_returns_document_bytes():
     content = export_ats_cv_pdf_bytes(
         {"title": "Backend Engineer", "company": "Acme"},
-        "Summary\nPython APIs\nPostgreSQL",
+        "Ignacio Rodriguez\nMadrid, Spain\nProfessional Summary\nPython APIs\nTechnical Skills\nPostgreSQL",
     )
 
     assert content.startswith(b"%PDF")
     assert len(content) > 1000
+
+
+def test_ats_cv_pdf_export_keeps_parseable_headings():
+    content = export_ats_cv_pdf_bytes(
+        {"title": "Backend Engineer", "company": "Acme"},
+        _complete_ats_cv_text(),
+    )
+
+    from pypdf import PdfReader
+    from io import BytesIO
+
+    text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(content)).pages)
+    assert "Ignacio Rodriguez" in text
+    assert "PROFESSIONAL SUMMARY" in text
+    assert "TECHNICAL SKILLS" in text
+    assert "PROFESSIONAL EXPERIENCE" in text
+    assert "EDUCATION" in text
 
 
 def test_ats_cv_export_strips_internal_optimization_notes():
