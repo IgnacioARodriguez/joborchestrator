@@ -16,6 +16,7 @@ Reviewed local artifacts:
 - `data/materials_live_probe/20260729_111851_between_fullstack_adjacent.json`
 - `data/materials_live_probe/20260729_112345_hirefeed_contract_ai_cautious.json`
 - PDF/DOCX exports under `output/pdf/materials_live_probe/`
+- Rendered PDF page PNGs under `output/pdf/materials_live_probe/rendered/`
 
 ## Overall Read
 
@@ -76,14 +77,27 @@ The latest synthetic one-role CV is intentionally short because the source CV is
 - The system now blocks a subtle ATS false positive: declaring a keyword in `keywords_used` while omitting the exact phrase from `ats_cv_text`.
 - The generated format is intentionally ATS-oriented, not a heavily designed visual resume. That is correct for ATS submission, but the visual styling will look simpler than a designed PDF resume.
 
+## PDF Visual Render Check
+
+`pdftoppm` was unavailable as a working binary in this Windows environment, so the PDFs were rendered with PyMuPDF into PNGs and visually inspected.
+
+Rendered pages:
+
+- `acme_backend_strong.pdf`: 1 page, nonblank, no visible clipping or overlap.
+- `pss_full_retry3.pdf`: 1 page, nonblank, no visible clipping or overlap.
+- `hirefeed_contract_ai_cautious.pdf`: 1 page, nonblank, no visible clipping or overlap.
+- `between_fullstack_adjacent.pdf`: 2 pages, both nonblank; page 2 is intentionally short because the CV flows after a full first page.
+
+Visual verdict: exports are readable, parseable, and ATS-classic. They are dense and plain rather than visually branded. That is acceptable for ATS submission, but not equivalent to a designed resume template.
+
 ## Remaining Risk
 
 - Human review is still recommended for final wording, especially cover letter tone and whether a cautious application is worth sending.
-- Visual pixel-level PDF rendering remains unverified because the local `pdftoppm` wrapper failed. Text extraction from PDFs/DOCX passed.
+- Visual PDF rendering has now been verified with PyMuPDF. Text extraction from PDFs/DOCX also passed.
 - A production UI should make clear that ATS CV output is optimized for parseability, while a separate styled resume export could preserve a more designed look.
 
 ## Qualitative Verdict
 
 The current branch is no longer showing the original "short and bare" failure mode for real multi-role CVs. The short output is confined to a synthetic short-source case and now passes only when it preserves source bullets, sections, and exact declared ATS keywords.
 
-Recommended next step before merge: review the four real-case generated materials in a PDF viewer for visual polish, then treat any remaining feedback as presentation/export polish rather than core ATS correctness.
+Recommended next step before merge: review cover-letter wording and application-tone choices for the four real-case generated materials. Treat any remaining PDF presentation feedback as export polish rather than core ATS correctness.

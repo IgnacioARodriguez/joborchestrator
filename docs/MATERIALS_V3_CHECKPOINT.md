@@ -119,7 +119,7 @@ Observed page counts:
 - `between_fullstack_adjacent`: 2 PDF pages
 - `hirefeed_contract_ai_cautious`: 1 PDF page
 
-Visual raster render was attempted earlier through `pdftoppm`, but the local wrapper failed with `El sistema no puede encontrar la ruta especificada.` Text extraction and export unit tests passed; pixel-level visual rendering remains unverified.
+Visual raster render was attempted earlier through `pdftoppm`, but the local wrapper failed with `El sistema no puede encontrar la ruta especificada.` A follow-up render using PyMuPDF succeeded for all exported PDF pages. Visual inspection found nonblank, readable pages with no visible clipping or overlap. The exports remain intentionally dense and ATS-classic rather than visually branded.
 
 ## Notes For Reviewer
 
@@ -138,5 +138,4 @@ Suggested review questions:
 
 Likely remaining before merge:
 
-- Optional: visually inspect exported PDFs using a working renderer or manual PDF viewer.
 - Recommended: qualitative human review of at least the four real-case generated materials before merging.
