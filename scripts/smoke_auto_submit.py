@@ -102,15 +102,17 @@ def run_smoke(db_path: Path, *, keep_db: bool = False) -> dict[str, object]:
         "session_state": updated["state"] if updated else None,
         "application_status": application["status"] if application else None,
         "auto_submit_status": auto_submit.get("status"),
+        "auto_submit_reasons": auto_submit.get("reasons"),
         "control_text": auto_submit.get("control_text"),
     }
     expected = {
         "db_mode": "sqlite",
         "processed": True,
         "operation_status": "completed",
-        "session_state": "submitted",
-        "application_status": "submitted",
-        "auto_submit_status": "submitted",
+        "session_state": "submit_only",
+        "application_status": "preparing",
+        "auto_submit_status": "blocked",
+        "auto_submit_reasons": ["final_submit_reserved_for_user"],
     }
     problems = [f"{key}={result.get(key)!r}" for key, value in expected.items() if result.get(key) != value]
     if not keep_db:

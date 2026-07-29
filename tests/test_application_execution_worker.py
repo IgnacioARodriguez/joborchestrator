@@ -149,10 +149,10 @@ def test_auto_submit_blocks_placeholder_resume_on_real_url(monkeypatch) -> None:
         dry_run=False,
     )
 
-    assert blockers == ["placeholder_resume_for_real_url"]
+    assert blockers == ["placeholder_resume_for_real_url", "final_submit_reserved_for_user"]
 
 
-def test_auto_submit_allows_placeholder_resume_for_local_fixture(monkeypatch) -> None:
+def test_auto_submit_reserves_final_submit_for_local_fixture(monkeypatch) -> None:
     monkeypatch.setenv("ENABLE_AUTO_SUBMIT_APPROVED", "1")
     blockers = auto_submit_blockers(
         session={"mode": "auto_submit_approved"},
@@ -166,7 +166,7 @@ def test_auto_submit_allows_placeholder_resume_for_local_fixture(monkeypatch) ->
         dry_run=False,
     )
 
-    assert blockers == []
+    assert blockers == ["final_submit_reserved_for_user"]
 
 
 def test_auto_submit_blocks_lever_until_explicitly_supported(monkeypatch) -> None:
@@ -183,7 +183,7 @@ def test_auto_submit_blocks_lever_until_explicitly_supported(monkeypatch) -> Non
         dry_run=False,
     )
 
-    assert blockers == ["provider_not_supported"]
+    assert blockers == ["provider_not_supported", "final_submit_reserved_for_user"]
 
 
 def test_application_metrics_split_native_custom_and_shadow_controls() -> None:
@@ -1089,7 +1089,7 @@ def test_application_execution_marks_closed_posting_unavailable(tmp_path, monkey
     assert updated["last_error"] == "Posting unavailable."
 
 
-def test_application_execution_auto_submits_when_preconditions_pass(tmp_path, monkeypatch) -> None:
+def test_application_execution_blocks_auto_submit_even_when_preconditions_pass(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
     monkeypatch.setenv("ENABLE_AUTO_SUBMIT_APPROVED", "1")
     monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
@@ -1137,10 +1137,11 @@ def test_application_execution_auto_submits_when_preconditions_pass(tmp_path, mo
     updated = db.get_application_session(int(session["id"]))
     application = db.get_application(int(updated["application_id"]))
 
-    assert result["auto_submit"]["status"] == "submitted"
-    assert updated["state"] == "submitted"
-    assert application["status"] == "submitted"
-    assert updated["artifacts_json"]["auto_submit"]["control_text"] == "Submit application"
+    assert result["auto_submit"]["status"] == "blocked"
+    assert result["auto_submit"]["reasons"] == ["final_submit_reserved_for_user"]
+    assert updated["state"] == "submit_only"
+    assert application["status"] == "preparing"
+    assert updated["artifacts_json"]["auto_submit"]["status"] == "blocked"
 
 
 def test_application_execution_auto_submit_blocks_unknown_sensitive_required_fields(tmp_path, monkeypatch) -> None:

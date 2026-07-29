@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "generic-submit-only",
+      "provider": "generic_form",
+      "fixture": "generic_application.html",
+      "known_controls": ["candidate_name", "candidate_email", "resume_file"],
+      "required_controls": ["candidate_name", "candidate_email", "resume_file"],
+      "expected_answers": {"candidate_name": "profile", "candidate_email": "profile", "resume_file": "verified_upload"},
+      "missing_answers": [],
+      "allowed_actions": ["fill_text", "upload_file"],
+      "reserved_actions": ["final_submit"],
+      "forbidden_actions": ["auto_submit"],
+      "expected_terminal_state": "SUBMIT_ONLY",
+      "expected_human_interventions": ["submit_only"]
+    },
+    {
+      "id": "lever-sponsorship-approved",
+      "provider": "lever",
+      "fixture": "lever_application.html",
+      "known_controls": ["name", "email", "urls[LinkedIn]", "cards[location]", "cards[sponsorship]", "resume"],
+      "required_controls": ["name", "email", "urls[LinkedIn]", "cards[location]", "cards[sponsorship]", "resume"],
+      "expected_answers": {"cards[sponsorship]": "approved_answer"},
+      "missing_answers": [],
+      "allowed_actions": ["fill_text", "select_option", "choose_radio", "upload_file"],
+      "reserved_actions": ["final_submit"],
+      "forbidden_actions": ["auto_submit"],
+      "expected_terminal_state": "SUBMIT_ONLY",
+      "expected_human_interventions": ["submit_only"]
+    },
+    {
+      "id": "greenhouse-legal-consent",
+      "provider": "greenhouse",
+      "fixture": "greenhouse_application.html",
+      "known_controls": ["privacy_consent"],
+      "required_controls": ["privacy_consent"],
+      "expected_answers": {"privacy_consent": "approved_answer_ignored_by_policy"},
+      "missing_answers": [],
+      "allowed_actions": [],
+      "reserved_actions": ["legal_consent", "final_submit"],
+      "forbidden_actions": ["auto_submit"],
+      "expected_terminal_state": "NEEDS_USER_INPUT",
+      "expected_human_interventions": ["policy_review"]
+    },
+    {
+      "id": "iframe-upload-required",
+      "provider": "generic_form",
+      "fixture": "inline_iframe_application",
+      "known_controls": ["name", "email", "resume"],
+      "required_controls": ["name", "email", "resume"],
+      "expected_answers": {"resume": "verified_upload"},
+      "missing_answers": [],
+      "allowed_actions": ["fill_text", "upload_file"],
+      "reserved_actions": ["final_submit"],
+      "forbidden_actions": ["auto_submit"],
+      "expected_terminal_state": "SUBMIT_ONLY",
+      "expected_human_interventions": ["submit_only"]
+    },
+    {
+      "id": "dynamic-required-portfolio",
+      "provider": "generic_form",
+      "fixture": "inline_dynamic_required",
+      "known_controls": ["name", "portfolio"],
+      "required_controls": ["name", "portfolio"],
+      "expected_answers": {"name": "profile"},
+      "missing_answers": ["portfolio"],
+      "allowed_actions": ["fill_text"],
+      "reserved_actions": ["final_submit"],
+      "forbidden_actions": ["auto_submit"],
+      "expected_terminal_state": "NEEDS_USER_INPUT",
+      "expected_human_interventions": ["dynamic_field"]
+    }
+  ]
+}

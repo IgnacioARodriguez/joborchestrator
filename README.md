@@ -150,8 +150,8 @@ joborchestrator/
   autofill notes.
 - Prepare application sessions in review-before-submit mode, with provider
   capabilities shown explicitly and manual submission recorded separately.
-- Enable personal Greenhouse auto-submit with `ENABLE_AUTO_SUBMIT_APPROVED=1`
-  and `auto_submit_approved` sessions when all required fields are resolved.
+- Application sessions can reach `submit_only` when all required fields are
+  resolved and verified; final submit remains a user action.
 
 ## Useful Commands
 

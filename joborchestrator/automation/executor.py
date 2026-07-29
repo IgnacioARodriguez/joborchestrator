@@ -14,6 +14,7 @@ from joborchestrator.automation.adapters import AdapterRegistry
 from joborchestrator.automation.accounts import load_password, site_identity_from_url
 from joborchestrator.automation import local_browser_agent
 from joborchestrator.automation.ledger import build_obligation_ledger
+from joborchestrator.automation.metrics import compute_outcome_metrics
 from joborchestrator.automation.policy import evaluate_answer_action, evaluate_browser_action
 from joborchestrator.automation.journey import ApplicationJourneyEngine
 from joborchestrator.automation.validation import validate_application_surface
@@ -464,8 +465,10 @@ async def run_application_execution(
     )
     readiness = obligation_ledger.get("readiness") or {}
     next_state = "submit_only" if readiness.get("ready") else "needs_user_input"
-    if auto_submit_result.get("status") == "submitted":
-        next_state = "submitted"
+    automation_metrics = {
+        **automation_metrics,
+        "outcome_metrics": compute_outcome_metrics(obligation_ledger),
+    }
     human_intervention = _build_human_intervention_report(
         next_state=next_state,
         review=review,
@@ -541,37 +544,15 @@ async def run_application_execution(
         "obligation_ledger": obligation_ledger,
         "human_intervention": human_intervention,
     }
-    if next_state == "submitted":
-        db.transition_application_session(
-            session_id,
-            "submit_only",
-            {"note": "Auto-submit preconditions passed.", "current_step": "auto_submit_ready", "artifacts_json": final_artifacts},
-        )
-        db.transition_application_session(
-            session_id,
-            "approved",
-            {"note": "Approved by auto_submit_approved mode.", "current_step": "auto_submit_approved"},
-        )
-        db.transition_application_session(
-            session_id,
-            "submitting",
-            {"note": "Submitting approved application.", "current_step": "auto_submit"},
-        )
-        session = db.transition_application_session(
-            session_id,
-            "submitted",
-            {"note": "Auto-submit completed.", "current_step": "submitted", "artifacts_json": final_artifacts},
-        )
-    else:
-        session = db.transition_application_session(
-            session_id,
-            next_state,
-            {
-                "note": "Ready for final user submit." if next_state == "submit_only" else "Missing fields require user input.",
-                "current_step": "review",
-                "artifacts_json": final_artifacts,
-            },
-        )
+    session = db.transition_application_session(
+        session_id,
+        next_state,
+        {
+            "note": "Ready for final user submit." if next_state == "submit_only" else "Missing fields require user input.",
+            "current_step": "review",
+            "artifacts_json": final_artifacts,
+        },
+    )
     return {
         "session": session,
         "provider": adapter.provider,
@@ -1016,8 +997,7 @@ async def maybe_auto_submit_application(
         return {"status": "disabled"}
     if blockers:
         return {"status": "blocked", "reasons": blockers}
-    _progress(progress, "Auto-submit preconditions passed; clicking final submit.")
-    return await click_approved_submit_control(page, timeout_ms=timeout_ms)
+    return {"status": "blocked", "reasons": ["final_submit_reserved_for_user"]}
 
 
 def auto_submit_blockers(
@@ -1053,6 +1033,7 @@ def auto_submit_blockers(
         blockers.append("required_resume_not_uploaded")
     if len(forbidden_submit_controls) != 1:
         blockers.append("ambiguous_submit_control" if forbidden_submit_controls else "missing_submit_control")
+    blockers.append("final_submit_reserved_for_user")
     return blockers
 
 
@@ -1230,10 +1211,19 @@ def _build_repair_report(
 ) -> dict[str, Any]:
     previous_fingerprint = str(previous_action_plan.get("form_fingerprint") or "")
     rescanned_fingerprint = str(rescanned_action_plan.get("form_fingerprint") or "")
+    reason_codes = []
+    if dynamic_required_fields:
+        reason_codes.append("dynamic_required_after_autofill")
+    if previous_fingerprint and rescanned_fingerprint and previous_fingerprint != rescanned_fingerprint:
+        reason_codes.append("form_fingerprint_changed")
     return {
         "status": "needs_user_input" if dynamic_required_fields else "no_repair_needed",
+        "attempts": 1,
+        "retry_budget": 1,
         "rescans": 1,
         "form_fingerprint_changed": bool(previous_fingerprint and rescanned_fingerprint and previous_fingerprint != rescanned_fingerprint),
+        "failure_classification": "dynamic_required" if dynamic_required_fields else "none",
+        "reason_codes": reason_codes,
         "dynamic_required_fields": dynamic_required_fields,
         "dynamic_required_count": len(dynamic_required_fields),
         "previous_form_fingerprint": previous_fingerprint,

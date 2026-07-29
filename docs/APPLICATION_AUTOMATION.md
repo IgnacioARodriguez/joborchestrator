@@ -47,15 +47,14 @@ External apply flow:
 11. After the user submits manually on the company site, they can record `submitted_manually`.
 12. A later confirmation can move the session to `submission_verified`.
 
-Personal auto-submit mode:
+Final submit boundary:
 
-- Set `ENABLE_AUTO_SUBMIT_APPROVED=1`.
-- Create the session with `"mode": "auto_submit_approved"`.
-- The worker queues that mode with `dry_run=false`.
-- Currently only Greenhouse is allowed.
-- The worker submits only when there are no unknown required or sensitive fields, any required resume file was uploaded, and exactly one final submit control is detected.
-- Blocked attempts stay in `submit_only`, legacy `ready_for_review`, or `needs_user_input` and write `artifacts_json.auto_submit.reasons`.
-- Successful attempts transition through `submit_only -> approved -> submitting -> submitted` and store the clicked control text in `artifacts_json.auto_submit`.
+- `auto_submit_approved` is retained as a compatibility mode, but it is blocked
+  with `final_submit_reserved_for_user`.
+- The worker can detect exactly one final submit control and include it in
+  artifacts as the submit boundary.
+- Real submissions are recorded only after the user submits manually and marks
+  the session `submitted_manually`.
 
 Obligation ledger:
 
