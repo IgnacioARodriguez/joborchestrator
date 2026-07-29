@@ -40,7 +40,10 @@ External apply flow:
 7. Final submit-like controls are classified as `forbidden` by default and recorded in session artifacts.
 8. If `APPLICATION_BROWSER_HANDOFF=1`, the worker keeps the local Chromium page alive and stores only an opaque `local-browser://session/<uuid>` reference.
 9. Sensitive or unknown fields remain unfilled and are reported for review.
-10. By default, the session ends at `ready_for_review` or `needs_user_input`.
+10. By default, the session ends at `submit_only` or `needs_user_input`.
+    `submit_only` means all registered required obligations were resolved,
+    policy-authorized, executed and verified, and the only remaining action is
+    the user-owned final submit boundary.
 11. After the user submits manually on the company site, they can record `submitted_manually`.
 12. A later confirmation can move the session to `submission_verified`.
 
@@ -51,8 +54,17 @@ Personal auto-submit mode:
 - The worker queues that mode with `dry_run=false`.
 - Currently only Greenhouse is allowed.
 - The worker submits only when there are no unknown required or sensitive fields, any required resume file was uploaded, and exactly one final submit control is detected.
-- Blocked attempts stay in `ready_for_review` or `needs_user_input` and write `artifacts_json.auto_submit.reasons`.
-- Successful attempts transition through `ready_for_review -> approved -> submitting -> submitted` and store the clicked control text in `artifacts_json.auto_submit`.
+- Blocked attempts stay in `submit_only`, legacy `ready_for_review`, or `needs_user_input` and write `artifacts_json.auto_submit.reasons`.
+- Successful attempts transition through `submit_only -> approved -> submitting -> submitted` and store the clicked control text in `artifacts_json.auto_submit`.
+
+Obligation ledger:
+
+- Browser execution writes `artifacts_json.obligation_ledger`.
+- Each ledger entry records logical control identity, owning surface, required
+  evidence, semantic category, resolved answer source, policy decision, planned
+  action, execution result, validation result, blocker and reason codes.
+- `artifacts_json.obligation_ledger.readiness.terminal_state` is `SUBMIT_ONLY`
+  only when the ledger has no fail-closed blockers.
 
 Answer bank:
 

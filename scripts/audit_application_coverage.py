@@ -253,7 +253,7 @@ def coverage_score(
         return "blocked"
     if fields_detected == 0:
         return "no_form_detected"
-    if unknown_fields == 0 and submit_controls_count == 1:
+    if state in {"submit_only", "ready_for_review"} and unknown_fields == 0 and submit_controls_count == 1:
         return "ready_no_human_input"
     if fields_autofilled > 0:
         return "partial_needs_answers"

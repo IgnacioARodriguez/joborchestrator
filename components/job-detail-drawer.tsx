@@ -411,6 +411,7 @@ function detectProvider(job: JobPosting) {
 function primaryActionLabel(session: ApplicationSession | null, job: JobPosting) {
   if (!session) return job.materials.ats_cv_notes ? "Prepare application" : "Prepare materials"
   if (session.state === "needs_user_input") return `Resolve ${session.unknown_fields_json.length || "missing"} fields`
+  if (session.state === "submit_only") return "Ready for final submit"
   if (session.state === "ready_for_review") return "Ready for final review"
   if (["created", "preparing", "preflight", "preparing_materials", "materials_ready", "opened", "ready_to_fill", "filling", "prefilled"].includes(session.state)) {
     return "Continue preparation"
@@ -533,7 +534,7 @@ function SessionReview({
           </Button>
         </div>
       ) : null}
-      {["ready_for_review", "needs_user_input"].includes(session.state) ? (
+      {["submit_only", "ready_for_review", "needs_user_input"].includes(session.state) ? (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-background/70 p-2">
           <p className="text-xs text-muted-foreground">
             Review the company page yourself. The app records the outcome only after you confirm it.

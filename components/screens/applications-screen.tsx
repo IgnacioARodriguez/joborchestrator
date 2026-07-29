@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils"
 const APPLICATION_COLUMNS: ApplicationStatus[] = [
   "preparing",
   "needs_user_input",
+  "submit_only",
   "ready_for_review",
   "submitted_manually",
   "submission_verified",
@@ -35,6 +36,7 @@ const LABELS: Record<ApplicationStatus, string> = {
   opened: "Opened",
   prefilled: "Prefilled",
   needs_user_input: "Needs input",
+  submit_only: "Submit only",
   ready_for_review: "Ready for review",
   submitted_manually: "Submitted manually",
   submission_verified: "Verified",

@@ -40,7 +40,7 @@ def test_read_urls_combines_file_args_dedupes_and_limits(tmp_path: Path) -> None
 def test_coverage_score_classifies_low_friction_and_gaps() -> None:
     assert (
         coverage_score(
-            state="ready_for_review",
+            state="submit_only",
             fields_detected=4,
             fields_autofilled=4,
             unknown_fields=0,
@@ -116,7 +116,7 @@ def test_report_writers_create_json_csv_and_markdown(tmp_path: Path) -> None:
             {
                 "url": "https://example.test/apply",
                 "provider_detected": "generic_form",
-                "state": "ready_for_review",
+                "state": "submit_only",
                 "coverage_score": "ready_no_human_input",
                 "fields_detected": 3,
                 "fields_autofilled": 3,
@@ -183,7 +183,7 @@ def test_audit_application_coverage_runs_dry_run_on_local_fixture(tmp_path: Path
     assert report["dry_run"] is True
     assert report["auto_submit_enabled"] is False
     assert result["provider_detected"] == "generic_form"
-    assert result["state"] == "ready_for_review"
+    assert result["state"] == "submit_only"
     assert result["coverage_score"] == "ready_no_human_input"
     assert result["resume_upload_status"] == "uploaded"
     assert result["submit_controls_count"] == 1

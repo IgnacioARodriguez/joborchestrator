@@ -286,7 +286,7 @@ def test_human_intervention_report_classifies_answer_widget_and_submit_only() ->
     assert report["blocking_count"] == 4
 
     submit_only = _build_human_intervention_report(
-        next_state="ready_for_review",
+        next_state="submit_only",
         review={"unknown_fields": []},
         mapping={"unknown_fields": []},
         validation_report={"status": "validation_clean"},
@@ -413,7 +413,7 @@ def test_application_execution_handles_lever_review_before_submit(tmp_path, monk
     assert result["forbidden_submit_controls"] == [
         {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
     ]
-    assert updated["state"] == "ready_for_review"
+    assert updated["state"] == "submit_only"
     assert updated["artifacts_json"]["action_plan"]["provider"] == "lever"
     assert updated["artifacts_json"]["action_plan"]["summary"]["actions"] >= 4
 
@@ -486,7 +486,7 @@ def test_application_execution_handles_generic_form_review_before_submit(tmp_pat
     assert result["forbidden_submit_controls"] == [
         {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
     ]
-    assert updated["state"] == "ready_for_review"
+    assert updated["state"] == "submit_only"
     assert updated["artifacts_json"]["journey"]["phase"] == "actions_planned"
     assert updated["artifacts_json"]["action_plan"]["provider"] == "generic_form"
     assert updated["artifacts_json"]["action_plan"]["summary"]["actions"] >= 3
@@ -643,7 +643,7 @@ def test_application_execution_handles_form_inside_accessible_iframe(tmp_path, m
     assert result["fields_autofilled"] == 3
     assert result["resume_upload"]["status"] == "uploaded"
     assert result["unknown_fields"] == 0
-    assert updated["state"] == "ready_for_review"
+    assert updated["state"] == "submit_only"
     assert updated["artifacts_json"]["journey"]["surface"]["kind"] == "frame"
     assert updated["artifacts_json"]["action_plan"]["actions"][0]["surface_id"].startswith("frame:")
 
@@ -824,7 +824,7 @@ def test_application_execution_waits_for_delayed_spa_application_form(tmp_path, 
 
     assert result["fields_autofilled"] == 2
     assert result["unknown_fields"] == 0
-    assert updated["state"] == "ready_for_review"
+    assert updated["state"] == "submit_only"
     assert any(step["action"] == "clicked_control" for step in result["navigation"])
     assert any(step.get("stability_status") == "stable" for step in result["navigation"])
 
@@ -938,7 +938,7 @@ def test_application_execution_advances_safe_multistep_and_stops_at_submit(tmp_p
 
     assert result["fields_autofilled"] == 2
     assert result["unknown_fields"] == 0
-    assert updated["state"] == "ready_for_review"
+    assert updated["state"] == "submit_only"
     assert artifacts["forbidden_submit_controls"] == [
         {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
     ]
@@ -1219,7 +1219,7 @@ def test_application_execution_fills_application_form_opened_in_popup(tmp_path, 
     assert any(step["action"] == "opened_popup" for step in result["navigation"])
     assert result["fields_autofilled"] == 2
     assert result["unknown_fields"] == 0
-    assert updated["state"] == "ready_for_review"
+    assert updated["state"] == "submit_only"
     assert artifacts["journey"]["surface"]["kind"] == "popup"
     assert artifacts["automation_metrics"]["submit_only_ready"] is True
     assert artifacts["automation_metrics"]["popup_handling_success_rate"] == 1.0

@@ -13,6 +13,7 @@ from playwright.async_api import Browser, BrowserContext, Page, TimeoutError as 
 from joborchestrator.automation.adapters import AdapterRegistry
 from joborchestrator.automation.accounts import load_password, site_identity_from_url
 from joborchestrator.automation import local_browser_agent
+from joborchestrator.automation.ledger import build_obligation_ledger
 from joborchestrator.automation.policy import evaluate_answer_action, evaluate_browser_action
 from joborchestrator.automation.journey import ApplicationJourneyEngine
 from joborchestrator.automation.validation import validate_application_surface
@@ -256,6 +257,7 @@ async def run_application_execution(
     validation_report: dict[str, Any] = {"status": "not_attempted"}
     repair_report: dict[str, Any] = {"status": "not_attempted"}
     automation_metrics: dict[str, Any] = {}
+    obligation_ledger: dict[str, Any] = {}
     try:
         journey_engine = ApplicationJourneyEngine()
         profile = db.get_candidate_profile_payload() or {}
@@ -448,7 +450,20 @@ async def run_application_execution(
         fill.data["filled_fields"] = live_fill["filled_fields"]
         fill.data["skipped_fields"] = live_fill["skipped_fields"]
     review = adapter.prepare_review(schema, mapping, fill)
-    next_state = "needs_user_input" if mapping.get("unknown_fields") else "ready_for_review"
+    obligation_ledger = build_obligation_ledger(
+        schema=schema,
+        mapping=mapping,
+        action_plan=journey_step.get("action_plan") or {},
+        validation_report=validation_report,
+        fill_result=live_fill,
+        resume_upload=resume_upload,
+        repair_report=repair_report,
+        forbidden_submit_controls=forbidden_submit_controls,
+        surfaces=journey_step.get("surfaces") or [],
+        step_transitions=journey_step.get("step_transitions") or [],
+    )
+    readiness = obligation_ledger.get("readiness") or {}
+    next_state = "submit_only" if readiness.get("ready") else "needs_user_input"
     if auto_submit_result.get("status") == "submitted":
         next_state = "submitted"
     human_intervention = _build_human_intervention_report(
@@ -492,6 +507,7 @@ async def run_application_execution(
                 "validation": validation_report,
                 "repair": repair_report,
                 "automation_metrics": automation_metrics,
+                "obligation_ledger": obligation_ledger,
                 "human_intervention": human_intervention,
             },
         },
@@ -522,12 +538,13 @@ async def run_application_execution(
         "validation": validation_report,
         "repair": repair_report,
         "automation_metrics": automation_metrics,
+        "obligation_ledger": obligation_ledger,
         "human_intervention": human_intervention,
     }
     if next_state == "submitted":
         db.transition_application_session(
             session_id,
-            "ready_for_review",
+            "submit_only",
             {"note": "Auto-submit preconditions passed.", "current_step": "auto_submit_ready", "artifacts_json": final_artifacts},
         )
         db.transition_application_session(
@@ -550,7 +567,7 @@ async def run_application_execution(
             session_id,
             next_state,
             {
-                "note": "Ready for review." if next_state == "ready_for_review" else "Missing fields require user input.",
+                "note": "Ready for final user submit." if next_state == "submit_only" else "Missing fields require user input.",
                 "current_step": "review",
                 "artifacts_json": final_artifacts,
             },
@@ -1381,7 +1398,7 @@ def _build_human_intervention_report(
     for field_name in skipped_fields:
         if not any(item.get("field") == field_name for item in items):
             items.append({"type": "widget", "field": field_name, "label": field_name, "reason": "planned_action_not_executed"})
-    if next_state == "ready_for_review" and automation_metrics.get("submit_only_ready"):
+    if next_state == "submit_only" and automation_metrics.get("submit_only_ready"):
         items.append(
             {
                 "type": "submit_only",

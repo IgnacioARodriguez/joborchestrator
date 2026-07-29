@@ -4,6 +4,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
+from joborchestrator.automation.ledger import build_obligation_ledger
 from joborchestrator.automation.policy import evaluate_answer_action
 
 
@@ -106,6 +107,7 @@ class JourneyStep:
     action_plan: ApplicationActionPlan
     browser_surface: Any = field(repr=False, compare=False)
     surfaces: list[InteractionSurface] = field(default_factory=list)
+    obligation_ledger: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +117,7 @@ class JourneyStep:
             "schema": self.schema,
             "mapping": self.mapping,
             "action_plan": self.action_plan.to_dict(),
+            "obligation_ledger": self.obligation_ledger,
         }
 
 
@@ -189,6 +192,19 @@ class ApplicationJourneyEngine:
             schema=schema,
             mapping=mapping,
         )
+        surface_dicts = [surface.to_dict() for surface in surfaces or [surface]]
+        obligation_ledger = build_obligation_ledger(
+            schema=schema,
+            mapping=mapping,
+            action_plan=action_plan.to_dict(),
+            validation_report={"status": "not_attempted", "issues": []},
+            fill_result={},
+            resume_upload={"status": "not_attempted"},
+            repair_report={"status": "not_attempted"},
+            forbidden_submit_controls=[],
+            surfaces=surface_dicts,
+            step_transitions=[],
+        )
         return JourneyStep(
             phase="actions_planned",
             surface=surface,
@@ -197,6 +213,7 @@ class ApplicationJourneyEngine:
             action_plan=action_plan,
             browser_surface=browser_surface,
             surfaces=surfaces or [surface],
+            obligation_ledger=obligation_ledger,
         )
 
     async def _discover_candidate_schemas(
