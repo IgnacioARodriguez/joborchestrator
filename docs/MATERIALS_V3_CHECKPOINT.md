@@ -18,7 +18,7 @@ What is now supported by evidence:
 - The latest code is rebased on current `origin/main`; the branch no longer shows unrelated deletions from application automation or branding assets when diffed against `origin/main`.
 - Deterministic materials validation now catches overcompressed ATS CVs, unparseable experience density, omitted single-role experience, unsupported years-of-experience claims, and unsupported employer/technology attribution.
 - ATS CV completeness now uses a source-aware line threshold: normal multi-role CVs still require 18+ parseable lines, while very short one-role source CVs may pass with 16-17 well-structured lines if all required sections and source-backed bullets are preserved.
-- ATS CV validation now rejects `keywords_used` items that do not appear verbatim in `ats_cv_text`, preventing keyword accounting from claiming ATS coverage that the submitted CV text does not actually contain.
+- ATS CV validation now rejects `keywords_used` items that do not appear as normalized token-aware phrases in `ats_cv_text`, preventing keyword accounting from claiming ATS coverage that the submitted CV text does not actually contain.
 - The ATS semantic evaluator no longer false-fails truthful wording variants such as `documentation` vs `Documented`, singular/plural, and punctuation-preserving bullet rewrites.
 - Full pytest suite, frontend lint, frontend typecheck, and frontend production build are green locally.
 
@@ -160,7 +160,7 @@ Suggested review questions:
 
 - Are the deterministic guards general enough, or do they still encode examples too tightly?
 - Is the source-aware ATS CV density threshold appropriate for both detailed multi-role CVs and very short one-role source CVs?
-- Is requiring `keywords_used` to appear verbatim in `ats_cv_text` the right level of ATS strictness?
+- Is requiring `keywords_used` to appear as normalized token-aware phrases in `ats_cv_text` the right level of ATS strictness?
 - Is failing fast on unparseable base-CV experience headings the right product behavior, or should the UI surface a guided fix?
 - Is the new semantic wording matcher appropriately conservative?
 - Should sanitized review packets be generated automatically by a script instead of maintained manually?

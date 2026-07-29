@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -70,7 +71,19 @@ def _dedupe_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _preferred_record(current: dict[str, Any] | None, candidate: dict[str, Any]) -> dict[str, Any]:
     if current is None:
         return candidate
+    current_timestamp = _artifact_timestamp(current)
+    candidate_timestamp = _artifact_timestamp(candidate)
+    if candidate_timestamp != current_timestamp:
+        return candidate if candidate_timestamp > current_timestamp else current
     return candidate if _record_completeness(candidate) > _record_completeness(current) else current
+
+
+def _artifact_timestamp(record: dict[str, Any]) -> str:
+    artifact = Path(str(record.get("artifact") or ""))
+    match = re.match(r"^(\d{8}_\d{6})_", artifact.name)
+    if match:
+        return match.group(1)
+    return ""
 
 
 def _record_completeness(record: dict[str, Any]) -> int:
@@ -176,7 +189,7 @@ def _case_row(item: dict[str, Any]) -> str:
     return (
         f"| `{_escape(item.get('case'))}` "
         f"| {_escape(_job_label(job))} "
-        f"| `{_escape(item.get('artifact'))}` "
+        f"| `{_escape(_display_path(item.get('artifact')))}` "
         f"| CV: {_escape(item.get('cv_status'))}<br>Kit: {_escape(item.get('kit_status'))} "
         f"| CV: {_escape(cv_meta.get('validation_attempts'))}<br>Kit: {_escape(kit_meta.get('validation_attempts'))} "
         f"| Materials: {_score_label(materials)}<br>ATS: {_score_label(ats)} "
@@ -214,6 +227,10 @@ def _job_label(job: dict[str, Any]) -> str:
 
 def _escape(value: Any) -> str:
     return str(value if value is not None else "").replace("|", "\\|").replace("\n", " ")
+
+
+def _display_path(value: Any) -> str:
+    return Path(str(value if value is not None else "")).as_posix()
 
 
 def _truncate(value: str, limit: int) -> str:

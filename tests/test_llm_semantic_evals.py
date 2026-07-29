@@ -440,6 +440,45 @@ def test_auto_eval_case_uses_job_and_profile_terms():
     assert "Fiction Express" in case["candidate"]["required_experience_terms"]
 
 
+def test_auto_eval_case_extracts_generic_employers_without_known_names():
+    case = build_auto_eval_case(
+        {
+            "id": 78,
+            "title": "Backend Developer",
+            "company": "CloudWorks",
+            "description_text": "Build Python APIs.",
+        },
+        {
+            "base_cv_text": """
+Professional Experience
+Backend Developer April 2025 - March 2026
+Northstar Labs
+- Built Python APIs.
+Full Stack Developer October 2022 - April 2025
+Riverstone Digital
+- Built reporting dashboards.
+Education
+Software Engineering.
+""",
+            "skills": [{"name": "Python", "level": "strong"}],
+        },
+    )
+
+    assert case["candidate"]["required_experience_terms"] == ["Northstar Labs", "Riverstone Digital"]
+
+
+def test_semantic_keyword_matching_does_not_count_sql_inside_nosql():
+    case = {
+        "ats_cv_expectations": {"required_keywords": ["SQL"], "required_sections": []},
+        "candidate": {},
+    }
+
+    result = evaluate_ats_cv_result(case, {"ats_cv_text": "Professional Summary\nNoSQL databases and APIs."})
+
+    assert result.passed is False
+    assert "missing_required_keywords:SQL" in result.issues
+
+
 def test_auto_eval_case_limits_required_terms_for_skip_jobs():
     case = build_auto_eval_case(
         {

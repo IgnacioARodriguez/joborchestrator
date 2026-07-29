@@ -592,10 +592,6 @@ def _sensitive_claim_supported(claim: str, supported_text: str, real_experience_
 
 
 def _extract_likely_employers(base_cv_text: str) -> list[str]:
-    known = ["Fiction Express", "Talan Consulting", "Globant", "Balloon Group"]
-    found = [term for term in known if _contains_phrase(_normalize(base_cv_text), term)]
-    if found:
-        return found
     section = re.search(
         r"(?ims)^\s*(experience|professional experience|experiencia)\s*$([\s\S]*?)(?=^\s*(projects|skills|education|formaci[oó]n)\s*$|\Z)",
         base_cv_text,
@@ -603,11 +599,35 @@ def _extract_likely_employers(base_cv_text: str) -> list[str]:
     if not section:
         return []
     employers: list[str] = []
+    tech_only_terms = {
+        "api",
+        "apis",
+        "aws",
+        "django",
+        "docker",
+        "fastapi",
+        "flask",
+        "javascript",
+        "mongodb",
+        "nosql",
+        "php",
+        "postgresql",
+        "python",
+        "react",
+        "redis",
+        "sql",
+        "typescript",
+    }
     for line in section.group(2).splitlines():
+        if line.lstrip().startswith(("-", "*")):
+            continue
         stripped = line.strip(" -\t")
         if not stripped or len(stripped) > 80:
             continue
         if re.search(r"(?i)\b(developer|engineer|consultant|manager|specialist)\b", stripped):
+            continue
+        tokens = _match_tokens(stripped)
+        if tokens and all(token in tech_only_terms for token in tokens):
             continue
         if re.search(r"[A-Z][a-z]+", stripped):
             employers.append(stripped)
@@ -785,10 +805,9 @@ def _normalize(text: Any) -> str:
 
 
 def _contains_phrase(normalized_text: str, phrase: str) -> bool:
+    normalized_text = _normalize(normalized_text)
     normalized_phrase = _normalize(phrase)
     if not normalized_phrase:
-        return True
-    if normalized_phrase in normalized_text:
         return True
 
     text_tokens = [_canonical_match_token(token) for token in _match_tokens(normalized_text)]

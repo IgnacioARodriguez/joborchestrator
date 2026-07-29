@@ -8,6 +8,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     LLMMaterialsError,
     _call_openai,
     _call_nvidia_kit,
+    _ats_cv_response_validation_error,
     _build_ats_fit_analysis,
     _experience_coverage_problems,
     _experience_density_problems,
@@ -551,7 +552,7 @@ Ongoing backend delivery practice.
     )
 
     assert error is not None
-    assert "keywords_used contains terms not present verbatim in ats_cv_text" in error
+    assert "keywords_used contains terms not present as normalized token-aware phrases in ats_cv_text" in error
     assert "operations workflows" in error
 
 
@@ -1566,7 +1567,7 @@ Software Engineering.
     assert "expected at least 1" in problems[-1]
 
 
-def test_nvidia_cv_density_parse_failure_does_not_retry(monkeypatch):
+def test_nvidia_cv_density_parse_failure_returns_degraded_review_cv(monkeypatch):
     calls = []
     base_cv = "Career Journey\n" + "\n".join(
         f"Backend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API, reporting, data, and dashboard workflows for team {index}."
@@ -1585,23 +1586,33 @@ def test_nvidia_cv_density_parse_failure_does_not_retry(monkeypatch):
 
     monkeypatch.setattr(llm_application_materials, "_call_nvidia_contract_once", fake_contract_once)
 
-    try:
-        llm_application_materials._call_nvidia_cv(
-            {"job": {"title": "Backend Engineer", "company": "Acme"}, "base_cv": {"text": base_cv}},
-            "test-key",
-            "test-model",
-            1.0,
-            validation_retry_limit=3,
-        )
-    except LLMMaterialsError as exc:
-        metadata = exc.generation_metadata
-    else:
-        raise AssertionError("Expected LLMMaterialsError")
+    result = llm_application_materials._call_nvidia_cv(
+        {"job": {"title": "Backend Engineer", "company": "Acme"}, "base_cv": {"text": base_cv}},
+        "test-key",
+        "test-model",
+        1.0,
+        validation_retry_limit=3,
+    )
+    metadata = result["_generation_metadata"]
 
     assert calls == [None]
     assert metadata["validation_attempts"] == 1
     assert metadata["human_review_required"] is True
+    assert metadata["experience_density_validation"] == "skipped"
     assert "density validation was not applied" in metadata["validation_errors"][0]
+
+
+def test_ats_cv_keywords_used_presence_is_token_aware():
+    payload = {
+        "ats_cv_text": _complete_ats_cv_text().replace("SQL", "NoSQL").replace("APIs", "API integrations"),
+        "risk_flags": [],
+        "keywords_used": ["SQL"],
+    }
+
+    error = _ats_cv_response_validation_error(payload, base_cv_text="")
+
+    assert error
+    assert "keywords_used contains terms not present" in error
 
 
 def test_ats_cv_validation_accepts_reasonable_experience_compression():

@@ -472,6 +472,38 @@ def _is_unrecoverable_validation_feedback(validation_feedback: str | None) -> bo
     return _normalize_for_match(EXPERIENCE_DENSITY_PARSE_FAILURE) in normalized
 
 
+def _split_validation_feedback(validation_feedback: str | None) -> list[str]:
+    return [part.strip() for part in str(validation_feedback or "").split("; ") if part.strip()]
+
+
+def _degraded_validation_feedbacks(validation_feedback: str | None) -> list[str]:
+    parse_failure = _normalize_for_match(EXPERIENCE_DENSITY_PARSE_FAILURE)
+    return [part for part in _split_validation_feedback(validation_feedback) if parse_failure in _normalize_for_match(part)]
+
+
+def _blocking_validation_feedback(validation_feedback: str | None) -> str | None:
+    parse_failure = _normalize_for_match(EXPERIENCE_DENSITY_PARSE_FAILURE)
+    blocking = [
+        part for part in _split_validation_feedback(validation_feedback) if parse_failure not in _normalize_for_match(part)
+    ]
+    return "; ".join(blocking) if blocking else None
+
+
+def _accepted_generation_metadata(
+    attempt: int,
+    validation_errors: list[str],
+    degraded_feedbacks: list[str] | None = None,
+) -> dict[str, Any]:
+    metadata = {
+        "validation_attempts": attempt + 1,
+        "validation_errors": [*validation_errors, *(degraded_feedbacks or [])],
+    }
+    if degraded_feedbacks:
+        metadata["human_review_required"] = True
+        metadata["experience_density_validation"] = "skipped"
+    return metadata
+
+
 def _request_failure_metadata(attempt: int, validation_errors: list[str], exc: Exception) -> dict[str, Any]:
     return {
         "validation_attempts": attempt + 1,
@@ -775,19 +807,19 @@ def _call_openai(
                 generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
             ) from exc
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
-        if not validation_feedback:
-            parsed["_generation_metadata"] = {
-                "validation_attempts": attempt + 1,
-                "validation_errors": validation_errors,
-            }
+        degraded_feedbacks = _degraded_validation_feedbacks(validation_feedback)
+        blocking_feedback = _blocking_validation_feedback(validation_feedback)
+        if not blocking_feedback:
+            parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors, degraded_feedbacks)
             return parsed
-        if attempt < retry_limit and not _is_unrecoverable_validation_feedback(validation_feedback):
-            validation_errors.append(validation_feedback)
-            logger.warning("Retrying OpenAI materials generation after invalid response: %s", validation_feedback)
+        if attempt < retry_limit:
+            validation_errors.extend(degraded_feedbacks)
+            validation_errors.append(blocking_feedback)
+            logger.warning("Retrying OpenAI materials generation after invalid response: %s", blocking_feedback)
             continue
         raise LLMMaterialsError(
-            f"OpenAI materials response was incomplete: {validation_feedback}",
-            generation_metadata=_validation_failure_metadata(attempt, validation_errors, validation_feedback),
+            f"OpenAI materials response was incomplete: {blocking_feedback}",
+            generation_metadata=_validation_failure_metadata(attempt, validation_errors + degraded_feedbacks, blocking_feedback),
         )
     raise LLMMaterialsError("OpenAI materials response did not produce a usable application kit.")
 
@@ -812,19 +844,19 @@ def _call_nvidia(
                 generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
             ) from exc
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
-        if not validation_feedback:
-            parsed["_generation_metadata"] = {
-                "validation_attempts": attempt + 1,
-                "validation_errors": validation_errors,
-            }
+        degraded_feedbacks = _degraded_validation_feedbacks(validation_feedback)
+        blocking_feedback = _blocking_validation_feedback(validation_feedback)
+        if not blocking_feedback:
+            parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors, degraded_feedbacks)
             return parsed
-        if attempt < retry_limit and not _is_unrecoverable_validation_feedback(validation_feedback):
-            validation_errors.append(validation_feedback)
-            logger.warning("Retrying NVIDIA materials generation after invalid response: %s", validation_feedback)
+        if attempt < retry_limit:
+            validation_errors.extend(degraded_feedbacks)
+            validation_errors.append(blocking_feedback)
+            logger.warning("Retrying NVIDIA materials generation after invalid response: %s", blocking_feedback)
             continue
         raise LLMMaterialsError(
-            f"NVIDIA materials response was incomplete: {validation_feedback}",
-            generation_metadata=_validation_failure_metadata(attempt, validation_errors, validation_feedback),
+            f"NVIDIA materials response was incomplete: {blocking_feedback}",
+            generation_metadata=_validation_failure_metadata(attempt, validation_errors + degraded_feedbacks, blocking_feedback),
         )
     raise LLMMaterialsError("NVIDIA materials response did not produce a usable application kit.")
 
@@ -856,23 +888,23 @@ def _call_nvidia_cv(
                 generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
             ) from exc
         validation_feedback = _ats_cv_response_validation_error(parsed, _base_cv_text(payload), payload)
-        if not validation_feedback:
-            parsed["_generation_metadata"] = {
-                "validation_attempts": attempt + 1,
-                "validation_errors": validation_errors,
-            }
+        degraded_feedbacks = _degraded_validation_feedbacks(validation_feedback)
+        blocking_feedback = _blocking_validation_feedback(validation_feedback)
+        if not blocking_feedback:
+            parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors, degraded_feedbacks)
             return parsed
-        if attempt < retry_limit and not _is_unrecoverable_validation_feedback(validation_feedback):
-            validation_errors.append(validation_feedback)
+        if attempt < retry_limit:
+            validation_errors.extend(degraded_feedbacks)
+            validation_errors.append(blocking_feedback)
             logger.warning(
                 "Retrying NVIDIA ATS CV generation after invalid response: %s received_keys=%s",
-                validation_feedback,
+                blocking_feedback,
                 sorted(parsed.keys()),
             )
             continue
         raise LLMMaterialsError(
-            f"NVIDIA ATS CV response was incomplete: {validation_feedback}",
-            generation_metadata=_validation_failure_metadata(attempt, validation_errors, validation_feedback),
+            f"NVIDIA ATS CV response was incomplete: {blocking_feedback}",
+            generation_metadata=_validation_failure_metadata(attempt, validation_errors + degraded_feedbacks, blocking_feedback),
         )
     raise LLMMaterialsError("NVIDIA ATS CV response did not produce a usable CV.")
 
@@ -1090,9 +1122,9 @@ def _materials_repair_instruction(validation_feedback: str) -> str:
         )
     if "keywords_used contains terms not present" in normalized:
         instructions.append(
-            "For every item in keywords_used, add that exact truthful phrase to ats_cv_text in Summary, Technical "
-            "Skills, or a matching Experience bullet. If a phrase cannot be stated truthfully, remove it from "
-            "keywords_used."
+            "For every item in keywords_used, add that truthful normalized phrase to ats_cv_text as a standalone "
+            "token-aware phrase in Summary, Technical Skills, or a matching Experience bullet. If a phrase cannot "
+            "be stated truthfully, remove it from keywords_used."
         )
     if "overcompressed" in normalized:
         instructions.append(
@@ -1418,9 +1450,9 @@ def _ats_cv_keywords_used_presence_problems(payload: dict[str, Any], ats_cv_text
     if not missing:
         return []
     return [
-        "keywords_used contains terms not present verbatim in ats_cv_text: "
+        "keywords_used contains terms not present as normalized token-aware phrases in ats_cv_text: "
         + ", ".join(missing[:8])
-        + ". Add the exact truthful keyword to ats_cv_text or remove it from keywords_used."
+        + ". Add the truthful keyword phrase to ats_cv_text or remove it from keywords_used."
     ]
 
 
@@ -2031,10 +2063,12 @@ def _normalize_for_match(text: str) -> str:
 
 
 def _contains_phrase_for_materials(normalized_text: str, phrase: str) -> bool:
+    normalized_text = _normalize_for_match(normalized_text)
     normalized_phrase = _normalize_for_match(phrase)
     if not normalized_phrase:
         return False
-    return normalized_phrase in normalized_text
+    pattern = rf"(?<![a-z0-9+#]){re.escape(normalized_phrase)}(?![a-z0-9+#])"
+    return re.search(pattern, normalized_text) is not None
 
 
 def _to_dict(value: Any) -> dict[str, Any]:

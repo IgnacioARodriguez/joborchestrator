@@ -25,7 +25,7 @@ This branch hardens LLM-generated application materials and ATS CVs. It focuses 
   - unparseable base-CV experience density,
   - omitted single-role CV experience,
   - unsupported years-of-experience claims,
-  - `keywords_used` entries not present verbatim in `ats_cv_text`.
+  - `keywords_used` entries not present as normalized token-aware phrases in `ats_cv_text`.
 - Updates NVIDIA materials prompts through CV `v14` and kit `v13`.
 - Adds source-aware ATS line thresholds so short one-role source CVs can pass with 16-17 well-structured lines, while normal multi-role CVs still require 18+ parseable lines.
 - Adds PDF/DOCX export polish plus local text and visual render verification notes.
@@ -63,7 +63,7 @@ Key final live follow-up:
 ## Review Focus
 
 - Confirm the guardrails are general enough and not overfit to individual probe cases.
-- Confirm `keywords_used` verbatim presence is the desired ATS strictness.
+- Confirm `keywords_used` normalized token-aware presence is the desired ATS strictness.
 - Confirm source-aware ATS line thresholds are acceptable.
 - Review prompt wording in `prompts/materials/nvidia_cv_contract/v14.md` and `prompts/materials/nvidia_kit_contract/v13.md`.
 - Review whether docs should distinguish ATS-first exports from styled resume exports in product UI later.

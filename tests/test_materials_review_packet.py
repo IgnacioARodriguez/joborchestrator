@@ -78,3 +78,34 @@ def test_review_packet_truncates_long_errors() -> None:
 
     assert "xxx..." in packet
     assert "x" * 400 not in packet
+
+
+def test_review_packet_prefers_latest_artifact_for_case(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "materials"
+    artifact_root.mkdir()
+    older_path = artifact_root / "20260728_120000_repeat_case.json"
+    newer_path = artifact_root / "20260729_120000_repeat_case.json"
+    for path, company in [(older_path, "OldCo"), (newer_path, "NewCo")]:
+        path.write_text(
+            json.dumps(
+                {
+                    "case": "repeat_case",
+                    "job": {"title": "Backend Developer", "company": company},
+                    "cv": {
+                        "ats_cv_text": "Professional Summary\nProfessional Experience",
+                        "_generation_metadata": {"validation_attempts": 1},
+                    },
+                    "kit": {"_generation_metadata": {"validation_attempts": 1}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    records = load_records(artifact_root, include_cases=["repeat_case"], include_all=False)
+    packet = render_packet(records, artifact_root)
+
+    assert len(records) == 1
+    assert "NewCo" in packet
+    assert "OldCo" not in packet
+    assert "20260729_120000_repeat_case.json" in packet
+    assert "20260728_120000_repeat_case.json" not in packet

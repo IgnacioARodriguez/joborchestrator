@@ -74,7 +74,7 @@ The latest synthetic one-role CV is intentionally short because the source CV is
 - Generated CVs use standard ATS sections: Professional Summary, Technical Skills, Professional Experience, Education.
 - PDF/DOCX exports preserve parseable text and sections.
 - Raw Unicode bullets are normalized in exported PDFs/DOCX, so ATS export text uses ordinary hyphen bullets.
-- The system now blocks a subtle ATS false positive: declaring a keyword in `keywords_used` while omitting the exact phrase from `ats_cv_text`.
+- The system now blocks a subtle ATS false positive: declaring a keyword in `keywords_used` while omitting the normalized token-aware phrase from `ats_cv_text`.
 - The generated format is intentionally ATS-oriented, not a heavily designed visual resume. That is correct for ATS submission, but the visual styling will look simpler than a designed PDF resume.
 
 ## PDF Visual Render Check

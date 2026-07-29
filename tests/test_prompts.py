@@ -27,7 +27,7 @@ def test_load_prompt_uses_registry_active_version():
     assert "very short one-role base CV may use 16-17 well-structured lines" in load_prompt(
         "materials", "nvidia_cv_contract"
     )
-    assert "Every item in keywords_used must appear verbatim in ats_cv_text" in load_prompt(
+    assert "Every item in keywords_used must appear as a normalized literal, token-aware phrase in ats_cv_text" in load_prompt(
         "materials", "nvidia_cv_contract"
     )
     assert "Target at least 20 well-structured lines" in load_prompt("materials", "nvidia_cv_contract")
