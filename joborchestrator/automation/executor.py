@@ -13,6 +13,7 @@ from playwright.async_api import Browser, BrowserContext, Page, TimeoutError as 
 from joborchestrator.automation.adapters import AdapterRegistry
 from joborchestrator.automation.accounts import load_password, site_identity_from_url
 from joborchestrator.automation import local_browser_agent
+from joborchestrator.automation.answer_bank import requires_explicit_human_consent
 from joborchestrator.automation.journey import ApplicationJourneyEngine
 from joborchestrator.automation.validation import validate_application_surface
 from joborchestrator.intelligence.llm_application_materials import export_ats_cv_pdf_bytes
@@ -1115,6 +1116,8 @@ def safe_fill_plan(mapping: dict[str, Any]) -> list[dict[str, str]]:
         canonical = str(answer.get("canonical_key") or "").strip()
         if not value or not field_name:
             continue
+        if _requires_explicit_human_consent(answer):
+            continue
         if answer.get("source") != "approved_answer" and canonical not in {
             "full_name",
             "email",
@@ -1146,6 +1149,14 @@ def safe_fill_plan(mapping: dict[str, Any]) -> list[dict[str, str]]:
             continue
         plan.append({"field_name": field_name, "value": value, "canonical_key": canonical, "action_type": "fill_text"})
     return plan
+
+
+def _requires_explicit_human_consent(answer: dict[str, Any]) -> bool:
+    return requires_explicit_human_consent(
+        str(answer.get("label") or ""),
+        str(answer.get("field_name") or ""),
+        str(answer.get("canonical_key") or ""),
+    )
 
 
 def _match_option(value: str, options: list[Any]) -> dict[str, str] | None:

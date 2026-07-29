@@ -4,6 +4,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
+from joborchestrator.automation.answer_bank import requires_explicit_human_consent
+
 
 JourneyPhase = Literal[
     "surface_discovery",
@@ -305,6 +307,18 @@ def _planned_action_for_answer(answer: dict[str, Any], control_handle: dict[str,
         )
     if not value:
         return None
+    if _requires_explicit_human_consent(answer):
+        return PlannedAction(
+            action_type="review_answer",
+            field_name=field_name,
+            canonical_key=canonical,
+            field_type=field_type,
+            policy="require_confirmation",
+            surface_id=(control_handle or {}).get("surface_id"),
+            control_handle=control_handle,
+            source=answer.get("source"),
+            reason="explicit_human_consent_required",
+        )
     if answer.get("source") != "approved_answer" and canonical not in {
         "full_name",
         "email",
@@ -349,6 +363,14 @@ def _planned_action_for_answer(answer: dict[str, Any], control_handle: dict[str,
         control_handle=control_handle,
         source=answer.get("source"),
         value_preview=_preview_value(value),
+    )
+
+
+def _requires_explicit_human_consent(answer: dict[str, Any]) -> bool:
+    return requires_explicit_human_consent(
+        str(answer.get("label") or ""),
+        str(answer.get("field_name") or ""),
+        str(answer.get("canonical_key") or ""),
     )
 
 
