@@ -273,6 +273,12 @@ def test_adapter_registry_uses_generic_form_for_apply_landing_page() -> None:
     assert AdapterRegistry().detect(html, {"apply_url": "https://careers.example.test/jobs/backend"}).provider == "generic_form"
 
 
+def test_adapter_registry_can_fetch_executable_adapter_by_provider() -> None:
+    registry = AdapterRegistry()
+
+    assert registry.get("generic_form").provider == "generic_form"
+
+
 def test_provider_capabilities_are_explicit_and_do_not_claim_submit() -> None:
     registry = AdapterRegistry()
     greenhouse = registry.capabilities("greenhouse")

@@ -6,7 +6,9 @@ from pathlib import Path
 from urllib.parse import quote
 
 from scripts.audit_application_coverage import (
+    adapter_uplift,
     audit_application_coverage,
+    automation_score,
     coverage_score,
     read_urls,
     write_csv_report,
@@ -83,6 +85,22 @@ def test_coverage_score_classifies_low_friction_and_gaps() -> None:
     )
 
 
+def test_adapter_uplift_compares_generic_and_detected_results() -> None:
+    generic = {"coverage_score": "partial_needs_answers", "provider_detected": "generic_form"}
+    adapter = {"coverage_score": "ready_no_human_input", "provider_detected": "greenhouse"}
+
+    assert automation_score(generic) == 0.55
+    assert adapter_uplift(generic, adapter) == {
+        "generic_score": 0.55,
+        "adapter_score": 1.0,
+        "delta": 0.45,
+        "generic_coverage_score": "partial_needs_answers",
+        "adapter_coverage_score": "ready_no_human_input",
+        "generic_provider": "generic_form",
+        "adapter_provider": "greenhouse",
+    }
+
+
 def test_report_writers_create_json_csv_and_markdown(tmp_path: Path) -> None:
     report = {
         "dry_run": True,
@@ -120,6 +138,13 @@ def test_report_writers_create_json_csv_and_markdown(tmp_path: Path) -> None:
                 "steps_completed_without_human": 0,
                 "step_advance_success_rate": 0.0,
                 "submit_only_ready": True,
+                "adapter_uplift": {
+                    "generic_score": 1.0,
+                    "adapter_score": 1.0,
+                    "delta": 0.0,
+                    "generic_coverage_score": "ready_no_human_input",
+                    "adapter_coverage_score": "ready_no_human_input",
+                },
                 "reason": None,
                 "last_error": None,
                 "final_url": "https://example.test/apply",
@@ -134,6 +159,8 @@ def test_report_writers_create_json_csv_and_markdown(tmp_path: Path) -> None:
 
     assert "ready_no_human_input" in (tmp_path / "audit.json").read_text(encoding="utf-8")
     assert "human_intervention_status" in (tmp_path / "audit.csv").read_text(encoding="utf-8")
+    assert "adapter_uplift_delta" in (tmp_path / "audit.csv").read_text(encoding="utf-8")
+    assert "Adapter uplift" in (tmp_path / "audit.md").read_text(encoding="utf-8")
     assert "| URL | Provider | State | Score |" in (tmp_path / "audit.md").read_text(encoding="utf-8")
 
 
@@ -148,6 +175,7 @@ def test_audit_application_coverage_runs_dry_run_on_local_fixture(tmp_path: Path
             headful=False,
             timeout_ms=10_000,
             keep_db=False,
+            compare_generic=True,
         )
     )
 
@@ -166,6 +194,9 @@ def test_audit_application_coverage_runs_dry_run_on_local_fixture(tmp_path: Path
     assert result["human_intervention_status"] == "submit_only"
     assert result["human_intervention_types"] == ["submit_only"]
     assert result["submit_only_intervention_rate"] == 1.0
+    assert result["generic_engine_result"]["provider_detected"] == "generic_form"
+    assert result["adapter_uplift"]["delta"] == 0.0
+    assert report["summary"]["average_adapter_uplift"] == 0.0
 
 
 def test_audit_application_coverage_restores_environment(tmp_path: Path, monkeypatch) -> None:

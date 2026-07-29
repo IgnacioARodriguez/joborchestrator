@@ -306,6 +306,12 @@ class AdapterRegistry:
                 return adapter
         return self._adapters[-1]
 
+    def get(self, provider: str) -> ApplicationAdapter:
+        for adapter in self._adapters:
+            if adapter.provider == provider:
+                return adapter
+        raise KeyError(f"Unknown executable application adapter: {provider}")
+
     def capabilities(self, provider: str | None = None) -> list[ProviderCapabilities] | ProviderCapabilities:
         if provider:
             return self._declared.get(provider, self._declared["generic"])

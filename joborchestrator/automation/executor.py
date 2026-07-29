@@ -54,6 +54,7 @@ async def run_application_execution(
     job_id: int,
     apply_url: str,
     provider_hint: str = "generic",
+    provider_override: str | None = None,
     dry_run: bool = True,
     progress: Progress | None = None,
 ) -> dict[str, Any]:
@@ -229,7 +230,11 @@ async def run_application_execution(
 
     job = db.get_job_posting(job_id) or {}
     registry = AdapterRegistry()
-    adapter = registry.detect(html, {**job, "apply_url": apply_url, "url": apply_url, "source": provider_hint})
+    adapter = (
+        registry.get(provider_override)
+        if provider_override
+        else registry.detect(html, {**job, "apply_url": apply_url, "url": apply_url, "source": provider_hint})
+    )
     _progress(progress, f"Detected provider: {adapter.provider}.")
     capabilities = adapter.capabilities()
     identity = site_identity_from_url(url, adapter.provider)

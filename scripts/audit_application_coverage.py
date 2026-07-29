@@ -67,14 +67,21 @@ def read_urls(*, urls: list[str], urls_file: Path | None, limit: int | None) -> 
     return deduped
 
 
-async def audit_application_url(url: str, *, provider: str, index: int) -> dict[str, object]:
+async def audit_application_url(
+    url: str,
+    *,
+    provider: str,
+    index: int,
+    provider_override: str | None = None,
+    external_id_prefix: str = "coverage-audit",
+) -> dict[str, object]:
     from joborchestrator.automation.executor import run_application_execution
     from joborchestrator.scanning.models import JobPosting
     from joborchestrator.scanning.normalization import compute_content_hash
     from joborchestrator.storage import persistence as db
 
     started = time.monotonic()
-    external_id = f"coverage-audit-{index}"
+    external_id = f"{external_id_prefix}-{index}"
     job = JobPosting(
         external_id=external_id,
         source=provider,
@@ -108,6 +115,7 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
             job_id=job_id,
             apply_url=url,
             provider_hint=provider,
+            provider_override=provider_override,
             dry_run=True,
         )
         updated = db.get_application_session(int(session["id"])) or {}
@@ -143,6 +151,7 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
         return {
             "url": url,
             "provider_hint": provider,
+            "provider_override": provider_override,
             "provider_detected": execution.get("provider"),
             "state": state,
             "coverage_score": score,
@@ -186,6 +195,7 @@ async def audit_application_url(url: str, *, provider: str, index: int) -> dict[
         return {
             "url": url,
             "provider_hint": provider,
+            "provider_override": provider_override,
             "provider_detected": None,
             "state": "failed",
             "coverage_score": "failed",
@@ -259,6 +269,7 @@ async def audit_application_coverage(
     headful: bool,
     timeout_ms: int,
     keep_db: bool,
+    compare_generic: bool = False,
 ) -> dict[str, object]:
     original_env = {key: os.environ.get(key) for key in AUDIT_ENV_KEYS}
     _remove_db(db_path)
@@ -276,7 +287,18 @@ async def audit_application_coverage(
 
         results: list[dict[str, object]] = []
         for index, url in enumerate(urls, start=1):
-            results.append(await audit_application_url(url, provider=provider, index=index))
+            result = await audit_application_url(url, provider=provider, index=index)
+            if compare_generic:
+                generic_result = await audit_application_url(
+                    url,
+                    provider=provider,
+                    index=index,
+                    provider_override="generic_form",
+                    external_id_prefix="coverage-audit-generic",
+                )
+                result["generic_engine_result"] = generic_result
+                result["adapter_uplift"] = adapter_uplift(generic_result, result)
+            results.append(result)
 
         summary = summarize_results(results)
         report = {
@@ -315,7 +337,50 @@ def summarize_results(results: list[dict[str, object]]) -> dict[str, object]:
         "low_friction_ratio": round(low_friction / total, 3) if total else 0,
         "by_score": by_score,
         "by_provider": by_provider,
+        "average_adapter_uplift": _average_adapter_uplift(results),
     }
+
+
+def adapter_uplift(generic_result: dict[str, object], adapter_result: dict[str, object]) -> dict[str, object]:
+    generic_score = automation_score(generic_result)
+    adapter_score = automation_score(adapter_result)
+    return {
+        "generic_score": generic_score,
+        "adapter_score": adapter_score,
+        "delta": round(adapter_score - generic_score, 3),
+        "generic_coverage_score": generic_result.get("coverage_score"),
+        "adapter_coverage_score": adapter_result.get("coverage_score"),
+        "generic_provider": generic_result.get("provider_detected"),
+        "adapter_provider": adapter_result.get("provider_detected"),
+    }
+
+
+def automation_score(result: dict[str, object]) -> float:
+    score_weights = {
+        "failed": 0.0,
+        "blocked": 0.0,
+        "posting_unavailable": 0.0,
+        "no_form_detected": 0.1,
+        "manual": 0.2,
+        "partial_needs_answers": 0.55,
+        "ready_no_human_input": 1.0,
+    }
+    score = score_weights.get(str(result.get("coverage_score") or ""), 0.0)
+    verified = result.get("verified_action_success_rate")
+    if isinstance(verified, int | float):
+        score = max(score, min(float(verified), 1.0) * 0.8)
+    return round(score, 3)
+
+
+def _average_adapter_uplift(results: list[dict[str, object]]) -> float | None:
+    deltas = [
+        float((result.get("adapter_uplift") or {}).get("delta"))
+        for result in results
+        if isinstance(result.get("adapter_uplift"), dict) and (result.get("adapter_uplift") or {}).get("delta") is not None
+    ]
+    if not deltas:
+        return None
+    return round(sum(deltas) / len(deltas), 3)
 
 
 def write_json_report(path: Path, report: dict[str, object]) -> None:
@@ -357,6 +422,10 @@ def write_csv_report(path: Path, results: list[dict[str, object]]) -> None:
         "steps_completed_without_human",
         "step_advance_success_rate",
         "submit_only_ready",
+        "adapter_uplift_delta",
+        "generic_engine_score",
+        "adapter_engine_score",
+        "generic_engine_coverage_score",
         "reason",
         "last_error",
         "final_url",
@@ -366,7 +435,16 @@ def write_csv_report(path: Path, results: list[dict[str, object]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         for result in results:
-            writer.writerow({column: result.get(column) for column in columns})
+            uplift = result.get("adapter_uplift") if isinstance(result.get("adapter_uplift"), dict) else {}
+            writer.writerow(
+                {
+                    **{column: result.get(column) for column in columns},
+                    "adapter_uplift_delta": uplift.get("delta"),
+                    "generic_engine_score": uplift.get("generic_score"),
+                    "adapter_engine_score": uplift.get("adapter_score"),
+                    "generic_engine_coverage_score": uplift.get("generic_coverage_score"),
+                }
+            )
 
 
 def write_markdown_report(path: Path, report: dict[str, object]) -> None:
@@ -382,6 +460,7 @@ def write_markdown_report(path: Path, report: dict[str, object]) -> None:
         f"- Low-friction ready: `{summary.get('low_friction_count')}` (`{summary.get('low_friction_ratio')}`)",
         f"- By score: `{json.dumps(summary.get('by_score'), sort_keys=True)}`",
         f"- By provider: `{json.dumps(summary.get('by_provider'), sort_keys=True)}`",
+        f"- Average adapter uplift: `{summary.get('average_adapter_uplift')}`",
         "",
         "| URL | Provider | State | Score | Fields | Filled | Unknown | Resume | Submit controls |",
         "| --- | --- | --- | --- | ---: | ---: | ---: | --- | ---: |",
@@ -426,6 +505,13 @@ def write_markdown_report(path: Path, report: dict[str, object]) -> None:
                 f"steps `{result.get('steps_completed_without_human') or 0}` / "
                 f"submit-only `{result.get('submit_only_ready')}`"
             )
+        if isinstance(result.get("adapter_uplift"), dict):
+            uplift = result["adapter_uplift"]
+            assert isinstance(uplift, dict)
+            lines.append(
+                f"  - Adapter uplift: `{uplift.get('delta')}` "
+                f"(generic `{uplift.get('generic_coverage_score')}` -> adapter `{uplift.get('adapter_coverage_score')}`)"
+            )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -455,6 +541,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--md-out", type=Path, default=PROJECT_ROOT / "logs" / "application-coverage-audit.md")
     parser.add_argument("--headful", action="store_true", help="Show Chromium while the audit runs.")
     parser.add_argument("--keep-db", action="store_true")
+    parser.add_argument("--compare-generic", action="store_true", help="Also run each URL with the generic_form engine and report adapter uplift.")
     parser.add_argument("--timeout-ms", type=int, default=30_000)
     args = parser.parse_args(argv)
 
@@ -472,6 +559,7 @@ def main(argv: list[str] | None = None) -> int:
             headful=args.headful,
             timeout_ms=args.timeout_ms,
             keep_db=args.keep_db,
+            compare_generic=args.compare_generic,
         )
     )
     write_json_report(args.json_out, report)
