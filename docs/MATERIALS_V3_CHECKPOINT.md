@@ -97,7 +97,7 @@ npm run build
 Result: passed
 ```
 
-GitHub CLI was available locally but not authenticated, so PR creation/check inspection could not be performed from this environment.
+GitHub CLI was available locally but not authenticated. The authenticated GitHub connector confirmed the remote compare state, but PR creation returned `403 Resource not accessible by integration`. Use `https://github.com/IgnacioARodriguez/joborchestrator/compare/main...codex/chat-isolated-work` or an authenticated `gh pr create` command to open the draft PR.
 
 ## Probe Artifact Map
 

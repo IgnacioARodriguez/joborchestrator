@@ -2,7 +2,11 @@
 
 Branch: `codex/chat-isolated-work`
 Base: `origin/main`
-Local state at brief time: current branch HEAD after rebase, `0 behind / 26 ahead` relative to `origin/main`.
+Local state at brief time: current branch HEAD after rebase, `0 behind / 27 ahead` relative to `origin/main`.
+
+Compare URL:
+
+`https://github.com/IgnacioARodriguez/joborchestrator/compare/main...codex/chat-isolated-work`
 
 ## Summary
 
@@ -64,4 +68,6 @@ Key final live follow-up:
 ## Known Limits
 
 - Raw live artifacts and rendered PNGs are intentionally local-only because they may include candidate/contact data.
-- GitHub CLI was not authenticated in the local environment; remote GitHub actions were performed through the authenticated GitHub connector when available.
+- GitHub CLI was not authenticated in the local environment.
+- The GitHub connector confirmed the remote branch diff, but PR creation returned `403 Resource not accessible by integration`.
+- Open the compare URL above or run `gh pr create --draft --base main --head codex/chat-isolated-work --title "Harden Materials v3 ATS generation guardrails" --body-file docs/MATERIALS_V3_PR_BRIEF.md` from an authenticated shell.
