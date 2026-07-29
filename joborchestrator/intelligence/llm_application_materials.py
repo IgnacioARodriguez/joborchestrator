@@ -1220,6 +1220,7 @@ def _kit_response_validation_error(
     problems.extend(_unsupported_hedge_problems(kit_text))
     problems.extend(_materials_internal_note_problems(kit_text))
     problems.extend(_application_tone_problems(payload, source_payload))
+    problems.extend(_unsupported_experience_years_problems(kit_text, source_payload, field_name="application_materials"))
     return "; ".join(problems) if problems else None
 
 
@@ -1313,6 +1314,7 @@ def _ats_cv_response_validation_error(
     problems.extend(_experience_density_problems(str(base_cv_text or ""), ats_cv_text))
     problems.extend(_experience_technology_attribution_problems(str(base_cv_text or ""), ats_cv_text))
     problems.extend(_avoid_overclaiming_problems(ats_cv_text, source_payload, field_name="ats_cv_text"))
+    problems.extend(_unsupported_experience_years_problems(ats_cv_text, source_payload, field_name="ats_cv_text"))
     return "; ".join(problems) if problems else None
 
 
@@ -1712,6 +1714,57 @@ def _avoid_overclaiming_problems(
         + ". Remove these exact terms and aliases from every generated field, including caveats or gap notes; "
         + "describe unsupported target-stack gaps generically instead."
     ]
+
+
+def _unsupported_experience_years_problems(
+    text: str,
+    source_payload: dict[str, Any] | None,
+    *,
+    field_name: str,
+) -> list[str]:
+    if not source_payload:
+        return []
+    claims = _experience_year_claims(text)
+    if not claims:
+        return []
+    supported_source = _supported_materials_source_text(source_payload)
+    supported_normalized = _normalize_for_match(supported_source)
+    profile = source_payload.get("candidate_profile") if isinstance(source_payload.get("candidate_profile"), dict) else {}
+    real_years = _float_or_none(profile.get("real_experience_years"))
+    unsupported: list[str] = []
+    for claim in claims:
+        if _contains_phrase_for_materials(supported_normalized, claim):
+            continue
+        claim_years = _experience_year_value(claim)
+        if claim_years is not None and real_years is not None and claim_years <= real_years:
+            continue
+        unsupported.append(claim)
+    if not unsupported:
+        return []
+    return [
+        f"{field_name} contains unsupported years-of-experience claims: "
+        + ", ".join(unsupported[:4])
+        + ". Remove or lower years claims unless Context.base_cv or candidate_profile.real_experience_years supports them."
+    ]
+
+
+def _experience_year_claims(text: str) -> list[str]:
+    return _dedupe_strings(
+        match.group(0)
+        for match in re.finditer(r"\b\d{1,2}\+?\s*(?:years|years'|anos|años)\b", str(text or ""), flags=re.IGNORECASE)
+    )
+
+
+def _experience_year_value(claim: str) -> float | None:
+    match = re.search(r"\b(\d{1,2})", str(claim or ""))
+    return float(match.group(1)) if match else None
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _avoid_overclaiming_aliases(term: str) -> list[str]:

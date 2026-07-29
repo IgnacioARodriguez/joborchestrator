@@ -773,6 +773,51 @@ def test_nvidia_kit_validation_rejects_serverless_aliases_from_cover_letter():
     assert "AWS Lambda" in error
 
 
+def test_materials_validation_rejects_unsupported_years_of_experience_claims():
+    error = _materials_validation_error(
+        {
+            "recruiter_message": "Hi Datosur, my Python API background may fit the Backend role.",
+            "cover_letter": "My Python API and SQL reporting experience maps to the role.",
+            "ats_cv_text": _complete_ats_cv_text().replace("with 4+ years of experience", "with backend experience"),
+            "autofill_notes": "Backend developer with 4+ years of experience in Python APIs.",
+            "risk_flags": [],
+            "keywords_used": ["Python"],
+        },
+        source_payload={
+            "base_cv": {"text": "Professional Experience\nBackend Developer 04/2022 - 03/2026\nAcme\n- Built APIs."},
+            "candidate_profile": {"skills": [{"name": "Python"}]},
+            "ranking": {},
+            "job": {"title": "Backend Developer", "company": "Datosur"},
+        },
+    )
+
+    assert error is not None
+    assert "unsupported years-of-experience claims" in error
+    assert "4+ years" in error
+
+
+def test_materials_validation_allows_declared_years_of_experience_claims():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Acme, my Python API background may fit the Backend role.",
+            "cover_letter": (
+                "I bring 4+ years of backend experience with Python APIs and reporting workflows. "
+                "That background maps to the role through practical backend delivery, documentation, "
+                "and collaboration with product and operations teams."
+            ),
+            "autofill_notes": "Use the Python API angle.",
+        },
+        {
+            "base_cv": {"text": "Professional Experience\nBackend Developer\n- Built APIs."},
+            "candidate_profile": {"real_experience_years": 4, "skills": [{"name": "Python"}]},
+            "ranking": {},
+            "job": {"title": "Backend Developer", "company": "Acme"},
+        },
+    )
+
+    assert error is None
+
+
 def test_materials_payload_exposes_avoid_overclaiming_aliases(monkeypatch):
     from joborchestrator.intelligence import llm_application_materials
 
