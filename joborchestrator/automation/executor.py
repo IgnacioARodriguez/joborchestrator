@@ -1231,6 +1231,8 @@ async def fill_safe_fields_on_page(page: Page, mapping: dict[str, Any], *, dry_r
                 if await locator.count() > 0:
                     await locator.select_option(value=value, timeout=3000)
                     filled.append(field_name)
+                elif await _select_aria_choice(page, field_name=field_name, value=value, dry_run=dry_run):
+                    filled.append(field_name)
                 else:
                     skipped.append(field_name)
             except Exception:
@@ -1242,6 +1244,8 @@ async def fill_safe_fields_on_page(page: Page, mapping: dict[str, Any], *, dry_r
                 if await locator.count() > 0:
                     await locator.check(timeout=3000)
                     filled.append(field_name)
+                elif await _choose_aria_radio(page, field_name=field_name, value=value, dry_run=dry_run):
+                    filled.append(field_name)
                 else:
                     skipped.append(field_name)
             except Exception:
@@ -1252,6 +1256,8 @@ async def fill_safe_fields_on_page(page: Page, mapping: dict[str, Any], *, dry_r
             try:
                 if await locator.count() > 0:
                     await locator.check(timeout=3000)
+                    filled.append(field_name)
+                elif await _check_aria_checkbox(page, field_name=field_name, dry_run=dry_run):
                     filled.append(field_name)
                 else:
                     skipped.append(field_name)
@@ -1293,6 +1299,147 @@ async def fill_safe_fields_on_page(page: Page, mapping: dict[str, Any], *, dry_r
         "filled_fields": filled,
         "skipped_fields": skipped,
     }
+
+
+async def _select_aria_choice(page: Page, *, field_name: str, value: str, dry_run: bool) -> bool:
+    result = await page.evaluate(
+        """({ fieldName, value, dryRun }) => {
+          function text(raw) {
+            return String(raw || '').replace(/\\s+/g, ' ').trim();
+          }
+          function normalized(raw) {
+            return text(raw).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+          }
+          function visible(element) {
+            const style = window.getComputedStyle(element);
+            return style.display !== 'none'
+              && style.visibility !== 'hidden'
+              && !element.hidden
+              && Boolean(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+          }
+          function labelFor(element) {
+            const explicitLabel = element.id ? document.querySelector(`label[for="${CSS.escape(element.id)}"]`) : null;
+            if (explicitLabel) return text(explicitLabel.innerText || explicitLabel.textContent);
+            const labelledBy = element.getAttribute('aria-labelledby');
+            if (labelledBy) {
+              const label = labelledBy.split(/\\s+/).map(part => document.getElementById(part)?.innerText || document.getElementById(part)?.textContent || '').join(' ');
+              if (text(label)) return text(label);
+            }
+            return text(element.getAttribute('aria-label') || element.getAttribute('name') || element.id || '');
+          }
+          function keyFor(element) {
+            return element.getAttribute('name') || element.id || element.getAttribute('aria-label') || labelFor(element);
+          }
+          function optionText(element) {
+            return text(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('data-value') || element.getAttribute('value'));
+          }
+          const wantedField = normalized(fieldName);
+          const wantedValue = normalized(value);
+          const controls = Array.from(document.querySelectorAll('[role="combobox"], [role="listbox"]'))
+            .filter(element => visible(element) && normalized(keyFor(element)) === wantedField);
+          for (const control of controls) {
+            control.click();
+            const ownerIds = (control.getAttribute('aria-controls') || control.getAttribute('aria-owns') || '').split(/\\s+/).filter(Boolean);
+            const containers = [control, ...ownerIds.map(id => document.getElementById(id)).filter(Boolean)];
+            const options = containers.flatMap(container => Array.from(container.querySelectorAll('[role="option"]')));
+            const option = options.find(item => visible(item) && normalized(optionText(item)) === wantedValue);
+            if (!option) continue;
+            option.click();
+            control.setAttribute('data-joborchestrator-selected-value', value);
+            if (dryRun) control.setAttribute('data-joborchestrator-dry-run', 'filled');
+            return true;
+          }
+          return false;
+        }""",
+        {"fieldName": field_name, "value": value, "dryRun": dry_run},
+    )
+    return bool(result)
+
+
+async def _choose_aria_radio(page: Page, *, field_name: str, value: str, dry_run: bool) -> bool:
+    result = await page.evaluate(
+        """({ fieldName, value, dryRun }) => {
+          function text(raw) {
+            return String(raw || '').replace(/\\s+/g, ' ').trim();
+          }
+          function normalized(raw) {
+            return text(raw).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+          }
+          function visible(element) {
+            const style = window.getComputedStyle(element);
+            return style.display !== 'none'
+              && style.visibility !== 'hidden'
+              && !element.hidden
+              && Boolean(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+          }
+          function labelFor(element) {
+            const labelledBy = element.getAttribute('aria-labelledby');
+            if (labelledBy) {
+              const label = labelledBy.split(/\\s+/).map(part => document.getElementById(part)?.innerText || document.getElementById(part)?.textContent || '').join(' ');
+              if (text(label)) return text(label);
+            }
+            return text(element.getAttribute('aria-label') || element.getAttribute('name') || element.id || element.innerText || element.textContent);
+          }
+          function keyFor(element) {
+            return element.getAttribute('name') || element.id || element.getAttribute('aria-label') || labelFor(element);
+          }
+          const wantedField = normalized(fieldName);
+          const wantedValue = normalized(value);
+          const groups = Array.from(document.querySelectorAll('[role="radiogroup"]'))
+            .filter(element => visible(element) && normalized(keyFor(element)) === wantedField);
+          for (const group of groups) {
+            const radios = Array.from(group.querySelectorAll('[role="radio"]')).filter(visible);
+            const radio = radios.find(item => normalized(labelFor(item)) === wantedValue || normalized(item.getAttribute('data-value')) === wantedValue);
+            if (!radio) continue;
+            radio.click();
+            radios.forEach(item => item.setAttribute('aria-checked', item === radio ? 'true' : 'false'));
+            group.setAttribute('data-joborchestrator-selected-value', value);
+            if (dryRun) group.setAttribute('data-joborchestrator-dry-run', 'filled');
+            return true;
+          }
+          return false;
+        }""",
+        {"fieldName": field_name, "value": value, "dryRun": dry_run},
+    )
+    return bool(result)
+
+
+async def _check_aria_checkbox(page: Page, *, field_name: str, dry_run: bool) -> bool:
+    result = await page.evaluate(
+        """({ fieldName, dryRun }) => {
+          function text(raw) {
+            return String(raw || '').replace(/\\s+/g, ' ').trim();
+          }
+          function normalized(raw) {
+            return text(raw).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+          }
+          function visible(element) {
+            const style = window.getComputedStyle(element);
+            return style.display !== 'none'
+              && style.visibility !== 'hidden'
+              && !element.hidden
+              && Boolean(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+          }
+          function labelFor(element) {
+            const labelledBy = element.getAttribute('aria-labelledby');
+            if (labelledBy) {
+              const label = labelledBy.split(/\\s+/).map(part => document.getElementById(part)?.innerText || document.getElementById(part)?.textContent || '').join(' ');
+              if (text(label)) return text(label);
+            }
+            return text(element.getAttribute('aria-label') || element.getAttribute('name') || element.id || element.innerText || element.textContent);
+          }
+          const wantedField = normalized(fieldName);
+          const checkbox = Array.from(document.querySelectorAll('[role="checkbox"]'))
+            .find(element => visible(element) && normalized(element.getAttribute('name') || element.id || element.getAttribute('aria-label') || labelFor(element)) === wantedField);
+          if (!checkbox) return false;
+          if (checkbox.getAttribute('aria-checked') !== 'true') checkbox.click();
+          checkbox.setAttribute('aria-checked', 'true');
+          if (dryRun) checkbox.setAttribute('data-joborchestrator-dry-run', 'filled');
+          return true;
+        }""",
+        {"fieldName": field_name, "dryRun": dry_run},
+    )
+    return bool(result)
 
 
 def resolve_resume_upload_file(job_id: int, job: dict[str, Any], *, max_bytes: int = 5_000_000) -> dict[str, Any]:

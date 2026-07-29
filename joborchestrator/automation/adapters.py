@@ -452,8 +452,15 @@ _APPLICATION_FORM_DISCOVERY_JS = """
 form => {
   const TECHNICAL_RE = /(^_|^hp_|csrf|token|utf8|captcha|g-recaptcha|h-captcha|honeypot|bot-field|website_url)/i;
   const controls = Array.from(form.querySelectorAll('input, textarea, select'));
+  const ariaControls = Array.from(form.querySelectorAll('[role="combobox"], [role="listbox"], [role="radiogroup"], [role="radio"], [role="checkbox"]'));
+  const controlledAriaIds = new Set(
+    ariaControls
+      .flatMap(element => String(element.getAttribute('aria-controls') || element.getAttribute('aria-owns') || '').split(/\\s+/))
+      .filter(Boolean)
+  );
   const byNameRadio = new Map();
   const fields = [];
+  const seenControlKeys = new Set();
 
   function text(value) {
     return String(value || '').replace(/\\s+/g, ' ').trim().replace(/\\s*\\*\\s*$/, '').trim();
@@ -525,12 +532,80 @@ form => {
     };
   }
 
+  function elementKey(element, fallbackLabel) {
+    return element.getAttribute('name') || element.id || element.getAttribute('aria-label') || element.getAttribute('data-testid') || fallbackLabel || '';
+  }
+
+  function optionLabel(element) {
+    return text(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('data-value') || element.getAttribute('value'));
+  }
+
+  function ariaOptions(element) {
+    const owns = element.getAttribute('aria-controls') || element.getAttribute('aria-owns') || '';
+    const containers = [element];
+    for (const part of owns.split(/\\s+/).filter(Boolean)) {
+      const owned = document.getElementById(part);
+      if (owned) containers.push(owned);
+    }
+    const options = [];
+    for (const container of containers) {
+      for (const option of Array.from(container.querySelectorAll('[role="option"], [role="radio"]'))) {
+        const label = optionLabel(option);
+        if (label) options.push({ value: option.getAttribute('data-value') || option.getAttribute('value') || label, label });
+      }
+    }
+    return options;
+  }
+
+  function ariaField(element) {
+    const role = String(element.getAttribute('role') || '').toLowerCase();
+    const labelled = labelFor(element);
+    const label = labelled.label || text(element.getAttribute('aria-label'));
+    const key = elementKey(element, label);
+    if (!key || isHidden(element)) return null;
+    if (role === 'combobox' || role === 'listbox') {
+      return {
+        id: key,
+        name: key,
+        label,
+        type: 'select',
+        required: element.getAttribute('aria-required') === 'true' || /[\\*âœ±]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
+        locator_strategy: 'aria_role',
+        options: ariaOptions(element),
+      };
+    }
+    if (role === 'radiogroup') {
+      return {
+        id: key,
+        name: key,
+        label,
+        type: 'radio',
+        required: element.getAttribute('aria-required') === 'true' || /[\\*âœ±]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
+        locator_strategy: 'aria_role',
+        options: ariaOptions(element),
+      };
+    }
+    if (role === 'checkbox') {
+      return {
+        id: key,
+        name: key,
+        label,
+        type: 'checkbox',
+        required: element.getAttribute('aria-required') === 'true' || /[\\*âœ±]/.test(element.closest('label, .application-question, .custom-question, .posting-field')?.textContent || ''),
+        locator_strategy: 'aria_role',
+        options: [{ value: element.getAttribute('data-value') || 'checked', label }],
+      };
+    }
+    return null;
+  }
+
   for (const element of controls) {
     const name = element.getAttribute('name') || '';
     const id = element.id || '';
     if (element.disabled || isHidden(element) || TECHNICAL_RE.test(name) || TECHNICAL_RE.test(id)) continue;
     const field = baseField(element);
     if (!field.label && !field.name) continue;
+    seenControlKeys.add(elementKey(element, field.label));
     if (field.type === 'radio') {
       const groupKey = name || id || field.label;
       const legend = text(element.closest('fieldset')?.querySelector('legend')?.innerText || element.closest('fieldset')?.querySelector('legend')?.textContent);
@@ -553,6 +628,17 @@ form => {
     fields.push(field);
   }
   fields.push(...Array.from(byNameRadio.values()));
+  for (const element of ariaControls) {
+    const role = String(element.getAttribute('role') || '').toLowerCase();
+    if (element.matches('input, textarea, select') || element.disabled || isHidden(element)) continue;
+    if (role === 'listbox' && element.id && controlledAriaIds.has(element.id)) continue;
+    if (role === 'radio' && element.closest('[role="radiogroup"]')) continue;
+    const field = ariaField(element);
+    if (!field || seenControlKeys.has(field.name)) continue;
+    if ((field.type === 'select' || field.type === 'radio') && !field.options.length) continue;
+    fields.push(field);
+    seenControlKeys.add(field.name);
+  }
   return fields;
 }
 """

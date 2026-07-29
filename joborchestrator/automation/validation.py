@@ -135,22 +135,52 @@ async def _check_postcondition(surface: Any, postcondition: dict[str, Any]) -> F
         return None
     result = await surface.evaluate(
         """({ fieldName, actionType }) => {
+          function text(raw) {
+            return String(raw || '').replace(/\\s+/g, ' ').trim();
+          }
+          function normalized(raw) {
+            return text(raw).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+          }
+          function visible(element) {
+            const style = window.getComputedStyle(element);
+            return style.display !== 'none'
+              && style.visibility !== 'hidden'
+              && !element.hidden
+              && Boolean(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+          }
+          function labelFor(element) {
+            const labelledBy = element.getAttribute('aria-labelledby');
+            if (labelledBy) {
+              const label = labelledBy.split(/\\s+/).map(part => document.getElementById(part)?.innerText || document.getElementById(part)?.textContent || '').join(' ');
+              if (text(label)) return text(label);
+            }
+            return text(element.getAttribute('aria-label') || element.getAttribute('name') || element.id || element.innerText || element.textContent);
+          }
+          function keyFor(element) {
+            return element.getAttribute('name') || element.id || element.getAttribute('aria-label') || labelFor(element);
+          }
           const byName = `[name="${CSS.escape(fieldName)}"]`;
           const byId = `#${CSS.escape(fieldName)}`;
-          const element = document.querySelector(byName) || document.querySelector(byId);
+          const element = document.querySelector(byName) || document.querySelector(byId)
+            || Array.from(document.querySelectorAll('[role="combobox"], [role="listbox"], [role="radiogroup"], [role="checkbox"]'))
+              .find(item => visible(item) && normalized(keyFor(item)) === normalized(fieldName));
           if (!element) return { ok: false, issue_type: 'control_missing', message: 'Control could not be found after actions.' };
           if (element.getAttribute('data-joborchestrator-dry-run') === 'filled') return { ok: true };
           const tag = element.tagName.toLowerCase();
           const type = String(element.getAttribute('type') || '').toLowerCase();
+          const role = String(element.getAttribute('role') || '').toLowerCase();
           if (actionType === 'check') {
-            return { ok: Boolean(element.checked), issue_type: 'postcondition_failed', message: 'Checkbox did not remain checked.' };
+            return { ok: Boolean(element.checked) || element.getAttribute('aria-checked') === 'true', issue_type: 'postcondition_failed', message: 'Checkbox did not remain checked.' };
           }
           if (actionType === 'choose_radio') {
             const checked = document.querySelector(`[name="${CSS.escape(fieldName)}"]:checked`);
-            return { ok: Boolean(checked), issue_type: 'postcondition_failed', message: 'Radio selection was not retained.' };
+            const ariaChecked = element.matches('[role="radiogroup"]')
+              ? element.querySelector('[role="radio"][aria-checked="true"]')
+              : null;
+            return { ok: Boolean(checked || ariaChecked), issue_type: 'postcondition_failed', message: 'Radio selection was not retained.' };
           }
-          if (tag === 'select') {
-            return { ok: Boolean(element.value), issue_type: 'postcondition_failed', message: 'Select value was not retained.' };
+          if (tag === 'select' || role === 'combobox' || role === 'listbox') {
+            return { ok: Boolean(element.value || element.getAttribute('data-joborchestrator-selected-value') || element.getAttribute('aria-activedescendant')), issue_type: 'postcondition_failed', message: 'Select value was not retained.' };
           }
           if (type === 'file') return { ok: true };
           return { ok: Boolean(String(element.value || '').trim()), issue_type: 'postcondition_failed', message: 'Field value was not retained.' };

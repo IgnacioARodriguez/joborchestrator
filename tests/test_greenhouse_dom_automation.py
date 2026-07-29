@@ -14,6 +14,7 @@ from joborchestrator.automation.executor import (
     resolve_resume_upload_file,
     upload_resume_on_page,
 )
+from joborchestrator.automation.validation import validate_application_surface
 
 
 def test_greenhouse_dom_schema_discovers_supported_controls() -> None:
@@ -68,6 +69,37 @@ def test_greenhouse_safe_dom_fill_handles_text_select_and_checkbox_without_sensi
     assert result["salary"] == ""
     assert result["work_authorization_checked"] == []
     assert result["fields_autofilled"] >= 4
+
+
+def test_dom_schema_discovers_aria_custom_controls() -> None:
+    schema = asyncio.run(_extract_schema(_aria_custom_controls_html()))
+    fields = {field["name"]: field for field in schema["fields"]}
+
+    assert fields["location-combobox"]["key"] == "preferred_location"
+    assert fields["location-combobox"]["type"] == "select"
+    assert fields["location-combobox"]["locator_strategy"] == "aria_role"
+    assert fields["location-combobox"]["options"] == [
+        {"value": "Remote", "label": "Remote"},
+        {"value": "Madrid", "label": "Madrid"},
+    ]
+    assert "location-options" not in fields
+    assert fields["work_mode"]["type"] == "radio"
+    assert fields["work_mode"]["options"] == [
+        {"value": "Remote", "label": "Remote"},
+        {"value": "Hybrid", "label": "Hybrid"},
+    ]
+    assert fields["talent-pool"]["key"] == "talent_pool"
+    assert fields["talent-pool"]["type"] == "checkbox"
+
+
+def test_safe_dom_fill_handles_aria_custom_controls() -> None:
+    result = asyncio.run(_fill_aria_custom_controls())
+
+    assert result["location_value"] == "Madrid"
+    assert result["work_mode"] == "Remote"
+    assert result["talent_pool"] is True
+    assert result["validation"]["status"] == "validation_clean"
+    assert result["fields_autofilled"] == 3
 
 
 def test_greenhouse_resume_upload_uses_generated_pdf_and_cleans_temporary_file(tmp_path, monkeypatch) -> None:
@@ -231,3 +263,102 @@ async def _fill_schema(html: str) -> dict:
             return {**values, **fill}
         finally:
             await browser.close()
+
+
+async def _fill_aria_custom_controls() -> dict:
+    adapter = GreenhouseAdapter()
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_aria_custom_controls_html())
+            schema = await adapter.extract_form_schema_page(page)
+            mapping = adapter.map_answers(
+                schema,
+                {},
+                [
+                    {
+                        "canonical_key": "preferred_location",
+                        "value": "Madrid",
+                        "source": "approved",
+                        "sensitivity": "public",
+                        "requires_confirmation": False,
+                    },
+                    {
+                        "canonical_key": "talent_pool",
+                        "value": "yes",
+                        "source": "approved",
+                        "sensitivity": "public",
+                        "requires_confirmation": False,
+                    },
+                    {
+                        "canonical_key": "work_authorization",
+                        "value": "Remote",
+                        "source": "approved",
+                        "sensitivity": "public",
+                        "requires_confirmation": False,
+                    },
+                ],
+            )
+            # Keep this role-specific answer local to avoid teaching the global resolver a portal-specific alias.
+            for answer in mapping["answers"]:
+                if answer["field_name"] == "work_mode":
+                    answer["canonical_key"] = "work_authorization"
+                    answer["source"] = "approved_answer"
+                    answer["value"] = "Remote"
+                    answer["requires_confirmation"] = False
+            fill = await fill_safe_fields_on_page(page, mapping, dry_run=True)
+            validation = await validate_application_surface(
+                page,
+                {
+                    "expected_postconditions": [
+                        {"field_name": "location-combobox", "action_type": "select_option"},
+                        {"field_name": "work_mode", "action_type": "choose_radio"},
+                        {"field_name": "talent-pool", "action_type": "check"},
+                    ]
+                },
+            )
+            values = await page.evaluate(
+                """() => ({
+                  location_value: document.getElementById('location-combobox').getAttribute('data-selected'),
+                  work_mode: document.querySelector('[role="radio"][aria-checked="true"]')?.textContent?.trim() || '',
+                  talent_pool: document.getElementById('talent-pool').getAttribute('aria-checked') === 'true',
+                })"""
+            )
+            return {**values, **fill, "validation": validation.to_dict()}
+        finally:
+            await browser.close()
+
+
+def _aria_custom_controls_html() -> str:
+    return """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application_form">
+          <label id="location-label">Preferred Location *</label>
+          <div
+            id="location-combobox"
+            role="combobox"
+            aria-labelledby="location-label"
+            aria-controls="location-options"
+            aria-required="true"
+            onclick="document.getElementById('location-options').style.display='block'"
+          ></div>
+          <div id="location-options" role="listbox" style="display:block">
+            <div role="option" onclick="document.getElementById('location-combobox').setAttribute('data-selected', 'Remote')">Remote</div>
+            <div role="option" onclick="document.getElementById('location-combobox').setAttribute('data-selected', 'Madrid')">Madrid</div>
+          </div>
+
+          <div id="work-mode-label">Work Mode *</div>
+          <div role="radiogroup" id="work_mode" aria-labelledby="work-mode-label" aria-required="true">
+            <div role="radio" aria-checked="false" onclick="this.setAttribute('aria-checked', 'true')">Remote</div>
+            <div role="radio" aria-checked="false" onclick="this.setAttribute('aria-checked', 'true')">Hybrid</div>
+          </div>
+
+          <div id="talent-pool" role="checkbox" aria-label="Talent Pool" onclick="this.setAttribute('aria-checked', 'true')">Talent Pool</div>
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
