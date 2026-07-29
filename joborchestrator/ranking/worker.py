@@ -17,6 +17,7 @@ from joborchestrator.storage import persistence as db
 DEFAULT_WORKER_CHUNK_SIZE = int(os.getenv("RANKING_WORKER_CHUNK_SIZE", "25"))
 DEFAULT_POLL_SECONDS = float(os.getenv("RANKING_WORKER_POLL_SECONDS", "5"))
 DEFAULT_STALE_SECONDS = int(os.getenv("RANKING_WORKER_STALE_SECONDS", "3600"))
+DEFAULT_ITEM_MAX_ATTEMPTS = int(os.getenv("RANKING_WORKER_ITEM_MAX_ATTEMPTS", "3"))
 LOG_PATH = Path("logs/ranking-worker.log")
 
 logger = logging.getLogger("joborchestrator.ranking.worker")
@@ -121,7 +122,13 @@ def run_worker_once(*, ranking_job_id: int | None = None, chunk_size: int = DEFA
             if summary.get("failed", 0)
             else "NVIDIA did not save a ranking for this job."
         )
-        db.sync_ranking_items_from_rankings(job_id, str(job["ranking_version"]), item_job_ids, missing_error)
+        db.sync_ranking_items_from_rankings(
+            job_id,
+            str(job["ranking_version"]),
+            item_job_ids,
+            missing_error,
+            max_attempts=DEFAULT_ITEM_MAX_ATTEMPTS,
+        )
         db.complete_ranking_job_if_done(job_id)
     except NvidiaRankingError as exc:
         logger.exception("NVIDIA ranking job #%s failed", job_id)
