@@ -654,6 +654,106 @@ def test_application_execution_detects_dynamic_required_fields_after_autofill(tm
     assert artifacts["automation_metrics"]["submit_only_ready"] is False
 
 
+def test_application_execution_waits_for_delayed_spa_application_form(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate", "email": "candidate@example.test"})
+    db.upsert_job_posting(make_job(external_id="delayed-spa-form-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <main id="app">
+          <h1>Backend Engineer</h1>
+          <button onclick="
+            setTimeout(() => {
+              document.getElementById('app').innerHTML = `
+                <form id='application'>
+                  <label for='name'>Full name *</label>
+                  <input id='name' name='name' required>
+                  <label for='email'>Email *</label>
+                  <input id='email' name='email' type='email' required>
+                  <button type='submit'>Submit application</button>
+                </form>
+              `;
+            }, 250);
+          ">Apply now</button>
+        </main>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+
+    assert result["fields_autofilled"] == 2
+    assert result["unknown_fields"] == 0
+    assert updated["state"] == "ready_for_review"
+    assert any(step["action"] == "clicked_control" for step in result["navigation"])
+    assert any(step.get("stability_status") == "stable" for step in result["navigation"])
+
+
+def test_application_execution_detects_delayed_dynamic_required_fields_after_autofill(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate"})
+    db.upsert_job_posting(make_job(external_id="delayed-dynamic-required-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application">
+          <label for="name">Full name *</label>
+          <input id="name" name="name" required oninput="
+            setTimeout(() => {
+              document.getElementById('dynamic').innerHTML = `
+                <label for='portfolio'>Portfolio URL *</label>
+                <input id='portfolio' name='portfolio' required>
+              `;
+            }, 250);
+          ">
+          <div id="dynamic"></div>
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    artifacts = updated["artifacts_json"]
+
+    assert result["fields_autofilled"] == 1
+    assert result["unknown_fields"] == 1
+    assert artifacts["repair"]["dynamic_required_count"] == 1
+    assert artifacts["repair"]["dynamic_required_fields"][0]["name"] == "portfolio"
+    assert artifacts["journey"]["steps"][0]["fill_stability"]["mutation_count"] > 0
+
+
 def test_application_execution_advances_safe_multistep_and_stops_at_submit(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
     monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
