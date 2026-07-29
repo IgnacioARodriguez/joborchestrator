@@ -3,8 +3,8 @@
 Date: 2026-07-29
 Branch: `codex/chat-isolated-work`
 Remote: `https://github.com/IgnacioARodriguez/joborchestrator.git`
-Latest reviewed state: current `codex/chat-isolated-work` HEAD after rebase.
-Base checked against: `origin/main` after rebase; `origin/main...HEAD` is `0 behind / 26 ahead`.
+Latest reviewed state: current `codex/chat-isolated-work` HEAD after rebase and PR-creation fallback documentation.
+Base checked against: `origin/main` after rebase; the branch is expected to be `0 behind` current `origin/main`. Use the compare URL in `docs/MATERIALS_V3_PR_BRIEF.md` for the live ahead count.
 
 This packet is intentionally sanitized. Raw generated CVs, cover letters, PDFs, DOCX files, and probe JSONs contain candidate contact/profile data and remain local under ignored paths (`data/` and `output/`). Use this document for remote code review and qualitative checkpointing; use local artifacts only when a reviewer explicitly needs full generated material text.
 
@@ -24,7 +24,7 @@ What is now supported by evidence:
 
 ## Commits Above `origin/main`
 
-After rebase onto current `origin/main`, `origin/main..HEAD` contains 25 implementation/docs commits:
+After rebase onto current `origin/main`, the implementation history before PR-fallback documentation contained these 25 materials/evals/docs commits:
 
 ```text
 b80963e test(materials): capture fresh v3 raw fixtures

@@ -2,7 +2,7 @@
 
 Branch: `codex/chat-isolated-work`
 Base: `origin/main`
-Local state at brief time: current branch HEAD after rebase, `0 behind / 27 ahead` relative to `origin/main`.
+Local state at brief time: current branch HEAD after rebase, expected `0 behind` relative to `origin/main`. Use the compare URL below for the live ahead count.
 
 Compare URL:
 
