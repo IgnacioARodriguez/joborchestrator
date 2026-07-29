@@ -1537,6 +1537,38 @@ def test_nvidia_batch_validation_rejects_missing_central_term_evidence():
     assert "Snowflake" in error
 
 
+def test_nvidia_payload_reconciliation_satisfies_central_term_validation():
+    payload = _ranking_payload(1, 70, "APPLY_WITH_TAILORED_CV")
+    payload["evidence"]["central_requirements"] = ["Python"]
+    payload["evidence"]["partial_matches"] = ["Python"]
+    payload["evidence"]["missing_requirements"] = []
+    result = {"rankings": [payload]}
+    jobs = [
+        {
+            "id": 1,
+            "title": "Senior Data Engineer",
+            "description_text": "Requirements: Python, Terraform, and Snowflake.",
+        }
+    ]
+
+    nvidia_ranker._reconcile_missing_central_evidence_payload(
+        result,
+        jobs,
+        {"profile_skill_labels": [{"name": "Python", "level": "strong"}], "profile_text": "python"},
+    )
+
+    error = nvidia_ranker._nvidia_batch_validation_error(result, jobs)
+
+    assert error is None
+    evidence = result["rankings"][0]["evidence"]
+    assert "Terraform" in evidence["central_requirements"]
+    assert "Snowflake" in evidence["central_requirements"]
+    assert "Terraform" in evidence["missing_requirements"]
+    assert "Snowflake" in evidence["missing_requirements"]
+    assert evidence["requires_llm_review"] is True
+    assert "evidence_central_terms_reconciled" in evidence["llm_escalation_reasons"]
+
+
 def test_nvidia_batch_validation_accepts_reconciled_central_terms():
     payload = _ranking_payload(1, 70, "APPLY_WITH_TAILORED_CV")
     payload["evidence"]["central_requirements"] = [

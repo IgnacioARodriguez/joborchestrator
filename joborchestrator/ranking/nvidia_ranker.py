@@ -383,6 +383,7 @@ def _call_nvidia_batch(
             presence_penalty=0,
         )
         parsed = _extract_json_object(response.text)
+        _reconcile_missing_central_evidence_payload(parsed, jobs, _active_profile_safety_context())
         validation_feedback = _nvidia_batch_validation_error(parsed, jobs)
         if not validation_feedback:
             parsed["_generation_metadata"] = {
@@ -484,6 +485,7 @@ async def _call_nvidia_batch_async(
             presence_penalty=0,
         )
         parsed = _extract_json_object(response.text)
+        _reconcile_missing_central_evidence_payload(parsed, jobs, _active_profile_safety_context())
         validation_feedback = _nvidia_batch_validation_error(parsed, jobs)
         if not validation_feedback:
             parsed["_generation_metadata"] = {
@@ -702,6 +704,55 @@ def _nvidia_central_term_evidence_errors(rankings: list[Any], jobs: list[dict[st
         if missing:
             errors.append(f"{_ranking_item_label(item, index)} missing central term evidence {missing[:5]}")
     return errors
+
+
+def _reconcile_missing_central_evidence_payload(
+    result: dict[str, Any],
+    jobs: list[dict[str, Any]],
+    safety_context: dict[str, Any],
+) -> None:
+    rankings = result.get("rankings")
+    if not isinstance(rankings, list):
+        return
+    jobs_by_id = {int(row.get("id") or row.get("job_id")): row for row in jobs if row.get("id") or row.get("job_id")}
+    for item in rankings:
+        if not isinstance(item, dict) or item.get("job_id") is None:
+            continue
+        job = jobs_by_id.get(int(item["job_id"]))
+        if not job:
+            continue
+        missing_terms = _missing_central_terms_in_evidence(item, job)
+        if not missing_terms:
+            continue
+        evidence = item.setdefault("evidence", {})
+        if not isinstance(evidence, dict):
+            continue
+        reasons = evidence.setdefault("llm_escalation_reasons", [])
+        if not isinstance(reasons, list):
+            reasons = []
+            evidence["llm_escalation_reasons"] = reasons
+        for term in missing_terms:
+            _append_payload_evidence_term(evidence, "central_requirements", term)
+            support = _profile_support_for_term(term, safety_context)
+            if support == "strong":
+                _append_payload_evidence_term(evidence, "strong_matches", term)
+            elif support == "partial":
+                _append_payload_evidence_term(evidence, "partial_matches", term)
+            else:
+                _append_payload_evidence_term(evidence, "missing_requirements", term)
+        evidence["requires_llm_review"] = True
+        if "evidence_central_terms_reconciled" not in reasons:
+            reasons.append("evidence_central_terms_reconciled")
+
+
+def _append_payload_evidence_term(evidence: dict[str, Any], key: str, term: str) -> None:
+    value = evidence.setdefault(key, [])
+    if not isinstance(value, list):
+        value = []
+        evidence[key] = value
+    if any(_contains_term_variant(str(item), term) for item in value):
+        return
+    value.append(term)
 
 
 def _missing_central_terms_in_evidence(item: dict[str, Any], job: dict[str, Any]) -> list[str]:
