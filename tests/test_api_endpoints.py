@@ -210,6 +210,31 @@ def test_jobs_expose_materials_review_status(tmp_path, monkeypatch):
     assert "ats_cv_contains_avoid_overclaiming_terms:Kubernetes" in materials["review"]["reasons"]
 
 
+def test_jobs_materials_review_flags_serverless_avoid_aliases(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(external_id="materials-serverless-review-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    db.save_job_ranking(
+        job_id,
+        make_ranking(
+            "ranking_v1.1.0-nvidia",
+            64,
+            "APPLY_WITH_TAILORED_CV",
+            avoid_keywords=["Serverless Architecture"],
+        ),
+    )
+    db.update_job_application_materials(
+        job_id,
+        recruiter_message="Hi PSS",
+        ats_cv_text="Professional Summary\nAWS Lambda and API Gateway backend ownership." * 10,
+        autofill_notes="Use Python API angle.",
+    )
+
+    materials = client.get("/api/jobs").json()["jobs"][0]["materials"]
+
+    assert "ats_cv_contains_avoid_overclaiming_terms:Serverless Architecture" in materials["review"]["reasons"]
+
+
 def test_jobs_accept_llm_output_feedback(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
     job_id = save_job_with_rankings()
