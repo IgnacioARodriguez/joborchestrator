@@ -43,6 +43,8 @@ npm run build
 
 All passed locally.
 
+The same CI-equivalent local check set was repeated successfully on the current branch HEAD after the latest rebase.
+
 Live/local probe evidence is summarized in:
 
 - `docs/MATERIALS_V3_CHECKPOINT.md`
