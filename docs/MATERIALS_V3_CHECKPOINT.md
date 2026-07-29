@@ -105,6 +105,13 @@ GitHub CLI was available locally but not authenticated. The authenticated GitHub
 
 Raw artifacts are local-only and intentionally ignored by git.
 
+The sanitized review packet is reproducible and committed at `docs/MATERIALS_V3_GENERATED_REVIEW_PACKET.md`.
+Regenerate it from local probe artifacts with:
+
+```text
+python scripts/build_materials_review_packet.py --case pss_full_retry3 --case acme_backend_strong --case between_fullstack_adjacent --case hirefeed_contract_ai_cautious --case synthetic_short_source_role_keywords_presence --case synthetic_short_unknown_heading --case synthetic_spanish_numeric_dates --output docs/MATERIALS_V3_GENERATED_REVIEW_PACKET.md
+```
+
 | Case | Job | Local artifact | CV status | Kit status | Attempts | Semantic result |
 | --- | --- | --- | --- | --- | --- | --- |
 | `pss_full_retry3` | AWS Backend / Cloud Developer at PSS Tecnologias de la Informacion | `data/materials_live_probe/20260728_140737_pss_full_retry3.json` | completed | completed | CV 4, kit 2 | materials 100, ATS 100 |
