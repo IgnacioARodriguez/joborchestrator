@@ -94,6 +94,7 @@ async def run_application_execution(
                 page = await browser.new_page()
             await page.goto(apply_url, wait_until="domcontentloaded", timeout=timeout_ms)
             await _safe_network_idle(page, timeout_ms)
+            await _wait_for_interactive_stability(page, timeout_ms)
             hop_result = await _follow_apply_hops(page, timeout_ms=timeout_ms, max_hops=2, progress=progress)
             navigation = hop_result["steps"]
             page = hop_result["page"]
@@ -163,6 +164,7 @@ async def run_application_execution(
         if login_result["ok"]:
             navigation.append({"action": "auto_login", "url": live_page.url, "text": str(login_result["username"])})
             await _safe_network_idle(live_page, timeout_ms)
+            await _wait_for_interactive_stability(live_page, timeout_ms)
             hop_result = await _follow_apply_hops(live_page, timeout_ms=timeout_ms, max_hops=2, progress=progress)
             navigation.extend(hop_result["steps"][1:])
             live_page = hop_result["page"]
@@ -277,6 +279,9 @@ async def run_application_execution(
                 )
                 step_fill = await fill_safe_fields_on_page(browser_surface, mapping, dry_run=dry_run)
                 _merge_fill_result(live_fill, step_fill)
+                fill_stability = await _wait_for_interactive_stability(browser_surface, timeout_ms)
+            else:
+                fill_stability = {"status": "not_applicable"}
             if capabilities.can_upload_resume and resume_upload.get("status") != "uploaded":
                 resume_upload = await upload_resume_on_page(
                     browser_surface,
@@ -349,6 +354,7 @@ async def run_application_execution(
                         "validation": validation_report,
                         "repair": repair_report,
                         "transition": transition,
+                        "fill_stability": fill_stability,
                     }
                 )
                 if mapping.get("unknown_fields") or validation.status != "validation_clean":
@@ -628,7 +634,16 @@ async def _follow_apply_hops(
             _progress(progress, f"Following intermediate apply link: {link['text']}.")
             await active_page.goto(link["url"], wait_until="domcontentloaded", timeout=timeout_ms)
             await _safe_network_idle(active_page, timeout_ms)
-            steps.append({"action": "followed_link", "url": active_page.url, "text": link["text"]})
+            stability = await _wait_for_interactive_stability(active_page, timeout_ms)
+            steps.append(
+                {
+                    "action": "followed_link",
+                    "url": active_page.url,
+                    "text": link["text"],
+                    "stability_status": str(stability.get("status") or ""),
+                    "stability_mutations": str(stability.get("mutation_count") or 0),
+                }
+            )
             continue
         click_result = await _click_apply_control(active_page, timeout_ms=timeout_ms)
         if click_result:
@@ -636,11 +651,14 @@ async def _follow_apply_hops(
             active_page = click_result["page"]
             _progress(progress, f"Clicked intermediate apply control: {clicked}.")
             await _safe_network_idle(active_page, timeout_ms)
+            stability = await _wait_for_interactive_stability(active_page, timeout_ms)
             steps.append(
                 {
                     "action": "opened_popup" if click_result.get("opened_popup") else "clicked_control",
                     "url": active_page.url,
                     "text": clicked,
+                    "stability_status": str(stability.get("status") or ""),
+                    "stability_mutations": str(stability.get("mutation_count") or 0),
                 }
             )
             continue
@@ -689,6 +707,75 @@ async def _safe_network_idle(page: Page, timeout_ms: int) -> None:
         await page.wait_for_load_state("networkidle", timeout=timeout_ms)
     except PlaywrightTimeoutError:
         return
+
+
+async def _wait_for_interactive_stability(page: Page, timeout_ms: int, *, quiet_ms: int = 400) -> dict[str, Any]:
+    wait_timeout = min(max(timeout_ms, 1000), 3000)
+    try:
+        result = await page.evaluate(
+            """({ quietMs, timeoutMs }) => new Promise(resolve => {
+              const startedAt = Date.now();
+              let mutationCount = 0;
+              let lastFingerprint = fingerprint();
+              let lastChangeAt = Date.now();
+              const observer = new MutationObserver(() => {
+                mutationCount += 1;
+                const next = fingerprint();
+                if (next !== lastFingerprint) {
+                  lastFingerprint = next;
+                  lastChangeAt = Date.now();
+                }
+              });
+              observer.observe(document.documentElement || document, {
+                subtree: true,
+                childList: true,
+                attributes: true,
+                attributeFilter: ['style', 'class', 'hidden', 'disabled', 'aria-hidden', 'aria-expanded', 'aria-invalid', 'required'],
+              });
+              const interval = window.setInterval(() => {
+                const stableFor = Date.now() - lastChangeAt;
+                const timedOut = Date.now() - startedAt >= timeoutMs;
+                if (stableFor >= quietMs || timedOut) {
+                  window.clearInterval(interval);
+                  observer.disconnect();
+                  resolve({
+                    status: stableFor >= quietMs ? 'stable' : 'timeout',
+                    mutation_count: mutationCount,
+                    stable_for_ms: stableFor,
+                    fingerprint: lastFingerprint,
+                  });
+                }
+              }, 100);
+
+              function fingerprint() {
+                return Array.from(document.querySelectorAll('form, input, textarea, select, button, a, [role], [aria-required="true"]'))
+                  .filter(visible)
+                  .map(element => [
+                    element.tagName.toLowerCase(),
+                    element.getAttribute('role') || '',
+                    element.getAttribute('type') || '',
+                    element.getAttribute('name') || '',
+                    element.id || '',
+                    element.getAttribute('aria-label') || '',
+                    element.getAttribute('aria-expanded') || '',
+                    element.hasAttribute('required') || element.getAttribute('aria-required') === 'true' ? 'required' : '',
+                  ].join(':'))
+                  .join('|');
+              }
+              function visible(element) {
+                const style = window.getComputedStyle(element);
+                return style.display !== 'none'
+                  && style.visibility !== 'hidden'
+                  && !element.hidden
+                  && element.getAttribute('aria-hidden') !== 'true'
+                  && Boolean(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+              }
+            })""",
+            {"quietMs": quiet_ms, "timeoutMs": wait_timeout},
+        )
+        return result if isinstance(result, dict) else {"status": "unknown"}
+    except Exception as exc:
+        return {"status": "failed", "error": exc.__class__.__name__}
 
 
 async def _close_browser_or_context(browser: Browser | None, context: BrowserContext | None) -> None:
@@ -843,7 +930,8 @@ async def click_safe_step_transition(page: Page, transition: dict[str, Any], *, 
         await page.locator("button, input[type='submit'], input[type='button'], a").nth(int(control.get("index") or 0)).click(timeout=5000)
         await page.wait_for_timeout(1000)
         await _safe_network_idle(page, timeout_ms)
-        return {"status": "advanced", "control_text": str(control.get("text") or ""), "url": page.url}
+        stability = await _wait_for_interactive_stability(page, timeout_ms)
+        return {"status": "advanced", "control_text": str(control.get("text") or ""), "url": page.url, "stability": stability}
     except Exception as exc:
         return {
             "status": "failed",
@@ -972,7 +1060,8 @@ async def click_approved_submit_control(page: Page, *, timeout_ms: int) -> dict[
         await locator.nth(int(selected["index"])).click(timeout=5000)
         await page.wait_for_timeout(1000)
         await _safe_network_idle(page, timeout_ms)
-        return {"status": "submitted", "control_text": selected["text"], "final_url": page.url}
+        stability = await _wait_for_interactive_stability(page, timeout_ms)
+        return {"status": "submitted", "control_text": selected["text"], "final_url": page.url, "stability": stability}
     except Exception as exc:
         return {
             "status": "failed",
