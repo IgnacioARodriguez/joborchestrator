@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, type ReactNode } from "react"
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
   Building2,
   Copy,
@@ -29,6 +29,7 @@ import { toast } from "sonner"
 import {
   Drawer,
   DrawerContent,
+  DrawerClose,
   DrawerHeader,
   DrawerTitle,
   DrawerDescription,
@@ -36,7 +37,6 @@ import {
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Textarea } from "@/components/ui/textarea"
 import { DecisionBadge } from "@/components/badges"
 import { ScoreRing } from "@/components/badges"
@@ -49,9 +49,57 @@ import {
   rankingSummaryText,
   salaryLabel,
 } from "@/lib/job-ui"
-import type { ApplicationSession, JobContact, JobPosting, ProviderCapabilities } from "@/lib/types"
+import type { ApplicationRecord, ApplicationSession, JobContact, JobPosting, ProviderCapabilities } from "@/lib/types"
 import type { LLMFeedbackAction, LLMFeedbackArtifact } from "@/lib/types"
 import { cn } from "@/lib/utils"
+
+type DetailActions = Pick<
+  ReturnType<typeof useStore>,
+  "setPipelineStatus" | "markOpened" | "generateMaterials" | "refresh"
+>
+
+function DeferredSection({
+  children,
+  className,
+}: {
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <section
+      className={cn(
+        "[content-visibility:auto] [contain-intrinsic-size:auto_300px]",
+        className,
+      )}
+    >
+      {children}
+    </section>
+  )
+}
+
+function LazyDetails({
+  title,
+  children,
+}: {
+  title: string
+  children: ReactNode
+}) {
+  const [mounted, setMounted] = useState(false)
+
+  return (
+    <details
+      className="rounded-lg border border-border bg-muted/20 p-3 [content-visibility:auto] [contain-intrinsic-size:auto_260px]"
+      onToggle={(event) => {
+        if (event.currentTarget.open) setMounted(true)
+      }}
+    >
+      <summary className="cursor-pointer text-sm font-semibold text-foreground">
+        {title}
+      </summary>
+      {mounted ? children : null}
+    </details>
+  )
+}
 
 function EvidenceList({
   title,
@@ -500,14 +548,19 @@ function SessionReview({
   )
 }
 
-function DetailBody({
+const DetailBody = memo(function DetailBody({
   job,
   onClose,
+  actions,
+  companyHistory,
 }: {
   job: JobPosting
   onClose: () => void
+  actions: DetailActions
+  companyHistory: ApplicationRecord[]
 }) {
-  const { setPipelineStatus, markOpened, generateMaterials, refresh, applications } = useStore()
+  const { setPipelineStatus, markOpened, generateMaterials, refresh } = actions
+  const scrollerRef = useRef<HTMLDivElement>(null)
   const [materialsOperationId, setMaterialsOperationId] = useState<number | null>(null)
   const [applicationOperationId, setApplicationOperationId] = useState<number | null>(null)
   const [contacts, setContacts] = useState<JobContact[]>([])
@@ -522,28 +575,36 @@ function DetailBody({
   const [showAllHiringContacts, setShowAllHiringContacts] = useState(false)
   const hiringContacts = job.hiring_contacts ?? []
   const visibleHiringContacts = showAllHiringContacts ? hiringContacts : hiringContacts.slice(0, 3)
-  const companyHistory = applications.filter(
-    (application) => application.company?.toLowerCase() === job.company.toLowerCase(),
+  const jobContacts = useMemo(
+    () =>
+      contacts.filter((contact) => {
+        const sameJob = contact.job_id === Number(job.id)
+        const sameCompany = (contact.company || "").toLowerCase() === job.company.toLowerCase()
+        return sameJob || sameCompany
+      }),
+    [contacts, job.company, job.id],
   )
-  const jobContacts = contacts.filter((contact) => {
-    const sameJob = contact.job_id === Number(job.id)
-    const sameCompany = (contact.company || "").toLowerCase() === job.company.toLowerCase()
-    return sameJob || sameCompany
-  })
-  const recruiterCandidates = [
-    ...(job.recruiter_name
-      ? [{
-          id: -1,
-          name: job.recruiter_name,
-          role: "Job poster",
-          linkedin_url: job.recruiter_profile_url,
-          source: "linkedin_scraper" as const,
-        }]
-      : []),
-    ...jobContacts,
-  ]
+  const recruiterCandidates = useMemo(
+    () => [
+      ...(job.recruiter_name
+        ? [{
+            id: -1,
+            name: job.recruiter_name,
+            role: "Job poster",
+            linkedin_url: job.recruiter_profile_url,
+            source: "linkedin_scraper" as const,
+          }]
+        : []),
+      ...jobContacts,
+    ],
+    [job.recruiter_name, job.recruiter_profile_url, jobContacts],
+  )
   const latestSession = sessions[0] ?? null
   const provider = detectProvider(job)
+
+  useEffect(() => {
+    scrollerRef.current?.scrollTo({ top: 0 })
+  }, [job.id])
 
   async function recordFeedback(artifact: LLMFeedbackArtifact, action: LLMFeedbackAction) {
     try {
@@ -787,7 +848,11 @@ function DetailBody({
   }
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
+    <div
+      ref={scrollerRef}
+      data-base-ui-swipe-ignore
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+    >
       <div className="flex flex-col gap-5 p-4">
         {/* Header block */}
         <div className="flex items-start gap-3">
@@ -1092,7 +1157,7 @@ function DetailBody({
           </div>
         </section>
 
-        <section className="flex flex-col gap-2">
+        <DeferredSection className="flex flex-col gap-2">
           <h3 className="text-sm font-semibold text-foreground">
             Job data
           </h3>
@@ -1102,10 +1167,10 @@ function DetailBody({
             <span className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">Source {job.source}</span>
             <span className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">Pipeline {PIPELINE_LABELS[job.pipeline_status]}</span>
           </div>
-        </section>
+        </DeferredSection>
 
         {hiringContacts.length > 0 ? (
-          <section className="flex flex-col gap-2">
+          <DeferredSection className="flex flex-col gap-2">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-semibold text-foreground">Hiring team</h3>
               {hiringContacts.length > 3 ? (
@@ -1153,10 +1218,10 @@ function DetailBody({
                 </div>
               ))}
             </div>
-          </section>
+          </DeferredSection>
         ) : null}
 
-        <section className="flex flex-col gap-2">
+        <DeferredSection className="flex flex-col gap-2">
           <h3 className="text-sm font-semibold text-foreground">Recruiter contact strategy</h3>
           <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs leading-relaxed text-muted-foreground">
             <p className="font-medium text-foreground">
@@ -1202,9 +1267,9 @@ function DetailBody({
               </div>
             )}
           </div>
-        </section>
+        </DeferredSection>
 
-        <section className="flex flex-col gap-2">
+        <DeferredSection className="flex flex-col gap-2">
           <h3 className="text-sm font-semibold text-foreground">
             Company history
           </h3>
@@ -1221,21 +1286,15 @@ function DetailBody({
               ))}
             </div>
           )}
-        </section>
+        </DeferredSection>
 
-        <details className="rounded-lg border border-border bg-muted/20 p-3">
-          <summary className="cursor-pointer text-sm font-semibold text-foreground">
-            Job description
-          </summary>
+        <LazyDetails title="Job description">
           <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
             {job.description_text}
           </p>
-        </details>
+        </LazyDetails>
 
-        <details className="rounded-lg border border-border bg-muted/20 p-3">
-          <summary className="cursor-pointer text-sm font-semibold text-foreground">
-            Ranking technical detail
-          </summary>
+        <LazyDetails title="Ranking technical detail">
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
             {Object.entries(job.ranking.scores).map(([key, value]) => (
               <div key={key} className="rounded-md border border-border bg-background/60 px-2 py-1">
@@ -1244,7 +1303,7 @@ function DetailBody({
               </div>
             ))}
           </div>
-        </details>
+        </LazyDetails>
 
         {/* Application materials */}
         {(job.materials.recruiter_message ||
@@ -1253,7 +1312,7 @@ function DetailBody({
           job.materials.autofill_notes) && (
           <>
             <Separator />
-            <section className="flex flex-col gap-2">
+            <DeferredSection className="flex flex-col gap-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold text-foreground">
                   Application materials
@@ -1295,13 +1354,13 @@ function DetailBody({
                 />
                 <AutofillPlanBlock text={job.materials.autofill_notes} />
               </div>
-            </section>
+            </DeferredSection>
           </>
         )}
       </div>
-    </ScrollArea>
+    </div>
   )
-}
+})
 
 export function JobDetailDrawer({
   jobId,
@@ -1310,8 +1369,25 @@ export function JobDetailDrawer({
   jobId: string | null
   onClose: () => void
 }) {
-  const { getJob } = useStore()
+  const {
+    applications,
+    generateMaterials,
+    getJob,
+    markOpened,
+    refresh,
+    setPipelineStatus,
+  } = useStore()
   const job = jobId ? getJob(jobId) : undefined
+  const actions = useMemo(
+    () => ({ generateMaterials, markOpened, refresh, setPipelineStatus }),
+    [generateMaterials, markOpened, refresh, setPipelineStatus],
+  )
+  const companyHistory = useMemo(() => {
+    if (!job) return []
+    return applications.filter(
+      (application) => application.company?.toLowerCase() === job.company.toLowerCase(),
+    )
+  }, [applications, job])
 
   return (
     <Drawer
@@ -1322,15 +1398,28 @@ export function JobDetailDrawer({
       showSwipeHandle
     >
       <DrawerContent className="data-[swipe-axis=y]:[--drawer-content-max-height:calc(100dvh-3rem)] data-[swipe-axis=y]:[--drawer-height:88dvh]">
-        <DrawerHeader className="text-left">
-          <DrawerTitle className="text-pretty leading-snug">
+        <DrawerHeader className="flex-row items-start justify-between gap-3 text-left">
+          <DrawerTitle className="min-w-0 flex-1 text-pretty leading-snug">
             {job?.title ?? "Job detail"}
           </DrawerTitle>
+          <DrawerClose
+            aria-label="Close job detail"
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/20 focus-visible:outline-none"
+          >
+            <X className="size-4" />
+          </DrawerClose>
           <DrawerDescription className="sr-only">
             Ranking, description, and application materials for this job.
           </DrawerDescription>
         </DrawerHeader>
-        {job && <DetailBody job={job} onClose={onClose} />}
+        {job && (
+          <DetailBody
+            job={job}
+            onClose={onClose}
+            actions={actions}
+            companyHistory={companyHistory}
+          />
+        )}
       </DrawerContent>
     </Drawer>
   )

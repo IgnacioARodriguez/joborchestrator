@@ -125,7 +125,7 @@ export function ScoreRing({
           strokeDasharray={circumference}
           strokeDashoffset={offset}
           strokeLinecap="round"
-          className={cn("transition-all", tone.ring)}
+          className={tone.ring}
           stroke="currentColor"
         />
       </svg>
