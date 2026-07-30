@@ -15,6 +15,12 @@ from joborchestrator.llm.provider import LLMProviderError, ProviderRegistry
 from joborchestrator.prompts import active_prompt_version, load_prompt
 from joborchestrator.intelligence.llm_costs import estimate_application_kit_tokens, estimate_cost
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
+from joborchestrator.intelligence.materials_keywords import derive_keywords_used
+from joborchestrator.intelligence.materials_repair import (
+    build_repair_directive,
+    repair_prompt_payload,
+)
+from joborchestrator.intelligence.materials_validation import validation_feedback_to_issues
 from joborchestrator.ranking.schemas import CandidateProfile
 from joborchestrator.ranking.serialization import result_to_dict
 from joborchestrator.storage import persistence as db
@@ -806,6 +812,7 @@ def _call_openai(
                 str(exc),
                 generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
             ) from exc
+        _derive_cv_metadata(parsed, payload)
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
         degraded_feedbacks = _degraded_validation_feedbacks(validation_feedback)
         blocking_feedback = _blocking_validation_feedback(validation_feedback)
@@ -843,6 +850,7 @@ def _call_nvidia(
                 str(exc),
                 generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
             ) from exc
+        _derive_cv_metadata(parsed, payload)
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
         degraded_feedbacks = _degraded_validation_feedbacks(validation_feedback)
         blocking_feedback = _blocking_validation_feedback(validation_feedback)
@@ -871,6 +879,7 @@ def _call_nvidia_cv(
 ) -> dict[str, Any]:
     validation_feedback: str | None = None
     validation_errors: list[str] = []
+    previous_response: dict[str, Any] | None = None
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
         try:
@@ -881,12 +890,14 @@ def _call_nvidia_cv(
                 model,
                 timeout,
                 validation_feedback,
+                previous_response=previous_response,
             )
         except LLMMaterialsError as exc:
             raise LLMMaterialsError(
                 str(exc),
                 generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
             ) from exc
+        _derive_cv_metadata(parsed, payload)
         validation_feedback = _ats_cv_response_validation_error(parsed, _base_cv_text(payload), payload)
         degraded_feedbacks = _degraded_validation_feedbacks(validation_feedback)
         blocking_feedback = _blocking_validation_feedback(validation_feedback)
@@ -896,6 +907,7 @@ def _call_nvidia_cv(
         if attempt < retry_limit:
             validation_errors.extend(degraded_feedbacks)
             validation_errors.append(blocking_feedback)
+            previous_response = parsed
             logger.warning(
                 "Retrying NVIDIA ATS CV generation after invalid response: %s received_keys=%s",
                 blocking_feedback,
@@ -919,6 +931,7 @@ def _call_nvidia_kit(
 ) -> dict[str, Any]:
     validation_feedback: str | None = None
     validation_errors: list[str] = []
+    previous_response: dict[str, Any] | None = None
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
         try:
@@ -929,6 +942,7 @@ def _call_nvidia_kit(
                 model,
                 timeout,
                 validation_feedback,
+                previous_response=previous_response,
             )
         except LLMMaterialsError as exc:
             raise LLMMaterialsError(
@@ -944,6 +958,7 @@ def _call_nvidia_kit(
             return parsed
         if attempt < retry_limit and not _is_unrecoverable_validation_feedback(validation_feedback):
             validation_errors.append(validation_feedback)
+            previous_response = parsed
             logger.warning(
                 "Retrying NVIDIA kit generation after invalid response: %s received_keys=%s",
                 validation_feedback,
@@ -964,6 +979,7 @@ def _call_nvidia_contract_once(
     model: str,
     timeout: float,
     validation_feedback: str | None = None,
+    previous_response: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     try:
         provider = ProviderRegistry().get(
@@ -975,7 +991,7 @@ def _call_nvidia_contract_once(
             http_module=httpx,
         )
         response = provider.complete(
-            _nvidia_contract_messages(contract, payload, validation_feedback),
+            _nvidia_contract_messages(contract, payload, validation_feedback, previous_response=previous_response),
             model=model,
             temperature=0,
             response_format="json",
@@ -1069,14 +1085,24 @@ def _nvidia_contract_messages(
     contract: str,
     payload: dict[str, Any],
     validation_feedback: str | None = None,
+    *,
+    previous_response: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     user_content = contract + "\n\nContext:\n" + json.dumps(payload, ensure_ascii=False)
     if validation_feedback:
         repair_instruction = _materials_repair_instruction(validation_feedback)
+        issues = validation_feedback_to_issues(validation_feedback)
+        repair_directive = (
+            repair_prompt_payload(build_repair_directive(previous_response, issues))
+            if previous_response
+            else None
+        )
         user_content += (
             "\n\nYour previous response was rejected because: "
             f"{validation_feedback}\n{repair_instruction}\nReturn a corrected complete JSON object only."
         )
+        if repair_directive:
+            user_content += "\n\nRepair directive:\n" + json.dumps(repair_directive, ensure_ascii=False)
     return [
         {
             "role": "system",
@@ -1153,6 +1179,23 @@ def _materials_repair_instruction(validation_feedback: str) -> str:
             "Remove every forbidden alias from every field, including caveats; describe gaps generically."
         )
     return " ".join(instructions)
+
+
+def _derive_cv_metadata(response: dict[str, Any], source_payload: dict[str, Any]) -> None:
+    if "ats_cv_text" not in response:
+        return
+    response["keywords_used"] = derive_keywords_used(
+        str(response.get("ats_cv_text") or ""),
+        _supported_keywords_from_payload(source_payload),
+    )
+
+
+def _supported_keywords_from_payload(payload: dict[str, Any]) -> list[str]:
+    ats_fit = payload.get("ats_fit_analysis") if isinstance(payload.get("ats_fit_analysis"), dict) else {}
+    supported = list(ats_fit.get("supported_keywords") or [])
+    ranking_constraints = payload.get("ranking_constraints") if isinstance(payload.get("ranking_constraints"), dict) else {}
+    supported.extend(ranking_constraints.get("keywords_to_emphasize") or [])
+    return _dedupe_strings([str(keyword).strip() for keyword in supported if str(keyword or "").strip()])
 
 
 def _openai_materials_messages(user_payload: dict[str, Any]) -> list[dict[str, Any]]:
