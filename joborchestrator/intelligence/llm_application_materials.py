@@ -20,7 +20,7 @@ from joborchestrator.intelligence.materials_controlled_pipeline import build_con
 from joborchestrator.intelligence.materials_cv_ir import parse_candidate_cv_ir
 from joborchestrator.intelligence.materials_keywords import derive_keywords_used
 from joborchestrator.intelligence.materials_planner import build_cv_planner_context
-from joborchestrator.intelligence.materials_routing import controlled_cv_enabled, nvidia_planner_enabled
+from joborchestrator.intelligence.materials_routing import controlled_cv_enabled, nvidia_planner_enabled, openai_fallback_enabled
 from joborchestrator.intelligence.materials_repair import (
     build_repair_directive,
     repair_prompt_payload,
@@ -162,20 +162,30 @@ def build_application_kit_with_nvidia(
 
     payload = _materials_payload(job, ranking)
     selected_model = model or DEFAULT_NVIDIA_MATERIALS_MODEL
-    if controlled_cv_enabled() and nvidia_planner_enabled():
-        cv_response = _call_nvidia_controlled_cv(
+    try:
+        if controlled_cv_enabled() and nvidia_planner_enabled():
+            cv_response = _call_nvidia_controlled_cv(
+                payload,
+                key,
+                selected_model,
+                timeout,
+            )
+        else:
+            cv_response = _call_nvidia_cv(
+                payload,
+                key,
+                selected_model,
+                timeout,
+                validation_retry_limit=validation_retry_limit,
+            )
+    except LLMMaterialsError as exc:
+        if not openai_fallback_enabled():
+            raise
+        cv_response = _call_openai_controlled_cv_fallback(
             payload,
-            key,
-            selected_model,
+            DEFAULT_MATERIALS_MODEL,
             timeout,
-        )
-    else:
-        cv_response = _call_nvidia_cv(
-            payload,
-            key,
-            selected_model,
-            timeout,
-            validation_retry_limit=validation_retry_limit,
+            previous_error=exc,
         )
     try:
         kit_response = _call_nvidia_kit(
@@ -884,6 +894,86 @@ def _call_nvidia(
 
 
 
+
+def _call_openai_controlled_cv_fallback(
+    payload: dict[str, Any],
+    model: str,
+    timeout: float,
+    *,
+    previous_error: LLMMaterialsError,
+) -> dict[str, Any]:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        metadata = dict(previous_error.generation_metadata or {})
+        metadata["fallback_provider"] = "openai"
+        metadata["fallback_error"] = "OPENAI_API_KEY is required"
+        raise LLMMaterialsError(
+            f"{previous_error}; OpenAI fallback unavailable: OPENAI_API_KEY is required",
+            generation_metadata=metadata,
+        ) from previous_error
+    supported_keywords = _supported_keywords_from_payload(payload)
+    cv_ir = parse_candidate_cv_ir(_base_cv_text(payload), supported_keywords)
+    planner_context = build_cv_planner_context(payload, cv_ir)
+    planner_response = _call_openai_cv_planner(planner_context, api_key, model, timeout)
+    rendered = build_controlled_ats_cv(
+        _base_cv_text(payload),
+        supported_keywords,
+        planner_response=planner_response,
+    )
+    previous_metadata = previous_error.generation_metadata if isinstance(previous_error.generation_metadata, dict) else {}
+    metadata = rendered.get("_generation_metadata") if isinstance(rendered.get("_generation_metadata"), dict) else {}
+    metadata.update(
+        {
+            "validation_attempts": 1 + int(previous_metadata.get("validation_attempts") or 0),
+            "validation_errors": [
+                *[str(error) for error in previous_metadata.get("validation_errors") or [str(previous_error)]],
+                *[str(error) for error in metadata.get("planner_errors") or []],
+            ],
+            "pipeline": "controlled_cv",
+            "stage": "fallback",
+            "fallback_provider": "openai",
+        }
+    )
+    rendered["_generation_metadata"] = metadata
+    return rendered
+
+
+def _call_openai_cv_planner(
+    planner_context: dict[str, Any],
+    api_key: str,
+    model: str,
+    timeout: float,
+) -> dict[str, Any]:
+    try:
+        provider = ProviderRegistry().get(
+            "materials",
+            provider_name="openai",
+            api_key=api_key,
+            timeout=timeout,
+            http_module=httpx,
+        )
+        response = provider.complete(
+            _openai_cv_planner_messages(planner_context),
+            model=model,
+            response_format="json",
+            response_schema=_cv_planner_schema(),
+            schema_name="ats_cv_plan",
+        )
+    except LLMProviderError as exc:
+        raise LLMMaterialsError(f"OpenAI CV planner fallback request failed: {exc}") from exc
+    try:
+        parsed = json.loads(response.text)
+    except json.JSONDecodeError as exc:
+        raise LLMMaterialsError("OpenAI CV planner fallback response was not valid JSON.") from exc
+    parsed["_generation_metadata"] = {
+        "validation_attempts": 1,
+        "validation_errors": [],
+        "pipeline": "controlled_cv",
+        "stage": "fallback",
+        "fallback_provider": "openai",
+    }
+    return parsed
+
 def _call_nvidia_controlled_cv(
     payload: dict[str, Any],
     api_key: str,
@@ -1273,6 +1363,55 @@ def _supported_keywords_from_payload(payload: dict[str, Any]) -> list[str]:
     ranking_constraints = payload.get("ranking_constraints") if isinstance(payload.get("ranking_constraints"), dict) else {}
     supported.extend(ranking_constraints.get("keywords_to_emphasize") or [])
     return _dedupe_strings([str(keyword).strip() for keyword in supported if str(keyword or "").strip()])
+
+
+def _openai_cv_planner_messages(planner_context: dict[str, Any]) -> list[dict[str, Any]]:
+    user_content = _nvidia_cv_planner_contract() + "\n\nContext:\n" + json.dumps(planner_context, ensure_ascii=False)
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a strict ATS CV planning assistant. Return only JSON matching the planner schema. "
+                "Do not write the final CV."
+            ),
+        },
+        {"role": "user", "content": user_content},
+    ]
+
+
+def _cv_planner_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["summary_lines", "skill_ids", "role_plans"],
+        "properties": {
+            "summary_lines": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["text", "evidence_ids"],
+                    "properties": {
+                        "text": {"type": "string"},
+                        "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
+            "skill_ids": {"type": "array", "items": {"type": "string"}},
+            "role_plans": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["role_id", "selected_bullet_ids"],
+                    "properties": {
+                        "role_id": {"type": "string"},
+                        "selected_bullet_ids": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
+        },
+    }
 
 
 def _openai_materials_messages(user_payload: dict[str, Any]) -> list[dict[str, Any]]:

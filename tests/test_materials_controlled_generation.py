@@ -340,6 +340,85 @@ def test_invalid_nvidia_planner_plan_falls_back_to_renderer_defaults(monkeypatch
     assert "planner response must not include ats_cv_text" in response["_generation_metadata"]["validation_errors"]
 
 
+def test_openai_fallback_renders_controlled_cv_after_nvidia_cv_failure(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials as llm
+
+    monkeypatch.setenv("MATERIALS_OPENAI_FALLBACK_ENABLED", "1")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-test-key")
+    monkeypatch.setattr(
+        llm,
+        "_materials_payload",
+        lambda job, ranking: {
+            "base_cv": {"text": _base_cv_text()},
+            "job": {"company": "Acme", "title": "Backend Engineer", "description_text": "Build Python APIs."},
+            "ats_fit_analysis": {"supported_keywords": ["Python", "REST APIs", "Redis"]},
+            "ranking": {"decision": "APPLY_NOW"},
+        },
+    )
+    monkeypatch.setattr(
+        llm,
+        "_call_nvidia_cv",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            llm.LLMMaterialsError(
+                "NVIDIA CV failed",
+                generation_metadata={"validation_attempts": 2, "validation_errors": ["CV_TOO_SHORT"]},
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        llm,
+        "_call_openai_cv_planner",
+        lambda *args, **kwargs: {
+            "summary_lines": [{"text": "Backend developer with Python API experience.", "evidence_ids": ["fact_01"]}],
+            "skill_ids": ["skill_python"],
+            "role_plans": [],
+        },
+    )
+    monkeypatch.setattr(
+        llm,
+        "_call_nvidia_kit",
+        lambda *args, **kwargs: {
+            "recruiter_message": "Hi Acme, Python API background may be relevant.",
+            "cover_letter": "Dear team, my Python API background may support this Backend Engineer role with source-backed experience.",
+            "autofill_notes": "Python backend profile",
+            "_generation_metadata": {"validation_attempts": 1, "validation_errors": []},
+        },
+    )
+
+    kit = llm.build_application_kit_with_nvidia({"title": "Backend Engineer"}, api_key="nvidia-test-key")
+
+    assert "Professional Experience" in kit["ats_cv_text"]
+    assert "Technologies: Python, REST APIs, Redis" in kit["ats_cv_text"]
+    assert "CV_TOO_SHORT" in kit["_generation_metadata"]["validation_errors"]
+
+
+def test_openai_fallback_without_key_preserves_original_cv_failure(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials as llm
+
+    monkeypatch.setenv("MATERIALS_OPENAI_FALLBACK_ENABLED", "1")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    previous_error = llm.LLMMaterialsError(
+        "NVIDIA CV failed",
+        generation_metadata={"validation_attempts": 2, "validation_errors": ["CV_TOO_SHORT"]},
+    )
+
+    try:
+        llm._call_openai_controlled_cv_fallback(
+            {"base_cv": {"text": _base_cv_text()}, "ats_fit_analysis": {"supported_keywords": ["Python"]}},
+            "gpt-test",
+            1.0,
+            previous_error=previous_error,
+        )
+    except llm.LLMMaterialsError as exc:
+        metadata = exc.generation_metadata
+    else:
+        raise AssertionError("Expected fallback failure without OPENAI_API_KEY")
+
+    assert metadata["validation_errors"] == ["CV_TOO_SHORT"]
+    assert metadata["fallback_provider"] == "openai"
+    assert metadata["fallback_error"] == "OPENAI_API_KEY is required"
+
+
 def test_avoid_job_does_not_auto_generate_without_override():
     ranking = {"decision": "AVOID"}
 

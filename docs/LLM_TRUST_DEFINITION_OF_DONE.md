@@ -175,7 +175,7 @@ Before promoting a prompt version:
 
 The materials pipeline now has an incremental controlled-generation path under feature flags. `keywords_used` is derived in code, failed attempts can be persisted in `materials_generation_attempts`, NVIDIA has a planner-only contract, and `build_application_kit_with_nvidia` can route CV generation through planner + deterministic renderer when controlled flags are enabled. CV rendering can preserve role headers, dates, titles, companies, bullets, canonical technologies, and education without freeform CV authorship.
 
-The controlled CV/planner/fallback flags remain disabled by default until paired live benchmark evidence exists. Offline benchmark results are documented in `docs/MATERIALS_CONTROLLED_GENERATION_BASELINE.md`; live pass-rate and latency targets are not claimed yet.
+The controlled CV/planner/fallback flags remain disabled by default until paired live benchmark evidence exists. OpenAI fallback is limited to CV planning followed by deterministic rendering, and missing fallback credentials preserve the original failure metadata. Offline benchmark results are documented in `docs/MATERIALS_CONTROLLED_GENERATION_BASELINE.md`; live pass-rate and latency targets are not claimed yet.
 
 ## Current Known Gaps
 

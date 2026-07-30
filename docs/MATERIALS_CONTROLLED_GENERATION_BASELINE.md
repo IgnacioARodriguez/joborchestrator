@@ -66,7 +66,7 @@ Rollout flags remain off by default:
 
 - `MATERIALS_CONTROLLED_CV_ENABLED`
 - `MATERIALS_NVIDIA_PLANNER_ENABLED`
-- `MATERIALS_OPENAI_FALLBACK_ENABLED`
+- `MATERIALS_OPENAI_FALLBACK_ENABLED` enables OpenAI CV planner fallback after NVIDIA CV-stage failure; the rendered CV still comes from code.
 - `MATERIALS_MAX_SEMANTIC_REPAIRS` defaults to `1`
 
 Queued LLM regenerations now clear stale material fields and mark `queued_generation_pending`, so an old successful CV cannot appear as the result of a queued or failed new operation.
@@ -107,5 +107,7 @@ Keep disabled until live paired benchmark evidence exists:
 - `MATERIALS_CONTROLLED_CV_ENABLED`
 - `MATERIALS_NVIDIA_PLANNER_ENABLED`
 - `MATERIALS_OPENAI_FALLBACK_ENABLED`
+
+OpenAI fallback is implemented as planner fallback for the CV stage, not as freeform historical CV authorship. If `OPENAI_API_KEY` is unavailable, the original NVIDIA CV failure metadata is preserved and the operation remains auditable.
 
 Retire legacy only after a 10-20 job paired benchmark shows hard factual invariants at target thresholds and no regression in application kit quality.
