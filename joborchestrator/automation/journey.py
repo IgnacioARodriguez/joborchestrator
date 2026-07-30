@@ -30,6 +30,8 @@ class InteractionSurface:
     accessible: bool = True
     challenge_detected: bool = False
     fingerprint: str = ""
+    lifecycle_state: str = "active"
+    generation: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

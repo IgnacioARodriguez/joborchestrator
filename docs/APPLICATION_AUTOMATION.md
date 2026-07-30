@@ -4,11 +4,11 @@ Automation is safe-by-default.
 
 - Default mode: `review_before_submit`.
 - `dry_run` defaults to true for form filling.
-- Auto-submit is disabled unless `ENABLE_AUTO_SUBMIT_APPROVED=1`.
+- Final submit is reserved for the user; automation does not click final submit controls.
 - Unknown or sensitive fields stop the session in `needs_user_input`.
 - Provider support is exposed through `GET /api/automation/provider-capabilities`.
 - The UI shows provider capabilities separately from provider detection.
-- Real submissions are recorded through `submitted_manually`, `submitted`, or later `submission_verified`.
+- Real submissions are recorded through `submitted_manually` or later `submission_verified`.
 
 Adapters:
 
@@ -21,7 +21,7 @@ Current provider capability matrix:
 
 | Provider | Open | Redirects | Detect fields | Fill text | Selects | Radios | Checkboxes | Resume upload | Browser resume | Auto-submit |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Greenhouse | yes | yes | yes | yes | yes | yes | yes | yes | yes | env-gated |
+| Greenhouse | yes | yes | yes | yes | yes | yes | yes | yes | yes | blocked |
 | Lever | yes | yes | yes | yes | yes | yes | yes | yes | yes | no |
 | Generic forms | yes | yes | yes | yes | yes | yes | yes | yes | yes | no |
 | Generic assisted | yes | yes | no | no | no | no | no | no | no | no |

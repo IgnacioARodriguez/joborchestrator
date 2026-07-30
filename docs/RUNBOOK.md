@@ -81,7 +81,9 @@ API health: `http://127.0.0.1:8000/api/health`
 11. Click `Mark submitted manually` only after you submit on the company site yourself.
 12. Use verification follow-up separately when a confirmation page or email is available.
 
-For final-submit boundary checks:
+For final-submit boundary checks, the legacy compatibility flag may be set so
+older `auto_submit_approved` sessions exercise the blocker path. It does not
+enable automated final submit:
 
 ```bash
 ENABLE_AUTO_SUBMIT_APPROVED=1
@@ -92,7 +94,7 @@ that the worker blocks with `final_submit_reserved_for_user` after required
 fields are resolved, the resume upload succeeds, and exactly one final submit
 control is detected.
 
-Before testing against a real company page, run the isolated local smoke. It forces SQLite, ignores `.env`/Turso, uses a synthetic Greenhouse fixture and verifies the full worker path reaches `submitted`:
+Before testing against a real company page, run the isolated local smoke. It forces SQLite, ignores `.env`/Turso, uses a synthetic Greenhouse fixture and verifies the full worker path reaches `submit_only` with final submit blocked:
 
 ```bash
 npm run smoke:auto-submit

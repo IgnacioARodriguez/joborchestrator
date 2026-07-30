@@ -14,6 +14,9 @@ class SurfaceNode:
     parent_surface_id: str | None = None
     accessible: bool = True
     fingerprint: str = ""
+    lifecycle_state: str = "active"
+    generation: int = 0
+    control_fingerprints: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -112,6 +115,78 @@ def rebind_control(schema: dict[str, Any], identity: dict[str, Any]) -> dict[str
     if len(candidates) > 1 and candidates[0][0] == candidates[1][0]:
         return None
     return candidates[0][1]
+
+
+def surface_nodes_from_step(step: dict[str, Any], *, generation: int) -> list[SurfaceNode]:
+    schema = step.get("schema") or {}
+    controls_by_surface: dict[str, list[str]] = {}
+    for field in schema.get("fields") or []:
+        if not isinstance(field, dict):
+            continue
+        handle = field.get("control_handle") if isinstance(field.get("control_handle"), dict) else {}
+        surface_id = str(field.get("surface_id") or handle.get("surface_id") or "main")
+        fingerprint = str(handle.get("fingerprint") or "")
+        if fingerprint:
+            controls_by_surface.setdefault(surface_id, []).append(fingerprint)
+    nodes = []
+    for item in step.get("surfaces") or []:
+        if not isinstance(item, dict):
+            continue
+        surface_id = str(item.get("surface_id") or "main")
+        nodes.append(
+            SurfaceNode(
+                surface_id=surface_id,
+                kind=str(item.get("kind") or "page"),
+                origin=str(item.get("origin") or ""),
+                parent_surface_id=item.get("parent_surface_id"),
+                accessible=bool(item.get("accessible", True)),
+                fingerprint=str(item.get("fingerprint") or ""),
+                lifecycle_state=str(item.get("lifecycle_state") or "active"),
+                generation=generation,
+                control_fingerprints=sorted(set(controls_by_surface.get(surface_id, []))),
+            )
+        )
+    return nodes
+
+
+def reconcile_surface_lifecycle(
+    previous: list[SurfaceNode],
+    current: list[SurfaceNode],
+    *,
+    generation: int,
+) -> list[SurfaceNode]:
+    current_ids = {node.surface_id for node in current}
+    reconciled = [
+        SurfaceNode(
+            surface_id=node.surface_id,
+            kind=node.kind,
+            origin=node.origin,
+            parent_surface_id=node.parent_surface_id,
+            accessible=node.accessible,
+            fingerprint=node.fingerprint,
+            lifecycle_state="active",
+            generation=generation,
+            control_fingerprints=node.control_fingerprints,
+        )
+        for node in current
+    ]
+    for node in previous:
+        if node.surface_id in current_ids:
+            continue
+        reconciled.append(
+            SurfaceNode(
+                surface_id=node.surface_id,
+                kind=node.kind,
+                origin=node.origin,
+                parent_surface_id=node.parent_surface_id,
+                accessible=False,
+                fingerprint=node.fingerprint,
+                lifecycle_state="inactive",
+                generation=generation,
+                control_fingerprints=node.control_fingerprints,
+            )
+        )
+    return reconciled
 
 
 def _identity_match_score(expected: dict[str, Any], actual: dict[str, Any]) -> int:

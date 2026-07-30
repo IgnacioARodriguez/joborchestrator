@@ -186,7 +186,7 @@ def evaluate_submit_only_readiness(
         blockers.append("validation_not_clean")
     if int(repair_report.get("dynamic_required_count") or 0) > 0:
         blockers.append("repair_pending_dynamic_required")
-    if str(repair_report.get("status") or "") not in {"", "not_attempted", "no_repair_needed"}:
+    if str(repair_report.get("status") or "") not in {"", "not_attempted", "no_repair_needed", "repaired"}:
         blockers.append("repair_not_terminal")
     if len(forbidden_submit_controls) != 1:
         blockers.append("submit_boundary_missing_or_ambiguous")
