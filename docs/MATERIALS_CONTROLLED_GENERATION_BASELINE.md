@@ -79,10 +79,11 @@ Queued LLM regenerations now clear stale material fields and mark `queued_genera
 
 ## Offline Benchmark
 
-Command:
+Commands:
 
 ```bash
 python scripts/run_materials_controlled_benchmark.py --output data/materials_controlled_benchmark_offline.json
+python scripts/run_materials_offline_integration.py --output data/materials_offline_integration.json
 ```
 
 Latest offline run on the evidence packet:
@@ -96,6 +97,8 @@ Latest offline run on the evidence packet:
 | E | OpenAI with CV IR and renderer | offline only | offline only | 15 | 0 | 29.8 | Provider control arm |
 
 Context size sample: legacy `6733` chars vs generation context `269` chars.
+
+Offline integration coverage from `tests/fixtures/materials_controlled_offline_cases.json` exercises deterministic high-fit backend rendering, low-fit/AVOID routing, Spanish language context, complex canonical technology rendering, forbidden alias exclusion from generation context, and incomplete CV parse human-review metadata. It does not call providers and does not claim live pass rates.
 
 These are offline architecture estimates from stored evidence themes, not live pass-rate claims. Live benchmark remains pending provider credentials.
 
