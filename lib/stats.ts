@@ -1,8 +1,8 @@
-import type { Decision, JobPosting, JobSource } from "./types"
+import type { Decision, JobListItem, JobSource } from "./types"
 import { DECISION_ORDER } from "./types"
 import { isActionableApplyDecision, isNewThisWeek } from "./job-ui"
 
-export function computeKpis(jobs: JobPosting[]) {
+export function computeKpis(jobs: JobListItem[]) {
   const total = jobs.length
   const applyCandidates = jobs.filter(
     (j) => isActionableApplyDecision(j.ranking.decision, j.ranking.final_score),
@@ -17,7 +17,7 @@ export function computeKpis(jobs: JobPosting[]) {
   return { total, applyCandidates, applied, newThisWeek, avgScore }
 }
 
-export function decisionDistribution(jobs: JobPosting[]) {
+export function decisionDistribution(jobs: JobListItem[]) {
   const counts: Record<Decision, number> = {
     APPLY_NOW: 0,
     APPLY_WITH_TAILORED_CV: 0,
@@ -29,7 +29,7 @@ export function decisionDistribution(jobs: JobPosting[]) {
   return DECISION_ORDER.map((d) => ({ decision: d, count: counts[d] }))
 }
 
-export function sourceDistribution(jobs: JobPosting[]) {
+export function sourceDistribution(jobs: JobListItem[]) {
   const sources: JobSource[] = ["LinkedIn", "Greenhouse", "Lever", "Ashby", "API", "Manual"]
   const counts = Object.fromEntries(sources.map((s) => [s, 0])) as Record<
     JobSource,
@@ -39,7 +39,7 @@ export function sourceDistribution(jobs: JobPosting[]) {
   return sources.map((s) => ({ source: s, count: counts[s] }))
 }
 
-export function weeklyTrend(jobs: JobPosting[]) {
+export function weeklyTrend(jobs: JobListItem[]) {
   // Buckets by day for the last 7 days based on first_seen_at.
   const days: { day: string; label: string; count: number }[] = []
   for (let i = 6; i >= 0; i--) {
@@ -60,7 +60,7 @@ export function weeklyTrend(jobs: JobPosting[]) {
   return days
 }
 
-export function pipelineFunnel(jobs: JobPosting[]) {
+export function pipelineFunnel(jobs: JobListItem[]) {
   const shortlisted = jobs.filter(
     (j) =>
       j.pipeline_status === "shortlisted" ||
@@ -76,7 +76,7 @@ export function pipelineFunnel(jobs: JobPosting[]) {
   ]
 }
 
-export function scoreHistogram(jobs: JobPosting[]) {
+export function scoreHistogram(jobs: JobListItem[]) {
   const buckets = [
     { range: "0–39", min: 0, max: 39, count: 0 },
     { range: "40–59", min: 40, max: 59, count: 0 },

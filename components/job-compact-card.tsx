@@ -3,7 +3,7 @@
 import { Building2, CircleAlert, Clock3, ExternalLink, MapPin, UserRoundCheck } from "lucide-react"
 import { DecisionBadge, MaterialsReviewBadge, ScoreBadge } from "@/components/badges"
 import { Button } from "@/components/ui/button"
-import type { JobPosting } from "@/lib/types"
+import type { JobListItem } from "@/lib/types"
 import { rankingSummaryText, relativeTime } from "@/lib/job-ui"
 import { cn } from "@/lib/utils"
 
@@ -17,7 +17,7 @@ export function JobCompactCard({
   onOpen,
   className,
 }: {
-  job: JobPosting
+  job: JobListItem
   onOpen: (id: string) => void
   className?: string
 }) {
@@ -49,8 +49,23 @@ export function JobCompactCard({
                 Review
               </span>
             ) : null}
-            {job.materials.review?.status !== "missing" ? (
-              <MaterialsReviewBadge materials={job.materials} className="text-[10px]" />
+            {job.materials_review?.status !== "missing" ? (
+              <MaterialsReviewBadge
+                materials={{
+                  recruiter_message: "",
+                  cover_letter: "",
+                  ats_cv_notes: "",
+                  autofill_notes: "",
+                  review: job.materials_review,
+                  generation: {
+                    provider: null,
+                    model: null,
+                    prompt_versions: {},
+                    validation_errors: [],
+                  },
+                }}
+                className="text-[10px]"
+              />
             ) : null}
           </div>
           <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
@@ -61,7 +76,7 @@ export function JobCompactCard({
           aria-label={`Open ${job.title}`}
           size="icon-sm"
           variant="ghost"
-          onClick={() => window.open(job.url, "_blank", "noopener,noreferrer")}
+          onClick={() => onOpen(job.id)}
         >
           <ExternalLink className="size-3.5" />
         </Button>

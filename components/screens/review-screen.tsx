@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { DecisionBadge, ScoreBadge } from "@/components/badges"
 import { PageHeader } from "@/components/page-chrome"
 import { useStore } from "@/lib/store"
-import type { JobPosting } from "@/lib/types"
+import type { JobListItem } from "@/lib/types"
 import { relativeTime } from "@/lib/job-ui"
 import { cn } from "@/lib/utils"
 
@@ -17,18 +17,25 @@ function summarize(items: string[], fallback: string) {
 }
 
 export function ReviewScreen({ onOpenJob }: { onOpenJob: (id: string) => void }) {
-  const { jobs, setPipelineStatus } = useStore()
-  const [query, setQuery] = useState("")
+  const { applyQueueQuery, jobs, setApplyQueueQuery, setPipelineStatus } = useStore()
+  const [query, setQuery] = useState(applyQueueQuery)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [bulk, setBulk] = useState<Set<string>>(new Set())
 
   const visible = useMemo(() => {
-    const q = query.trim().toLowerCase()
     return jobs
       .filter((job) => job.pipeline_status !== "discarded")
-      .filter((job) => !q || `${job.title} ${job.company} ${job.location}`.toLowerCase().includes(q))
       .sort((a, b) => b.ranking.final_score - a.ranking.final_score)
-  }, [jobs, query])
+  }, [jobs])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (query.trim() !== applyQueueQuery) {
+        setApplyQueueQuery(query.trim())
+      }
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [applyQueueQuery, query, setApplyQueueQuery])
 
   const activeId = selectedId ?? visible[0]?.id ?? null
 
@@ -37,7 +44,7 @@ export function ReviewScreen({ onOpenJob }: { onOpenJob: (id: string) => void })
     [activeId, visible],
   )
 
-  const act = useCallback((job: JobPosting, status: "shortlisted" | "ready_to_apply" | "discarded") => {
+  const act = useCallback((job: JobListItem, status: "shortlisted" | "ready_to_apply" | "discarded") => {
     setPipelineStatus(job.id, status)
     toast.success(status === "discarded" ? "Discarded" : "Saved", { description: job.title })
   }, [setPipelineStatus])

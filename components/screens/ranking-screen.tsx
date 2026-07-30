@@ -15,7 +15,7 @@ import { JobCompactCard } from "@/components/job-compact-card"
 import { PageHeader } from "@/components/page-chrome"
 import { cn } from "@/lib/utils"
 import { useStore } from "@/lib/store"
-import type { Decision, JobPosting } from "@/lib/types"
+import type { Decision, JobListItem } from "@/lib/types"
 import { DECISION_STYLES, isActionableApplyDecision } from "@/lib/job-ui"
 
 type FilterKey = "remote" | "linkedin" | "ats" | "review"
@@ -47,9 +47,9 @@ function rankingVersionLabel(version: string): string {
   return version
 }
 
-function needsReview(job: JobPosting): boolean {
+function needsReview(job: JobListItem): boolean {
   if (job.ranking.evidence.requires_llm_review) return true
-  if (job.materials.review?.status === "needs_review") return true
+  if (job.materials_review?.status === "needs_review") return true
   return (
     (job.ranking.decision === "APPLY_NOW" ||
       job.ranking.decision === "APPLY_WITH_TAILORED_CV") &&
@@ -57,7 +57,7 @@ function needsReview(job: JobPosting): boolean {
   )
 }
 
-function matchesFilter(job: JobPosting, key: FilterKey): boolean {
+function matchesFilter(job: JobListItem, key: FilterKey): boolean {
   switch (key) {
     case "remote":
       return job.remote
@@ -70,7 +70,7 @@ function matchesFilter(job: JobPosting, key: FilterKey): boolean {
   }
 }
 
-function sortJobs(list: JobPosting[], sort: SortKey): JobPosting[] {
+function sortJobs(list: JobListItem[], sort: SortKey): JobListItem[] {
   return [...list].sort((a, b) => {
     if (sort === "score") return b.ranking.final_score - a.ranking.final_score
     if (sort === "newest") {
@@ -80,7 +80,7 @@ function sortJobs(list: JobPosting[], sort: SortKey): JobPosting[] {
   })
 }
 
-function averageScore(jobs: JobPosting[]): number {
+function averageScore(jobs: JobListItem[]): number {
   if (jobs.length === 0) return 0
   return Math.round(jobs.reduce((sum, job) => sum + job.ranking.final_score, 0) / jobs.length)
 }
@@ -130,7 +130,7 @@ export function RankingScreen({
   }, [jobs, query, active, sort])
 
   const grouped = useMemo(() => {
-    const map = new Map<Decision, JobPosting[]>()
+    const map = new Map<Decision, JobListItem[]>()
     for (const decision of DECISION_COLUMNS) map.set(decision, [])
     for (const job of filtered) {
       map.get(job.ranking.decision)?.push(job)

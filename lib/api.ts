@@ -7,7 +7,7 @@ import type {
   ResumeVariant,
   JobContact,
   FollowUp,
-  JobPosting,
+  JobDetail,
   JobsResponse,
   LinkedInProfileSetting,
   OperationRun,
@@ -79,11 +79,19 @@ export const api = {
     return request<JobsResponse>(`/api/jobs${query}`)
   },
 
-  async getApplyQueue(rankingVersion?: string | null, limit = 50, offset = 0, freshness = "active") {
+  async getJob(id: string, rankingVersion?: string | null, signal?: AbortSignal) {
+    const query = rankingVersion ? `?ranking_version=${encodeURIComponent(rankingVersion)}` : ""
+    return request<{ job: JobDetail }>(`/api/jobs/${encodeURIComponent(id)}${query}`, { fresh: true, signal })
+  },
+
+  async getApplyQueue(rankingVersion?: string | null, limit = 50, offset = 0, freshness = "active", query?: string) {
     const params = new URLSearchParams()
     params.set("limit", String(limit))
     params.set("offset", String(offset))
     params.set("freshness", freshness)
+    if (query?.trim()) {
+      params.set("q", query.trim())
+    }
     if (rankingVersion) {
       params.set("ranking_version", rankingVersion)
     }
@@ -197,7 +205,7 @@ export const api = {
     source?: string
     description_text?: string
   }) {
-    return request<{ job: JobPosting }>("/api/jobs", {
+    return request<{ job: JobDetail }>("/api/jobs", {
       method: "POST",
       body: JSON.stringify(input),
     })
@@ -245,7 +253,7 @@ export const api = {
   },
 
   async generateMaterials(id: string, provider: "heuristic" | "openai" | "nvidia" = "openai") {
-    return request<{ job?: JobPosting; operation_id?: number; status?: string }>(`/api/jobs/${id}/materials`, {
+    return request<{ job?: JobDetail; operation_id?: number; status?: string }>(`/api/jobs/${id}/materials`, {
       method: "POST",
       body: JSON.stringify({ provider, use_llm: provider !== "heuristic", shortlist: true }),
     })

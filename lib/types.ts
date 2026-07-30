@@ -199,6 +199,61 @@ export interface JobPosting {
   materials: ApplicationMaterials
 }
 
+export type JobDetail = JobPosting
+
+export interface RankingEvidenceSummary {
+  strong_matches: string[]
+  missing_requirements: string[]
+  requires_llm_review: boolean
+  llm_escalation_reasons: string[]
+  red_flags: string[]
+}
+
+export interface JobRankingSummary {
+  final_score: number
+  decision: Decision
+  confidence: number
+  evidence: RankingEvidenceSummary
+  reasoning_summary: string
+  ranking_version: string
+  review: JobRanking["review"]
+}
+
+export type PrioritySummary = Pick<
+  PriorityBreakdown,
+  | "priority_score"
+  | "fit_score"
+  | "eligibility_score"
+  | "freshness_score"
+  | "freshness_bucket"
+  | "freshness_age_days"
+  | "application_effort_score"
+  | "recruiter_advantage_score"
+  | "estimated_minutes"
+  | "next_action"
+  | "blocker"
+>
+
+export interface JobListItem {
+  id: string
+  title: string
+  company: string
+  location: string
+  remote: boolean
+  source: JobSource
+  source_raw?: string
+  apply_type?: string | null
+  first_seen_at: string
+  last_seen_at: string
+  status: JobStatus
+  pipeline_status: PipelineStatus
+  ranking: JobRankingSummary
+  priority: PrioritySummary
+  has_materials: boolean
+  materials_review: ApplicationMaterials["review"]
+  has_recruiter_contact: boolean
+}
+
 export interface ApplicationEvent {
   id: number
   application_id: number
@@ -343,13 +398,14 @@ export interface JobsMeta {
   has_next?: boolean
   has_previous?: boolean
   freshness?: "active" | "all" | "fresh" | "recent" | "stale" | "archival" | string
+  query?: string
   freshness_counts?: Record<string, number>
   unfiltered_total?: number
   db_mode: "sqlite" | "turso" | string
 }
 
 export interface JobsResponse {
-  jobs: JobPosting[]
+  jobs: JobListItem[]
   ranking_versions: string[]
   selected_ranking_version?: string | null
   meta?: JobsMeta

@@ -583,6 +583,67 @@ def get_job_postings(
         conn.close()
 
 
+JOB_LIST_COLUMNS = """
+              jp.id,
+              jp.source,
+              jp.company,
+              jp.title,
+              jp.location,
+              jp.workplace_type,
+              jp.url,
+              jp.apply_url,
+              jp.applicant_count,
+              jp.recruiter_name,
+              jp.recruiter_profile_url,
+              jp.apply_type,
+              jp.external_apply_url,
+              jp.posted_at,
+              jp.first_seen_at,
+              jp.last_seen_at,
+              jp.is_active,
+              jp.pipeline_status,
+              jp.data_quality_flags,
+              CASE
+                WHEN COALESCE(jp.recruiter_message, jp.cover_letter, jp.ats_cv_text, jp.autofill_notes, '') != '' THEN 1
+                ELSE 0
+              END AS has_materials,
+              CASE WHEN COALESCE(jp.ats_cv_text, '') != '' THEN 1 ELSE 0 END AS has_ats_cv,
+              CASE WHEN COALESCE(jp.cover_letter, '') != '' THEN 1 ELSE 0 END AS has_cover_letter,
+              jr.id AS ranking_id,
+              jr.job_id AS ranking_job_id,
+              jr.final_score AS ranking_final_score,
+              jr.decision AS ranking_decision,
+              jr.confidence AS ranking_confidence,
+              jr.evidence_json AS ranking_evidence_json,
+              jr.reasoning_summary AS ranking_reasoning_summary,
+              jr.ranking_validation_attempts AS ranking_ranking_validation_attempts,
+              jr.ranking_version AS ranking_ranking_version
+"""
+
+
+def get_job_posting_summaries(
+    connect: ConnectionFactory,
+    read_sql_query: ReadSqlQuery,
+    ranking_version: str | None,
+    limit: int,
+    offset: int = 0,
+) -> pd.DataFrame:
+    conn = connect()
+    try:
+        query = f"""
+            SELECT
+{JOB_LIST_COLUMNS}
+            FROM job_postings jp
+            LEFT JOIN job_rankings jr
+              ON jr.job_id = jp.id AND jr.ranking_version = ?
+            ORDER BY jp.last_seen_at DESC, jp.id DESC
+            LIMIT ? OFFSET ?
+        """
+        return read_sql_query(query, conn, [ranking_version or "", limit, offset])
+    finally:
+        conn.close()
+
+
 def get_apply_queue_job_postings(
     connect: ConnectionFactory,
     read_sql_query: ReadSqlQuery,
@@ -590,33 +651,17 @@ def get_apply_queue_job_postings(
     freshness: str,
     limit: int,
     offset: int,
+    search: str | None = None,
     now: datetime | None = None,
 ) -> pd.DataFrame:
     conn = connect()
     try:
         where_sql, params = _freshness_where_clause(freshness, now or datetime.now())
+        where_sql, params = _append_job_search_filter(where_sql, params, search)
         join_sql = "LEFT JOIN job_rankings jr ON jr.job_id = jp.id AND jr.ranking_version = ?"
         query = f"""
             SELECT
-              jp.*,
-              jr.id AS ranking_id,
-              jr.job_id AS ranking_job_id,
-              jr.final_score AS ranking_final_score,
-              jr.decision AS ranking_decision,
-              jr.confidence AS ranking_confidence,
-              jr.scores_json AS ranking_scores_json,
-              jr.evidence_json AS ranking_evidence_json,
-              jr.reasoning_summary AS ranking_reasoning_summary,
-              jr.recommended_application_angle AS ranking_recommended_application_angle,
-              jr.cv_keywords_to_emphasize_json AS ranking_cv_keywords_to_emphasize_json,
-              jr.cv_keywords_to_avoid_overclaiming_json AS ranking_cv_keywords_to_avoid_overclaiming_json,
-              jr.ranking_provider AS ranking_ranking_provider,
-              jr.ranking_model AS ranking_ranking_model,
-              jr.ranking_prompt_versions_json AS ranking_ranking_prompt_versions_json,
-              jr.ranking_validation_attempts AS ranking_ranking_validation_attempts,
-              jr.ranking_validation_errors_json AS ranking_ranking_validation_errors_json,
-              jr.ranking_candidate_profile_hash AS ranking_ranking_candidate_profile_hash,
-              jr.ranking_version AS ranking_ranking_version
+{JOB_LIST_COLUMNS}
             FROM job_postings jp
             {join_sql}
             {where_sql}
@@ -646,11 +691,13 @@ def get_apply_queue_job_postings(
 def count_apply_queue_job_postings(
     connect: ConnectionFactory,
     freshness: str,
+    search: str | None = None,
     now: datetime | None = None,
 ) -> int:
     conn = connect()
     try:
         where_sql, params = _freshness_where_clause(freshness, now or datetime.now())
+        where_sql, params = _append_job_search_filter(where_sql, params, search)
         row = conn.execute(f"SELECT COUNT(*) AS count FROM job_postings jp {where_sql}", params).fetchone()
         return int(row["count"] if row else 0)
     finally:
@@ -892,6 +939,23 @@ def _freshness_where_clause(freshness: str, now: datetime) -> tuple[str, list[ob
     if freshness == "archival":
         return f"WHERE ({date_expr} < ? OR {date_expr} IS NULL)", [stale_cutoff]
     raise ValueError(f"Unsupported freshness filter: {freshness}")
+
+
+def _append_job_search_filter(where_sql: str, params: list[object], search: str | None) -> tuple[str, list[object]]:
+    term = str(search or "").strip().lower()
+    if not term:
+        return where_sql, params
+    predicate = """
+        (
+            LOWER(COALESCE(jp.title, '')) LIKE ?
+            OR LOWER(COALESCE(jp.company, '')) LIKE ?
+            OR LOWER(COALESCE(jp.location, '')) LIKE ?
+            OR LOWER(COALESCE(jp.source, '')) LIKE ?
+        )
+    """
+    prefix = "WHERE" if not where_sql else f"{where_sql} AND"
+    pattern = f"%{term}%"
+    return f"{prefix} {predicate}", [*params, pattern, pattern, pattern, pattern]
 
 
 def _freshness_cutoffs(now: datetime) -> tuple[str, str, str]:

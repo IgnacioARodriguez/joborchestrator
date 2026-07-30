@@ -128,7 +128,7 @@ def test_health_and_profile_round_trip(tmp_path, monkeypatch):
 
 def test_jobs_can_select_ranking_version_and_hide_heuristic_versions(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
-    save_job_with_rankings()
+    job_id = save_job_with_rankings()
 
     default_response = client.get("/api/jobs")
     openai_response = client.get("/api/jobs", params={"ranking_version": "ranking_v1.1.0-openai:gpt-5.4-mini"})
@@ -137,7 +137,9 @@ def test_jobs_can_select_ranking_version_and_hide_heuristic_versions(tmp_path, m
     default_body = default_response.json()
     assert default_body["jobs"][0]["ranking"]["ranking_version"] == "ranking_v1.1.0-nvidia"
     assert default_body["jobs"][0]["ranking"]["final_score"] == 91
-    assert default_body["jobs"][0]["ranking"]["generation"] == {
+    assert "generation" not in default_body["jobs"][0]["ranking"]
+    detail_body = client.get(f"/api/jobs/{job_id}").json()
+    assert detail_body["job"]["ranking"]["generation"] == {
         "provider": "nvidia",
         "model": "test-ranking-model",
         "prompt_versions": {"ranking/nvidia_response_contract": "v2"},
@@ -200,7 +202,10 @@ def test_jobs_expose_materials_review_status(tmp_path, monkeypatch):
         ats_cv_text="Kubernetes platform ownership.",
     )
 
-    materials = client.get("/api/jobs").json()["jobs"][0]["materials"]
+    list_job = client.get("/api/jobs").json()["jobs"][0]
+    assert list_job["has_materials"] is True
+    assert "materials" not in list_job
+    materials = client.get(f"/api/jobs/{job_id}").json()["job"]["materials"]
 
     assert materials["review"]["status"] == "needs_review"
     assert materials["review"]["requires_review"] is True
@@ -230,7 +235,10 @@ def test_jobs_materials_review_flags_serverless_avoid_aliases(tmp_path, monkeypa
         autofill_notes="Use Python API angle.",
     )
 
-    materials = client.get("/api/jobs").json()["jobs"][0]["materials"]
+    list_job = client.get("/api/jobs").json()["jobs"][0]
+    assert list_job["has_materials"] is True
+    assert "materials" not in list_job
+    materials = client.get(f"/api/jobs/{job_id}").json()["job"]["materials"]
 
     assert "ats_cv_contains_avoid_overclaiming_terms:Serverless Architecture" in materials["review"]["reasons"]
 
@@ -279,6 +287,65 @@ def test_jobs_reject_heuristic_ranking_versions(tmp_path, monkeypatch):
     assert "Heuristic rankings" in response.json()["detail"]
 
 
+def test_jobs_endpoint_returns_lightweight_contract(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    job_id = save_job_with_rankings()
+    db.update_job_application_materials(
+        job_id,
+        recruiter_message="Long recruiter message",
+        cover_letter="Long cover letter",
+        ats_cv_text="Long ATS CV",
+        autofill_notes="Long autofill notes",
+    )
+
+    response = client.get("/api/jobs", params={"limit": 1})
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "private, no-store"
+    body = response.json()
+    job = body["jobs"][0]
+    assert body["meta"]["limit"] == 1
+    assert body["meta"]["offset"] == 0
+    assert job["id"] == str(job_id)
+    assert job["ranking"]["final_score"] == 91
+    assert job["ranking"]["evidence"]["strong_matches"] == ["Python"]
+    assert job["has_materials"] is True
+    assert "description_text" not in job
+    assert "materials" not in job
+    assert "url" not in job
+    assert "apply_url" not in job
+    assert "scores" not in job["ranking"]
+    assert "generation" not in job["ranking"]
+    assert "recommended_application_angle" not in job["ranking"]
+
+
+def test_job_detail_endpoint_returns_full_contract_and_404(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    job_id = save_job_with_rankings()
+    db.update_job_application_materials(
+        job_id,
+        recruiter_message="Recruiter intro",
+        cover_letter="Cover letter",
+        ats_cv_text="ATS CV",
+        autofill_notes="Autofill notes",
+    )
+
+    response = client.get(f"/api/jobs/{job_id}")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "private, no-store"
+    job = response.json()["job"]
+    assert job["id"] == str(job_id)
+    assert job["description_text"] == "Build APIs with Python and FastAPI."
+    assert job["materials"]["cover_letter"] == "Cover letter"
+    assert job["ranking"]["scores"]["technical_fit"] == 91
+    assert job["ranking"]["generation"]["provider"] == "nvidia"
+
+    missing = client.get("/api/jobs/999999")
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Job not found"
+
+
 def test_apply_queue_paginates_after_priority_sort(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
     for index, score in enumerate([20, 95, 60], start=1):
@@ -323,6 +390,27 @@ def test_apply_queue_filters_stale_test_data(tmp_path, monkeypatch):
     assert [job["title"] for job in stale["jobs"]] == ["Old Role"]
     assert active["meta"]["freshness_counts"]["fresh"] == 1
     assert active["meta"]["freshness_counts"]["stale"] == 1
+
+
+def test_apply_queue_search_filters_server_side(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    for external_id, title, company in [
+        ("python-role", "Python Platform Engineer", "Acme"),
+        ("frontend-role", "Frontend Designer", "Bright Studio"),
+    ]:
+        db.upsert_job_posting(
+            make_job(external_id=external_id, title=title, company=company),
+            seen_at=datetime.now().isoformat(timespec="seconds"),
+        )
+    rows = db.get_job_postings(limit=None)
+    for _, row in rows.iterrows():
+        db.save_job_ranking(int(row["id"]), make_ranking("ranking_v1.1.0-nvidia", 80, "APPLY_NOW"))
+
+    body = client.get("/api/apply-queue", params={"q": "bright", "freshness": "all"}).json()
+
+    assert body["meta"]["query"] == "bright"
+    assert body["meta"]["total"] == 1
+    assert [job["title"] for job in body["jobs"]] == ["Frontend Designer"]
 
 
 def test_scan_fresh_queues_scan_with_auto_ranking(tmp_path, monkeypatch):

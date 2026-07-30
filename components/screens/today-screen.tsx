@@ -7,7 +7,7 @@ import { JobCompactCard } from "@/components/job-compact-card"
 import { PageHeader } from "@/components/page-chrome"
 import { useStore } from "@/lib/store"
 import type { Section } from "@/lib/nav"
-import type { JobPosting } from "@/lib/types"
+import type { JobListItem } from "@/lib/types"
 
 function Queue({
   title,
@@ -20,7 +20,7 @@ function Queue({
 }: {
   title: string
   icon: typeof Briefcase
-  jobs: JobPosting[]
+  jobs: JobListItem[]
   empty: string
   actionLabel: string
   onAction: () => void
@@ -69,15 +69,15 @@ export function TodayScreen({
   const waitingAnswerJobs = applications
     .filter((application) => application.status === "preparing")
     .map((application) => jobs.find((job) => Number(job.id) === application.job_id))
-    .filter((job): job is JobPosting => Boolean(job))
+    .filter((job): job is JobListItem => Boolean(job))
   const followUpJobs = applications
     .filter((application) => application.status === "submitted" || application.status === "recruiter_screen")
     .map((application) => jobs.find((job) => Number(job.id) === application.job_id))
-    .filter((job): job is JobPosting => Boolean(job))
+    .filter((job): job is JobListItem => Boolean(job))
   const interviewJobs = applications
     .filter((application) => application.status === "interview" || application.status === "technical")
     .map((application) => jobs.find((job) => Number(job.id) === application.job_id))
-    .filter((job): job is JobPosting => Boolean(job))
+    .filter((job): job is JobListItem => Boolean(job))
   const automationFailures = jobs.filter((job) => job.ranking.decision === "MAYBE" && job.ranking.final_score === 0)
 
   return (

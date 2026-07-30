@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from joborchestrator.api_dto import (
     job_dto,
+    job_list_item_dto,
     latest_rankings_by_job_id,
     parse_json_value,
     scan_result_dto,
@@ -70,6 +71,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _private_no_store(response: Response) -> None:
+    response.headers["Cache-Control"] = "private, no-store"
 
 
 class PipelinePatch(BaseModel):
@@ -486,45 +491,73 @@ def get_operation(operation_id: int) -> dict[str, Any]:
 
 
 @app.get("/api/jobs")
-def list_jobs(limit: int | None = None, ranking_version: str | None = None) -> dict[str, Any]:
+def list_jobs(
+    response: Response,
+    limit: int | None = None,
+    offset: int = 0,
+    ranking_version: str | None = None,
+) -> dict[str, Any]:
+    _private_no_store(response)
     if ranking_version and is_heuristic_ranking_version(ranking_version):
         raise HTTPException(status_code=400, detail="Heuristic rankings are no longer supported in the dashboard.")
     effective_limit = 100 if limit is None else max(1, min(int(limit), 1000))
-    jobs = db.get_job_postings(limit=effective_limit)
+    effective_offset = max(0, int(offset))
     ranking_versions = filter_llm_ranking_versions(db.get_ranking_versions())
     selected_ranking_version = ranking_version or (ranking_versions[0] if ranking_versions else None)
+    jobs = db.get_job_posting_summaries(selected_ranking_version, effective_limit, effective_offset)
     rows = jobs.to_dict("records")
-    job_ids = [int(row["id"]) for row in rows]
-    ranking_rows = (
-        db.get_rankings_for_job_ids(selected_ranking_version, job_ids).to_dict("records")
-        if selected_ranking_version
-        else []
-    )
-    rankings = {int(row["job_id"]): row for row in ranking_rows}
     total = db.count_job_postings()
     return {
         "jobs": [
-            job_dto(row, rankings.get(int(row["id"])), include_hiring_contacts=False, compact=True)
+            job_list_item_dto(row, _ranking_from_apply_queue_row(row))
             for row in rows
         ],
         "ranking_versions": ranking_versions,
         "selected_ranking_version": selected_ranking_version,
         "meta": {
             "total": total,
-            "returned": len(jobs),
-            "limited": effective_limit is not None and len(jobs) < total,
+            "returned": len(rows),
+            "limited": effective_offset + len(rows) < total,
+            "limit": effective_limit,
+            "offset": effective_offset,
+            "has_next": effective_offset + effective_limit < total,
+            "has_previous": effective_offset > 0,
             "db_mode": db_connection.connection_mode(),
         },
     }
 
 
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: int, response: Response, ranking_version: str | None = None) -> dict[str, Any]:
+    _private_no_store(response)
+    if job_id <= 0:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if ranking_version and is_heuristic_ranking_version(ranking_version):
+        raise HTTPException(status_code=400, detail="Heuristic rankings are no longer supported in the dashboard.")
+    job = db.get_job_posting(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    ranking_versions = filter_llm_ranking_versions(db.get_ranking_versions())
+    selected_ranking_version = ranking_version or (ranking_versions[0] if ranking_versions else None)
+    ranking_rows = (
+        db.get_rankings_for_job_ids(selected_ranking_version, [job_id]).to_dict("records")
+        if selected_ranking_version
+        else []
+    )
+    ranking = ranking_rows[0] if ranking_rows else None
+    return {"job": job_dto(job, ranking)}
+
+
 @app.get("/api/apply-queue")
 def apply_queue(
+    response: Response,
     limit: int = 50,
     offset: int = 0,
     ranking_version: str | None = None,
     freshness: str = "active",
+    q: str | None = None,
 ) -> dict[str, Any]:
+    _private_no_store(response)
     if ranking_version and is_heuristic_ranking_version(ranking_version):
         raise HTTPException(status_code=400, detail="Heuristic rankings are no longer supported in the dashboard.")
     freshness_filter = _normalize_freshness_filter(freshness)
@@ -537,17 +570,18 @@ def apply_queue(
         freshness_filter,
         effective_limit,
         effective_offset,
+        q,
     ).to_dict("records")
     jobs = sorted(
         [
-            job_dto(row, _ranking_from_apply_queue_row(row), include_hiring_contacts=False, compact=True)
+            job_list_item_dto(row, _ranking_from_apply_queue_row(row))
             for row in rows
         ],
         key=_apply_queue_sort_key,
         reverse=True,
     )
     freshness_counts = db.count_job_freshness_buckets()
-    total = _freshness_total(freshness_filter, freshness_counts)
+    total = db.count_apply_queue_job_postings(freshness_filter, q) if q else _freshness_total(freshness_filter, freshness_counts)
     return {
         "jobs": jobs,
         "ranking_versions": ranking_versions,
@@ -561,6 +595,7 @@ def apply_queue(
             "has_next": effective_offset + effective_limit < total,
             "has_previous": effective_offset > 0,
             "freshness": freshness_filter,
+            "query": q.strip() if q else "",
             "freshness_counts": freshness_counts,
             "unfiltered_total": sum(freshness_counts.values()),
             "db_mode": db_connection.connection_mode(),
