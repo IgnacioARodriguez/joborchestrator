@@ -16,10 +16,12 @@ from joborchestrator.intelligence.cv_profile_extractor import CVProfileError, bu
 from joborchestrator.intelligence.llm_application_materials import (
     DEFAULT_MATERIALS_MODEL,
     DEFAULT_NVIDIA_MATERIALS_MODEL,
+    LLMMaterialsError,
     build_application_kit_with_llm,
     build_application_kit_with_nvidia,
     materials_prompt_versions,
 )
+from joborchestrator.intelligence.materials_validation import issues_to_dicts, validation_feedback_to_issues
 from joborchestrator.intelligence.profile_trace import profile_trace
 from joborchestrator.llm.provider import ProviderRegistry
 from joborchestrator.automation.executor import run_application_execution
@@ -152,14 +154,22 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
     selected_model = model or DEFAULT_MATERIALS_MODEL
     prompt_versions = materials_prompt_versions() if provider in {"openai", "nvidia"} else {}
     if provider == "openai":
-        kit = build_application_kit_with_llm(job, ranking=ranking, model=selected_model)
+        try:
+            kit = build_application_kit_with_llm(job, ranking=ranking, model=selected_model)
+        except LLMMaterialsError as exc:
+            _record_failed_materials_attempt(operation_id, job_id, provider, selected_model, prompt_versions, exc)
+            raise
     elif provider == "nvidia":
         selected_model = model if model and model != DEFAULT_MATERIALS_MODEL else DEFAULT_NVIDIA_MATERIALS_MODEL
-        kit = build_application_kit_with_nvidia(
-            job,
-            ranking=ranking,
-            model=selected_model,
-        )
+        try:
+            kit = build_application_kit_with_nvidia(
+                job,
+                ranking=ranking,
+                model=selected_model,
+            )
+        except LLMMaterialsError as exc:
+            _record_failed_materials_attempt(operation_id, job_id, provider, selected_model, prompt_versions, exc)
+            raise
     elif provider == "heuristic":
         selected_model = "heuristic"
         kit = build_application_kit(job, keywords=keywords)
@@ -203,6 +213,35 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
         "Application materials ready.",
     )
     logger.info("Completed application materials operation=%s job_id=%s provider=%s", operation_id, job_id, provider)
+
+
+def _record_failed_materials_attempt(
+    operation_id: int,
+    job_id: int,
+    provider: str,
+    model: str,
+    prompt_versions: dict[str, str],
+    exc: LLMMaterialsError,
+) -> None:
+    metadata = exc.generation_metadata if isinstance(exc.generation_metadata, dict) else {}
+    errors = [str(error) for error in metadata.get("validation_errors") or [str(exc)]]
+    issues = [
+        issue
+        for error in errors
+        for issue in validation_feedback_to_issues(error)
+    ]
+    db.record_materials_generation_attempt(
+        operation_id=operation_id,
+        job_id=job_id,
+        stage=str(metadata.get("stage") or "fallback"),
+        attempt_number=int(metadata.get("validation_attempts") or 1),
+        provider=provider,
+        model=model,
+        prompt_version=",".join(f"{key}={value}" for key, value in sorted(prompt_versions.items())) or None,
+        output_text=str(metadata.get("output_text") or ""),
+        validation_issues=issues_to_dicts(issues),
+        accepted=False,
+    )
 
 
 def _process_job_scan(operation: dict[str, Any]) -> None:

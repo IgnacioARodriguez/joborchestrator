@@ -2,6 +2,7 @@
 
 import sqlite3
 import hashlib
+import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -576,6 +577,32 @@ CREATE TABLE IF NOT EXISTS llm_output_feedback (
 
 CREATE INDEX IF NOT EXISTS idx_llm_output_feedback_job ON llm_output_feedback(job_id, artifact_type, created_at);
 CREATE INDEX IF NOT EXISTS idx_llm_output_feedback_action ON llm_output_feedback(action, created_at);
+
+CREATE TABLE IF NOT EXISTS materials_generation_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation_id INTEGER,
+    job_id INTEGER,
+    stage TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL,
+    provider TEXT,
+    model TEXT,
+    prompt_version TEXT,
+    input_hash TEXT,
+    previous_attempt_id INTEGER,
+    output_text TEXT,
+    validation_issues_json TEXT NOT NULL,
+    latency_ms INTEGER,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    accepted INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(operation_id) REFERENCES operation_runs(id),
+    FOREIGN KEY(job_id) REFERENCES job_postings(id),
+    FOREIGN KEY(previous_attempt_id) REFERENCES materials_generation_attempts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_materials_generation_attempts_operation ON materials_generation_attempts(operation_id, stage, attempt_number);
+CREATE INDEX IF NOT EXISTS idx_materials_generation_attempts_job ON materials_generation_attempts(job_id, created_at);
 """
 
 
@@ -1053,6 +1080,86 @@ def complete_operation(operation_id: int, output_payload: dict, message: str = "
 
 def fail_operation(operation_id: int, error: str, message: str = "Failed.") -> None:
     operations_repository.fail_operation(_conn, operation_id, error, message)
+
+
+def record_materials_generation_attempt(
+    *,
+    operation_id: int | None,
+    job_id: int | None,
+    stage: str,
+    attempt_number: int,
+    provider: str | None = None,
+    model: str | None = None,
+    prompt_version: str | None = None,
+    input_hash: str | None = None,
+    previous_attempt_id: int | None = None,
+    output_text: str | None = None,
+    validation_issues: list | None = None,
+    latency_ms: int | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    accepted: bool = False,
+) -> int:
+    now = datetime.now().isoformat(timespec="seconds")
+    issues_json = json.dumps(validation_issues or [], ensure_ascii=False)
+    conn = _conn()
+    try:
+        cursor = conn.execute(
+            """INSERT INTO materials_generation_attempts (
+                   operation_id, job_id, stage, attempt_number, provider, model,
+                   prompt_version, input_hash, previous_attempt_id, output_text,
+                   validation_issues_json, latency_ms, input_tokens, output_tokens,
+                   accepted, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                operation_id,
+                job_id,
+                stage,
+                int(attempt_number),
+                provider,
+                model,
+                prompt_version,
+                input_hash,
+                previous_attempt_id,
+                output_text,
+                issues_json,
+                latency_ms,
+                input_tokens,
+                output_tokens,
+                1 if accepted else 0,
+                now,
+            ),
+        )
+        conn.commit()
+        return _last_insert_id(conn, cursor)
+    finally:
+        conn.close()
+
+
+def list_materials_generation_attempts(operation_id: int | None = None, job_id: int | None = None) -> list[dict]:
+    conn = _conn()
+    try:
+        params: list[object] = []
+        query = "SELECT * FROM materials_generation_attempts"
+        clauses = []
+        if operation_id is not None:
+            clauses.append("operation_id = ?")
+            params.append(int(operation_id))
+        if job_id is not None:
+            clauses.append("job_id = ?")
+            params.append(int(job_id))
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at ASC, id ASC"
+        rows = conn.execute(query, params).fetchall()
+        result = []
+        for row in rows:
+            data = dict(row)
+            data["validation_issues_json"] = parse_json_value(data.get("validation_issues_json"), [])
+            result.append(data)
+        return result
+    finally:
+        conn.close()
 
 
 def parse_json_value(value: object, fallback: object) -> object:
