@@ -22,6 +22,7 @@ def build_controlled_ats_cv(
         if not plan_errors:
             plan = ats_cv_plan_from_response(planner_response)
     ats_cv_text = render_ats_cv(cv_ir, plan, min_bullets_per_role=min_bullets_per_role)
+    validation_errors = [*cv_ir.parse_warnings, *plan_errors]
     return {
         "ats_cv_text": ats_cv_text,
         "keywords_used": derive_keywords_used(ats_cv_text, supported_keywords),
@@ -30,6 +31,7 @@ def build_controlled_ats_cv(
             "pipeline": "controlled_cv",
             "planner_errors": plan_errors,
             "parse_warnings": cv_ir.parse_warnings,
+            "validation_errors": validation_errors,
             "human_review_required": cv_ir.human_review_required,
         },
     }

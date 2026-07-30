@@ -371,6 +371,46 @@ def test_controlled_pipeline_renders_cv_without_freeform_generation():
     assert result["_generation_metadata"]["pipeline"] == "controlled_cv"
 
 
+def test_controlled_pipeline_records_parse_warnings_as_validation_errors():
+    result = build_controlled_ats_cv(
+        "Career Journey\nBackend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API workflows.",
+        ["Python", "APIs"],
+        planner_response={"summary_lines": [], "skill_ids": [], "role_plans": []},
+    )
+
+    assert result["risk_flags"] == ["human_review_required"]
+    assert result["_generation_metadata"]["human_review_required"] is True
+    assert result["_generation_metadata"]["parse_warnings"] == ["experience_roles_not_parsed"]
+    assert result["_generation_metadata"]["validation_errors"] == ["experience_roles_not_parsed"]
+
+
+def test_nvidia_controlled_cv_preserves_parse_warnings_in_validation_errors(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials as llm
+
+    monkeypatch.setattr(
+        llm,
+        "_call_nvidia_cv_planner",
+        lambda *args, **kwargs: {"summary_lines": [], "skill_ids": [], "role_plans": []},
+    )
+
+    response = llm._call_nvidia_controlled_cv(
+        {
+            "base_cv": {
+                "text": "Career Journey\nBackend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API workflows."
+            },
+            "job": {"company": "Acme", "title": "Backend Engineer", "description_text": "Build Python APIs."},
+            "ats_fit_analysis": {"supported_keywords": ["Python", "APIs"]},
+        },
+        "test-key",
+        "test-model",
+        1.0,
+    )
+
+    assert response["risk_flags"] == ["human_review_required"]
+    assert response["_generation_metadata"]["validation_errors"] == ["experience_roles_not_parsed"]
+    assert response["_generation_metadata"]["stage"] == "cv_render"
+
+
 def test_nvidia_controlled_flags_use_planner_instead_of_freeform_cv(monkeypatch):
     from joborchestrator.intelligence import llm_application_materials as llm
 

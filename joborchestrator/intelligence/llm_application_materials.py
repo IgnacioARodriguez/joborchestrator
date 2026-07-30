@@ -1015,7 +1015,7 @@ def _call_openai_controlled_cv_fallback(
             "validation_attempts": 1 + int(previous_metadata.get("validation_attempts") or 0),
             "validation_errors": [
                 *[str(error) for error in previous_metadata.get("validation_errors") or [str(previous_error)]],
-                *[str(error) for error in metadata.get("planner_errors") or []],
+                *[str(error) for error in metadata.get("validation_errors") or metadata.get("planner_errors") or []],
             ],
             "pipeline": "controlled_cv",
             "stage": "fallback",
@@ -1081,7 +1081,7 @@ def _call_nvidia_controlled_cv(
     metadata.update(
         {
             "validation_attempts": 1,
-            "validation_errors": list(metadata.get("planner_errors") or []),
+            "validation_errors": list(metadata.get("validation_errors") or metadata.get("planner_errors") or []),
             "pipeline": "controlled_cv",
             "stage": "cv_render",
         }
