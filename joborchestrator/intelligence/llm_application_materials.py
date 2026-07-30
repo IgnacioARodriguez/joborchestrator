@@ -27,7 +27,10 @@ from joborchestrator.intelligence.materials_repair import (
     build_repair_directive,
     repair_prompt_payload,
 )
-from joborchestrator.intelligence.materials_validation import validation_feedback_to_issues
+from joborchestrator.intelligence.materials_validation import (
+    derive_risk_flags_from_issues,
+    validation_feedback_to_issues,
+)
 from joborchestrator.ranking.schemas import CandidateProfile
 from joborchestrator.ranking.serialization import result_to_dict
 from joborchestrator.storage import persistence as db
@@ -441,13 +444,18 @@ def _materials_experience_claim_constraints(base_cv_text: str) -> list[dict[str,
     return constraints
 
 
-def _kit_from_response(response: dict[str, Any]) -> dict[str, str]:
-    return {
+def _kit_from_response(response: dict[str, Any]) -> dict[str, Any]:
+    kit: dict[str, Any] = {
         "recruiter_message": _clean_recruiter_message(_material_text(response["recruiter_message"])),
         "cover_letter": str(response.get("cover_letter") or ""),
         "ats_cv_text": _clean_cv_text_for_export(str(response["ats_cv_text"])),
         "autofill_notes": _autofill_notes_text(response),
     }
+    if isinstance(response.get("risk_flags"), list):
+        kit["risk_flags"] = _dedupe_strings([str(flag).strip() for flag in response["risk_flags"] if str(flag or "").strip()])
+    if isinstance(response.get("keywords_used"), list):
+        kit["keywords_used"] = _dedupe_strings([str(keyword).strip() for keyword in response["keywords_used"] if str(keyword or "").strip()])
+    return kit
 
 
 def _autofill_notes_text(response: dict[str, Any]) -> str:
@@ -493,6 +501,20 @@ def _attach_generation_metadata(kit: dict[str, Any], response: dict[str, Any]) -
     metadata = response.get("_generation_metadata")
     if isinstance(metadata, dict):
         kit["_generation_metadata"] = metadata
+        _attach_derived_risk_flags(kit, metadata)
+
+
+def _attach_derived_risk_flags(kit: dict[str, Any], metadata: dict[str, Any]) -> None:
+    existing = kit.get("risk_flags") if isinstance(kit.get("risk_flags"), list) else []
+    flags = _dedupe_strings([str(flag).strip() for flag in existing if str(flag or "").strip()])
+    errors = [str(error) for error in metadata.get("validation_errors") or []]
+    for error in errors:
+        flags.extend(derive_risk_flags_from_issues(validation_feedback_to_issues(error)))
+    if metadata.get("human_review_required"):
+        flags.append("human_review_required")
+    flags = _dedupe_strings(flags)
+    if flags:
+        kit["risk_flags"] = flags
 
 
 def _combined_generation_metadata(responses: list[dict[str, Any]]) -> dict[str, Any]:

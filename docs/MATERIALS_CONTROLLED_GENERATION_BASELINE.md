@@ -39,6 +39,7 @@ Fallback / human review
 Initial implementation notes:
 
 - `keywords_used` is derived in code from rendered CV text and supported keywords.
+- `risk_flags` remain schema-visible but are now partially derived from structured validation issues and human-review metadata, while model-supplied flags are preserved.
 - Forbidden aliases named in validation issues can be deterministically replaced with generic caveat wording before semantic retry.
 - Validation feedback can be converted to stable structured issues.
 - NVIDIA repair prompts receive the previous response and an explicit frozen-field directive.

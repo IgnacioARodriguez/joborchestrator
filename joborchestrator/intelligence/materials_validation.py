@@ -42,6 +42,35 @@ ISSUE_CODES = {
     "AUTOFILL_SHAPE_INVALID",
 }
 
+_RISK_FLAG_BY_ISSUE_CODE = {
+    "KEYWORD_METADATA_MISMATCH": "keywords_used_derived_from_cv_text",
+    "FORBIDDEN_ALIAS": "unsupported_target_stack_terms_required_repair",
+    "UNSUPPORTED_YEARS_CLAIM": "unsupported_experience_years_claim_required_repair",
+    "UNSUPPORTED_ROLE_TECH": "role_technology_attribution_required_repair",
+    "MISSING_CANONICAL_ROLE_TECH": "role_technology_evidence_required_repair",
+    "ROLE_OMITTED": "cv_completeness_required_repair",
+    "ROLE_OVERCOMPRESSED": "cv_completeness_required_repair",
+    "CV_TOO_SHORT": "cv_completeness_required_repair",
+    "INTERNAL_LANGUAGE_LEAK": "internal_review_language_required_repair",
+    "OVERCONFIDENT_TONE": "tone_required_cautious_review",
+    "LANGUAGE_MISMATCH": "output_language_required_repair",
+    "AUTOFILL_SHAPE_INVALID": "autofill_shape_required_repair",
+    "MISSING_REQUIRED_FIELD": "generation_required_human_review",
+    "INVALID_SCHEMA": "generation_required_human_review",
+    "UNSUPPORTED_GENERAL_CLAIM": "generation_required_human_review",
+}
+
+
+def derive_risk_flags_from_issues(issues: list[ValidationIssue]) -> list[str]:
+    flags: list[str] = []
+    for issue in issues:
+        flag = _RISK_FLAG_BY_ISSUE_CODE.get(issue.code)
+        if flag is None and issue.severity == "hard":
+            flag = "generation_required_human_review"
+        if flag and flag not in flags:
+            flags.append(flag)
+    return flags
+
 
 def issues_to_messages(issues: list[ValidationIssue]) -> list[str]:
     return [issue_to_message(issue) for issue in issues]

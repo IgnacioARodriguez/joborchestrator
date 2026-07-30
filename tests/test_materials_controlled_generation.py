@@ -38,6 +38,7 @@ from joborchestrator.intelligence.materials_repair import (
 from joborchestrator.intelligence.materials_routing import max_semantic_repairs, should_auto_generate_materials
 from joborchestrator.intelligence.materials_controlled_pipeline import build_controlled_ats_cv
 from joborchestrator.intelligence.materials_validation import (
+    derive_risk_flags_from_issues,
     issues_to_messages,
     validation_feedback_to_issues,
 )
@@ -95,6 +96,48 @@ def test_validation_feedback_has_stable_issue_codes():
 
     assert [issue.code for issue in issues] == ["KEYWORD_METADATA_MISMATCH", "MISSING_CANONICAL_ROLE_TECH"]
     assert "KEYWORD_METADATA_MISMATCH in keywords_used" in issues_to_messages(issues)[0]
+
+
+def test_risk_flags_are_derived_from_validation_issues():
+    issues = validation_feedback_to_issues(
+        "application_materials contains unsupported ranking avoid-overclaiming terms: Kubernetes.; "
+        "ats_cv_text is overcompressed compared with base CV experience roles."
+    )
+
+    assert derive_risk_flags_from_issues(issues) == [
+        "unsupported_target_stack_terms_required_repair",
+        "cv_completeness_required_repair",
+    ]
+
+
+def test_kit_preserves_and_derives_risk_flags_from_metadata():
+    kit = llm._kit_from_response(
+        {
+            "recruiter_message": "Hi Acme, Python API background may be relevant.",
+            "cover_letter": "Dear Acme team",
+            "ats_cv_text": "Professional Summary\nBackend engineer",
+            "autofill_notes": "Python backend profile",
+            "risk_flags": ["model_supplied_review"],
+            "keywords_used": ["Python"],
+        }
+    )
+
+    llm._attach_generation_metadata(
+        kit,
+        {
+            "_generation_metadata": {
+                "validation_errors": [
+                    "application_materials contains unsupported ranking avoid-overclaiming terms: Kubernetes."
+                ]
+            }
+        },
+    )
+
+    assert kit["risk_flags"] == [
+        "model_supplied_review",
+        "unsupported_target_stack_terms_required_repair",
+    ]
+    assert kit["keywords_used"] == ["Python"]
 
 
 def test_retry_cannot_change_frozen_fields():
