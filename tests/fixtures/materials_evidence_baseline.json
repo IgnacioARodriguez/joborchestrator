@@ -1,0 +1,87 @@
+{
+  "source_packet": "materials_generation_logs_for_gpt_20260730_122014.zip",
+  "created_at": "2026-07-30T12:20:25",
+  "records_found": 29,
+  "provider_status_counts": {
+    "nvidia:completed": 6,
+    "nvidia:failed": 4,
+    "nvidia:running": 3,
+    "openai:completed": 4,
+    "nvidia:queued": 12
+  },
+  "provider_duration_seconds": {
+    "nvidia": {"count": 10, "min": 134, "max": 456, "avg": 288.7},
+    "openai": {"count": 4, "min": 22, "max": 40, "avg": 29.8}
+  },
+  "validation_error_themes": {
+    "overcompressed_cv": 10,
+    "missing_canonical_role_tech": 8,
+    "keywords_not_in_cv": 5,
+    "unsupported_role_specific_tech": 2,
+    "unsupported_ranking_terms": 3
+  },
+  "representative_cases": [
+    {
+      "operation_id": 37,
+      "provider": "nvidia",
+      "status": "completed",
+      "job": "Acme - Backend Engineer",
+      "represents": [
+        "overcompressed_cv",
+        "unsupported_role_specific_tech",
+        "missing_canonical_role_tech",
+        "keywords_not_in_cv",
+        "repair_regression"
+      ]
+    },
+    {
+      "operation_id": 41,
+      "provider": "nvidia",
+      "status": "completed",
+      "job": "Lemon.io - Senior DevOps Engineer",
+      "represents": [
+        "keywords_not_in_cv",
+        "missing_canonical_role_tech",
+        "unsupported_ranking_terms",
+        "repair_regression"
+      ]
+    },
+    {
+      "operation_id": 60,
+      "provider": "nvidia",
+      "status": "completed",
+      "job": "MY Humancapital GmbH - System Engineer Requirements & Systemarchitektur",
+      "represents": [
+        "overcompressed_cv",
+        "missing_canonical_role_tech",
+        "overconfident_tone",
+        "unsupported_ranking_terms",
+        "low_fit_or_avoid"
+      ]
+    },
+    {
+      "operation_id": 62,
+      "provider": "nvidia",
+      "status": "completed",
+      "job": "DevHub - Data Entry Typist",
+      "represents": [
+        "overcompressed_cv",
+        "missing_canonical_role_tech",
+        "overconfident_tone",
+        "low_fit_or_avoid"
+      ]
+    },
+    {
+      "operation_id": 63,
+      "provider": "nvidia",
+      "status": "completed",
+      "job": "IRIUM - ANALISTA PROGRAMADOR/A PYTHON (REMOTO)",
+      "represents": [
+        "spanish_job",
+        "overcompressed_cv",
+        "missing_canonical_role_tech",
+        "unsupported_ranking_terms"
+      ]
+    }
+  ]
+}
