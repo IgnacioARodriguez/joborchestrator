@@ -2,7 +2,7 @@
 
 ## Mission
 
-Make the smallest safe, reviewable change that satisfies the task.
+Make the smallest safe, reviewable change that satisfies the current task.
 
 Priorities:
 
@@ -12,22 +12,24 @@ Priorities:
 4. Low unnecessary token and tool use.
 5. Honest evidence.
 
-Task instructions override this file. The nearest nested `AGENTS.md` overrides broader rules in its scope. Do not restate instructions or narrate routine work.
+Task-specific instructions override this file. The nearest nested `AGENTS.md` adds narrower rules and wins on conflicts.
+
+Do not restate these instructions or narrate routine operations.
 
 ## Repository map
 
 - `app/`, `components/`, `lib/`: active Next.js dashboard.
-- `dashboard/`: legacy duplicate; edit only when explicitly requested.
+- `dashboard/`: legacy duplicate; do not edit unless explicitly requested.
 - `joborchestrator/api.py`: FastAPI API.
 - `joborchestrator/worker.py`: local long-running worker.
 - `joborchestrator/automation/`: browser application engine.
-- `joborchestrator/scanning/`: imports, ATS providers, search APIs.
-- `joborchestrator/ranking/`: ranking models, prompts, worker.
-- `joborchestrator/intelligence/`: application materials and signals.
+- `joborchestrator/scanning/`: imports, ATS providers, and search APIs.
+- `joborchestrator/ranking/`: ranking models, prompts, and worker.
+- `joborchestrator/intelligence/`: application materials and supporting signals.
 - `joborchestrator/storage/`: SQLite/Turso persistence.
 - `tests/`: Python tests.
-- `scripts/`: smoke, audit, eval, seed, maintenance.
-- `docs/`: architecture, safety, trust, evidence.
+- `scripts/`: smoke, audit, eval, seed, and maintenance commands.
+- `docs/`: architecture, safety, trust, and operating evidence.
 
 The root Next.js app is active. Long-running AI and browser work belongs in local workers, not Vercel serverless handlers.
 
@@ -38,26 +40,10 @@ When information conflicts:
 1. Current task and acceptance criteria.
 2. Nearest applicable `AGENTS.md`.
 3. Current code, schemas, tests, and fixtures.
-4. This file.
+4. Broader `AGENTS.md` files.
 5. Documentation and historical reports.
 
-Old plans and docs are not proof of current behavior.
-
-## Complexity boundary
-
-Use a low-complexity workflow only when the task is explicit, localized, mechanically implementable, and has obvious exact validation.
-
-Treat the task as medium-complexity when any of these apply:
-
-- Unknown root cause.
-- Multiple subsystems or contracts.
-- Ambiguous behavior or conflicting evidence.
-- New abstraction or compatibility decision.
-- Browser automation, storage, schemas, workers, ranking, materials, trust, security, concurrency, migrations, or external systems.
-
-This classification controls exploration and validation only; it does not change the configured model or reasoning effort.
-
-If a low-complexity task reveals medium scope, stop broad implementation, preserve valid work, report the evidence, and recommend one smallest continuation step. Do not silently expand scope.
+Old plans, checkpoints, and docs are not proof of current behavior.
 
 ## Default workflow
 
@@ -101,30 +87,25 @@ Do not:
 - Introduce an abstraction when a local change is enough.
 - Change tests merely to make incorrect behavior pass.
 - Print large JSON, databases, lockfiles, environment dumps, generated files, or long logs.
-- Create subagents or parallel investigations unless duplication is controlled and clearly useful.
+- Create subagents or parallel investigations unless clearly useful and duplication is controlled.
 - Claim behavior, validation, or completion not directly observed.
 
-Search before reading. Prefer exact ranges, focused diffs, concise output, and targeted tests. Reuse verified findings. Stop exploration once the acceptance criteria can be safely implemented and verified.
+Search before reading. Prefer exact ranges, focused diffs, concise output, and targeted tests. Reuse verified findings. Stop exploration once acceptance criteria can be safely implemented and verified.
 
 Ask only questions that materially affect architecture, safety, scope, or irreversible actions.
 
-## Application automation safety
+## Validation routing
 
-Default to review-before-submit.
+Use the smallest validation that can reasonably falsify the change.
 
-Unless explicitly authorized for a controlled test, never:
+- Docs only: focused review; no full suite unless behavior is generated from docs.
+- Localized Python: exact affected tests plus direct consumers.
+- Cross-cutting backend: relevant tests during implementation; one full `python -m pytest` at completion.
+- Frontend: affected checks during implementation; typecheck, lint, and one build at completion when warranted.
+- Shared API contract: backend consumers plus frontend typecheck; full relevant suites at completion.
+- Ranking, materials, prompts, evals, or trust: follow the nearest nested instructions.
 
-- Submit a real application or broaden auto-submit.
-- Accept legal consent, terms, privacy acknowledgements, declarations, certifications, signatures, or background-check authorization.
-- Solve CAPTCHA, MFA, login challenges, password recovery, or email verification.
-- Create irreversible accounts or withdraw applications.
-- Expose secrets, cookies, tokens, production records, or personal data.
-
-Prefer fixtures, snapshots, temporary databases, and `data:` pages over real portals.
-
-Work authorization and sponsorship are not generic legal consent. Fill them only from exact, current, approved answers under policy.
-
-Fail closed on unknown required controls, ambiguous mappings, unverified uploads, pending validation, unsupported controls, and uncertain postconditions.
+Do not run full `pytest` solely because a Python file changed. Do not repeat a passing full suite unless later changes could invalidate it. Do not run frontend checks for Python-only changes without shared contract impact. Do not run `npm run verify` mechanically.
 
 ## External systems and data safety
 
@@ -135,73 +116,9 @@ By default:
 - External checks are read-only.
 - Do not seed, mutate, submit, delete, deploy, or bulk-process production data.
 - Do not run live LLM, browser, Turso, Vercel, LinkedIn, or portal smokes unless explicitly required and authorized.
-- Use temporary SQLite databases and offline fixtures.
-- Keep browser contexts isolated.
-- Avoid arbitrary sleeps.
-- Do not assume browser or shared-database tests are parallel-safe.
+- Use temporary databases and offline fixtures.
 
 Never commit `.env` files, secrets, tokens, cookies, local databases, browser profiles, logs, caches, generated exports, or personal application data.
-
-## Validation routing
-
-Use the smallest validation that can reasonably falsify the change.
-
-| Impact | During implementation | At completion |
-|---|---|---|
-| Docs only | Focused diff review | No suite unless behavior is generated from docs |
-| Localized Python | Exact affected tests | Exact tests plus direct consumers |
-| Cross-cutting backend | Relevant subsystem tests | One full `pytest` run |
-| Ranking/materials/prompts/evals/trust | Exact affected tests | `npm run trust:gate`; full `pytest` only if backend/shared contracts changed |
-| Frontend | Affected type/lint checks | Typecheck, lint, and one build |
-| Shared API contract | Backend consumers + frontend typecheck | Full backend suite + frontend checks |
-
-Do not run full `pytest` solely because a Python file changed. Do not repeat a passing full suite unless later changes could invalidate it. Do not run frontend checks for Python-only changes without shared contract impact. Do not run `npm run verify` mechanically.
-
-### Commands
-
-Targeted backend:
-
-```powershell
-python -m pytest <test-files-or-node-ids> -q --maxfail=1
-```
-
-Full backend:
-
-```powershell
-python -m pytest
-```
-
-Repeat failures:
-
-```powershell
-python -m pytest --lf -x
-```
-
-Temporary test discovery:
-
-```powershell
-python -m pytest -q --maxfail=1 -k "<expression>"
-```
-
-Stop using broad `-k` once exact tests are known.
-
-Frontend:
-
-```powershell
-npm run typecheck
-npm run lint
-npm run build
-```
-
-Trust gate:
-
-```powershell
-npm run trust:gate
-```
-
-Do not use `pytest-xdist` unless parallel safety has been explicitly introduced and proven.
-
-Select tests for modified behavior, direct consumers, changed contracts, and regression coverage. Broaden only when evidence shows wider impact.
 
 ## Git discipline
 
@@ -214,12 +131,12 @@ Select tests for modified behavior, direct consumers, changed contracts, and reg
 
 Before each requested commit:
 
-1. Inspect `git diff --stat` and the relevant diff.
+1. Inspect the relevant diff.
 2. Run targeted validation.
 3. Run `git diff --check`.
 4. Confirm no unrelated files are included.
 
-## Communication
+## Communication and completion
 
 Send progress updates only for a meaningful finding, blocker, scope change, validation result, or irreversible decision requiring authorization.
 
@@ -232,23 +149,6 @@ Final reports must contain:
 - Remaining real risks.
 - One smallest next action only when needed.
 
-Do not repeat the prompt, paste large code excerpts, or present planned work as completed.
-
-## Done and stop rules
-
 A task is done only when acceptance criteria are met, relevant validation passes, safety remains intact, compatibility impact is handled, no unrelated changes remain, and evidence supports every completion claim.
 
-Passing tests alone is not product-level proof. Use fixtures, artifacts, postconditions, and observable outcomes appropriate to the task.
-
-Stop instead of improvising when:
-
-- Conflicting user changes exist.
-- A destructive migration is required.
-- Unauthorized real-world actions are needed.
-- Credentials or production access are missing.
-- Scope must expand materially.
-- Baseline failures cannot be separated from regressions.
-- Safety conflicts with the requested implementation.
-- Completion would require claiming evidence not obtained.
-
-When stopped, preserve valid work, explain the blocker precisely, and recommend one smallest next action.
+Stop instead of improvising when conflicting user changes exist, a destructive migration is required, unauthorized real-world actions are needed, credentials are missing, scope must expand materially, baseline failures cannot be separated from regressions, or completion would require unsupported claims.
