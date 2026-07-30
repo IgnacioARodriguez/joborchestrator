@@ -195,6 +195,15 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
         materials_candidate_profile_hash=profile_metadata.get("hash"),
         materials_candidate_profile_snapshot=profile_metadata.get("snapshot"),
     )
+    _record_successful_materials_attempt(
+        operation_id,
+        job_id,
+        provider,
+        selected_model,
+        prompt_versions,
+        kit,
+        generation_metadata,
+    )
     resume_variant = None
     if ats_cv_text:
         resume_variant = db.register_generated_resume_variant(
@@ -237,11 +246,49 @@ def _record_failed_materials_attempt(
         attempt_number=int(metadata.get("validation_attempts") or 1),
         provider=provider,
         model=model,
-        prompt_version=",".join(f"{key}={value}" for key, value in sorted(prompt_versions.items())) or None,
+        prompt_version=_materials_prompt_versions_text(prompt_versions),
         output_text=str(metadata.get("output_text") or ""),
         validation_issues=issues_to_dicts(issues),
         accepted=False,
     )
+
+
+def _record_successful_materials_attempt(
+    operation_id: int,
+    job_id: int,
+    provider: str,
+    model: str,
+    prompt_versions: dict[str, str],
+    kit: dict[str, Any],
+    metadata: dict[str, Any],
+) -> None:
+    errors = [str(error) for error in metadata.get("validation_errors") or []]
+    issues = [
+        issue
+        for error in errors
+        for issue in validation_feedback_to_issues(error)
+    ]
+    output_text = "\n\n".join(
+        str(kit.get(field) or "")
+        for field in ["recruiter_message", "cover_letter", "ats_cv_text", "autofill_notes"]
+        if str(kit.get(field) or "").strip()
+    )
+    db.record_materials_generation_attempt(
+        operation_id=operation_id,
+        job_id=job_id,
+        stage=str(metadata.get("stage") or metadata.get("pipeline") or "materials_generation"),
+        attempt_number=int(metadata.get("validation_attempts") or 1),
+        provider=provider,
+        model=model,
+        prompt_version=_materials_prompt_versions_text(prompt_versions),
+        output_text=output_text,
+        validation_issues=issues_to_dicts(issues),
+        accepted=True,
+    )
+
+
+def _materials_prompt_versions_text(prompt_versions: dict[str, str]) -> str | None:
+    return ",".join(f"{key}={value}" for key, value in sorted(prompt_versions.items())) or None
 
 
 def _process_job_scan(operation: dict[str, Any]) -> None:

@@ -85,6 +85,7 @@ def test_worker_processes_application_materials_generation(monkeypatch):
     saved = {}
     completed = {}
     progress = []
+    recorded = {}
 
     monkeypatch.setattr(worker.db, "requeue_stale_operations", lambda operation_types, stale_seconds: 0)
     monkeypatch.setattr(
@@ -141,6 +142,7 @@ def test_worker_processes_application_materials_generation(monkeypatch):
         "complete_operation",
         lambda op_id, output, message: completed.update({"id": op_id, "output": output, "message": message}),
     )
+    monkeypatch.setattr(worker.db, "record_materials_generation_attempt", lambda **kwargs: recorded.update(kwargs) or 1)
     monkeypatch.setattr(worker.db, "fail_operation", lambda *args: (_ for _ in ()).throw(AssertionError("unexpected failure")))
 
     assert worker.process_once("worker-1") is True
@@ -160,6 +162,13 @@ def test_worker_processes_application_materials_generation(monkeypatch):
     assert saved["materials_candidate_profile_snapshot"]["headline"] == "Backend engineer"
     assert completed["output"]["materials_saved"] is True
     assert completed["output"]["resume_variant_id"] == 9
+    assert recorded["operation_id"] == 21
+    assert recorded["job_id"] == 5
+    assert recorded["attempt_number"] == 2
+    assert recorded["provider"] == "nvidia"
+    assert recorded["accepted"] is True
+    assert recorded["validation_issues"][0]["code"] == "UNSUPPORTED_GENERAL_CLAIM"
+    assert "Professional Summary" in recorded["output_text"]
     assert "Generating nvidia application materials." in progress
 
 

@@ -42,7 +42,7 @@ Initial implementation notes:
 - Validation feedback can be converted to stable structured issues.
 - NVIDIA repair prompts receive the previous response and an explicit frozen-field directive.
 - A deterministic CV IR and renderer provide a rollout path behind feature flags.
-- Failed materials attempts are persisted in `materials_generation_attempts`.
+- Accepted and failed materials attempts are persisted in `materials_generation_attempts`.
 - Application kit parsing accepts a structured internal `autofill` object, renders it to persisted `autofill_notes`, and rejects JSON-encoded object strings in `autofill_notes`.
 - Application kit validation fails closed on clear English/Spanish language mismatch when the job language has enough signal.
 
@@ -103,7 +103,7 @@ Safe now:
 
 - Keep legacy materials generation active.
 - Enable the deterministic `keywords_used` derivation already integrated into legacy/provider calls.
-- Keep attempt persistence active.
+- Keep accepted/failed attempt persistence active.
 - Use `materials_generation_attempts` for audit and debugging.
 
 Keep disabled until live paired benchmark evidence exists:
