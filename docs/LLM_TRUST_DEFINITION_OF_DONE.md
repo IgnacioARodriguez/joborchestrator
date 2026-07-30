@@ -171,6 +171,12 @@ Before promoting a prompt version:
 - Commit prompt changes atomically.
 - Record summary of tests and assumptions.
 
+## Materials Controlled Generation Progress
+
+The materials pipeline now has an incremental controlled-generation path under feature flags. `keywords_used` is derived in code, failed attempts can be persisted in `materials_generation_attempts`, NVIDIA has a planner-only contract, and CV rendering can preserve role headers, dates, titles, companies, bullets, canonical technologies, and education without freeform CV authorship.
+
+The controlled CV/planner/fallback flags remain disabled by default until paired live benchmark evidence exists. Offline benchmark results are documented in `docs/MATERIALS_CONTROLLED_GENERATION_BASELINE.md`; live pass-rate and latency targets are not claimed yet.
+
 ## Current Known Gaps
 
 As of this document, the prompt infrastructure is stronger than the measured prompt quality.
