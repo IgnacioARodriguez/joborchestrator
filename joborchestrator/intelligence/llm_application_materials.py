@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -883,6 +884,7 @@ def _call_nvidia_cv(
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
         try:
+            previous_response_kwargs = {"previous_response": previous_response} if previous_response and _accepts_previous_response_kwarg(_call_nvidia_contract_once) else {}
             parsed = _call_nvidia_contract_once(
                 _nvidia_cv_contract(),
                 payload,
@@ -890,7 +892,7 @@ def _call_nvidia_cv(
                 model,
                 timeout,
                 validation_feedback,
-                previous_response=previous_response,
+                **previous_response_kwargs,
             )
         except LLMMaterialsError as exc:
             raise LLMMaterialsError(
@@ -935,6 +937,7 @@ def _call_nvidia_kit(
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
         try:
+            previous_response_kwargs = {"previous_response": previous_response} if previous_response and _accepts_previous_response_kwarg(_call_nvidia_contract_once) else {}
             parsed = _call_nvidia_contract_once(
                 _nvidia_kit_contract(),
                 payload,
@@ -942,7 +945,7 @@ def _call_nvidia_kit(
                 model,
                 timeout,
                 validation_feedback,
-                previous_response=previous_response,
+                **previous_response_kwargs,
             )
         except LLMMaterialsError as exc:
             raise LLMMaterialsError(
@@ -1008,6 +1011,17 @@ def _call_nvidia_contract_once(
     except json.JSONDecodeError as exc:
         raise LLMMaterialsError(f"NVIDIA materials response was not valid JSON: {exc}") from exc
 
+
+
+def _accepts_previous_response_kwarg(callable_obj: Any) -> bool:
+    try:
+        parameters = inspect.signature(callable_obj).parameters
+    except (TypeError, ValueError):
+        return True
+    return "previous_response" in parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
 
 def _call_nvidia_once(
     payload: dict[str, Any],
