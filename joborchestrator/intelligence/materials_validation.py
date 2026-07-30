@@ -91,6 +91,8 @@ def validation_feedback_to_issues(feedback: str | None) -> list[ValidationIssue]
         normalized = part.lower()
         if "keywords_used contains terms not present" in normalized:
             issues.append(_issue("KEYWORD_METADATA_MISMATCH", "keywords_used", "hard", "derive", part))
+        elif "omitted base cv experience entries" in normalized:
+            issues.append(_issue("ROLE_OMITTED", "ats_cv_text", "hard", "inject_source", part))
         elif "overcompressed for base cv experience roles" in normalized:
             issues.append(_issue("ROLE_OVERCOMPRESSED", "ats_cv_text", "hard", "inject_source", part))
         elif "overcompressed compared with base cv" in normalized or "too short" in normalized:

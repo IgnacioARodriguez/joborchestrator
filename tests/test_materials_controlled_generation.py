@@ -98,6 +98,15 @@ def test_validation_feedback_has_stable_issue_codes():
     assert "KEYWORD_METADATA_MISMATCH in keywords_used" in issues_to_messages(issues)[0]
 
 
+def test_role_omission_feedback_has_stable_issue_code():
+    issues = validation_feedback_to_issues(
+        "ats_cv_text omitted base CV experience entries: Globant Client: Tigo LATAM, Balloon Group"
+    )
+
+    assert [issue.code for issue in issues] == ["ROLE_OMITTED"]
+    assert derive_risk_flags_from_issues(issues) == ["cv_completeness_required_repair"]
+
+
 def test_risk_flags_are_derived_from_validation_issues():
     issues = validation_feedback_to_issues(
         "application_materials contains unsupported ranking avoid-overclaiming terms: Kubernetes.; "
