@@ -108,7 +108,7 @@ def test_dom_schema_and_fill_traverse_open_shadow_roots() -> None:
     assert result["fields"]["first_name"]["type"] == "text"
     assert result["fields"]["location"]["type"] == "select"
     assert result["fields"]["talent_pool"]["type"] == "checkbox"
-    assert result["first_name"] == "Synthetic Candidate"
+    assert result["first_name"] == "Synthetic"
     assert result["location"] == "madrid"
     assert result["talent_pool"] is True
     assert result["validation"]["status"] == "validation_clean"

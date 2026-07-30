@@ -65,6 +65,16 @@ Obligation ledger:
 - `artifacts_json.obligation_ledger.readiness.terminal_state` is `SUBMIT_ONLY`
   only when the ledger has no fail-closed blockers.
 
+Replay corpus:
+
+- `tests/fixtures/application_corpus.json` is fixture ground truth, not a copy
+  of generated ledger output. Each case declares known controls, required
+  controls, expected semantic mappings, expected answer sources, allowed,
+  reserved and forbidden actions, expected terminal state, human interventions,
+  submit-only eligibility and expected repair attempts.
+- Corpus outcome metrics compare generated artifacts to those declarations and
+  report numerator, denominator, rate, sample size and failed fixture IDs.
+
 Answer bank:
 
 - Answers have explicit `status`: `proposed`, `approved`, `rejected`, `expired`, or `requires_confirmation`.

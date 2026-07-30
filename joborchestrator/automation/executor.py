@@ -1254,6 +1254,10 @@ async def run_bounded_repair_loop(
         lifecycle=[node.to_dict() for node in lifecycle],
         retry_budget=retry_budget,
     )
+    repair_report["skipped_already_verified"] = _verified_action_fields(
+        previous_step_dict.get("action_plan") or {},
+        action_states,
+    )
     current_validation = previous_validation_report
     if dynamic_required_fields:
         repair_report["status"] = "needs_user_input"
@@ -1445,6 +1449,18 @@ def _recoverable_repair_targets(
             }
         )
     return [target for target in targets if not target.get("skipped")]
+
+
+def _verified_action_fields(action_plan: dict[str, Any], action_states: dict[str, dict[str, Any]]) -> list[str]:
+    verified = []
+    for action in action_plan.get("actions") or []:
+        if not isinstance(action, dict):
+            continue
+        if (action_states.get(_action_state_key(action)) or {}).get("status") == "verified":
+            field_name = str(action.get("field_name") or "")
+            if field_name:
+                verified.append(field_name)
+    return list(dict.fromkeys(verified))
 
 
 def _classify_repair_failure(validation_report: dict[str, Any], dynamic_required_fields: list[dict[str, Any]]) -> str:

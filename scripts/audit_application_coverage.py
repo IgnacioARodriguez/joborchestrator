@@ -125,6 +125,7 @@ async def audit_application_url(
         automation_metrics = artifacts.get("automation_metrics") or {}
         human_intervention = artifacts.get("human_intervention") or {}
         repair = artifacts.get("repair") or {}
+        outcome_metrics = automation_metrics.get("outcome_metrics") or {}
         validation_issues = [
             issue for issue in validation.get("issues") or []
             if isinstance(issue, dict)
@@ -185,6 +186,7 @@ async def audit_application_url(
             "steps_completed_without_human": automation_metrics.get("steps_completed_without_human"),
             "step_advance_success_rate": automation_metrics.get("step_advance_success_rate"),
             "submit_only_ready": automation_metrics.get("submit_only_ready"),
+            "outcome_metrics": outcome_metrics,
             "blocked": bool(execution.get("blocked")),
             "reason": reason or None,
             "last_error": updated.get("last_error"),
@@ -229,6 +231,7 @@ async def audit_application_url(
             "steps_completed_without_human": 0,
             "step_advance_success_rate": None,
             "submit_only_ready": False,
+            "outcome_metrics": {},
             "blocked": True,
             "reason": exc.__class__.__name__,
             "last_error": str(exc),
@@ -322,6 +325,8 @@ async def audit_application_coverage(
 
 
 def summarize_results(results: list[dict[str, object]]) -> dict[str, object]:
+    from joborchestrator.automation.metrics import aggregate_outcome_metrics
+
     by_score: dict[str, int] = {}
     by_provider: dict[str, int] = {}
     for result in results:
@@ -331,7 +336,7 @@ def summarize_results(results: list[dict[str, object]]) -> dict[str, object]:
         by_provider[provider] = by_provider.get(provider, 0) + 1
     total = len(results)
     low_friction = by_score.get("ready_no_human_input", 0)
-    return {
+    summary = {
         "total": total,
         "low_friction_count": low_friction,
         "low_friction_ratio": round(low_friction / total, 3) if total else 0,
@@ -339,6 +344,9 @@ def summarize_results(results: list[dict[str, object]]) -> dict[str, object]:
         "by_provider": by_provider,
         "average_adapter_uplift": _average_adapter_uplift(results),
     }
+    if any(isinstance(result.get("outcome_metrics"), dict) and result.get("outcome_metrics") for result in results):
+        summary["outcome_scorecard"] = aggregate_outcome_metrics(results)
+    return summary
 
 
 def adapter_uplift(generic_result: dict[str, object], adapter_result: dict[str, object]) -> dict[str, object]:
@@ -461,10 +469,16 @@ def write_markdown_report(path: Path, report: dict[str, object]) -> None:
         f"- By score: `{json.dumps(summary.get('by_score'), sort_keys=True)}`",
         f"- By provider: `{json.dumps(summary.get('by_provider'), sort_keys=True)}`",
         f"- Average adapter uplift: `{summary.get('average_adapter_uplift')}`",
-        "",
-        "| URL | Provider | State | Score | Fields | Filled | Unknown | Resume | Submit controls |",
-        "| --- | --- | --- | --- | ---: | ---: | ---: | --- | ---: |",
     ]
+    if isinstance(summary.get("outcome_scorecard"), dict):
+        lines.append(f"- Outcome scorecard: `{json.dumps(summary.get('outcome_scorecard'), sort_keys=True)}`")
+    lines.extend(
+        [
+            "",
+            "| URL | Provider | State | Score | Fields | Filled | Unknown | Resume | Submit controls |",
+            "| --- | --- | --- | --- | ---: | ---: | ---: | --- | ---: |",
+        ]
+    )
     for result in report["results"]:
         assert isinstance(result, dict)
         lines.append(

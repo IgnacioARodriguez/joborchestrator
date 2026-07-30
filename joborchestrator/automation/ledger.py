@@ -149,6 +149,7 @@ def build_obligation_ledger(
             "unknown_required": len(unknown_requireds),
         },
         "readiness": readiness,
+        "repair_report": repair_report,
     }
 
 
