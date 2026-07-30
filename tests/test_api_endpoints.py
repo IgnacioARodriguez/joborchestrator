@@ -460,6 +460,16 @@ def test_confirming_application_updates_existing_preparation_without_duplicate(t
     events = application["events"]
     assert events[-1]["event_type"] == "submitted_manually"
 
+    repeated = client.post(
+        f"/api/jobs/{job_id}/applications",
+        json={"status": "submitted_manually", "channel": "portal", "submitted_at": "2026-01-02T10:00:00"},
+    )
+
+    assert repeated.status_code == 200
+    assert repeated.json()["application"]["id"] == existing["id"]
+    assert [app["id"] for app in db.list_applications()] == [existing["id"]]
+    assert len(repeated.json()["application"]["events"]) == len(events)
+
     body = client.get("/api/apply-queue", params={"freshness": "all"}).json()
     assert body["jobs"] == []
 

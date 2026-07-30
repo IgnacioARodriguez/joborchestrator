@@ -46,6 +46,7 @@ APPLICATION_EVENTS = {
     "interview_scheduled",
     "ghosted",
 }
+SUBMISSION_STATUSES = {"submitted", "submitted_manually", "submission_verified"}
 ANSWER_SOURCES = {"approved", "generated"}
 ANSWER_SENSITIVITIES = {"public", "preference", "sensitive"}
 ANSWER_STATUSES = {"proposed", "approved", "rejected", "expired", "requires_confirmation"}
@@ -60,7 +61,7 @@ def create_application(connect: ConnectionFactory, payload: dict) -> dict:
     conn = connect()
     try:
         existing = conn.execute(
-            """SELECT id FROM applications
+            """SELECT id, status FROM applications
                WHERE job_id = ?
                  AND status NOT IN ('rejected', 'withdrawn')
                ORDER BY updated_at DESC, id DESC
@@ -69,23 +70,28 @@ def create_application(connect: ConnectionFactory, payload: dict) -> dict:
         ).fetchone()
         if existing:
             application_id = int(existing["id"])
-            if status in {"submitted", "submitted_manually", "submission_verified"}:
+            if status in SUBMISSION_STATUSES:
                 submitted_at = payload.get("submitted_at") or now
-                conn.execute(
-                    "UPDATE applications SET status = ?, submitted_at = COALESCE(submitted_at, ?), updated_at = ? WHERE id = ?",
-                    (status, submitted_at, now, application_id),
+                previous_status = str(existing["status"] or "")
+                should_update = previous_status != status and (
+                    previous_status not in SUBMISSION_STATUSES or status == "submission_verified"
                 )
-                conn.execute(
-                    """INSERT INTO application_events (application_id, event_type, event_at, note)
-                       VALUES (?, ?, ?, ?)""",
-                    (
-                        application_id,
-                        "submission_verified" if status == "submission_verified" else "submitted_manually",
-                        submitted_at,
-                        "Confirmed by the user from Apply.",
-                    ),
-                )
-                conn.commit()
+                if should_update:
+                    conn.execute(
+                        "UPDATE applications SET status = ?, submitted_at = COALESCE(submitted_at, ?), updated_at = ? WHERE id = ?",
+                        (status, submitted_at, now, application_id),
+                    )
+                    conn.execute(
+                        """INSERT INTO application_events (application_id, event_type, event_at, note)
+                           VALUES (?, ?, ?, ?)""",
+                        (
+                            application_id,
+                            _submission_event_type(status),
+                            submitted_at,
+                            "Confirmed by the user from Apply.",
+                        ),
+                    )
+                    conn.commit()
             return get_application(connect, application_id) or {"id": application_id}
         cursor = conn.execute(
             """INSERT INTO applications (
@@ -195,6 +201,14 @@ def create_application_event(connect: ConnectionFactory, application_id: int, pa
         return dict(row)
     finally:
         conn.close()
+
+
+def _submission_event_type(status: str) -> str:
+    if status == "submission_verified":
+        return "submission_verified"
+    if status == "submitted":
+        return "submitted"
+    return "submitted_manually"
 
 
 def record_job_opened(connect: ConnectionFactory, job_id: int) -> dict:
