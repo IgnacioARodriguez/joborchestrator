@@ -54,7 +54,7 @@ interface StoreValue {
   getJobSummary: (id: string) => JobListItem | undefined
   getJobDetailEntry: (id: string) => JobDetailEntry
   loadJobDetail: (id: string, options?: { force?: boolean }) => Promise<JobDetail | undefined>
-  setPipelineStatus: (id: string, status: PipelineStatus) => void
+  setPipelineStatus: (id: string, status: PipelineStatus) => Promise<boolean>
   setApplicationStatus: (id: number, status: ApplicationStatus) => void
   markOpened: (id: string) => void
   generateMaterials: (
@@ -289,21 +289,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return request
   }, [jobDetails])
 
-  const setPipelineStatus = useCallback((id: string, status: PipelineStatus) => {
+  const setPipelineStatus = useCallback(async (id: string, status: PipelineStatus) => {
+    const previousStatus = jobs.find((job) => job.id === id)?.pipeline_status
     setJobs((prev) => prev.map((job) => (job.id === id ? { ...job, pipeline_status: status } : job)))
     setJobDetails((prev) => {
       const entry = prev[id]
       if (!entry?.job) return prev
       return upsertDetail(prev, id, { ...entry, job: { ...entry.job, pipeline_status: status } })
     })
-    void api.setPipelineStatus(id, status).catch(() => {
+    try {
+      await api.setPipelineStatus(id, status)
+      setBackendOnline(true)
+      return true
+    } catch {
       setBackendOnline(false)
+      if (previousStatus) {
+        setJobs((prev) => prev.map((job) => (job.id === id ? { ...job, pipeline_status: previousStatus } : job)))
+      }
       setJobDetails((prev) => {
         const entry = prev[id]
-        return upsertDetail(prev, id, { ...entry, status: "idle" })
+        if (!entry?.job || !previousStatus) return upsertDetail(prev, id, { ...entry, status: "idle" })
+        return upsertDetail(prev, id, { ...entry, status: "idle", job: { ...entry.job, pipeline_status: previousStatus } })
       })
-    })
-  }, [])
+      return false
+    }
+  }, [jobs])
 
   const setApplicationStatus = useCallback((id: number, status: ApplicationStatus) => {
     setApplications((prev) =>

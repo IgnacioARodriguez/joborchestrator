@@ -1,11 +1,10 @@
 "use client"
 
 import Image from "next/image"
+import { usePathname } from "next/navigation"
 import { useCallback, useEffect, useState } from "react"
 import {
   Activity,
-  ChevronLeft,
-  ChevronRight,
   Compass,
   LoaderCircle,
   RefreshCw,
@@ -13,19 +12,22 @@ import {
   Zap,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { NAV_ITEMS, type Section } from "@/lib/nav"
+import { LEGACY_SECTION_ALIASES, NAV_ITEMS, SECTION_PATHS, isPrimarySection, primarySectionFor, type Section } from "@/lib/nav"
 import { useStore } from "@/lib/store"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
-import { TodayScreen } from "@/components/screens/today-screen"
-import { ReviewScreen } from "@/components/screens/review-screen"
+import { JobsScreen } from "@/components/screens/review-screen"
 import { ApplicationsScreen } from "@/components/screens/applications-screen"
 import { ProfileScreen } from "@/components/screens/profile-screen"
 import { OpsScreen } from "@/components/screens/ops-screen"
 import { InsightsScreen } from "@/components/screens/insights-screen"
+import { PipelineScreen } from "@/components/screens/pipeline-screen"
+import { SettingsScreen } from "@/components/screens/settings-screen"
 import { JobDetailDrawer } from "@/components/job-detail-drawer"
 import { toast } from "sonner"
 import type { OpsStatus } from "@/lib/types"
+
+type SearchState = "idle" | "searching" | "success" | "empty" | "error"
 
 function DataLoadingBanner() {
   const { loading } = useStore()
@@ -78,9 +80,6 @@ function OpsStatusBanner({
   const hasWork = status.local_worker_needed || status.ranking_worker_needed
   const hasFailure = status.summary.includes("failed")
   if (!hasWork && !hasFailure) return null
-  const command = hasWork
-    ? status.expected_commands.workers
-    : status.expected_commands.all
   return (
     <div className="mb-3 flex items-center gap-3 rounded-lg border border-border bg-card p-3">
       <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -92,48 +91,61 @@ function OpsStatusBanner({
         </p>
         <p className="text-xs text-muted-foreground">
           {hasWork
-            ? `Local worker required: ${command}`
-            : "Open operations for details."}
+            ? "Hay tareas pendientes para revisar en configuración."
+            : "Abre configuración para ver el detalle."}
         </p>
       </div>
       <Button variant="outline" size="sm" onClick={onOpenOps}>
-        Operations
+        Configuración
       </Button>
     </div>
   )
 }
 
-export function AppShell() {
-  const [section, setSection] = useState<Section>("today")
+function sectionFromPath(pathname: string): Section {
+  if (pathname.startsWith("/apply")) return "apply"
+  if (pathname.startsWith("/applications")) return "applications"
+  if (pathname.startsWith("/settings")) return "settings"
+  if (pathname.startsWith("/profile")) return "profile"
+  if (pathname.startsWith("/automations") || pathname.startsWith("/ops")) return "automations"
+  if (pathname.startsWith("/insights")) return "insights"
+  return "jobs"
+}
+
+export function AppShell({ initialSection }: { initialSection?: Section }) {
+  const pathname = usePathname()
+  const [section, setSection] = useState<Section>(initialSection ?? sectionFromPath(pathname))
   const [openJobId, setOpenJobId] = useState<string | null>(null)
-  const [scanBusy, setScanBusy] = useState(false)
+  const [searchState, setSearchState] = useState<SearchState>("idle")
+  const [searchMessage, setSearchMessage] = useState<string | null>(null)
   const [opsStatus, setOpsStatus] = useState<OpsStatus | null>(null)
   const {
     jobs,
     jobsMeta,
     backendOnline,
     loading,
-    applyQueuePage,
-    applyQueuePageSize,
-    applyQueueFreshness,
-    setApplyQueuePage,
-    setApplyQueueFreshness,
     refresh,
   } = useStore()
   const backendReady = backendOnline || jobsMeta !== null || jobs.length > 0
   const totalJobs = jobsMeta?.total ?? jobs.length
-  const returnedJobs = jobsMeta?.returned ?? jobs.length
-  const offset = jobsMeta?.offset ?? (applyQueuePage - 1) * applyQueuePageSize
-  const rangeStart = totalJobs === 0 ? 0 : offset + 1
-  const rangeEnd = Math.min(offset + returnedJobs, totalJobs)
-  const canPagePrevious = Boolean(jobsMeta?.has_previous) || applyQueuePage > 1
-  const canPageNext = Boolean(jobsMeta?.has_next)
-  const freshnessCounts = jobsMeta?.freshness_counts ?? {}
-  const hiddenStale = (freshnessCounts.stale ?? 0) + (freshnessCounts.archival ?? 0)
 
   function navigate(next: Section) {
     setSection(next)
+    const primary = primarySectionFor(next)
+    if (isPrimarySection(next)) {
+      window.history.pushState(null, "", SECTION_PATHS[next])
+    } else {
+      window.history.pushState(null, "", `${SECTION_PATHS[primary]}#${next}`)
+    }
   }
+
+  useEffect(() => {
+    function onPopState() {
+      setSection(sectionFromPath(window.location.pathname))
+    }
+    window.addEventListener("popstate", onPopState)
+    return () => window.removeEventListener("popstate", onPopState)
+  }, [])
 
   const loadOpsStatus = useCallback(async () => {
     try {
@@ -141,6 +153,18 @@ export function AppShell() {
     } catch {
       setOpsStatus(null)
     }
+  }, [])
+
+  useEffect(() => {
+    function syncHash() {
+      const key = window.location.hash.replace("#", "")
+      if (!key) return
+      const aliased = LEGACY_SECTION_ALIASES[key]
+      if (aliased) setSection(aliased)
+    }
+    syncHash()
+    window.addEventListener("hashchange", syncHash)
+    return () => window.removeEventListener("hashchange", syncHash)
   }, [])
 
   useEffect(() => {
@@ -158,20 +182,25 @@ export function AppShell() {
   }, [loadOpsStatus])
 
   async function scanFreshJobs() {
-    setScanBusy(true)
+    setSearchState("searching")
+    setSearchMessage(null)
     try {
       const response = await api.scanFresh()
-      toast.success(response.already_running ? "Fresh scan already running" : "Fresh scan queued", {
-        description: `Operation #${response.operation_id}`,
+      const message = response.already_running
+        ? "La búsqueda ya estaba en curso."
+        : response.progress_message || "Búsqueda iniciada. Los nuevos jobs aparecerán al sincronizar."
+      setSearchState(response.already_running ? "success" : "success")
+      setSearchMessage(message)
+      toast.success(response.already_running ? "Búsqueda en curso" : "Búsqueda iniciada", {
+        description: message,
       })
       await loadOpsStatus()
-      setSection("automations")
     } catch (error) {
-      toast.error("Could not queue fresh scan", {
-        description: error instanceof Error ? error.message : "Backend request failed.",
+      setSearchState("error")
+      setSearchMessage("No se pudo completar la búsqueda.")
+      toast.error("No se pudo completar la búsqueda", {
+        description: error instanceof Error ? error.message : "La API no respondió.",
       })
-    } finally {
-      setScanBusy(false)
     }
   }
 
@@ -192,7 +221,7 @@ export function AppShell() {
           </div>
           <nav className="flex flex-col gap-1.5">
             {NAV_ITEMS.map((item) => {
-              const active = section === item.id
+              const active = primarySectionFor(section) === item.id
               const Icon = item.icon
               return (
                 <button
@@ -205,6 +234,7 @@ export function AppShell() {
                       ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-[inset_0_0_0_1px_rgba(65,105,225,0.08)]"
                       : "text-muted-foreground hover:bg-muted hover:text-sidebar-foreground",
                   )}
+                  aria-current={active ? "page" : undefined}
                 >
                   <Icon className="size-4.5 shrink-0" />
                   <span className="flex-1 text-left">{item.label}</span>
@@ -219,10 +249,10 @@ export function AppShell() {
               </span>
               <div>
                 <p className="text-xs font-semibold text-foreground">
-                  {backendReady ? "System ready" : "API offline"}
+                  {backendReady ? "Listo" : "Sin conexión"}
                 </p>
                 <p className="text-[11px] text-muted-foreground">
-                  {jobsMeta?.db_mode ? `Synced from ${jobsMeta.db_mode}` : `${totalJobs} opportunities`}
+                  {totalJobs.toLocaleString()} oportunidades
                 </p>
               </div>
             </div>
@@ -237,63 +267,10 @@ export function AppShell() {
                 <Compass className="size-4" />
               </div>
               <span className="text-xs text-muted-foreground">
-                {returnedJobs === totalJobs ? `${totalJobs} jobs` : `${rangeStart}-${rangeEnd} / ${totalJobs} jobs`}
-                {jobsMeta?.db_mode ? ` - ${jobsMeta.db_mode}` : ""}
+                {totalJobs.toLocaleString()} jobs
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="hidden items-center rounded-lg border border-border bg-card p-0.5 lg:flex">
-                {[
-                  ["active", "Fresh"],
-                  ["all", "All"],
-                  ["stale", "Stale"],
-                ].map(([value, label]) => (
-                  <Button
-                    key={value}
-                    variant={applyQueueFreshness === value ? "default" : "ghost"}
-                    size="sm"
-                    className="h-7 px-2 text-xs"
-                    disabled={loading}
-                    onClick={() => setApplyQueueFreshness(value as "active" | "all" | "stale")}
-                  >
-                    {label}
-                  </Button>
-                ))}
-              </div>
-              {applyQueueFreshness === "active" && hiddenStale > 0 ? (
-                <span className="hidden text-xs text-muted-foreground xl:inline">
-                  {hiddenStale} stale hidden
-                </span>
-              ) : null}
-              <Button
-                variant="default"
-                size="sm"
-                disabled={loading || scanBusy}
-                onClick={() => void scanFreshJobs()}
-              >
-                {scanBusy ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-                {scanBusy ? "Queueing scan" : "Scan fresh jobs"}
-              </Button>
-              <div className="hidden items-center gap-1 sm:flex">
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  aria-label="Previous jobs page"
-                  disabled={loading || !canPagePrevious}
-                  onClick={() => setApplyQueuePage(applyQueuePage - 1)}
-                >
-                  <ChevronLeft className="size-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  aria-label="Next jobs page"
-                  disabled={loading || !canPageNext}
-                  onClick={() => setApplyQueuePage(applyQueuePage + 1)}
-                >
-                  <ChevronRight className="size-4" />
-                </Button>
-              </div>
               <Button
                 variant="outline"
                 size="sm"
@@ -301,9 +278,9 @@ export function AppShell() {
                 onClick={() => void refresh()}
               >
                 {loading ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-                Sync
+                Actualizar
               </Button>
-              <Button variant="outline" size="icon-sm" aria-label="Settings" onClick={() => navigate("automations")}>
+              <Button variant="outline" size="icon-sm" aria-label="Configuración" onClick={() => navigate("settings")}>
                 <Settings className="size-4" />
               </Button>
             </div>
@@ -311,14 +288,20 @@ export function AppShell() {
 
           <main className="mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col overflow-y-auto px-4 pb-24 pt-3 sm:px-6 lg:px-6 lg:pb-6">
             <div className="shrink-0">
-              <OpsStatusBanner status={opsStatus} onOpenOps={() => navigate("automations")} />
+              <OpsStatusBanner status={opsStatus} onOpenOps={() => navigate("settings")} />
               <DataLoadingBanner />
             </div>
-            {section === "today" && (
-              <TodayScreen onOpenJob={setOpenJobId} onNavigate={navigate} />
+            {section === "jobs" && (
+              <JobsScreen
+                onOpenJob={setOpenJobId}
+                onSearchNewJobs={() => void scanFreshJobs()}
+                searchState={searchState}
+                searchMessage={searchMessage}
+              />
             )}
-            {section === "review" && <ReviewScreen onOpenJob={setOpenJobId} />}
+            {section === "apply" && <PipelineScreen onOpenJob={setOpenJobId} />}
             {section === "applications" && <ApplicationsScreen onOpenJob={setOpenJobId} />}
+            {section === "settings" && <SettingsScreen onNavigate={navigate} />}
             {section === "profile" && <ProfileScreen />}
             {section === "automations" && <OpsScreen />}
             {section === "insights" && <InsightsScreen />}
@@ -330,7 +313,7 @@ export function AppShell() {
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-md items-stretch justify-around">
           {NAV_ITEMS.map((item) => {
-            const active = section === item.id
+            const active = primarySectionFor(section) === item.id
             const Icon = item.icon
             return (
               <button
