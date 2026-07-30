@@ -1,6 +1,7 @@
 import type {
   CompanySource,
   CandidateProfile,
+  ApplicationMaterials,
   ApplicationRecord,
   ApplicationStatus,
   AnswerDefinition,
@@ -259,6 +260,16 @@ export const api = {
     })
   },
 
+  async updateMaterials(
+    id: string,
+    input: Partial<Pick<ApplicationMaterials, "recruiter_message" | "cover_letter" | "ats_cv_notes" | "autofill_notes">>,
+  ) {
+    return request<{ job: JobDetail }>(`/api/jobs/${id}/materials`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    })
+  },
+
   materialDownloadUrl(id: string, format: "docx" | "pdf") {
     return `${API_BASE}/api/jobs/${id}/materials/ats-cv.${format}`
   },
@@ -307,6 +318,22 @@ export const api = {
 
   async getApplications() {
     return request<{ applications: ApplicationRecord[] }>("/api/applications")
+  },
+
+  async createApplication(
+    jobId: string,
+    input: Partial<{
+      ats_type: string
+      status: ApplicationStatus
+      channel: "portal" | "easy_apply" | "referral" | "direct_contact"
+      resume_variant_id: number
+      submitted_at: string
+    }>,
+  ) {
+    return request<{ application: ApplicationRecord }>(`/api/jobs/${jobId}/applications`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
   },
 
   async getResumes() {

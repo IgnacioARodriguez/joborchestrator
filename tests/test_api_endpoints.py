@@ -413,6 +413,57 @@ def test_apply_queue_search_filters_server_side(tmp_path, monkeypatch):
     assert [job["title"] for job in body["jobs"]] == ["Frontend Designer"]
 
 
+def test_apply_queue_excludes_confirmed_applications(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    for external_id, title in [
+        ("pending-role", "Pending Role"),
+        ("submitted-role", "Submitted Role"),
+    ]:
+        db.upsert_job_posting(
+            make_job(external_id=external_id, title=title),
+            seen_at=datetime.now().isoformat(timespec="seconds"),
+        )
+    rows = db.get_job_postings(limit=None)
+    for _, row in rows.iterrows():
+        job_id = int(row["id"])
+        db.save_job_ranking(job_id, make_ranking("ranking_v1.1.0-nvidia", 80, "APPLY_NOW"))
+        if row["external_id"] == "submitted-role":
+            db.create_application({"job_id": job_id, "status": "submitted_manually", "channel": "portal"})
+
+    body = client.get("/api/apply-queue", params={"freshness": "all"}).json()
+
+    assert [job["title"] for job in body["jobs"]] == ["Pending Role"]
+    assert body["meta"]["total"] == 1
+
+
+def test_confirming_application_updates_existing_preparation_without_duplicate(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(
+        make_job(external_id="confirm-role", title="Confirm Role"),
+        seen_at=datetime.now().isoformat(timespec="seconds"),
+    )
+    job_id = int(db.get_job_postings(limit=None).iloc[0]["id"])
+    db.save_job_ranking(job_id, make_ranking("ranking_v1.1.0-nvidia", 80, "APPLY_NOW"))
+    existing = db.create_application({"job_id": job_id, "status": "preparing", "channel": "portal"})
+
+    response = client.post(
+        f"/api/jobs/{job_id}/applications",
+        json={"status": "submitted_manually", "channel": "portal", "submitted_at": "2026-01-02T10:00:00"},
+    )
+
+    assert response.status_code == 200
+    application = response.json()["application"]
+    assert application["id"] == existing["id"]
+    assert application["status"] == "submitted_manually"
+    assert application["submitted_at"] == "2026-01-02T10:00:00"
+    assert [app["id"] for app in db.list_applications()] == [existing["id"]]
+    events = application["events"]
+    assert events[-1]["event_type"] == "submitted_manually"
+
+    body = client.get("/api/apply-queue", params={"freshness": "all"}).json()
+    assert body["jobs"] == []
+
+
 def test_scan_fresh_queues_scan_with_auto_ranking(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
     client.put("/api/profile", json={"profile": profile_payload()})
@@ -731,6 +782,35 @@ def test_generate_materials_persists_application_kit(tmp_path, monkeypatch):
     assert job["materials"]["generation"]["validation_attempts"] == 1
     assert job["materials"]["generation"]["validation_errors"] == []
     assert len(job["materials"]["generation"]["candidate_profile_hash"]) == 64
+
+
+def test_update_materials_edits_application_kit(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(external_id="materials-edit-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=None).iloc[0]["id"])
+    db.update_job_application_materials(
+        job_id,
+        recruiter_message="Old recruiter",
+        cover_letter="Old cover",
+        ats_cv_text="Old CV",
+        autofill_notes="Old notes",
+    )
+
+    response = client.patch(
+        f"/api/jobs/{job_id}/materials",
+        json={
+            "cover_letter": "Updated cover",
+            "ats_cv_notes": "Updated CV",
+            "autofill_notes": "Updated notes",
+        },
+    )
+
+    assert response.status_code == 200
+    materials = response.json()["job"]["materials"]
+    assert materials["recruiter_message"] == "Old recruiter"
+    assert materials["cover_letter"] == "Updated cover"
+    assert materials["ats_cv_notes"] == "Updated CV"
+    assert materials["autofill_notes"] == "Updated notes"
 
 
 def test_application_rest_endpoints(tmp_path, monkeypatch):

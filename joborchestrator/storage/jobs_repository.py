@@ -658,6 +658,7 @@ def get_apply_queue_job_postings(
     try:
         where_sql, params = _freshness_where_clause(freshness, now or datetime.now())
         where_sql, params = _append_job_search_filter(where_sql, params, search)
+        where_sql = _append_unsubmitted_application_filter(where_sql)
         join_sql = "LEFT JOIN job_rankings jr ON jr.job_id = jp.id AND jr.ranking_version = ?"
         query = f"""
             SELECT
@@ -698,10 +699,26 @@ def count_apply_queue_job_postings(
     try:
         where_sql, params = _freshness_where_clause(freshness, now or datetime.now())
         where_sql, params = _append_job_search_filter(where_sql, params, search)
+        where_sql = _append_unsubmitted_application_filter(where_sql)
         row = conn.execute(f"SELECT COUNT(*) AS count FROM job_postings jp {where_sql}", params).fetchone()
         return int(row["count"] if row else 0)
     finally:
         conn.close()
+
+
+def _append_unsubmitted_application_filter(where_sql: str) -> str:
+    submitted_statuses = "('submitted', 'submitted_manually', 'submission_verified')"
+    clause = f"""
+        NOT EXISTS (
+          SELECT 1
+          FROM applications a
+          WHERE a.job_id = jp.id
+            AND a.status IN {submitted_statuses}
+        )
+    """
+    if where_sql.strip().upper().startswith("WHERE"):
+        return f"{where_sql} AND {clause}"
+    return f"WHERE {clause}"
 
 
 def count_job_freshness_buckets(connect: ConnectionFactory, now: datetime | None = None) -> dict[str, int]:

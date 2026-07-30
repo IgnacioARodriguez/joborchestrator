@@ -68,7 +68,25 @@ def create_application(connect: ConnectionFactory, payload: dict) -> dict:
             (payload["job_id"],),
         ).fetchone()
         if existing:
-            return get_application(connect, int(existing["id"])) or {"id": int(existing["id"])}
+            application_id = int(existing["id"])
+            if status in {"submitted", "submitted_manually", "submission_verified"}:
+                submitted_at = payload.get("submitted_at") or now
+                conn.execute(
+                    "UPDATE applications SET status = ?, submitted_at = COALESCE(submitted_at, ?), updated_at = ? WHERE id = ?",
+                    (status, submitted_at, now, application_id),
+                )
+                conn.execute(
+                    """INSERT INTO application_events (application_id, event_type, event_at, note)
+                       VALUES (?, ?, ?, ?)""",
+                    (
+                        application_id,
+                        "submission_verified" if status == "submission_verified" else "submitted_manually",
+                        submitted_at,
+                        "Confirmed by the user from Apply.",
+                    ),
+                )
+                conn.commit()
+            return get_application(connect, application_id) or {"id": application_id}
         cursor = conn.execute(
             """INSERT INTO applications (
                    job_id, ats_type, status, channel, resume_variant_id,

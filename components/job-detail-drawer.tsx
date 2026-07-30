@@ -24,6 +24,8 @@ import {
   ClipboardCheck,
   FileSearch,
   Play,
+  Pencil,
+  Save,
 } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -137,15 +139,36 @@ function MaterialBlock({
   label,
   text,
   actions,
+  onSave,
 }: {
   label: string
   text: string
   actions?: ReactNode
+  onSave?: (value: string) => Promise<void>
 }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(text)
+  const [saving, setSaving] = useState(false)
+
   if (!text) return null
   async function copyText() {
     await navigator.clipboard.writeText(text)
     toast.success("Copied", { description: label })
+  }
+  async function saveText() {
+    if (!onSave) return
+    setSaving(true)
+    try {
+      await onSave(draft)
+      setEditing(false)
+      toast.success("Saved", { description: label })
+    } catch (error) {
+      toast.error("Could not save", {
+        description: error instanceof Error ? error.message : "Backend request failed.",
+      })
+    } finally {
+      setSaving(false)
+    }
   }
   return (
     <div className="flex flex-col gap-1 rounded-lg border border-border bg-muted/30 p-3">
@@ -153,15 +176,44 @@ function MaterialBlock({
         <p className="text-xs font-semibold text-foreground">{label}</p>
         <div className="flex flex-wrap justify-end gap-1">
           {actions}
+          {onSave ? (
+            editing ? (
+              <Button variant="ghost" size="sm" disabled={saving} onClick={() => void saveText()}>
+                <Save data-icon="inline-start" />
+                Save
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setDraft(text)
+                  setEditing(true)
+                }}
+              >
+                <Pencil data-icon="inline-start" />
+                Edit
+              </Button>
+            )
+          ) : null}
           <Button variant="ghost" size="sm" onClick={() => void copyText()}>
             <Copy data-icon="inline-start" />
             Copy
           </Button>
         </div>
       </div>
-      <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
-        {text}
-      </p>
+      {editing ? (
+        <Textarea
+          aria-label={label}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          className="min-h-36 text-xs leading-relaxed"
+        />
+      ) : (
+        <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+          {text}
+        </p>
+      )}
     </div>
   )
 }
@@ -317,13 +369,45 @@ function parseAutofillPlan(text: string) {
   }
 }
 
-function AutofillPlanBlock({ text }: { text: string }) {
+function AutofillPlanBlock({
+  text,
+  onSave,
+}: {
+  text: string
+  onSave: (value: string) => Promise<void>
+}) {
   const plan = parseAutofillPlan(text)
-  if (!plan) return <MaterialBlock label="Autofill notes" text={text} />
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(text)
+  const [saving, setSaving] = useState(false)
+  if (!plan) {
+    return (
+      <MaterialBlock
+        label="Autofill notes"
+        text={text}
+        onSave={onSave}
+      />
+    )
+  }
 
   const copyText = async (label: string, value: string) => {
     await navigator.clipboard.writeText(value)
     toast.success("Copied", { description: label })
+  }
+
+  async function saveText() {
+    setSaving(true)
+    try {
+      await onSave(draft)
+      setEditing(false)
+      toast.success("Saved", { description: "Autofill notes" })
+    } catch (error) {
+      toast.error("Could not save", {
+        description: error instanceof Error ? error.message : "Backend request failed.",
+      })
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -332,17 +416,45 @@ function AutofillPlanBlock({ text }: { text: string }) {
         <p className="text-xs font-semibold text-foreground">
           Application workflow
         </p>
-        {plan.copy_paste_block && (
+        <div className="flex flex-wrap justify-end gap-1">
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => void copyText("Application answers", plan.copy_paste_block ?? "")}
+            onClick={() => {
+              setDraft(text)
+              setEditing(true)
+            }}
           >
-            <Copy data-icon="inline-start" />
-            Copy answers
+            <Pencil data-icon="inline-start" />
+            Edit
           </Button>
-        )}
+          {editing ? (
+            <Button variant="ghost" size="sm" disabled={saving} onClick={() => void saveText()}>
+              <Save data-icon="inline-start" />
+              Save
+            </Button>
+          ) : null}
+          {plan.copy_paste_block && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={saving}
+              onClick={() => void copyText("Application answers", plan.copy_paste_block ?? "")}
+            >
+              <Copy data-icon="inline-start" />
+              Copy answers
+            </Button>
+          )}
+        </div>
       </div>
+      {editing ? (
+        <Textarea
+          aria-label="Autofill notes"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          className="min-h-36 text-xs leading-relaxed"
+        />
+      ) : null}
       {plan.preflight_checklist && plan.preflight_checklist.length > 0 && (
         <div className="flex flex-col gap-1">
           <p className="text-xs font-medium text-foreground">Preflight</p>
@@ -829,6 +941,14 @@ const DetailBody = memo(function DetailBody({
     } finally {
       setSessionBusy(false)
     }
+  }
+
+  async function saveMaterial(
+    field: "recruiter_message" | "cover_letter" | "ats_cv_notes" | "autofill_notes",
+    value: string,
+  ) {
+    await api.updateMaterials(job.id, { [field]: value })
+    await loadJobDetail(job.id, { force: true })
   }
 
   function openExternal(url: string) {
@@ -1326,14 +1446,17 @@ const DetailBody = memo(function DetailBody({
                 <MaterialBlock
                   label="Recruiter message"
                   text={job.materials.recruiter_message}
+                  onSave={(value) => saveMaterial("recruiter_message", value)}
                 />
                 <MaterialBlock
                   label="Cover letter"
                   text={job.materials.cover_letter}
+                  onSave={(value) => saveMaterial("cover_letter", value)}
                 />
                 <MaterialBlock
                   label="Optimized ATS CV"
                   text={job.materials.ats_cv_notes}
+                  onSave={(value) => saveMaterial("ats_cv_notes", value)}
                   actions={
                     <>
                       <Button
@@ -1353,7 +1476,10 @@ const DetailBody = memo(function DetailBody({
                     </>
                   }
                 />
-                <AutofillPlanBlock text={job.materials.autofill_notes} />
+                <AutofillPlanBlock
+                  text={job.materials.autofill_notes}
+                  onSave={(value) => saveMaterial("autofill_notes", value)}
+                />
               </div>
             </DeferredSection>
           </>

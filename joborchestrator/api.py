@@ -164,6 +164,13 @@ class ApplicationSessionTransitionPayload(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class MaterialsPatch(BaseModel):
+    recruiter_message: str | None = None
+    cover_letter: str | None = None
+    ats_cv_notes: str | None = None
+    autofill_notes: str | None = None
+
+
 class AutomationAccountPayload(BaseModel):
     provider: str = "generic"
     domain: str
@@ -582,7 +589,7 @@ def apply_queue(
         reverse=True,
     )
     freshness_counts = db.count_job_freshness_buckets()
-    total = db.count_apply_queue_job_postings(freshness_filter, q) if q else _freshness_total(freshness_filter, freshness_counts)
+    total = db.count_apply_queue_job_postings(freshness_filter, q)
     return {
         "jobs": jobs,
         "ranking_versions": ranking_versions,
@@ -1161,6 +1168,19 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
         materials_candidate_profile_hash=profile_metadata.get("hash"),
         materials_candidate_profile_snapshot=profile_metadata.get("snapshot"),
     )
+    fresh = db.get_job_posting(job_id)
+    rankings = latest_rankings_by_job_id()
+    return {"job": job_dto(fresh, rankings.get(job_id))}
+
+
+@app.patch("/api/jobs/{job_id}/materials")
+def update_materials(job_id: int, payload: MaterialsPatch) -> dict[str, Any]:
+    if not db.get_job_posting(job_id):
+        raise HTTPException(status_code=404, detail="Job not found")
+    updates = payload.model_dump(exclude_unset=True)
+    if "ats_cv_notes" in updates:
+        updates["ats_cv_text"] = updates.pop("ats_cv_notes")
+    db.update_job_application_materials(job_id, **updates)
     fresh = db.get_job_posting(job_id)
     rankings = latest_rankings_by_job_id()
     return {"job": job_dto(fresh, rankings.get(job_id))}
