@@ -16,7 +16,12 @@ def test_load_prompt_uses_registry_active_version():
     assert active_prompt_version("judge", "semantic_rubric") == "v1"
     assert "calibrated evaluator" in load_prompt("judge", "semantic_rubric")
     assert active_prompt_version("materials", "nvidia_cv_contract") == "v14"
+    assert active_prompt_version("materials", "nvidia_cv_planner_contract") == "v1"
     assert active_prompt_version("materials", "nvidia_kit_contract") == "v13"
+    assert "Return a small JSON plan for a deterministic renderer" in load_prompt(
+        "materials", "nvidia_cv_planner_contract"
+    )
+    assert "Do not write the final CV" in load_prompt("materials", "nvidia_cv_planner_contract")
     assert "forbidden claim family" in load_prompt("materials", "nvidia_cv_contract")
     assert "avoid_overclaiming_aliases" in load_prompt("materials", "nvidia_cv_contract")
     assert "experience_claim_constraints" in load_prompt("materials", "nvidia_cv_contract")

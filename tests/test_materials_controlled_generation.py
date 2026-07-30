@@ -25,6 +25,10 @@ from joborchestrator.intelligence.materials_cv_ir import (
 from joborchestrator.intelligence.materials_keywords import derive_keywords_used
 from joborchestrator.intelligence.materials_kit import parse_autofill, render_autofill
 from joborchestrator.intelligence.materials_language import detect_job_language, language_mismatch
+from joborchestrator.intelligence.materials_planner import (
+    build_cv_planner_context,
+    validate_planner_response,
+)
 from joborchestrator.intelligence.materials_repair import (
     build_repair_directive,
     deterministic_repair,
@@ -32,6 +36,7 @@ from joborchestrator.intelligence.materials_repair import (
     repair_prompt_payload,
 )
 from joborchestrator.intelligence.materials_routing import max_semantic_repairs, should_auto_generate_materials
+from joborchestrator.intelligence.materials_controlled_pipeline import build_controlled_ats_cv
 from joborchestrator.intelligence.materials_validation import (
     issues_to_messages,
     validation_feedback_to_issues,
@@ -213,6 +218,52 @@ def test_repair_payload_lists_mutable_and_frozen_fields():
     assert "previous_response" in payload
 
 
+def test_nvidia_planner_response_rejects_final_cv_and_unknown_ids():
+    errors = validate_planner_response(
+        _cv_ir(),
+        {
+            "ats_cv_text": "Should not be here",
+            "keywords_used": ["Python"],
+            "summary_lines": [{"text": "Backend", "evidence_ids": ["missing"]}],
+        },
+    )
+
+    assert "summary line references unknown evidence ids: missing" in errors
+    assert "planner response must not include ats_cv_text" in errors
+    assert "planner response must not include keywords_used" in errors
+
+
+def test_planner_context_uses_cv_ir_and_compact_generation_context():
+    context = build_cv_planner_context(
+        {
+            "job": {"company": "Acme", "title": "Backend Engineer", "description_text": "Build Python APIs."},
+            "ats_fit_analysis": {"supported_keywords": ["Python"]},
+        },
+        _cv_ir(),
+    )
+
+    assert context["job"]["company"] == "Acme"
+    assert context["cv_ir"]["roles"][0]["id"] == "role_fiction"
+    assert "base_cv" not in context
+
+
+def test_controlled_pipeline_renders_cv_without_freeform_generation():
+    result = build_controlled_ats_cv(
+        _base_cv_text(),
+        ["Python", "REST APIs", "Redis"],
+        planner_response={
+            "summary_lines": [{"text": "Backend developer with Python API experience.", "evidence_ids": ["fact_01"]}],
+            "skill_ids": ["skill_python"],
+            "role_plans": [],
+        },
+    )
+
+    assert "Professional Experience" in result["ats_cv_text"]
+    assert "Technologies: Python, REST APIs, Redis" in result["ats_cv_text"]
+    assert result["keywords_used"] == ["Python", "REST APIs", "Redis"]
+    assert result["_generation_metadata"]["pipeline"] == "controlled_cv"
+
+
 def test_avoid_job_does_not_auto_generate_without_override():
     ranking = {"decision": "AVOID"}
 
@@ -257,3 +308,19 @@ def _cv_ir() -> CandidateCvIR:
         education=[EducationEntry(id="education_01", source_text="Computer Science")],
         base_cv_text="source",
     )
+
+
+def _base_cv_text() -> str:
+    return """Ignacio Rodriguez
+Contact line
+
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express
+- Built analytics APIs with Python.
+- Improved data reliability with Redis.
+Technologies: Python, REST APIs, Redis
+
+Education
+Computer Science
+"""

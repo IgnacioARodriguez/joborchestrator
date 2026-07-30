@@ -5,7 +5,8 @@
       "ranking/nvidia_response_contract": "v9",
       "materials/nvidia_cv_contract": "v14",
       "materials/nvidia_kit_contract": "v13",
-      "judge/semantic_rubric": "v1"
+      "judge/semantic_rubric": "v1",
+      "materials/nvidia_cv_planner_contract": "v1"
     }
   }
 }

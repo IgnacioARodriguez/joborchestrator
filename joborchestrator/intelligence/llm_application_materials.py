@@ -112,6 +112,7 @@ def estimate_materials_cost(
 def materials_prompt_versions() -> dict[str, str]:
     return {
         "materials/nvidia_cv_contract": active_prompt_version("materials", "nvidia_cv_contract"),
+        "materials/nvidia_cv_planner_contract": active_prompt_version("materials", "nvidia_cv_planner_contract"),
         "materials/nvidia_kit_contract": active_prompt_version("materials", "nvidia_kit_contract"),
     }
 
@@ -1263,6 +1264,10 @@ def _materials_schema() -> dict[str, Any]:
 
 def _nvidia_cv_contract() -> str:
     return load_prompt("materials", "nvidia_cv_contract")
+
+
+def _nvidia_cv_planner_contract() -> str:
+    return load_prompt("materials", "nvidia_cv_planner_contract")
 
 
 def _nvidia_kit_contract() -> str:
