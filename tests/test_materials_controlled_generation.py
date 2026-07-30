@@ -459,6 +459,81 @@ def test_nvidia_controlled_flags_use_planner_instead_of_freeform_cv(monkeypatch)
     assert kit["_generation_metadata"]["validation_errors"] == []
 
 
+def test_nvidia_cv_deterministic_unsupported_role_technology_repair_avoids_retry(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials as llm
+
+    base_cv = """Ignacio Rodriguez
+Contact line
+
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express
+- Built analytics APIs with Python.
+- Improved data reliability with Redis.
+- Technologies: Python, REST APIs, Redis.
+Full Stack Developer October 2022 - April 2025
+Talan Consulting
+- Built dashboards with React and Python.
+- Technologies: Python, React, SQL.
+
+Education
+Computer Science
+""".strip()
+    generated = """Ignacio Rodriguez
+Contact line
+
+Professional Summary
+Backend developer with Python API experience and source-backed Redis data reliability work.
+Experience also includes dashboards with React, Python, and SQL from the Talan role.
+
+Technical Skills
+Python, REST APIs, Redis, React, SQL, Kubernetes
+
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs with Python.
+- Improved data reliability with Redis.
+- Supported source-backed product workflows.
+Technologies: Python, REST APIs, Redis, Kubernetes
+Full Stack Developer | Talan Consulting | October 2022 - April 2025
+- Built dashboards with React and Python.
+- Supported SQL-backed dashboard workflows.
+Technologies: Python, React, SQL
+
+Education
+Computer Science
+
+Additional Development
+The profile stays within source evidence for Fiction Express and Talan Consulting, preserving role-specific technology attribution while keeping globally relevant supported skills separate.
+""".strip()
+    calls = []
+
+    def fake_contract_once(*args, **kwargs):
+        calls.append(kwargs.get("previous_response"))
+        return {"ats_cv_text": generated, "risk_flags": [], "keywords_used": []}
+
+    monkeypatch.setattr(llm, "_call_nvidia_contract_once", fake_contract_once)
+
+    response = llm._call_nvidia_cv(
+        {
+            "base_cv": {"text": base_cv},
+            "job": {"company": "Acme", "title": "Backend Engineer", "description_text": "Build Python APIs."},
+            "ats_fit_analysis": {"supported_keywords": ["Python", "REST APIs", "Redis", "React", "SQL", "Kubernetes"]},
+        },
+        "test-key",
+        "test-model",
+        1.0,
+        validation_retry_limit=0,
+    )
+
+    assert len(calls) == 1
+    fiction_block = response["ats_cv_text"].split("Backend Developer | Fiction Express", 1)[1].split("Full Stack Developer | Talan Consulting", 1)[0]
+    assert "Kubernetes" not in fiction_block
+    assert "Technologies: Python, REST APIs, APIs, Redis" in fiction_block
+    assert response["_generation_metadata"]["validation_attempts"] == 1
+    assert "unsupported role-specific technologies" in response["_generation_metadata"]["validation_errors"][0]
+
+
 def test_nvidia_cv_deterministic_canonical_technology_repair_avoids_retry(monkeypatch):
     from joborchestrator.intelligence import llm_application_materials as llm
 

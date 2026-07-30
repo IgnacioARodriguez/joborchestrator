@@ -584,7 +584,7 @@ def _apply_deterministic_materials_repair(
     if not issues:
         return parsed, validation_feedback, []
     repaired, remaining = deterministic_repair(parsed, issues, supported_keywords=_supported_keywords_from_payload(payload))
-    if any(issue.code == "MISSING_CANONICAL_ROLE_TECH" for issue in remaining):
+    if any(issue.code in {"MISSING_CANONICAL_ROLE_TECH", "UNSUPPORTED_ROLE_TECH"} for issue in remaining):
         repaired = _repair_missing_canonical_role_technologies(repaired, payload)
     if repaired == parsed:
         return parsed, validation_feedback, []
