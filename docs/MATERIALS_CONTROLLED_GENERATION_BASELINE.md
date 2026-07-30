@@ -53,7 +53,7 @@ Known remaining gaps:
 
 ## Planner And Renderer Rollout
 
-The controlled path now has a dedicated NVIDIA planner contract: `materials/nvidia_cv_planner_contract` at `v1`.
+The controlled path now has a dedicated NVIDIA planner contract: `materials/nvidia_cv_planner_contract` at `v1`. When both `MATERIALS_CONTROLLED_CV_ENABLED` and `MATERIALS_NVIDIA_PLANNER_ENABLED` are enabled, `build_application_kit_with_nvidia` uses NVIDIA for CV planning and renders `ats_cv_text` deterministically in code.
 
 Responsibilities:
 

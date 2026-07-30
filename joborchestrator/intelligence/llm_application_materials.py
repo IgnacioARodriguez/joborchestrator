@@ -16,7 +16,11 @@ from joborchestrator.llm.provider import LLMProviderError, ProviderRegistry
 from joborchestrator.prompts import active_prompt_version, load_prompt
 from joborchestrator.intelligence.llm_costs import estimate_application_kit_tokens, estimate_cost
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
+from joborchestrator.intelligence.materials_controlled_pipeline import build_controlled_ats_cv
+from joborchestrator.intelligence.materials_cv_ir import parse_candidate_cv_ir
 from joborchestrator.intelligence.materials_keywords import derive_keywords_used
+from joborchestrator.intelligence.materials_planner import build_cv_planner_context
+from joborchestrator.intelligence.materials_routing import controlled_cv_enabled, nvidia_planner_enabled
 from joborchestrator.intelligence.materials_repair import (
     build_repair_directive,
     repair_prompt_payload,
@@ -158,13 +162,21 @@ def build_application_kit_with_nvidia(
 
     payload = _materials_payload(job, ranking)
     selected_model = model or DEFAULT_NVIDIA_MATERIALS_MODEL
-    cv_response = _call_nvidia_cv(
-        payload,
-        key,
-        selected_model,
-        timeout,
-        validation_retry_limit=validation_retry_limit,
-    )
+    if controlled_cv_enabled() and nvidia_planner_enabled():
+        cv_response = _call_nvidia_controlled_cv(
+            payload,
+            key,
+            selected_model,
+            timeout,
+        )
+    else:
+        cv_response = _call_nvidia_cv(
+            payload,
+            key,
+            selected_model,
+            timeout,
+            validation_retry_limit=validation_retry_limit,
+        )
     try:
         kit_response = _call_nvidia_kit(
             payload,
@@ -870,6 +882,56 @@ def _call_nvidia(
         )
     raise LLMMaterialsError("NVIDIA materials response did not produce a usable application kit.")
 
+
+
+def _call_nvidia_controlled_cv(
+    payload: dict[str, Any],
+    api_key: str,
+    model: str,
+    timeout: float,
+) -> dict[str, Any]:
+    supported_keywords = _supported_keywords_from_payload(payload)
+    cv_ir = parse_candidate_cv_ir(_base_cv_text(payload), supported_keywords)
+    planner_context = build_cv_planner_context(payload, cv_ir)
+    planner_response = _call_nvidia_cv_planner(planner_context, api_key, model, timeout)
+    rendered = build_controlled_ats_cv(
+        _base_cv_text(payload),
+        supported_keywords,
+        planner_response=planner_response,
+    )
+    metadata = rendered.get("_generation_metadata") if isinstance(rendered.get("_generation_metadata"), dict) else {}
+    metadata.update(
+        {
+            "validation_attempts": 1,
+            "validation_errors": list(metadata.get("planner_errors") or []),
+            "pipeline": "controlled_cv",
+            "stage": "cv_render",
+        }
+    )
+    rendered["_generation_metadata"] = metadata
+    return rendered
+
+
+def _call_nvidia_cv_planner(
+    planner_context: dict[str, Any],
+    api_key: str,
+    model: str,
+    timeout: float,
+) -> dict[str, Any]:
+    parsed = _call_nvidia_contract_once(
+        _nvidia_cv_planner_contract(),
+        planner_context,
+        api_key,
+        model,
+        timeout,
+    )
+    parsed["_generation_metadata"] = {
+        "validation_attempts": 1,
+        "validation_errors": [],
+        "pipeline": "controlled_cv",
+        "stage": "cv_plan",
+    }
+    return parsed
 
 def _call_nvidia_cv(
     payload: dict[str, Any],

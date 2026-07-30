@@ -264,6 +264,82 @@ def test_controlled_pipeline_renders_cv_without_freeform_generation():
     assert result["_generation_metadata"]["pipeline"] == "controlled_cv"
 
 
+def test_nvidia_controlled_flags_use_planner_instead_of_freeform_cv(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials as llm
+
+    planner_contexts = []
+    monkeypatch.setenv("MATERIALS_CONTROLLED_CV_ENABLED", "1")
+    monkeypatch.setenv("MATERIALS_NVIDIA_PLANNER_ENABLED", "1")
+    monkeypatch.setattr(
+        llm,
+        "_materials_payload",
+        lambda job, ranking: {
+            "base_cv": {"text": _base_cv_text()},
+            "job": {"company": "Acme", "title": "Backend Engineer", "description_text": "Build Python APIs."},
+            "ats_fit_analysis": {"supported_keywords": ["Python", "REST APIs", "Redis"]},
+            "ranking": {"decision": "APPLY_NOW"},
+        },
+    )
+    monkeypatch.setattr(llm, "_call_nvidia_cv", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("legacy CV path used")))
+
+    def fake_contract_once(contract, payload, api_key, model, timeout, validation_feedback=None, previous_response=None):
+        planner_contexts.append(payload)
+        return {
+            "summary_lines": [{"text": "Backend developer with Python API experience.", "evidence_ids": ["fact_01"]}],
+            "skill_ids": ["skill_python"],
+            "role_plans": [],
+        }
+
+    monkeypatch.setattr(llm, "_call_nvidia_contract_once", fake_contract_once)
+    monkeypatch.setattr(
+        llm,
+        "_call_nvidia_kit",
+        lambda *args, **kwargs: {
+            "recruiter_message": "Hi Acme, Python API background may be relevant.",
+            "cover_letter": "Dear team, my Python API background may support this Backend Engineer role with source-backed experience.",
+            "autofill_notes": "Python backend profile",
+            "_generation_metadata": {"validation_attempts": 1, "validation_errors": []},
+        },
+    )
+
+    kit = llm.build_application_kit_with_nvidia({"title": "Backend Engineer"}, api_key="test-key")
+
+    assert planner_contexts
+    assert "cv_ir" in planner_contexts[0]
+    assert "base_cv" not in planner_contexts[0]
+    assert "Professional Experience" in kit["ats_cv_text"]
+    assert "Technologies: Python, REST APIs, Redis" in kit["ats_cv_text"]
+    assert kit["_generation_metadata"]["validation_errors"] == []
+
+
+def test_invalid_nvidia_planner_plan_falls_back_to_renderer_defaults(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials as llm
+
+    monkeypatch.setattr(
+        llm,
+        "_call_nvidia_cv_planner",
+        lambda *args, **kwargs: {
+            "summary_lines": [{"text": "Unsupported", "evidence_ids": ["missing"]}],
+            "ats_cv_text": "not allowed",
+        },
+    )
+
+    response = llm._call_nvidia_controlled_cv(
+        {
+            "base_cv": {"text": _base_cv_text()},
+            "job": {"company": "Acme", "title": "Backend Engineer", "description_text": "Build Python APIs."},
+            "ats_fit_analysis": {"supported_keywords": ["Python", "REST APIs", "Redis"]},
+        },
+        "test-key",
+        "test-model",
+        1.0,
+    )
+
+    assert "Professional Experience" in response["ats_cv_text"]
+    assert "summary line references unknown evidence ids: missing" in response["_generation_metadata"]["validation_errors"]
+    assert "planner response must not include ats_cv_text" in response["_generation_metadata"]["validation_errors"]
+
+
 def test_avoid_job_does_not_auto_generate_without_override():
     ranking = {"decision": "AVOID"}
 
