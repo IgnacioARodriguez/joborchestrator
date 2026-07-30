@@ -250,6 +250,43 @@ def test_application_kit_flattens_nested_recruiter_message():
     assert kit["autofill_notes"] == "Use tailored answers\n\nReview before submit"
 
 
+def test_application_kit_renders_structured_autofill_object():
+    kit = _kit_from_response(
+        {
+            "recruiter_message": "Hi Acme, Python API work maps well to the Backend Engineer role.",
+            "cover_letter": "Dear Acme team",
+            "ats_cv_text": "Professional Summary\nBackend engineer",
+            "autofill": {
+                "core_pitch": "Python backend profile for API and automation work.",
+                "availability": "Two weeks after offer acceptance.",
+                "work_authorization": "Authorized to work in Spain.",
+                "location_note": "Madrid-based, open to remote EU teams.",
+                "application_caveats": ["Confirm exact cloud stack before claiming direct AWS production depth."],
+            },
+        }
+    )
+
+    assert "Python backend profile" in kit["autofill_notes"]
+    assert "Availability: Two weeks" in kit["autofill_notes"]
+    assert "Work authorization: Authorized" in kit["autofill_notes"]
+    assert "Location: Madrid" in kit["autofill_notes"]
+    assert "Caveats: Confirm exact cloud stack" in kit["autofill_notes"]
+
+
+def test_application_kit_validation_rejects_json_encoded_autofill_notes():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Acme, Python API work maps well to the Backend Engineer role.",
+            "cover_letter": "Dear Acme team,\n\nMy Python API background maps well to this Backend Engineer role through backend services, database work, and product collaboration on reliable application workflows.",
+            "autofill_notes": '{"core_pitch": "Python API profile"}',
+        },
+        {"job": {"title": "Backend Engineer", "company": "Acme"}},
+    )
+
+    assert error is not None
+    assert "autofill_notes must not be a JSON-encoded object string" in error
+
+
 def test_application_kit_cleans_internal_ats_cv_notes():
     kit = _kit_from_response(
         {

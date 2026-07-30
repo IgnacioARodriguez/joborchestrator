@@ -19,6 +19,7 @@ from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to
 from joborchestrator.intelligence.materials_controlled_pipeline import build_controlled_ats_cv
 from joborchestrator.intelligence.materials_cv_ir import parse_candidate_cv_ir
 from joborchestrator.intelligence.materials_keywords import derive_keywords_used
+from joborchestrator.intelligence.materials_kit import parse_autofill, render_autofill
 from joborchestrator.intelligence.materials_planner import build_cv_planner_context
 from joborchestrator.intelligence.materials_routing import controlled_cv_enabled, nvidia_planner_enabled, openai_fallback_enabled
 from joborchestrator.intelligence.materials_repair import (
@@ -438,8 +439,47 @@ def _kit_from_response(response: dict[str, Any]) -> dict[str, str]:
         "recruiter_message": _clean_recruiter_message(_material_text(response["recruiter_message"])),
         "cover_letter": str(response.get("cover_letter") or ""),
         "ats_cv_text": _clean_cv_text_for_export(str(response["ats_cv_text"])),
-        "autofill_notes": _material_text(response["autofill_notes"]),
+        "autofill_notes": _autofill_notes_text(response),
     }
+
+
+def _autofill_notes_text(response: dict[str, Any]) -> str:
+    if "autofill" in response:
+        return render_autofill(parse_autofill(response.get("autofill")))
+    return _material_text(response.get("autofill_notes"))
+
+
+def _autofill_validation_text(payload: dict[str, Any]) -> tuple[str, list[str]]:
+    problems: list[str] = []
+    if "autofill" in payload:
+        try:
+            text = render_autofill(parse_autofill(payload.get("autofill")))
+        except ValueError as exc:
+            return "", [f"autofill shape invalid: {exc}"]
+        if not text.strip():
+            problems.append("autofill is required")
+        return text, problems
+
+    raw_notes = payload.get("autofill_notes")
+    if isinstance(raw_notes, str) and raw_notes.strip().startswith("{"):
+        return "", ["autofill_notes must not be a JSON-encoded object string"]
+    text = _material_text(raw_notes)
+    if not text.strip():
+        problems.append("autofill_notes is required")
+    return text, problems
+
+
+def _kit_validation_text(payload: dict[str, Any]) -> str:
+    autofill_text, _ = _autofill_validation_text(payload)
+    return "\n".join(
+        part
+        for part in [
+            str(payload.get("recruiter_message") or ""),
+            str(payload.get("cover_letter") or ""),
+            autofill_text,
+        ]
+        if part
+    )
 
 
 def _attach_generation_metadata(kit: dict[str, Any], response: dict[str, Any]) -> None:
@@ -1510,9 +1550,11 @@ def _kit_response_validation_error(
     source_payload: dict[str, Any] | None = None,
 ) -> str | None:
     problems = []
-    for field in ["recruiter_message", "cover_letter", "autofill_notes"]:
+    for field in ["recruiter_message", "cover_letter"]:
         if not str(payload.get(field) or "").strip():
             problems.append(f"{field} is required")
+    autofill_text, autofill_problems = _autofill_validation_text(payload)
+    problems.extend(autofill_problems)
     recruiter_message = str(payload.get("recruiter_message") or "")
     cover_letter = str(payload.get("cover_letter") or "").strip()
     if len(recruiter_message) > RECRUITER_MESSAGE_MAX_CHARS:
@@ -1521,7 +1563,11 @@ def _kit_response_validation_error(
         problems.append("cover_letter is too short to be substantive")
     problems.extend(_recruiter_message_quality_problems(recruiter_message))
     problems.extend(_recruiter_message_specificity_problems(recruiter_message, source_payload))
-    kit_text = "\n".join(str(payload.get(field) or "") for field in ["recruiter_message", "cover_letter", "autofill_notes"])
+    kit_text = "\n".join(
+        part
+        for part in [recruiter_message, str(payload.get("cover_letter") or ""), autofill_text]
+        if part
+    )
     problems.extend(_unsupported_hedge_problems(kit_text))
     problems.extend(_materials_internal_note_problems(kit_text))
     problems.extend(_application_tone_problems(payload, source_payload))
@@ -1971,9 +2017,7 @@ def _application_tone_problems(
         )
     if tone.get("tone") != "cautious_review":
         return []
-    text = _normalize_for_match(
-        "\n".join(str(payload.get(field) or "") for field in ["recruiter_message", "cover_letter", "autofill_notes"])
-    )
+    text = _normalize_for_match(_kit_validation_text(payload))
     found = [phrase for phrase in _cautious_tone_forbidden_phrases() if phrase in text]
     if not found:
         return []
@@ -2042,10 +2086,7 @@ def _materials_non_cv_overclaiming_error(
     payload: dict[str, Any],
     source_payload: dict[str, Any] | None,
 ) -> str | None:
-    text = "\n".join(
-        str(payload.get(field) or "")
-        for field in ["recruiter_message", "cover_letter", "autofill_notes"]
-    )
+    text = _kit_validation_text(payload)
     problems = _avoid_overclaiming_problems(text, source_payload, field_name="application_materials")
     return "; ".join(problems) if problems else None
 

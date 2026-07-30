@@ -43,6 +43,7 @@ Initial implementation notes:
 - NVIDIA repair prompts receive the previous response and an explicit frozen-field directive.
 - A deterministic CV IR and renderer provide a rollout path behind feature flags.
 - Failed materials attempts are persisted in `materials_generation_attempts`.
+- Application kit parsing accepts a structured internal `autofill` object, renders it to persisted `autofill_notes`, and rejects JSON-encoded object strings in `autofill_notes`.
 
 Known remaining gaps:
 
@@ -61,6 +62,7 @@ Responsibilities:
 - Renderer: preserve identity, all role headers, titles, companies, dates, mandatory bullets, canonical technologies, and education.
 - Validator: map legacy feedback into structured `ValidationIssue` codes while compatibility callers still consume strings.
 - Repair: deterministic repair runs before semantic repair. Semantic repair receives the previous response, mutable fields, and frozen fields.
+- Kit: structured `autofill` can carry `core_pitch`, availability, work authorization, location, and caveats while storage/API compatibility still exposes rendered `autofill_notes`.
 
 Rollout flags remain off by default:
 
