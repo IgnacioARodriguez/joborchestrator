@@ -262,28 +262,77 @@ def _record_successful_materials_attempt(
     kit: dict[str, Any],
     metadata: dict[str, Any],
 ) -> None:
-    errors = [str(error) for error in metadata.get("validation_errors") or []]
+    stage_attempts = metadata.get("stage_attempts")
+    if isinstance(stage_attempts, list) and stage_attempts:
+        for stage_attempt in stage_attempts:
+            if isinstance(stage_attempt, dict):
+                _record_successful_materials_stage_attempt(
+                    operation_id,
+                    job_id,
+                    provider,
+                    model,
+                    prompt_versions,
+                    kit,
+                    stage_attempt,
+                )
+        return
+    _record_successful_materials_stage_attempt(
+        operation_id,
+        job_id,
+        provider,
+        model,
+        prompt_versions,
+        kit,
+        {
+            "stage": str(metadata.get("stage") or metadata.get("pipeline") or "materials_generation"),
+            "attempt_number": int(metadata.get("validation_attempts") or 1),
+            "validation_errors": [str(error) for error in metadata.get("validation_errors") or []],
+            "accepted": True,
+        },
+    )
+
+
+def _record_successful_materials_stage_attempt(
+    operation_id: int,
+    job_id: int,
+    provider: str,
+    model: str,
+    prompt_versions: dict[str, str],
+    kit: dict[str, Any],
+    stage_attempt: dict[str, Any],
+) -> None:
+    errors = [str(error) for error in stage_attempt.get("validation_errors") or []]
     issues = [
         issue
         for error in errors
         for issue in validation_feedback_to_issues(error)
     ]
-    output_text = "\n\n".join(
-        str(kit.get(field) or "")
-        for field in ["recruiter_message", "cover_letter", "ats_cv_text", "autofill_notes"]
-        if str(kit.get(field) or "").strip()
-    )
+    stage = str(stage_attempt.get("stage") or "materials_generation")
     db.record_materials_generation_attempt(
         operation_id=operation_id,
         job_id=job_id,
-        stage=str(metadata.get("stage") or metadata.get("pipeline") or "materials_generation"),
-        attempt_number=int(metadata.get("validation_attempts") or 1),
+        stage=stage,
+        attempt_number=int(stage_attempt.get("attempt_number") or 1),
         provider=provider,
         model=model,
         prompt_version=_materials_prompt_versions_text(prompt_versions),
-        output_text=output_text,
+        output_text=_materials_stage_output_text(kit, stage),
         validation_issues=issues_to_dicts(issues),
-        accepted=True,
+        accepted=bool(stage_attempt.get("accepted", True)),
+    )
+
+
+def _materials_stage_output_text(kit: dict[str, Any], stage: str) -> str:
+    if stage.startswith("cv") or stage == "fallback":
+        fields = ["ats_cv_text"]
+    elif stage.startswith("kit"):
+        fields = ["recruiter_message", "cover_letter", "autofill_notes"]
+    else:
+        fields = ["recruiter_message", "cover_letter", "ats_cv_text", "autofill_notes"]
+    return "\n\n".join(
+        str(kit.get(field) or "")
+        for field in fields
+        if str(kit.get(field) or "").strip()
     )
 
 

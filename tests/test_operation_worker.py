@@ -172,6 +172,37 @@ def test_worker_processes_application_materials_generation(monkeypatch):
     assert "Generating nvidia application materials." in progress
 
 
+def test_worker_records_successful_materials_stage_attempts_separately(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(worker.db, "record_materials_generation_attempt", lambda **kwargs: recorded.append(kwargs) or len(recorded))
+
+    worker._record_successful_materials_attempt(
+        21,
+        5,
+        "nvidia",
+        "test-model",
+        {"materials/nvidia_cv_contract": "v14", "materials/nvidia_kit_contract": "v14"},
+        {
+            "recruiter_message": "Hi Acme",
+            "cover_letter": "Dear team",
+            "ats_cv_text": "Professional Summary\nBackend engineer",
+            "autofill_notes": "Paste answers",
+        },
+        {
+            "stage_attempts": [
+                {"stage": "cv_render", "attempt_number": 1, "validation_errors": []},
+                {"stage": "kit_generation", "attempt_number": 2, "validation_errors": ["recruiter_message is generic"]},
+            ]
+        },
+    )
+
+    assert [attempt["stage"] for attempt in recorded] == ["cv_render", "kit_generation"]
+    assert recorded[0]["output_text"] == "Professional Summary\nBackend engineer"
+    assert "Hi Acme" in recorded[1]["output_text"]
+    assert recorded[1]["attempt_number"] == 2
+    assert recorded[1]["validation_issues"][0]["code"] == "UNSUPPORTED_GENERAL_CLAIM"
+
+
 def test_worker_records_failed_materials_attempt_metadata(monkeypatch):
     recorded = {}
     failed = {}

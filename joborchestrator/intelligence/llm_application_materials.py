@@ -498,13 +498,30 @@ def _attach_generation_metadata(kit: dict[str, Any], response: dict[str, Any]) -
 def _combined_generation_metadata(responses: list[dict[str, Any]]) -> dict[str, Any]:
     attempts = 0
     errors: list[str] = []
+    stage_attempts: list[dict[str, Any]] = []
     for response in responses:
         metadata = response.get("_generation_metadata")
         if not isinstance(metadata, dict):
             continue
-        attempts += int(metadata.get("validation_attempts") or 0)
-        errors.extend(str(error) for error in metadata.get("validation_errors") or [])
-    return {"validation_attempts": attempts or 1, "validation_errors": errors}
+        attempt_count = int(metadata.get("validation_attempts") or 0)
+        attempts += attempt_count
+        validation_errors = [str(error) for error in metadata.get("validation_errors") or []]
+        errors.extend(validation_errors)
+        if isinstance(metadata.get("stage_attempts"), list):
+            stage_attempts.extend(item for item in metadata["stage_attempts"] if isinstance(item, dict))
+        else:
+            stage_attempts.append(
+                {
+                    "stage": str(metadata.get("stage") or metadata.get("pipeline") or "materials_generation"),
+                    "attempt_number": attempt_count or 1,
+                    "validation_errors": validation_errors,
+                    "accepted": True,
+                }
+            )
+    combined = {"validation_attempts": attempts or 1, "validation_errors": errors}
+    if stage_attempts:
+        combined["stage_attempts"] = stage_attempts
+    return combined
 
 
 def _materials_validation_retry_limit(payload: dict[str, Any]) -> int:
@@ -889,6 +906,7 @@ def _call_openai(
         blocking_feedback = _blocking_validation_feedback(validation_feedback)
         if not blocking_feedback:
             parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors, degraded_feedbacks)
+            parsed["_generation_metadata"]["stage"] = "materials_generation"
             return parsed
         if attempt < retry_limit:
             validation_errors.extend(degraded_feedbacks)
@@ -927,6 +945,7 @@ def _call_nvidia(
         blocking_feedback = _blocking_validation_feedback(validation_feedback)
         if not blocking_feedback:
             parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors, degraded_feedbacks)
+            parsed["_generation_metadata"]["stage"] = "materials_generation"
             return parsed
         if attempt < retry_limit:
             validation_errors.extend(degraded_feedbacks)
@@ -1105,6 +1124,7 @@ def _call_nvidia_cv(
         blocking_feedback = _blocking_validation_feedback(validation_feedback)
         if not blocking_feedback:
             parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors, degraded_feedbacks)
+            parsed["_generation_metadata"]["stage"] = "cv_generation"
             return parsed
         if attempt < retry_limit:
             validation_errors.extend(degraded_feedbacks)
@@ -1157,6 +1177,7 @@ def _call_nvidia_kit(
             parsed["_generation_metadata"] = {
                 "validation_attempts": attempt + 1,
                 "validation_errors": validation_errors,
+                "stage": "kit_generation",
             }
             return parsed
         if attempt < retry_limit and not _is_unrecoverable_validation_feedback(validation_feedback):

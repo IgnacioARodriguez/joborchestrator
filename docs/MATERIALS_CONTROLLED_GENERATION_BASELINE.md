@@ -42,7 +42,7 @@ Initial implementation notes:
 - Validation feedback can be converted to stable structured issues.
 - NVIDIA repair prompts receive the previous response and an explicit frozen-field directive.
 - A deterministic CV IR and renderer provide a rollout path behind feature flags.
-- Accepted and failed materials attempts are persisted in `materials_generation_attempts`.
+- Accepted and failed materials attempts are persisted in `materials_generation_attempts`; accepted metadata can emit `stage_attempts` so CV and kit rows remain separable.
 - Application kit parsing accepts a structured internal `autofill` object, renders it to persisted `autofill_notes`, and rejects JSON-encoded object strings in `autofill_notes`.
 - Application kit validation fails closed on clear English/Spanish language mismatch when the job language has enough signal.
 

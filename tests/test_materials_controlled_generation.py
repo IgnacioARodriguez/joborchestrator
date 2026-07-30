@@ -53,6 +53,25 @@ def test_materials_evidence_baseline_documents_packet_cases():
     assert {37, 41, 60, 62, 63}.issubset(case_ids)
 
 
+def test_combined_generation_metadata_preserves_stage_attempts():
+    metadata = llm._combined_generation_metadata(
+        [
+            {"_generation_metadata": {"stage": "cv_render", "validation_attempts": 1, "validation_errors": []}},
+            {
+                "_generation_metadata": {
+                    "stage": "kit_generation",
+                    "validation_attempts": 2,
+                    "validation_errors": ["recruiter_message is generic"],
+                }
+            },
+        ]
+    )
+
+    assert metadata["validation_attempts"] == 3
+    assert [attempt["stage"] for attempt in metadata["stage_attempts"]] == ["cv_render", "kit_generation"]
+    assert metadata["stage_attempts"][1]["attempt_number"] == 2
+
+
 def test_keywords_used_are_derived_from_rendered_cv():
     cv = "Technical Skills\nPython, REST APIs, PostgreSQL\nExperience\nBuilt API integrations."
 
