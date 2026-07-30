@@ -63,7 +63,7 @@ Responsibilities:
 - Renderer: preserve identity, all role headers, titles, companies, dates, mandatory bullets, canonical technologies, and education.
 - Validator: map legacy feedback into structured `ValidationIssue` codes while compatibility callers still consume strings.
 - Repair: deterministic repair runs before semantic repair. Semantic repair receives the previous response, mutable fields, and frozen fields.
-- Kit: structured `autofill` can carry `core_pitch`, availability, work authorization, location, and caveats while storage/API compatibility still exposes rendered `autofill_notes`.
+- Kit: active `materials/nvidia_kit_contract` v14 requires structured `autofill` with `core_pitch`, availability, work authorization, location, and caveats while storage/API compatibility still exposes rendered `autofill_notes`.
 - Language: kit validation checks recruiter, cover letter, and autofill text against conservative English/Spanish job-language detection.
 
 Rollout flags remain off by default:

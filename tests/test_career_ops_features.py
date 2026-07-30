@@ -17,6 +17,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     _kit_validation_error,
     _materials_validation_error,
     _materials_payload,
+    _materials_schema,
     _materials_repair_instruction,
     _materials_validation_retry_limit,
     _openai_materials_messages,
@@ -248,6 +249,15 @@ def test_application_kit_flattens_nested_recruiter_message():
     assert kit["recruiter_message"] == "Hi team\n\nLonger recruiter message"
     assert "{'short'" not in kit["recruiter_message"]
     assert kit["autofill_notes"] == "Use tailored answers\n\nReview before submit"
+
+
+def test_openai_materials_schema_requires_structured_autofill():
+    schema = _materials_schema()
+
+    assert "autofill" in schema["required"]
+    assert "autofill_notes" not in schema["required"]
+    assert schema["properties"]["autofill"]["additionalProperties"] is False
+    assert schema["properties"]["autofill"]["properties"]["availability"]["type"] == ["string", "null"]
 
 
 def test_application_kit_renders_structured_autofill_object():

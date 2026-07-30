@@ -252,7 +252,7 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "Output language should match the job posting language unless the user profile clearly indicates otherwise.",
             "ATS CV text should be ready to copy, export to DOCX/PDF, and submit after human review.",
             "Cover letter is required and must be substantive; when constraints are risky, write it cautiously instead of leaving it empty.",
-            "Autofill notes should include copy-paste answers for common portal questions and caveats for claims to avoid.",
+            "Autofill must be a structured object with copy-paste answers for common portal questions and caveats for claims to avoid.",
             "List risk_flags for unsupported claims, adjacency framing, or user facts to double-check.",
             "Return only JSON matching the schema.",
         ],
@@ -260,7 +260,13 @@ def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
             "recruiter_message": "short recruiter connection note, ready to paste into LinkedIn invite/InMail/email",
             "cover_letter": "concise tailored cover letter",
             "ats_cv_text": "complete ATS-optimized CV only; no notes or internal instructions",
-            "autofill_notes": "structured copy-paste application workflow",
+            "autofill": {
+                "core_pitch": "copy-paste portal answer for why this profile fits",
+                "availability": None,
+                "work_authorization": None,
+                "location_note": None,
+                "application_caveats": [],
+            },
             "risk_flags": ["unsupported or review-needed claims"],
             "keywords_used": ["truthful job keywords included"],
         },
@@ -1341,7 +1347,7 @@ def _materials_repair_instruction(validation_feedback: str) -> str:
     instructions = ["Fix only the rejected fields while preserving all required JSON keys."]
     if "overconfident tone" in normalized:
         instructions.append(
-            "For cautious/review rankings, fully rewrite recruiter_message, cover_letter, and autofill_notes in "
+            "For cautious/review rankings, fully rewrite recruiter_message, cover_letter, and autofill in "
             "exploratory-review mode. Use only neutral phrases such as 'may be relevant to review', "
             "'supported Python/API background', 'worth discussing if the contract context fits', and "
             "'I would treat this as exploratory'. Remove the exact words confident, excited, eager, strong fit, "
@@ -1489,7 +1495,7 @@ def _materials_schema() -> dict[str, Any]:
             "recruiter_message",
             "cover_letter",
             "ats_cv_text",
-            "autofill_notes",
+            "autofill",
             "risk_flags",
             "keywords_used",
         ],
@@ -1497,9 +1503,30 @@ def _materials_schema() -> dict[str, Any]:
             "recruiter_message": {"type": "string"},
             "cover_letter": {"type": "string"},
             "ats_cv_text": {"type": "string"},
-            "autofill_notes": {"type": "string"},
+            "autofill": _autofill_schema(),
             "risk_flags": {"type": "array", "items": {"type": "string"}},
             "keywords_used": {"type": "array", "items": {"type": "string"}},
+        },
+    }
+
+
+def _autofill_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "core_pitch",
+            "availability",
+            "work_authorization",
+            "location_note",
+            "application_caveats",
+        ],
+        "properties": {
+            "core_pitch": {"type": "string"},
+            "availability": {"type": ["string", "null"]},
+            "work_authorization": {"type": ["string", "null"]},
+            "location_note": {"type": ["string", "null"]},
+            "application_caveats": {"type": "array", "items": {"type": "string"}},
         },
     }
 

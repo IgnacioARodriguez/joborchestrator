@@ -7,11 +7,11 @@ from joborchestrator.intelligence.materials_keywords import derive_keywords_used
 from joborchestrator.intelligence.materials_validation import ValidationIssue
 
 SEMANTIC_REPAIR_FIELDS = {
-    "OVERCONFIDENT_TONE": ["recruiter_message", "cover_letter", "autofill_notes"],
-    "FORBIDDEN_ALIAS": ["recruiter_message", "cover_letter", "autofill_notes", "ats_cv_text"],
-    "INTERNAL_LANGUAGE_LEAK": ["recruiter_message", "cover_letter", "autofill_notes", "ats_cv_text"],
-    "LANGUAGE_MISMATCH": ["recruiter_message", "cover_letter", "autofill_notes"],
-    "AUTOFILL_SHAPE_INVALID": ["autofill_notes"],
+    "OVERCONFIDENT_TONE": ["recruiter_message", "cover_letter", "autofill", "autofill_notes"],
+    "FORBIDDEN_ALIAS": ["recruiter_message", "cover_letter", "autofill", "autofill_notes", "ats_cv_text"],
+    "INTERNAL_LANGUAGE_LEAK": ["recruiter_message", "cover_letter", "autofill", "autofill_notes", "ats_cv_text"],
+    "LANGUAGE_MISMATCH": ["recruiter_message", "cover_letter", "autofill", "autofill_notes"],
+    "AUTOFILL_SHAPE_INVALID": ["autofill", "autofill_notes"],
 }
 
 
