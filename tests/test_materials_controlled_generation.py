@@ -219,6 +219,42 @@ def test_deterministic_repair_runs_before_semantic_retry():
     assert remaining == []
 
 
+def test_deterministic_repair_removes_forbidden_aliases_from_kit_fields():
+    response = {
+        "recruiter_message": "Hi Acme, AWS Lambda experience may be useful.",
+        "cover_letter": "I would discuss DynamoDB and API Gateway only if relevant.",
+        "autofill": {"core_pitch": "Mention Serverless Architecture cautiously.", "application_caveats": ["Avoid AWS Lambda claims."]},
+        "autofill_notes": "Do not claim AWS CDK directly.",
+    }
+    issues = validation_feedback_to_issues(
+        "application_materials contains unsupported ranking avoid-overclaiming terms: "
+        "Serverless Architecture (AWS Lambda, DynamoDB, API Gateway, AWS CDK)."
+    )
+
+    repaired, remaining = deterministic_repair(response, issues, supported_keywords=[])
+    repaired_text = json.dumps(repaired, ensure_ascii=False)
+
+    assert remaining == []
+    assert "AWS Lambda" not in repaired_text
+    assert "DynamoDB" not in repaired_text
+    assert "API Gateway" not in repaired_text
+    assert "AWS CDK" not in repaired_text
+    assert "some target stack items are not directly evidenced" in repaired_text
+
+
+def test_deterministic_repair_does_not_replace_alias_inside_larger_token():
+    response = {"cover_letter": "NoSQL storage experience is supported; SQL is not direct here."}
+    issues = validation_feedback_to_issues(
+        "application_materials contains unsupported ranking avoid-overclaiming terms: SQL."
+    )
+
+    repaired, remaining = deterministic_repair(response, issues, supported_keywords=[])
+
+    assert remaining == []
+    assert "NoSQL" in repaired["cover_letter"]
+    assert "SQL is not direct" not in repaired["cover_letter"]
+
+
 def test_semantic_retry_limit_is_one(monkeypatch):
     monkeypatch.setenv("MATERIALS_MAX_SEMANTIC_REPAIRS", "1")
 

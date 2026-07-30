@@ -39,6 +39,7 @@ Fallback / human review
 Initial implementation notes:
 
 - `keywords_used` is derived in code from rendered CV text and supported keywords.
+- Forbidden aliases named in validation issues can be deterministically replaced with generic caveat wording before semantic retry.
 - Validation feedback can be converted to stable structured issues.
 - NVIDIA repair prompts receive the previous response and an explicit frozen-field directive.
 - A deterministic CV IR and renderer provide a rollout path behind feature flags.
@@ -62,7 +63,7 @@ Responsibilities:
 - Planner: select evidence IDs, skill IDs, and role bullet IDs. It must not write `ats_cv_text` or `keywords_used`.
 - Renderer: preserve identity, all role headers, titles, companies, dates, mandatory bullets, canonical technologies, and education.
 - Validator: map legacy feedback into structured `ValidationIssue` codes while compatibility callers still consume strings.
-- Repair: deterministic repair runs before semantic repair. Semantic repair receives the previous response, mutable fields, and frozen fields.
+- Repair: deterministic repair runs before semantic repair for derived metadata and explicit forbidden aliases. Semantic repair receives the previous response, mutable fields, and frozen fields.
 - Kit: active `materials/nvidia_kit_contract` v14 requires structured `autofill` with `core_pitch`, availability, work authorization, location, and caveats while storage/API compatibility still exposes rendered `autofill_notes`.
 - Language: kit validation checks recruiter, cover letter, and autofill text against conservative English/Spanish job-language detection.
 
