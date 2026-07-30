@@ -90,11 +90,10 @@ The project uses Python `pytest` and a Next.js/TypeScript frontend.
 
 For substantial multi-commit work:
 
-1. One initial full backend baseline.
-2. Exact or targeted tests during implementation.
-3. Relevant subsystem tests before each commit.
-4. One final full backend suite.
-5. Extra full runs only after a genuinely cross-cutting change or after fixing a final-suite failure.
+1. Exact or targeted tests during implementation.
+2. Relevant subsystem tests before each commit.
+3. One final full backend suite.
+4. Extra full runs only after a genuinely cross-cutting change or after fixing a final-suite failure.
 
 For small localized work, skip the initial full suite when targeted tests establish a reliable baseline.
 
