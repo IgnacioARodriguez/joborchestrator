@@ -4,7 +4,9 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
-from joborchestrator.automation.answer_bank import requires_explicit_human_consent
+from joborchestrator.automation.ledger import build_obligation_ledger
+from joborchestrator.automation.policy import evaluate_answer_action
+from joborchestrator.automation.surfaces import build_surface_fingerprint, logical_control_identity
 
 
 JourneyPhase = Literal[
@@ -27,6 +29,9 @@ class InteractionSurface:
     parent_surface_id: str | None = None
     accessible: bool = True
     challenge_detected: bool = False
+    fingerprint: str = ""
+    lifecycle_state: str = "active"
+    generation: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -45,6 +50,7 @@ class ControlHandle:
     visible: bool = True
     confidence: float = 0.5
     fingerprint: str = ""
+    logical_identity: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -62,6 +68,8 @@ class PlannedAction:
     source: str | None = None
     value_preview: str | None = None
     reason: str | None = None
+    policy_decision: dict[str, Any] | None = None
+    reason_code: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -104,6 +112,7 @@ class JourneyStep:
     action_plan: ApplicationActionPlan
     browser_surface: Any = field(repr=False, compare=False)
     surfaces: list[InteractionSurface] = field(default_factory=list)
+    obligation_ledger: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -113,6 +122,7 @@ class JourneyStep:
             "schema": self.schema,
             "mapping": self.mapping,
             "action_plan": self.action_plan.to_dict(),
+            "obligation_ledger": self.obligation_ledger,
         }
 
 
@@ -187,6 +197,19 @@ class ApplicationJourneyEngine:
             schema=schema,
             mapping=mapping,
         )
+        surface_dicts = [surface.to_dict() for surface in surfaces or [surface]]
+        obligation_ledger = build_obligation_ledger(
+            schema=schema,
+            mapping=mapping,
+            action_plan=action_plan.to_dict(),
+            validation_report={"status": "not_attempted", "issues": []},
+            fill_result={},
+            resume_upload={"status": "not_attempted"},
+            repair_report={"status": "not_attempted"},
+            forbidden_submit_controls=[],
+            surfaces=surface_dicts,
+            step_transitions=[],
+        )
         return JourneyStep(
             phase="actions_planned",
             surface=surface,
@@ -195,6 +218,7 @@ class ApplicationJourneyEngine:
             action_plan=action_plan,
             browser_surface=browser_surface,
             surfaces=surfaces or [surface],
+            obligation_ledger=obligation_ledger,
         )
 
     async def _discover_candidate_schemas(
@@ -211,6 +235,10 @@ class ApplicationJourneyEngine:
             kind=root_surface_kind,
             origin=_origin_from_url(str(getattr(page, "url", "") or "")),
             accessible=True,
+            fingerprint=build_surface_fingerprint(
+                kind=root_surface_kind,
+                origin=_origin_from_url(str(getattr(page, "url", "") or "")),
+            ),
         )
         if not capabilities.can_detect_fields:
             return [{"surface": main_surface, "schema": adapter.extract_form_schema_html(html), "browser_surface": page}]
@@ -231,6 +259,12 @@ class ApplicationJourneyEngine:
                 origin=_origin_from_url(str(getattr(frame, "url", "") or "")),
                 parent_surface_id="main",
                 accessible=True,
+                fingerprint=build_surface_fingerprint(
+                    kind="frame",
+                    origin=_origin_from_url(str(getattr(frame, "url", "") or "")),
+                    parent_surface_id="main",
+                    index=index,
+                ),
             )
             try:
                 schema = await adapter.extract_form_schema_page(frame)
@@ -243,6 +277,7 @@ class ApplicationJourneyEngine:
                             origin=surface.origin,
                             parent_surface_id="main",
                             accessible=False,
+                            fingerprint=surface.fingerprint,
                         ),
                         "schema": {"provider": str(adapter.provider), "fields": []},
                         "browser_surface": frame,
@@ -291,9 +326,25 @@ def _planned_action_for_answer(answer: dict[str, Any], control_handle: dict[str,
     value = str(answer.get("value") or "").strip()
     canonical = str(answer.get("canonical_key") or "").strip() or None
     field_type = str(answer.get("field_type") or "text")
+    action_type = _action_type_for_field(field_type)
+    decision = evaluate_answer_action(answer, action=action_type)
     if not field_name:
         return None
-    if answer.get("requires_confirmation"):
+    if decision.outcome == "DENY":
+        return PlannedAction(
+            action_type="review_answer",
+            field_name=field_name,
+            canonical_key=canonical,
+            field_type=field_type,
+            policy="forbid",
+            surface_id=(control_handle or {}).get("surface_id"),
+            control_handle=control_handle,
+            source=answer.get("source"),
+            reason=decision.reason_code,
+            policy_decision=decision.to_dict(),
+            reason_code=decision.reason_code,
+        )
+    if decision.outcome == "REVIEW_REQUIRED":
         return PlannedAction(
             action_type="review_answer",
             field_name=field_name,
@@ -303,42 +354,12 @@ def _planned_action_for_answer(answer: dict[str, Any], control_handle: dict[str,
             surface_id=(control_handle or {}).get("surface_id"),
             control_handle=control_handle,
             source=answer.get("source"),
-            reason="requires_confirmation",
+            reason=decision.reason_code,
+            policy_decision=decision.to_dict(),
+            reason_code=decision.reason_code,
         )
     if not value:
         return None
-    if _requires_explicit_human_consent(answer):
-        return PlannedAction(
-            action_type="review_answer",
-            field_name=field_name,
-            canonical_key=canonical,
-            field_type=field_type,
-            policy="require_confirmation",
-            surface_id=(control_handle or {}).get("surface_id"),
-            control_handle=control_handle,
-            source=answer.get("source"),
-            reason="explicit_human_consent_required",
-        )
-    if answer.get("source") != "approved_answer" and canonical not in {
-        "full_name",
-        "email",
-        "phone",
-        "linkedin",
-        "portfolio",
-        "preferred_location",
-        "talent_pool",
-    }:
-        return PlannedAction(
-            action_type="review_answer",
-            field_name=field_name,
-            canonical_key=canonical,
-            field_type=field_type,
-            policy="require_confirmation",
-            surface_id=(control_handle or {}).get("surface_id"),
-            control_handle=control_handle,
-            source=answer.get("source"),
-            reason="unapproved_non_profile_answer",
-        )
     if field_type in {"select", "radio"} and _match_option(value, list(answer.get("options") or [])) is None:
         return PlannedAction(
             action_type="review_answer",
@@ -350,11 +371,12 @@ def _planned_action_for_answer(answer: dict[str, Any], control_handle: dict[str,
             control_handle=control_handle,
             source=answer.get("source"),
             reason="option_not_matched",
+            reason_code="option_not_matched",
         )
     if field_type == "checkbox" and _normalized(value) not in {"yes", "true", "checked", "1"}:
         return None
     return PlannedAction(
-        action_type=_action_type_for_field(field_type),
+        action_type=action_type,
         field_name=field_name,
         canonical_key=canonical,
         field_type=field_type,
@@ -363,14 +385,8 @@ def _planned_action_for_answer(answer: dict[str, Any], control_handle: dict[str,
         control_handle=control_handle,
         source=answer.get("source"),
         value_preview=_preview_value(value),
-    )
-
-
-def _requires_explicit_human_consent(answer: dict[str, Any]) -> bool:
-    return requires_explicit_human_consent(
-        str(answer.get("label") or ""),
-        str(answer.get("field_name") or ""),
-        str(answer.get("canonical_key") or ""),
+        policy_decision=decision.to_dict(),
+        reason_code=decision.reason_code,
     )
 
 
@@ -467,7 +483,7 @@ def _control_handle_for_field(field: dict[str, Any], surface_id: str, index: int
     strategies = [locator_strategy] if locator_strategy else []
     if field.get("in_shadow_root"):
         strategies.append("shadow_root")
-    fingerprint = f"{surface_id}:{name}:{native_type}:{bool(field.get('required'))}"
+    identity = logical_control_identity(field, surface_id=surface_id, index=index)
     return ControlHandle(
         surface_id=surface_id,
         control_id=name,
@@ -477,7 +493,8 @@ def _control_handle_for_field(field: dict[str, Any], surface_id: str, index: int
         locator_strategies=strategies,
         required=bool(field.get("required")),
         confidence=float(field.get("confidence") or 0.5),
-        fingerprint=fingerprint,
+        fingerprint=identity.fingerprint,
+        logical_identity=identity.to_dict(),
     )
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import quote
 
 from joborchestrator import worker
@@ -12,8 +13,10 @@ from joborchestrator.automation.executor import (
     _looks_blocked,
     _looks_posting_unavailable,
     auto_submit_blockers,
+    click_approved_submit_control,
     detect_safe_step_transition_controls,
     run_application_execution,
+    run_bounded_repair_loop,
 )
 from joborchestrator.automation import local_browser_agent
 from joborchestrator.scanning.models import JobPosting
@@ -149,10 +152,10 @@ def test_auto_submit_blocks_placeholder_resume_on_real_url(monkeypatch) -> None:
         dry_run=False,
     )
 
-    assert blockers == ["placeholder_resume_for_real_url"]
+    assert blockers == ["placeholder_resume_for_real_url", "final_submit_reserved_for_user"]
 
 
-def test_auto_submit_allows_placeholder_resume_for_local_fixture(monkeypatch) -> None:
+def test_auto_submit_reserves_final_submit_for_local_fixture(monkeypatch) -> None:
     monkeypatch.setenv("ENABLE_AUTO_SUBMIT_APPROVED", "1")
     blockers = auto_submit_blockers(
         session={"mode": "auto_submit_approved"},
@@ -166,7 +169,7 @@ def test_auto_submit_allows_placeholder_resume_for_local_fixture(monkeypatch) ->
         dry_run=False,
     )
 
-    assert blockers == []
+    assert blockers == ["final_submit_reserved_for_user"]
 
 
 def test_auto_submit_blocks_lever_until_explicitly_supported(monkeypatch) -> None:
@@ -183,7 +186,7 @@ def test_auto_submit_blocks_lever_until_explicitly_supported(monkeypatch) -> Non
         dry_run=False,
     )
 
-    assert blockers == ["provider_not_supported"]
+    assert blockers == ["provider_not_supported", "final_submit_reserved_for_user"]
 
 
 def test_application_metrics_split_native_custom_and_shadow_controls() -> None:
@@ -286,7 +289,7 @@ def test_human_intervention_report_classifies_answer_widget_and_submit_only() ->
     assert report["blocking_count"] == 4
 
     submit_only = _build_human_intervention_report(
-        next_state="ready_for_review",
+        next_state="submit_only",
         review={"unknown_fields": []},
         mapping={"unknown_fields": []},
         validation_report={"status": "validation_clean"},
@@ -413,7 +416,7 @@ def test_application_execution_handles_lever_review_before_submit(tmp_path, monk
     assert result["forbidden_submit_controls"] == [
         {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
     ]
-    assert updated["state"] == "ready_for_review"
+    assert updated["state"] == "submit_only"
     assert updated["artifacts_json"]["action_plan"]["provider"] == "lever"
     assert updated["artifacts_json"]["action_plan"]["summary"]["actions"] >= 4
 
@@ -486,10 +489,103 @@ def test_application_execution_handles_generic_form_review_before_submit(tmp_pat
     assert result["forbidden_submit_controls"] == [
         {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
     ]
-    assert updated["state"] == "ready_for_review"
+    assert updated["state"] == "submit_only"
     assert updated["artifacts_json"]["journey"]["phase"] == "actions_planned"
     assert updated["artifacts_json"]["action_plan"]["provider"] == "generic_form"
     assert updated["artifacts_json"]["action_plan"]["summary"]["actions"] >= 3
+
+
+def test_application_execution_requires_real_name_when_only_headline_exists(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload({"headline": "Synthetic backend engineer", "email": "candidate@example.test"})
+    db.upsert_job_posting(make_job(external_id="headline-name-block-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application">
+          <label for="name">Full name *</label>
+          <input id="name" name="name" required>
+          <label for="email">Email *</label>
+          <input id="email" name="email" type="email" required>
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    artifacts = updated["artifacts_json"]
+    answers = {answer["field_name"]: answer for answer in updated["mapped_answers_json"]["answers"]}
+
+    assert result["unknown_fields"] == 1
+    assert updated["state"] == "needs_user_input"
+    assert answers["name"]["canonical_key"] == "full_name"
+    assert answers["name"]["value"] is None
+    assert answers["name"]["match_strategy"] == "unresolved"
+    assert artifacts["automation_metrics"]["submit_only_ready"] is False
+    assert artifacts["human_intervention"]["status"] == "needs_human"
+
+
+def test_application_execution_blocks_visual_only_terms_checkbox(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate", "email": "candidate@example.test"})
+    db.upsert_job_posting(make_job(external_id="visual-checkbox-block-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application">
+          <label for="name">Full name *</label>
+          <input id="name" name="name" required>
+          <label for="email">Email *</label>
+          <input id="email" name="email" type="email" required>
+          <div role="checkbox" aria-checked="false" aria-required="true" aria-label="Terms acknowledgement"
+            onclick="window.__termsClicked = (window.__termsClicked || 0) + 1; this.setAttribute('aria-checked', 'true')">
+            I agree
+          </div>
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=False,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    artifacts = updated["artifacts_json"]
+
+    assert updated["state"] == "needs_user_input"
+    assert result["fields_autofilled"] == 2
+    assert artifacts["automation_metrics"]["submit_only_ready"] is False
+    assert artifacts["human_intervention"]["status"] == "needs_human"
+    assert any("terms" in str(field.get("label") or "").lower() for field in updated["unknown_fields_json"])
 
 
 def test_application_execution_does_not_check_legal_consent_even_with_approved_answer(tmp_path, monkeypatch) -> None:
@@ -643,7 +739,7 @@ def test_application_execution_handles_form_inside_accessible_iframe(tmp_path, m
     assert result["fields_autofilled"] == 3
     assert result["resume_upload"]["status"] == "uploaded"
     assert result["unknown_fields"] == 0
-    assert updated["state"] == "ready_for_review"
+    assert updated["state"] == "submit_only"
     assert updated["artifacts_json"]["journey"]["surface"]["kind"] == "frame"
     assert updated["artifacts_json"]["action_plan"]["actions"][0]["surface_id"].startswith("frame:")
 
@@ -824,7 +920,7 @@ def test_application_execution_waits_for_delayed_spa_application_form(tmp_path, 
 
     assert result["fields_autofilled"] == 2
     assert result["unknown_fields"] == 0
-    assert updated["state"] == "ready_for_review"
+    assert updated["state"] == "submit_only"
     assert any(step["action"] == "clicked_control" for step in result["navigation"])
     assert any(step.get("stability_status") == "stable" for step in result["navigation"])
 
@@ -878,6 +974,329 @@ def test_application_execution_detects_delayed_dynamic_required_fields_after_aut
     assert artifacts["journey"]["steps"][0]["fill_stability"]["mutation_count"] > 0
     assert artifacts["human_intervention"]["status"] == "needs_human"
     assert artifacts["human_intervention"]["counts_by_type"]["dynamic_field"] == 1
+
+
+def test_application_execution_repairs_rerendered_control_with_logical_rebind(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    monkeypatch.setenv("APPLICATION_REPAIR_RETRY_BUDGET", "1")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate", "email": "candidate@example.test"})
+    db.upsert_job_posting(make_job(external_id="repair-rerender-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application">
+          <div id="name-holder">
+            <label for="name_1">Full name *</label>
+            <input id="name_1" name="name_1" required oninput="
+              if (!window.__rerendered) {
+                window.__rerendered = true;
+                document.getElementById('name-holder').innerHTML = `<label for='name_2'>Full name *</label><input id='name_2' name='name_2' required>`;
+              }
+            ">
+          </div>
+          <label for="email">Email *</label>
+          <input id="email" name="email" type="email" required oninput="
+            window.__emailInputs = (window.__emailInputs || 0) + 1;
+            if (window.__emailInputs > 1) {
+              this.value = '';
+            }
+          ">
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    artifacts = updated["artifacts_json"]
+
+    assert updated["state"] == "submit_only"
+    assert result["unknown_fields"] == 0
+    assert artifacts["repair"]["status"] == "repaired"
+    assert artifacts["repair"]["attempts"] == 1
+    assert artifacts["repair"]["retry_attempts"][0]["rebound"] is True
+    assert artifacts["repair"]["retry_attempts"][0]["second_validation"]["status"] == "validation_clean"
+    assert artifacts["repair"]["retry_attempts"][0]["policy"]["outcome"] == "ALLOW"
+    assert "email" in artifacts["repair"]["skipped_already_verified"]
+    assert artifacts["validation"]["checked_postconditions"] == 2
+    assert artifacts["journey"]["steps"][0]["validation"]["status"] == "validation_clean"
+    assert artifacts["review"]["fields_autofilled"] == 2
+
+
+def test_application_execution_retry_budget_exhaustion_blocks_terminally(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    monkeypatch.setenv("APPLICATION_REPAIR_RETRY_BUDGET", "0")
+    db.init_db()
+    db.save_candidate_profile_payload({"full_name": "Synthetic Candidate"})
+    db.upsert_job_posting(make_job(external_id="repair-budget-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application">
+          <label for="name">Full name *</label>
+          <input id="name" name="name" required oninput="this.value = ''">
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=True,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    artifacts = updated["artifacts_json"]
+
+    assert updated["state"] == "needs_user_input"
+    assert result["unknown_fields"] == 0
+    assert artifacts["validation"]["status"] == "validation_failed"
+    assert artifacts["repair"]["status"] == "failed_terminal"
+    assert artifacts["repair"]["terminal_blocker"] == "retry_budget_exhausted"
+    assert "retry_budget_exhausted" in artifacts["repair"]["reason_codes"]
+
+
+def test_application_execution_policy_blocks_retry_during_repair(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
+    monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "0")
+    monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
+    monkeypatch.setenv("APPLICATION_REPAIR_RETRY_BUDGET", "1")
+    db.init_db()
+    db.save_candidate_profile_payload(
+        {
+            "full_name": "Synthetic Candidate",
+            "email": "candidate@example.test",
+            "linkedin_url": "https://www.linkedin.com/in/synthetic",
+        }
+    )
+    db.upsert_job_posting(make_job(external_id="policy-repair-block-job"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    session = db.create_application_session({"job_id": job_id, "provider": "generic_form", "mode": "review_before_submit"})
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <form id="application">
+          <div id="dynamic-holder">
+            <label for="linkedin">LinkedIn profile *</label>
+            <input id="linkedin" name="linkedin" type="url" required oninput="
+              if (!window.__changedToPolicyControl) {
+                window.__changedToPolicyControl = true;
+                document.getElementById('dynamic-holder').innerHTML = `
+                  <label for='linkedin'>Authorize background check</label>
+                  <input id='linkedin' name='linkedin' required
+                    oninput='window.__forbiddenFills = (window.__forbiddenFills || 0) + 1'>`;
+              }
+            ">
+          </div>
+          <button type="submit">Submit application</button>
+        </form>
+      </body>
+    </html>
+    """
+
+    result = asyncio.run(
+        run_application_execution(
+            session_id=int(session["id"]),
+            job_id=job_id,
+            apply_url=f"data:text/html,{quote(html)}",
+            provider_hint="generic_form",
+            dry_run=False,
+        )
+    )
+    updated = db.get_application_session(int(session["id"]))
+    artifacts = updated["artifacts_json"]
+    attempt = artifacts["repair"]["retry_attempts"][0]
+
+    assert updated["state"] == "needs_user_input"
+    assert result["unknown_fields"] >= 1
+    assert artifacts["repair"]["status"] == "failed_terminal"
+    assert attempt["policy"]["outcome"] == "REVIEW_REQUIRED"
+    assert attempt["reason"] == "legal_consent_reserved_for_user"
+    assert attempt["policy"]["semantic_category"] == "background_check_authorization"
+    assert attempt["status"] == "failed-terminal"
+    assert artifacts["automation_metrics"]["submit_only_ready"] is False
+
+
+def test_repair_policy_block_prevents_forbidden_retry() -> None:
+    previous_action_plan = {
+        "actions": [
+            {
+                "field_name": "background_check_authorization",
+                "action_type": "check",
+                "control_handle": {
+                    "fingerprint": "old-background",
+                    "logical_identity": {
+                        "semantic_key": "background_check_authorization",
+                        "label_norm": "background check authorization",
+                        "type": "checkbox",
+                        "required": True,
+                    },
+                },
+            }
+        ]
+    }
+    rescanned_action_plan = {
+        "actions": [
+            {
+                "field_name": "background_check_authorization",
+                "action_type": "check",
+                "control_handle": {
+                    "fingerprint": "new-background",
+                    "logical_identity": {
+                        "semantic_key": "background_check_authorization",
+                        "label_norm": "background check authorization",
+                        "type": "checkbox",
+                        "required": True,
+                    },
+                },
+            }
+        ]
+    }
+    rescanned_schema = {
+        "fields": [
+            {
+                "name": "background_check_authorization",
+                "label": "Authorize background check",
+                "type": "checkbox",
+                "required": True,
+                "fingerprint": "new-background",
+                "logical_identity": {
+                    "semantic_key": "background_check_authorization",
+                    "label_norm": "background check authorization",
+                    "type": "checkbox",
+                    "required": True,
+                },
+            }
+        ]
+    }
+    rescanned_mapping = {
+        "answers": [
+            {
+                "field_name": "background_check_authorization",
+                "label": "Authorize background check",
+                "canonical_key": "background_check_authorization",
+                "value": "yes",
+                "field_type": "checkbox",
+                "source": "approved_answer",
+                "requires_confirmation": False,
+            }
+        ],
+        "unknown_fields": [],
+    }
+    previous_step = _repair_step(
+        schema={"fields": []},
+        mapping={"answers": [], "unknown_fields": []},
+        action_plan=previous_action_plan,
+    )
+    rescanned_step = _repair_step(
+        schema=rescanned_schema,
+        mapping=rescanned_mapping,
+        action_plan=rescanned_action_plan,
+    )
+
+    async def run() -> dict:
+        from playwright.async_api import async_playwright
+
+        async def inspect_surface(**_):
+            return rescanned_step
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page()
+                await page.set_content(
+                    """
+                    <form>
+                      <label><input name="background_check_authorization" type="checkbox" required
+                        onclick="window.__forbiddenClicks = (window.__forbiddenClicks || 0) + 1">
+                        Authorize background check
+                      </label>
+                    </form>
+                    """
+                )
+                repair = await run_bounded_repair_loop(
+                    page=page,
+                    journey_engine=SimpleNamespace(inspect_surface=inspect_surface),
+                    adapter=SimpleNamespace(),
+                    capabilities=SimpleNamespace(),
+                    current_step=previous_step,
+                    html=await page.content(),
+                    profile={},
+                    answer_bank=[],
+                    previous_validation_report={
+                        "status": "validation_failed",
+                        "issues": [
+                            {
+                                "field_name": "background_check_authorization",
+                                "issue_type": "control_missing",
+                                "message": "Control changed after first attempt.",
+                            }
+                        ],
+                    },
+                    fill_stability={"mutation_count": 1},
+                    fill_result={"filled_fields": [], "skipped_fields": []},
+                    resume_upload={"status": "not_applicable"},
+                    dry_run=False,
+                    timeout_ms=1000,
+                    action_states={
+                        "old-background": {
+                            "status": "failed-recoverable",
+                            "field_name": "background_check_authorization",
+                            "reason": "control_missing",
+                        }
+                    },
+                    progress=None,
+                )
+                clicks = await page.evaluate("() => window.__forbiddenClicks || 0")
+                return {"repair": repair["repair_report"], "clicks": clicks}
+            finally:
+                await browser.close()
+
+    result = asyncio.run(run())
+    repair = result["repair"]
+
+    assert repair["status"] == "failed_terminal"
+    assert repair["retry_attempts"][0]["policy"]["outcome"] == "REVIEW_REQUIRED"
+    assert repair["retry_attempts"][0]["reason"] == "legal_consent_reserved_for_user"
+    assert repair["retry_attempts"][0]["policy"]["semantic_category"] == "background_check_authorization"
+    assert repair["retry_attempts"][0]["status"] == "failed-terminal"
+    assert result["clicks"] == 0
+
+
+def test_click_approved_submit_control_is_policy_blocked() -> None:
+    result = asyncio.run(click_approved_submit_control(None, timeout_ms=1))  # type: ignore[arg-type]
+
+    assert result == {
+        "status": "blocked",
+        "reasons": ["final_submit_reserved_for_user"],
+        "policy": "reserved_for_user",
+    }
 
 
 def test_application_execution_advances_safe_multistep_and_stops_at_submit(tmp_path, monkeypatch) -> None:
@@ -938,7 +1357,7 @@ def test_application_execution_advances_safe_multistep_and_stops_at_submit(tmp_p
 
     assert result["fields_autofilled"] == 2
     assert result["unknown_fields"] == 0
-    assert updated["state"] == "ready_for_review"
+    assert updated["state"] == "submit_only"
     assert artifacts["forbidden_submit_controls"] == [
         {"tag": "button", "text": "Submit application", "action_policy": "forbidden"}
     ]
@@ -1089,7 +1508,7 @@ def test_application_execution_marks_closed_posting_unavailable(tmp_path, monkey
     assert updated["last_error"] == "Posting unavailable."
 
 
-def test_application_execution_auto_submits_when_preconditions_pass(tmp_path, monkeypatch) -> None:
+def test_application_execution_blocks_auto_submit_even_when_preconditions_pass(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
     monkeypatch.setenv("ENABLE_AUTO_SUBMIT_APPROVED", "1")
     monkeypatch.setenv("APPLICATION_BROWSER_HEADLESS", "1")
@@ -1137,10 +1556,11 @@ def test_application_execution_auto_submits_when_preconditions_pass(tmp_path, mo
     updated = db.get_application_session(int(session["id"]))
     application = db.get_application(int(updated["application_id"]))
 
-    assert result["auto_submit"]["status"] == "submitted"
-    assert updated["state"] == "submitted"
-    assert application["status"] == "submitted"
-    assert updated["artifacts_json"]["auto_submit"]["control_text"] == "Submit application"
+    assert result["auto_submit"]["status"] == "blocked"
+    assert result["auto_submit"]["reasons"] == ["final_submit_reserved_for_user"]
+    assert updated["state"] == "submit_only"
+    assert application["status"] == "preparing"
+    assert updated["artifacts_json"]["auto_submit"]["status"] == "blocked"
 
 
 def test_application_execution_auto_submit_blocks_unknown_sensitive_required_fields(tmp_path, monkeypatch) -> None:
@@ -1219,7 +1639,7 @@ def test_application_execution_fills_application_form_opened_in_popup(tmp_path, 
     assert any(step["action"] == "opened_popup" for step in result["navigation"])
     assert result["fields_autofilled"] == 2
     assert result["unknown_fields"] == 0
-    assert updated["state"] == "ready_for_review"
+    assert updated["state"] == "submit_only"
     assert artifacts["journey"]["surface"]["kind"] == "popup"
     assert artifacts["automation_metrics"]["submit_only_ready"] is True
     assert artifacts["automation_metrics"]["popup_handling_success_rate"] == 1.0
@@ -1268,6 +1688,25 @@ async def _detect_step_transition_for_html(html: str) -> dict:
             return await detect_safe_step_transition_controls(page)
         finally:
             await browser.close()
+
+
+def _repair_step(*, schema: dict, mapping: dict, action_plan: dict):
+    return SimpleNamespace(
+        schema=schema,
+        mapping=mapping,
+        action_plan=SimpleNamespace(to_dict=lambda: action_plan),
+        surface=SimpleNamespace(),
+        browser_surface={},
+        surfaces=[],
+        to_dict=lambda: {
+            "schema": schema,
+            "mapping": mapping,
+            "action_plan": action_plan,
+            "surface": {},
+            "browser_surface": {},
+            "surfaces": [],
+        },
+    )
 
 
 async def _run_handoff_twice(session_id: int, job_id: int, html: str) -> dict:

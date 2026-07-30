@@ -37,6 +37,7 @@ from joborchestrator.intelligence.llm_application_materials import (
 from joborchestrator.intelligence.profile_trace import profile_trace
 from joborchestrator.automation.adapters import AdapterRegistry
 from joborchestrator.automation.accounts import site_identity_from_url, store_password
+from joborchestrator.automation.ledger import build_obligation_ledger
 from joborchestrator.paths import SALIDAS_DIR
 from joborchestrator.ranking.nvidia_ranker import (
     DEFAULT_NVIDIA_MAX_CONCURRENCY,
@@ -844,7 +845,19 @@ def create_job_application_session(job_id: int, payload: ApplicationSessionPaylo
         mapping = adapter.map_answers(schema, db.get_candidate_profile_payload() or {}, db.list_answer_definitions())
         fill = adapter.fill_fields_html(html, mapping, dry_run=payload.dry_run)
         review = adapter.prepare_review(schema, mapping, fill)
-        next_state = "needs_user_input" if mapping.get("unknown_fields") else "ready_for_review"
+        obligation_ledger = build_obligation_ledger(
+            schema=schema,
+            mapping=mapping,
+            action_plan={"actions": [], "forbidden": [], "expected_postconditions": []},
+            validation_report={"status": "not_attempted", "issues": []},
+            fill_result=fill.data,
+            resume_upload={"status": "not_attempted"},
+            repair_report={"status": "not_attempted"},
+            forbidden_submit_controls=[],
+            surfaces=[],
+            step_transitions=[],
+        )
+        next_state = "submit_only" if obligation_ledger["readiness"]["ready"] else "needs_user_input"
         session = db.transition_application_session(
             int(session["id"]),
             "preflight",
@@ -870,8 +883,8 @@ def create_job_application_session(job_id: int, payload: ApplicationSessionPaylo
             int(session["id"]),
             next_state,
             {
-                "note": "Ready for user review." if next_state == "ready_for_review" else "User input required.",
-                "artifacts_json": {"review": review, "dry_run": payload.dry_run},
+                "note": "Ready for final user submit." if next_state == "submit_only" else "User input required.",
+                "artifacts_json": {"review": review, "dry_run": payload.dry_run, "obligation_ledger": obligation_ledger},
             },
         )
     else:
@@ -958,7 +971,7 @@ def mark_application_session_submitted_manually(session_id: int) -> dict[str, An
     session = db.get_application_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Application session not found")
-    if session["state"] not in {"ready_for_review", "needs_user_input"}:
+    if session["state"] not in {"submit_only", "ready_for_review", "needs_user_input"}:
         raise HTTPException(status_code=409, detail=f"Cannot mark a {session['state']} session as manually submitted.")
     try:
         updated = db.transition_application_session(

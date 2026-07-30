@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from joborchestrator.automation.policy import requires_explicit_human_consent as policy_requires_explicit_human_consent
+
 
 SENSITIVE_KEYS = {
     "salary",
@@ -42,6 +44,8 @@ class FieldAnswer:
 def classify_field(label: str, field_type: str = "text") -> tuple[str | None, str]:
     text = f"{label} {field_type}".lower()
     patterns = {
+        "first_name": r"\b(first name|given name|nombre)\b",
+        "last_name": r"\b(last name|surname|family name|apellido)\b",
         "full_name": r"\b(full name|name|nombre)\b",
         "email": r"\b(email|e-mail|correo)\b",
         "phone": r"\b(phone|telefono|teléfono)\b",
@@ -65,24 +69,7 @@ def classify_field(label: str, field_type: str = "text") -> tuple[str | None, st
 
 
 def requires_explicit_human_consent(*parts: str) -> bool:
-    text = normalize_question(" ".join(str(part or "") for part in parts))
-    consent_markers = {
-        "consent",
-        "agree",
-        "agreement",
-        "terms",
-        "privacy",
-        "policy",
-        "declaration",
-        "certify",
-        "accurate",
-        "accuracy",
-        "signature",
-        "acknowledge",
-        "acknowledgement",
-        "background check",
-    }
-    return any(marker in text for marker in consent_markers)
+    return policy_requires_explicit_human_consent(*parts)
 
 
 def map_answers(schema: dict[str, Any], profile: dict[str, Any], answer_bank: list[dict[str, Any]]) -> dict[str, Any]:
@@ -202,7 +189,9 @@ def _profile_value(canonical: str | None, profile: dict[str, Any]) -> str | None
     if not canonical:
         return None
     aliases = {
-        "full_name": ["full_name", "name", "headline"],
+        "full_name": ["full_name", "name"],
+        "first_name": ["first_name", "given_name"],
+        "last_name": ["last_name", "surname", "family_name"],
         "email": ["email"],
         "phone": ["phone"],
         "linkedin": ["linkedin_url", "linkedin"],
@@ -210,6 +199,14 @@ def _profile_value(canonical: str | None, profile: dict[str, Any]) -> str | None
         "preferred_location": ["preferred_location", "preferred_locations", "location"],
         "talent_pool": ["talent_pool"],
     }
+    if canonical == "first_name":
+        first = _split_full_name(profile)[0]
+        if first:
+            return first
+    if canonical == "last_name":
+        last = _split_full_name(profile)[1]
+        if last:
+            return last
     for key in aliases.get(canonical, []):
         value = profile.get(key)
         if isinstance(value, list):
@@ -217,3 +214,13 @@ def _profile_value(canonical: str | None, profile: dict[str, Any]) -> str | None
         if value:
             return str(value)
     return None
+
+
+def _split_full_name(profile: dict[str, Any]) -> tuple[str | None, str | None]:
+    full_name = str(profile.get("full_name") or profile.get("name") or "").strip()
+    if not full_name:
+        return None, None
+    parts = full_name.split()
+    if len(parts) < 2:
+        return parts[0], None
+    return parts[0], " ".join(parts[1:])

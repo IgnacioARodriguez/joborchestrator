@@ -22,6 +22,7 @@ APPLICATION_STATUSES = {
     "opened",
     "prefilled",
     "needs_user_input",
+    "submit_only",
     "ready_for_review",
     "submitted_manually",
     "submission_verified",
