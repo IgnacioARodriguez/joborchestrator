@@ -1059,6 +1059,7 @@ def update_job_application_materials(
     materials_validation_errors: list | None = None,
     materials_candidate_profile_hash: str | None = None,
     materials_candidate_profile_snapshot: dict | None = None,
+    clear_existing_materials: bool = False,
 ) -> None:
     generated_at = (
         datetime.now().isoformat(timespec="seconds")
@@ -1085,10 +1086,10 @@ def update_job_application_materials(
         conn.execute(
             """UPDATE job_postings SET
                    pipeline_status = COALESCE(?, pipeline_status),
-                   recruiter_message = COALESCE(?, recruiter_message),
-                   cover_letter = COALESCE(?, cover_letter),
-                   ats_cv_text = COALESCE(?, ats_cv_text),
-                   autofill_notes = COALESCE(?, autofill_notes),
+                   recruiter_message = CASE WHEN ? THEN NULL ELSE COALESCE(?, recruiter_message) END,
+                   cover_letter = CASE WHEN ? THEN NULL ELSE COALESCE(?, cover_letter) END,
+                   ats_cv_text = CASE WHEN ? THEN NULL ELSE COALESCE(?, ats_cv_text) END,
+                   autofill_notes = CASE WHEN ? THEN NULL ELSE COALESCE(?, autofill_notes) END,
                    materials_provider = COALESCE(?, materials_provider),
                    materials_model = COALESCE(?, materials_model),
                    materials_prompt_versions_json = COALESCE(?, materials_prompt_versions_json),
@@ -1100,9 +1101,13 @@ def update_job_application_materials(
                WHERE id = ?""",
             (
                 pipeline_status,
+                int(clear_existing_materials),
                 recruiter_message,
+                int(clear_existing_materials),
                 cover_letter,
+                int(clear_existing_materials),
                 ats_cv_text,
+                int(clear_existing_materials),
                 autofill_notes,
                 materials_provider,
                 materials_model,

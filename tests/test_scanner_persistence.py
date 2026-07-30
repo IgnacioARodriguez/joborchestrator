@@ -143,6 +143,45 @@ def test_application_materials_are_saved(tmp_path, monkeypatch):
     assert stored["materials_candidate_profile_snapshot_json"] == '{"headline": "Backend engineer"}'
 
 
+def test_queued_operation_does_not_reuse_stale_materials(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+
+    db.update_job_application_materials(
+        job_id,
+        pipeline_status="shortlisted",
+        recruiter_message="Old recruiter",
+        cover_letter="Old cover",
+        ats_cv_text="Old ATS",
+        autofill_notes="Old autofill",
+        materials_provider="nvidia",
+        materials_model="old-model",
+        materials_validation_attempts=2,
+        materials_validation_errors=[],
+    )
+    db.update_job_application_materials(
+        job_id,
+        pipeline_status="preparing_materials",
+        materials_provider="nvidia",
+        materials_model="new-model",
+        materials_validation_attempts=0,
+        materials_validation_errors=["queued_generation_pending"],
+        clear_existing_materials=True,
+    )
+
+    stored = db.get_job_posting(job_id)
+    assert stored["pipeline_status"] == "preparing_materials"
+    assert stored["recruiter_message"] is None
+    assert stored["cover_letter"] is None
+    assert stored["ats_cv_text"] is None
+    assert stored["autofill_notes"] is None
+    assert stored["materials_model"] == "new-model"
+    assert stored["materials_validation_attempts"] == 0
+    assert stored["materials_validation_errors_json"] == '["queued_generation_pending"]'
+
+
 def test_application_material_update_preserves_unspecified_fields(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()

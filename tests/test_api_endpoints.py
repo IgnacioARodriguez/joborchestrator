@@ -844,6 +844,11 @@ def test_generate_materials_queues_nvidia_provider(tmp_path, monkeypatch):
     assert operation["input_json"]["job_id"] == job_id
     assert operation["input_json"]["provider"] == "nvidia"
     assert operation["input_json"]["model"].startswith("nvidia/")
+    refreshed = db.get_job_posting(job_id)
+    assert refreshed["pipeline_status"] == "preparing_materials"
+    assert refreshed["ats_cv_text"] is None
+    assert refreshed["materials_validation_attempts"] == 0
+    assert "queued_generation_pending" in refreshed["materials_validation_errors_json"]
 
 
 def test_generate_materials_queues_openai_provider_with_openai_model(tmp_path, monkeypatch):

@@ -1467,6 +1467,7 @@ def update_job_application_materials(
     materials_validation_errors: list | None = None,
     materials_candidate_profile_hash: str | None = None,
     materials_candidate_profile_snapshot: dict | None = None,
+    clear_existing_materials: bool = False,
 ) -> None:
     jobs_repository.update_job_application_materials(
         _conn,
@@ -1483,6 +1484,7 @@ def update_job_application_materials(
         materials_validation_errors=materials_validation_errors,
         materials_candidate_profile_hash=materials_candidate_profile_hash,
         materials_candidate_profile_snapshot=materials_candidate_profile_snapshot,
+        clear_existing_materials=clear_existing_materials,
     )
 
 
