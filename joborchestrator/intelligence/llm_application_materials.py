@@ -584,10 +584,75 @@ def _apply_deterministic_materials_repair(
     if not issues:
         return parsed, validation_feedback, []
     repaired, remaining = deterministic_repair(parsed, issues, supported_keywords=_supported_keywords_from_payload(payload))
-    if repaired == parsed or len(remaining) == len(issues):
+    if any(issue.code == "MISSING_CANONICAL_ROLE_TECH" for issue in remaining):
+        repaired = _repair_missing_canonical_role_technologies(repaired, payload)
+    if repaired == parsed:
         return parsed, validation_feedback, []
     _derive_cv_metadata(repaired, payload)
     return repaired, validator(repaired), [str(validation_feedback)]
+
+
+def _repair_missing_canonical_role_technologies(response: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    ats_cv_text = str(response.get("ats_cv_text") or "")
+    base_cv_text = _base_cv_text(payload)
+    entries = _extract_base_experience_entries(base_cv_text)
+    if not ats_cv_text or not entries:
+        return response
+
+    repaired_text = ats_cv_text
+    for entry in entries:
+        source_block = _experience_block_for_entry(_experience_section(base_cv_text), entry, entries)
+        canonical = _canonical_role_technologies(source_block)
+        if not canonical:
+            continue
+        repaired_text = _upsert_generated_role_technology_line(repaired_text, entry, canonical)
+
+    if repaired_text == ats_cv_text:
+        return response
+    repaired = dict(response)
+    repaired["ats_cv_text"] = repaired_text
+    return repaired
+
+
+def _upsert_generated_role_technology_line(ats_cv_text: str, entry: dict[str, Any], canonical: list[str]) -> str:
+    lines = str(ats_cv_text or "").splitlines()
+    start = _generated_role_start_index(lines, entry)
+    if start is None:
+        return ats_cv_text
+    end = _generated_role_end_index(lines, start + 1)
+    tech_line = f"Technologies: {', '.join(canonical)}"
+    for index in range(start + 1, end):
+        if "technolog" in _normalize_for_match(lines[index]):
+            lines[index] = tech_line
+            return "\n".join(lines)
+    insert_at = end
+    while insert_at > start + 1 and not lines[insert_at - 1].strip():
+        insert_at -= 1
+    lines.insert(insert_at, tech_line)
+    return "\n".join(lines)
+
+
+def _generated_role_start_index(lines: list[str], entry: dict[str, Any]) -> int | None:
+    terms = entry.get("terms") or []
+    best: int | None = None
+    for index, line in enumerate(lines):
+        normalized = _normalize_for_match(line)
+        if not any(term in normalized for term in terms):
+            continue
+        if _looks_like_experience_header(line) or "|" in line:
+            return index
+        if best is None:
+            best = index
+    return best
+
+
+def _generated_role_end_index(lines: list[str], start: int) -> int:
+    for index in range(start, len(lines)):
+        if _is_cv_section_heading(lines[index]) and _normalize_for_match(lines[index]) != "professional experience":
+            return index
+        if index > start and _looks_like_experience_header(lines[index]):
+            return index
+    return len(lines)
 
 
 def _validation_failure_metadata(attempt: int, validation_errors: list[str], validation_feedback: str) -> dict[str, Any]:

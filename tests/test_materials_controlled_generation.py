@@ -459,6 +459,79 @@ def test_nvidia_controlled_flags_use_planner_instead_of_freeform_cv(monkeypatch)
     assert kit["_generation_metadata"]["validation_errors"] == []
 
 
+def test_nvidia_cv_deterministic_canonical_technology_repair_avoids_retry(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials as llm
+
+    base_cv = """Ignacio Rodriguez
+Contact line
+
+Professional Experience
+Full Stack Developer November 2021 - August 2022
+Balloon Group Buenos Aires, Argentina
+- Developed web applications and backend services for international clients.
+- Built API integrations and SQL-backed reporting workflows.
+- Technologies: Python, PHP, JavaScript, SQL, APIs.
+Backend Developer August 2022 - October 2022
+Globant Client: Tigo LATAM Buenos Aires, Argentina
+- Built REST API services with Python and AWS.
+- Technologies: Python, AWS, REST APIs.
+
+Education
+Computer Science
+""".strip()
+    generated = """Ignacio Rodriguez
+Contact line
+
+Professional Summary
+Full stack developer with source-backed backend services and web application experience.
+Experience includes API integrations, SQL-backed reporting workflows, and international client delivery.
+
+Technical Skills
+Python, PHP, JavaScript, SQL, APIs
+
+Professional Experience
+Full Stack Developer | Balloon Group | November 2021 - August 2022
+- Developed web applications and backend services for international clients.
+- Built API integrations and SQL-backed reporting workflows.
+- Supported source-backed delivery for international client workflows.
+Technologies: PHP
+Backend Developer | Globant (Client: Tigo LATAM) | August 2022 - October 2022
+- Built REST API services with Python and AWS.
+- Preserved source-backed REST API delivery details.
+Technologies: Python, AWS, REST APIs
+
+Education
+Computer Science
+
+Additional Development
+The profile stays within source evidence from Balloon Group, including web applications, backend services, API integrations, SQL reporting workflows, and client delivery. It avoids unsupported cloud, platform, certification, management, or years-of-experience claims.
+""".strip()
+    calls = []
+
+    def fake_contract_once(*args, **kwargs):
+        calls.append(kwargs.get("previous_response"))
+        return {"ats_cv_text": generated, "risk_flags": [], "keywords_used": []}
+
+    monkeypatch.setattr(llm, "_call_nvidia_contract_once", fake_contract_once)
+
+    response = llm._call_nvidia_cv(
+        {
+            "base_cv": {"text": base_cv},
+            "job": {"company": "Acme", "title": "Full Stack Engineer", "description_text": "Developer role for Python and APIs."},
+            "ats_fit_analysis": {"supported_keywords": ["Python", "PHP", "JavaScript", "SQL", "APIs", "AWS", "REST APIs"]},
+        },
+        "test-key",
+        "test-model",
+        1.0,
+        validation_retry_limit=0,
+    )
+
+    assert len(calls) == 1
+    assert "Technologies: Python, JavaScript, SQL, APIs, PHP" in response["ats_cv_text"]
+    assert response["_generation_metadata"]["validation_attempts"] == 1
+    assert "missing canonical role technologies" in response["_generation_metadata"]["validation_errors"][0]
+
+
 def test_nvidia_cv_deterministic_forbidden_alias_repair_avoids_retry(monkeypatch):
     from joborchestrator.intelligence import llm_application_materials as llm
 
