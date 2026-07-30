@@ -25,6 +25,7 @@ from joborchestrator.intelligence.materials_planner import build_cv_planner_cont
 from joborchestrator.intelligence.materials_routing import controlled_cv_enabled, nvidia_planner_enabled, openai_fallback_enabled
 from joborchestrator.intelligence.materials_repair import (
     build_repair_directive,
+    deterministic_repair,
     repair_prompt_payload,
 )
 from joborchestrator.intelligence.materials_validation import (
@@ -573,6 +574,22 @@ def _coerce_validation_retry_limit(validation_retry_limit: int | None, payload: 
     return max(0, int(validation_retry_limit))
 
 
+def _apply_deterministic_materials_repair(
+    parsed: dict[str, Any],
+    payload: dict[str, Any],
+    validation_feedback: str | None,
+    validator: Any,
+) -> tuple[dict[str, Any], str | None, list[str]]:
+    issues = validation_feedback_to_issues(validation_feedback)
+    if not issues:
+        return parsed, validation_feedback, []
+    repaired, remaining = deterministic_repair(parsed, issues, supported_keywords=_supported_keywords_from_payload(payload))
+    if repaired == parsed or len(remaining) == len(issues):
+        return parsed, validation_feedback, []
+    _derive_cv_metadata(repaired, payload)
+    return repaired, validator(repaired), [str(validation_feedback)]
+
+
 def _validation_failure_metadata(attempt: int, validation_errors: list[str], validation_feedback: str) -> dict[str, Any]:
     metadata = {
         "validation_attempts": attempt + 1,
@@ -924,20 +941,27 @@ def _call_openai(
             ) from exc
         _derive_cv_metadata(parsed, payload)
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
+        parsed, validation_feedback, deterministic_feedbacks = _apply_deterministic_materials_repair(
+            parsed,
+            payload,
+            validation_feedback,
+            lambda repaired: _materials_validation_error(repaired, _base_cv_text(payload), payload),
+        )
         degraded_feedbacks = _degraded_validation_feedbacks(validation_feedback)
         blocking_feedback = _blocking_validation_feedback(validation_feedback)
         if not blocking_feedback:
-            parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors, degraded_feedbacks)
+            parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors + deterministic_feedbacks, degraded_feedbacks)
             parsed["_generation_metadata"]["stage"] = "materials_generation"
             return parsed
         if attempt < retry_limit:
+            validation_errors.extend(deterministic_feedbacks)
             validation_errors.extend(degraded_feedbacks)
             validation_errors.append(blocking_feedback)
             logger.warning("Retrying OpenAI materials generation after invalid response: %s", blocking_feedback)
             continue
         raise LLMMaterialsError(
             f"OpenAI materials response was incomplete: {blocking_feedback}",
-            generation_metadata=_validation_failure_metadata(attempt, validation_errors + degraded_feedbacks, blocking_feedback),
+            generation_metadata=_validation_failure_metadata(attempt, validation_errors + deterministic_feedbacks + degraded_feedbacks, blocking_feedback),
         )
     raise LLMMaterialsError("OpenAI materials response did not produce a usable application kit.")
 
@@ -963,20 +987,27 @@ def _call_nvidia(
             ) from exc
         _derive_cv_metadata(parsed, payload)
         validation_feedback = _materials_validation_error(parsed, _base_cv_text(payload), payload)
+        parsed, validation_feedback, deterministic_feedbacks = _apply_deterministic_materials_repair(
+            parsed,
+            payload,
+            validation_feedback,
+            lambda repaired: _materials_validation_error(repaired, _base_cv_text(payload), payload),
+        )
         degraded_feedbacks = _degraded_validation_feedbacks(validation_feedback)
         blocking_feedback = _blocking_validation_feedback(validation_feedback)
         if not blocking_feedback:
-            parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors, degraded_feedbacks)
+            parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors + deterministic_feedbacks, degraded_feedbacks)
             parsed["_generation_metadata"]["stage"] = "materials_generation"
             return parsed
         if attempt < retry_limit:
+            validation_errors.extend(deterministic_feedbacks)
             validation_errors.extend(degraded_feedbacks)
             validation_errors.append(blocking_feedback)
             logger.warning("Retrying NVIDIA materials generation after invalid response: %s", blocking_feedback)
             continue
         raise LLMMaterialsError(
             f"NVIDIA materials response was incomplete: {blocking_feedback}",
-            generation_metadata=_validation_failure_metadata(attempt, validation_errors + degraded_feedbacks, blocking_feedback),
+            generation_metadata=_validation_failure_metadata(attempt, validation_errors + deterministic_feedbacks + degraded_feedbacks, blocking_feedback),
         )
     raise LLMMaterialsError("NVIDIA materials response did not produce a usable application kit.")
 
@@ -1142,13 +1173,20 @@ def _call_nvidia_cv(
             ) from exc
         _derive_cv_metadata(parsed, payload)
         validation_feedback = _ats_cv_response_validation_error(parsed, _base_cv_text(payload), payload)
+        parsed, validation_feedback, deterministic_feedbacks = _apply_deterministic_materials_repair(
+            parsed,
+            payload,
+            validation_feedback,
+            lambda repaired: _ats_cv_response_validation_error(repaired, _base_cv_text(payload), payload),
+        )
         degraded_feedbacks = _degraded_validation_feedbacks(validation_feedback)
         blocking_feedback = _blocking_validation_feedback(validation_feedback)
         if not blocking_feedback:
-            parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors, degraded_feedbacks)
+            parsed["_generation_metadata"] = _accepted_generation_metadata(attempt, validation_errors + deterministic_feedbacks, degraded_feedbacks)
             parsed["_generation_metadata"]["stage"] = "cv_generation"
             return parsed
         if attempt < retry_limit:
+            validation_errors.extend(deterministic_feedbacks)
             validation_errors.extend(degraded_feedbacks)
             validation_errors.append(blocking_feedback)
             previous_response = parsed
@@ -1160,7 +1198,7 @@ def _call_nvidia_cv(
             continue
         raise LLMMaterialsError(
             f"NVIDIA ATS CV response was incomplete: {blocking_feedback}",
-            generation_metadata=_validation_failure_metadata(attempt, validation_errors + degraded_feedbacks, blocking_feedback),
+            generation_metadata=_validation_failure_metadata(attempt, validation_errors + deterministic_feedbacks + degraded_feedbacks, blocking_feedback),
         )
     raise LLMMaterialsError("NVIDIA ATS CV response did not produce a usable CV.")
 

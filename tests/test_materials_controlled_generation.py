@@ -459,6 +459,67 @@ def test_nvidia_controlled_flags_use_planner_instead_of_freeform_cv(monkeypatch)
     assert kit["_generation_metadata"]["validation_errors"] == []
 
 
+def test_nvidia_cv_deterministic_forbidden_alias_repair_avoids_retry(monkeypatch):
+    from joborchestrator.intelligence import llm_application_materials as llm
+
+    rendered = """Ignacio Rodriguez
+Contact line
+
+Professional Summary
+Backend developer with source-backed Python API experience.
+Experience includes analytics APIs and Redis-backed data reliability work.
+
+Technical Skills
+Python, REST APIs, Redis
+Kubernetes exposure should be discussed cautiously.
+
+Professional Experience
+Backend Developer | Fiction Express | April 2025 - March 2026
+- Built analytics APIs with Python.
+- Improved data reliability with Redis.
+- Supported product data workflows through REST APIs.
+Technologies: Python, REST APIs, Redis
+
+Education
+Computer Science
+
+Additional Development
+Source-backed backend delivery, API documentation, and product data reliability practice.
+The profile remains focused on the base CV evidence: analytics APIs, Python implementation work, Redis data reliability, REST API delivery, and product workflow support. It does not add unsupported platform, cloud, certification, management, or years-of-experience claims beyond the source material.
+""".strip()
+    calls = []
+
+    def fake_contract_once(*args, **kwargs):
+        calls.append(kwargs.get("previous_response"))
+        return {
+            "ats_cv_text": rendered,
+            "risk_flags": [],
+            "keywords_used": ["Kubernetes"],
+        }
+
+    monkeypatch.setattr(llm, "_call_nvidia_contract_once", fake_contract_once)
+
+    response = llm._call_nvidia_cv(
+        {
+            "base_cv": {"text": _base_cv_text()},
+            "job": {"company": "Acme", "title": "Backend Engineer", "description_text": "Build Python APIs."},
+            "ats_fit_analysis": {"supported_keywords": ["Python", "REST APIs", "Redis", "Kubernetes"]},
+            "ranking": {"cv_keywords_to_avoid_overclaiming": ["Kubernetes"]},
+        },
+        "test-key",
+        "test-model",
+        1.0,
+        validation_retry_limit=0,
+    )
+
+    assert len(calls) == 1
+    assert "Kubernetes" not in response["ats_cv_text"]
+    assert "some target stack items are not directly evidenced" in response["ats_cv_text"]
+    assert response["keywords_used"] == ["Python", "REST APIs", "Redis"]
+    assert response["_generation_metadata"]["validation_attempts"] == 1
+    assert "unsupported ranking avoid-overclaiming terms" in response["_generation_metadata"]["validation_errors"][0]
+
+
 def test_invalid_nvidia_planner_plan_falls_back_to_renderer_defaults(monkeypatch):
     from joborchestrator.intelligence import llm_application_materials as llm
 
