@@ -327,6 +327,38 @@ def test_recruiter_message_cleanup_removes_cover_letter_contamination():
     assert kit["recruiter_message"].startswith("Hi, I'm Ignacio Rodriguez")
 
 
+def test_kit_validation_rejects_language_mismatch_for_supported_job_language():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Acme, my developer experience maps well to this remote team role.",
+            "cover_letter": "Dear Acme team,\n\nMy experience as a backend developer maps well to this remote team role, with responsibilities across APIs, product collaboration, and reliable delivery for business workflows.",
+            "autofill_notes": "Experience as a developer on remote work, team responsibilities, and backend delivery.",
+        },
+        {
+            "job": {
+                "title": "Desarrollador Python remoto",
+                "description_text": "Requisitos experiencia trabajo remoto jornada equipo desarrollo Python.",
+            }
+        },
+    )
+
+    assert error is not None
+    assert "application materials language mismatch" in error
+
+
+def test_kit_validation_does_not_reject_unsupported_job_language_signal():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Acme, Python API work maps well to this role.",
+            "cover_letter": "Dear Acme team,\n\nMy Python API background maps well to this role through backend services, database work, and product collaboration on reliable application workflows.",
+            "autofill_notes": "Use the Python API angle for portal questions.",
+        },
+        {"job": {"title": "Python", "description_text": "Build APIs."}},
+    )
+
+    assert error is None
+
+
 def test_recruiter_message_validation_rejects_generic_message_with_job_context():
     error = _materials_validation_error(
         {

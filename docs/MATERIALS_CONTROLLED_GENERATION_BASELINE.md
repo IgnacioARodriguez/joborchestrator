@@ -44,6 +44,7 @@ Initial implementation notes:
 - A deterministic CV IR and renderer provide a rollout path behind feature flags.
 - Failed materials attempts are persisted in `materials_generation_attempts`.
 - Application kit parsing accepts a structured internal `autofill` object, renders it to persisted `autofill_notes`, and rejects JSON-encoded object strings in `autofill_notes`.
+- Application kit validation fails closed on clear English/Spanish language mismatch when the job language has enough signal.
 
 Known remaining gaps:
 
@@ -63,6 +64,7 @@ Responsibilities:
 - Validator: map legacy feedback into structured `ValidationIssue` codes while compatibility callers still consume strings.
 - Repair: deterministic repair runs before semantic repair. Semantic repair receives the previous response, mutable fields, and frozen fields.
 - Kit: structured `autofill` can carry `core_pitch`, availability, work authorization, location, and caveats while storage/API compatibility still exposes rendered `autofill_notes`.
+- Language: kit validation checks recruiter, cover letter, and autofill text against conservative English/Spanish job-language detection.
 
 Rollout flags remain off by default:
 

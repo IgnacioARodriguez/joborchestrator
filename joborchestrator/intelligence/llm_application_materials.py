@@ -20,6 +20,7 @@ from joborchestrator.intelligence.materials_controlled_pipeline import build_con
 from joborchestrator.intelligence.materials_cv_ir import parse_candidate_cv_ir
 from joborchestrator.intelligence.materials_keywords import derive_keywords_used
 from joborchestrator.intelligence.materials_kit import parse_autofill, render_autofill
+from joborchestrator.intelligence.materials_language import detect_job_language, language_mismatch
 from joborchestrator.intelligence.materials_planner import build_cv_planner_context
 from joborchestrator.intelligence.materials_routing import controlled_cv_enabled, nvidia_planner_enabled, openai_fallback_enabled
 from joborchestrator.intelligence.materials_repair import (
@@ -1571,6 +1572,7 @@ def _kit_response_validation_error(
     problems.extend(_unsupported_hedge_problems(kit_text))
     problems.extend(_materials_internal_note_problems(kit_text))
     problems.extend(_application_tone_problems(payload, source_payload))
+    problems.extend(_application_language_problems(kit_text, source_payload))
     problems.extend(_unsupported_experience_years_problems(kit_text, source_payload, field_name="application_materials"))
     return "; ".join(problems) if problems else None
 
@@ -2002,6 +2004,22 @@ def _materials_internal_note_problems(text: str) -> list[str]:
         "application materials expose internal review/evaluation language: "
         + ", ".join(found[:4])
     ]
+
+
+def _application_language_problems(
+    kit_text: str,
+    source_payload: dict[str, Any] | None,
+) -> list[str]:
+    if not source_payload:
+        return []
+    job = source_payload.get("job") if isinstance(source_payload.get("job"), dict) else {}
+    target_language = detect_job_language(
+        str(job.get("title") or ""),
+        str(job.get("description_text") or job.get("description") or ""),
+    )
+    if language_mismatch(kit_text, target_language):
+        return [f"application materials language mismatch: expected {target_language} job language"]
+    return []
 
 
 def _application_tone_problems(
