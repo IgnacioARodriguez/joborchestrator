@@ -95,8 +95,8 @@ export function TodayScreen({
       />
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-          <Queue title="Review" icon={CircleHelp} jobs={needsReview} empty="No ranked jobs waiting for review." actionLabel="Review" onAction={() => onNavigate("review")} onOpenJob={onOpenJob} />
-          <Queue title="Prepare applications" icon={Send} jobs={ready} empty="No high-priority preparation candidates." actionLabel="Prepare" onAction={() => onNavigate("review")} onOpenJob={onOpenJob} />
+          <Queue title="Review" icon={CircleHelp} jobs={needsReview} empty="No ranked jobs waiting for review." actionLabel="Review" onAction={() => onNavigate("jobs")} onOpenJob={onOpenJob} />
+          <Queue title="Prepare applications" icon={Send} jobs={ready} empty="No high-priority preparation candidates." actionLabel="Prepare" onAction={() => onNavigate("jobs")} onOpenJob={onOpenJob} />
           <Queue title="Waiting for your answer" icon={Bell} jobs={waitingAnswerJobs} empty="No preparing applications need input." actionLabel="Applications" onAction={() => onNavigate("applications")} onOpenJob={onOpenJob} />
           <Queue title="Follow up today" icon={Clock} jobs={followUpJobs} empty="No follow-ups due in the current queue." actionLabel="Applications" onAction={() => onNavigate("applications")} onOpenJob={onOpenJob} />
           <Queue title="Interviews to prepare" icon={CheckCircle2} jobs={interviewJobs} empty="No interviews or technical stages yet." actionLabel="Applications" onAction={() => onNavigate("applications")} onOpenJob={onOpenJob} />

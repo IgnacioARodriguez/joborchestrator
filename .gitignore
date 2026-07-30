@@ -50,6 +50,7 @@ Thumbs.db
 dashboard-dev.*.log
 api-dev.*.log
 logs/
+artifacts/
 
 # v0 sandbox internal files
 __v0_runtime_loader.js

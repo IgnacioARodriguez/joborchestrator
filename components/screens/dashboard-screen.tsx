@@ -165,7 +165,7 @@ export function DashboardScreen({
                   variant="ghost"
                   size="sm"
                   className="h-7 px-2 text-xs"
-                  onClick={() => onNavigate("review")}
+                  onClick={() => onNavigate("jobs")}
                 >
                   Review
                   <ArrowRight data-icon="inline-end" />
