@@ -55,7 +55,7 @@ import { cn } from "@/lib/utils"
 
 type DetailActions = Pick<
   ReturnType<typeof useStore>,
-  "setPipelineStatus" | "markOpened" | "generateMaterials" | "refresh"
+  "setPipelineStatus" | "markOpened" | "generateMaterials" | "refreshApplications" | "loadJobDetail"
 >
 
 function DeferredSection({
@@ -559,7 +559,7 @@ const DetailBody = memo(function DetailBody({
   actions: DetailActions
   companyHistory: ApplicationRecord[]
 }) {
-  const { setPipelineStatus, markOpened, generateMaterials, refresh } = actions
+  const { setPipelineStatus, markOpened, generateMaterials, refreshApplications, loadJobDetail } = actions
   const scrollerRef = useRef<HTMLDivElement>(null)
   const [materialsOperationId, setMaterialsOperationId] = useState<number | null>(null)
   const [applicationOperationId, setApplicationOperationId] = useState<number | null>(null)
@@ -632,7 +632,7 @@ const DetailBody = memo(function DetailBody({
         const response = await api.getOperation(materialsOperationId)
         if (stopped) return
         if (response.operation.status === "completed") {
-          await refresh()
+          await loadJobDetail(job.id, { force: true })
           if (!stopped) {
             setMaterialsOperationId(null)
             toast.success("Application kit ready", { description: job.title })
@@ -661,7 +661,7 @@ const DetailBody = memo(function DetailBody({
       stopped = true
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [job.title, materialsOperationId, refresh])
+  }, [job.id, job.title, loadJobDetail, materialsOperationId])
 
   useEffect(() => {
     if (!applicationOperationId) return
@@ -784,7 +784,7 @@ const DetailBody = memo(function DetailBody({
       } else {
         toast.success("Application session ready", { description: response.session.state.replaceAll("_", " ") })
       }
-      await refresh()
+      await Promise.all([loadJobDetail(job.id, { force: true }), refreshApplications()])
     } catch (e) {
       toast.error("Could not prepare application", {
         description: e instanceof Error ? e.message : "Backend request failed.",
@@ -819,7 +819,7 @@ const DetailBody = memo(function DetailBody({
     try {
       const response = await api.markApplicationSubmittedManually(latestSession.id)
       setSessions((prev) => [response.session, ...prev.filter((item) => item.id !== response.session.id)])
-      await refresh()
+      await Promise.all([loadJobDetail(job.id, { force: true }), refreshApplications()])
       toast.success("Manual submission recorded", { description: job.title })
     } catch (e) {
       toast.error("Could not record manual submission", {
@@ -1373,15 +1373,24 @@ export function JobDetailDrawer({
     applications,
     generateMaterials,
     getJob,
+    getJobDetailEntry,
+    getJobSummary,
+    loadJobDetail,
     markOpened,
-    refresh,
+    refreshApplications,
     setPipelineStatus,
   } = useStore()
   const job = jobId ? getJob(jobId) : undefined
+  const summary = jobId ? getJobSummary(jobId) : undefined
+  const detailEntry = jobId ? getJobDetailEntry(jobId) : { status: "idle" as const }
   const actions = useMemo(
-    () => ({ generateMaterials, markOpened, refresh, setPipelineStatus }),
-    [generateMaterials, markOpened, refresh, setPipelineStatus],
+    () => ({ generateMaterials, loadJobDetail, markOpened, refreshApplications, setPipelineStatus }),
+    [generateMaterials, loadJobDetail, markOpened, refreshApplications, setPipelineStatus],
   )
+  useEffect(() => {
+    if (!jobId) return
+    void loadJobDetail(jobId)
+  }, [jobId, loadJobDetail])
   const companyHistory = useMemo(() => {
     if (!job) return []
     return applications.filter(
@@ -1400,7 +1409,7 @@ export function JobDetailDrawer({
       <DrawerContent className="data-[swipe-axis=y]:[--drawer-content-max-height:calc(100dvh-3rem)] data-[swipe-axis=y]:[--drawer-height:88dvh]">
         <DrawerHeader className="flex-row items-start justify-between gap-3 text-left">
           <DrawerTitle className="min-w-0 flex-1 text-pretty leading-snug">
-            {job?.title ?? "Job detail"}
+            {job?.title ?? summary?.title ?? "Job detail"}
           </DrawerTitle>
           <DrawerClose
             aria-label="Close job detail"
@@ -1412,13 +1421,41 @@ export function JobDetailDrawer({
             Ranking, description, and application materials for this job.
           </DrawerDescription>
         </DrawerHeader>
-        {job && (
+        {job ? (
           <DetailBody
             job={job}
             onClose={onClose}
             actions={actions}
             companyHistory={companyHistory}
           />
+        ) : (
+          <div className="flex min-h-[360px] flex-col gap-4 px-4 pb-6">
+            {detailEntry.status === "error" ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4">
+                <div className="flex items-start gap-3">
+                  <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-foreground">Could not load job detail</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {detailEntry.error ?? "The backend request failed."}
+                    </p>
+                    {jobId ? (
+                      <Button className="mt-3" size="sm" variant="outline" onClick={() => void loadJobDetail(jobId, { force: true })}>
+                        Retry
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="h-6 w-40 animate-pulse rounded-md bg-muted" />
+                <div className="h-20 animate-pulse rounded-lg bg-muted" />
+                <div className="h-28 animate-pulse rounded-lg bg-muted" />
+                <div className="h-36 animate-pulse rounded-lg bg-muted" />
+              </div>
+            )}
+          </div>
         )}
       </DrawerContent>
     </Drawer>

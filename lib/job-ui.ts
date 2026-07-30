@@ -1,4 +1,4 @@
-import type { Decision, JobPosting, PipelineStatus } from "./types"
+import type { Decision, JobListItem, JobPosting, PipelineStatus } from "./types"
 
 // Presentation config shared across screens. Kept separate from data + types.
 
@@ -111,7 +111,7 @@ export function relativeTime(iso: string): string {
   return `${weeks}w ago`
 }
 
-export function isNewThisWeek(job: JobPosting): boolean {
+export function isNewThisWeek(job: Pick<JobListItem, "first_seen_at">): boolean {
   const seen = new Date(job.first_seen_at).getTime()
   return Date.now() - seen <= 7 * 24 * 60 * 60 * 1000
 }

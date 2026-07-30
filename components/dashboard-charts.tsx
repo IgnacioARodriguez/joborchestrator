@@ -25,7 +25,7 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart"
 import { DECISION_LABELS } from "@/lib/types"
-import type { JobPosting } from "@/lib/types"
+import type { JobListItem } from "@/lib/types"
 import {
   decisionDistribution,
   pipelineFunnel,
@@ -71,7 +71,7 @@ function ChartCard({
   )
 }
 
-export function DashboardCharts({ jobs }: { jobs: JobPosting[] }) {
+export function DashboardCharts({ jobs }: { jobs: JobListItem[] }) {
   const decisions = decisionDistribution(jobs).map((d) => ({
     ...d,
     label: DECISION_LABELS[d.decision],

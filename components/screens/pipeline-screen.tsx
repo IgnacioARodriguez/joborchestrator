@@ -13,7 +13,7 @@ import { ScoreBadge, DecisionBadge } from "@/components/badges"
 import { PageHeader } from "@/components/page-chrome"
 import { useStore } from "@/lib/store"
 import { PIPELINE_LABELS, relativeTime } from "@/lib/job-ui"
-import type { JobPosting, PipelineStatus } from "@/lib/types"
+import type { JobListItem, PipelineStatus } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 const PIPELINE_COLUMNS: PipelineStatus[] = [
@@ -31,7 +31,7 @@ function PipelineCard({
   job,
   onOpen,
 }: {
-  job: JobPosting
+  job: JobListItem
   onOpen: (id: string) => void
 }) {
   const { setPipelineStatus } = useStore()

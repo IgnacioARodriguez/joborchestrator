@@ -2,14 +2,14 @@
 
 import { ChevronRight } from "lucide-react"
 import { ScoreBadge, DecisionBadge } from "@/components/badges"
-import type { JobPosting } from "@/lib/types"
+import type { JobListItem } from "@/lib/types"
 import { relativeTime } from "@/lib/job-ui"
 
 export function JobRow({
   job,
   onOpen,
 }: {
-  job: JobPosting
+  job: JobListItem
   onOpen: (id: string) => void
 }) {
   return (

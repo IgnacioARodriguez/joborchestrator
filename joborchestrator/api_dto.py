@@ -71,6 +71,61 @@ def job_dto(
     }
 
 
+def job_list_item_dto(job: dict[str, Any], ranking_row: dict[str, Any] | None) -> dict[str, Any]:
+    ranking = ranking_summary_dto(ranking_row)
+    priority_ranking = _default_ranking()
+    priority_ranking.update(ranking)
+    priority_ranking["evidence"] = {**_default_ranking()["evidence"], **ranking.get("evidence", {})}
+    priority_job = dict(job)
+    if job.get("has_ats_cv"):
+        priority_job.setdefault("ats_cv_text", "1")
+    if job.get("has_cover_letter"):
+        priority_job.setdefault("cover_letter", "1")
+    priority = compute_priority(priority_job, priority_ranking).to_dict()
+    location_mode = _string(job.get("location") or job.get("workplace_type")).lower()
+    recruiter_name = _nullable_string(job.get("recruiter_name"))
+    recruiter_profile_url = _nullable_string(job.get("recruiter_profile_url"))
+    has_materials = bool(job.get("has_materials")) or any(
+        _string(job.get(key)).strip()
+        for key in ["recruiter_message", "cover_letter", "ats_cv_text", "autofill_notes"]
+    )
+    return {
+        "id": str(job["id"]),
+        "title": _string(job.get("title"), "Untitled role"),
+        "company": _string(job.get("company"), "Unknown company"),
+        "location": _string(job.get("location"), "Unspecified"),
+        "remote": any(marker in location_mode for marker in ["remote", "remoto", "remota"]),
+        "source": _source_label(job.get("source")),
+        "source_raw": job.get("source"),
+        "apply_type": _nullable_string(job.get("apply_type")),
+        "first_seen_at": _string(job.get("first_seen_at")),
+        "last_seen_at": _string(job.get("last_seen_at")),
+        "status": "active" if int(job.get("is_active") or 0) else "expired",
+        "pipeline_status": job.get("pipeline_status") or "new",
+        "ranking": ranking,
+        "priority": {
+            "priority_score": priority.get("priority_score", 0),
+            "fit_score": priority.get("fit_score", 0),
+            "eligibility_score": priority.get("eligibility_score", 0),
+            "freshness_score": priority.get("freshness_score", 0),
+            "freshness_bucket": priority.get("freshness_bucket", "archival"),
+            "freshness_age_days": priority.get("freshness_age_days"),
+            "application_effort_score": priority.get("application_effort_score", 0),
+            "recruiter_advantage_score": priority.get("recruiter_advantage_score", 0),
+            "estimated_minutes": priority.get("estimated_minutes", 0),
+            "next_action": priority.get("next_action", "Review"),
+            "blocker": priority.get("blocker"),
+        },
+        "has_materials": has_materials,
+        "materials_review": {
+            "status": "ready" if has_materials else "missing",
+            "requires_review": False if has_materials else True,
+            "reasons": [] if has_materials else ["materials_missing"],
+        },
+        "has_recruiter_contact": bool(recruiter_name or recruiter_profile_url),
+    }
+
+
 def materials_review_dto(job: dict[str, Any], ranking: dict[str, Any]) -> dict[str, Any]:
     recruiter_message = _string(job.get("recruiter_message")).strip()
     cover_letter = _string(job.get("cover_letter")).strip()
@@ -216,6 +271,47 @@ def ranking_dto(row: dict[str, Any] | None) -> dict[str, Any]:
     }
     ranking["review"] = ranking_review_dto(ranking)
     return ranking
+
+
+def ranking_summary_dto(row: dict[str, Any] | None) -> dict[str, Any]:
+    if not row:
+        ranking = _default_ranking()
+    else:
+        evidence = parse_json_value(row.get("evidence_json"), {})
+        evidence_summary = {
+            "strong_matches": list(evidence.get("strong_matches") or [])[:3],
+            "missing_requirements": list(evidence.get("missing_requirements") or [])[:2],
+            "requires_llm_review": bool(evidence.get("requires_llm_review")),
+            "llm_escalation_reasons": list(evidence.get("llm_escalation_reasons") or [])[:3],
+            "red_flags": list(evidence.get("red_flags") or [])[:3],
+        }
+        ranking = {
+            "final_score": int(row.get("final_score") or 0),
+            "decision": row.get("decision") or "MAYBE",
+            "confidence": float(row.get("confidence") or 0),
+            "evidence": evidence_summary,
+            "reasoning_summary": _string(row.get("reasoning_summary"))[:280],
+            "ranking_version": row.get("ranking_version") or NVIDIA_RANKING_VERSION,
+            "generation": {
+                "validation_attempts": _int_or_none(row.get("ranking_validation_attempts")),
+            },
+        }
+        ranking["review"] = ranking_review_dto(ranking)
+    return {
+        "final_score": ranking["final_score"],
+        "decision": ranking["decision"],
+        "confidence": ranking["confidence"],
+        "evidence": {
+            "strong_matches": list(ranking["evidence"].get("strong_matches") or [])[:3],
+            "missing_requirements": list(ranking["evidence"].get("missing_requirements") or [])[:2],
+            "requires_llm_review": bool(ranking["evidence"].get("requires_llm_review")),
+            "llm_escalation_reasons": list(ranking["evidence"].get("llm_escalation_reasons") or [])[:3],
+            "red_flags": list(ranking["evidence"].get("red_flags") or [])[:3],
+        },
+        "reasoning_summary": _string(ranking.get("reasoning_summary"))[:280],
+        "ranking_version": ranking["ranking_version"],
+        "review": ranking["review"],
+    }
 
 
 def ranking_review_dto(ranking: dict[str, Any]) -> dict[str, Any]:
