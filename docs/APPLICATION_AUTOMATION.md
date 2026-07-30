@@ -4,11 +4,11 @@ Automation is safe-by-default.
 
 - Default mode: `review_before_submit`.
 - `dry_run` defaults to true for form filling.
-- Auto-submit is disabled unless `ENABLE_AUTO_SUBMIT_APPROVED=1`.
+- Final submit is reserved for the user; automation does not click final submit controls.
 - Unknown or sensitive fields stop the session in `needs_user_input`.
 - Provider support is exposed through `GET /api/automation/provider-capabilities`.
 - The UI shows provider capabilities separately from provider detection.
-- Real submissions are recorded through `submitted_manually`, `submitted`, or later `submission_verified`.
+- Real submissions are recorded through `submitted_manually` or later `submission_verified`.
 
 Adapters:
 
@@ -21,7 +21,7 @@ Current provider capability matrix:
 
 | Provider | Open | Redirects | Detect fields | Fill text | Selects | Radios | Checkboxes | Resume upload | Browser resume | Auto-submit |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Greenhouse | yes | yes | yes | yes | yes | yes | yes | yes | yes | env-gated |
+| Greenhouse | yes | yes | yes | yes | yes | yes | yes | yes | yes | blocked |
 | Lever | yes | yes | yes | yes | yes | yes | yes | yes | yes | no |
 | Generic forms | yes | yes | yes | yes | yes | yes | yes | yes | yes | no |
 | Generic assisted | yes | yes | no | no | no | no | no | no | no | no |
@@ -40,19 +40,40 @@ External apply flow:
 7. Final submit-like controls are classified as `forbidden` by default and recorded in session artifacts.
 8. If `APPLICATION_BROWSER_HANDOFF=1`, the worker keeps the local Chromium page alive and stores only an opaque `local-browser://session/<uuid>` reference.
 9. Sensitive or unknown fields remain unfilled and are reported for review.
-10. By default, the session ends at `ready_for_review` or `needs_user_input`.
+10. By default, the session ends at `submit_only` or `needs_user_input`.
+    `submit_only` means all registered required obligations were resolved,
+    policy-authorized, executed and verified, and the only remaining action is
+    the user-owned final submit boundary.
 11. After the user submits manually on the company site, they can record `submitted_manually`.
 12. A later confirmation can move the session to `submission_verified`.
 
-Personal auto-submit mode:
+Final submit boundary:
 
-- Set `ENABLE_AUTO_SUBMIT_APPROVED=1`.
-- Create the session with `"mode": "auto_submit_approved"`.
-- The worker queues that mode with `dry_run=false`.
-- Currently only Greenhouse is allowed.
-- The worker submits only when there are no unknown required or sensitive fields, any required resume file was uploaded, and exactly one final submit control is detected.
-- Blocked attempts stay in `ready_for_review` or `needs_user_input` and write `artifacts_json.auto_submit.reasons`.
-- Successful attempts transition through `ready_for_review -> approved -> submitting -> submitted` and store the clicked control text in `artifacts_json.auto_submit`.
+- `auto_submit_approved` is retained as a compatibility mode, but it is blocked
+  with `final_submit_reserved_for_user`.
+- The worker can detect exactly one final submit control and include it in
+  artifacts as the submit boundary.
+- Real submissions are recorded only after the user submits manually and marks
+  the session `submitted_manually`.
+
+Obligation ledger:
+
+- Browser execution writes `artifacts_json.obligation_ledger`.
+- Each ledger entry records logical control identity, owning surface, required
+  evidence, semantic category, resolved answer source, policy decision, planned
+  action, execution result, validation result, blocker and reason codes.
+- `artifacts_json.obligation_ledger.readiness.terminal_state` is `SUBMIT_ONLY`
+  only when the ledger has no fail-closed blockers.
+
+Replay corpus:
+
+- `tests/fixtures/application_corpus.json` is fixture ground truth, not a copy
+  of generated ledger output. Each case declares known controls, required
+  controls, expected semantic mappings, expected answer sources, allowed,
+  reserved and forbidden actions, expected terminal state, human interventions,
+  submit-only eligibility and expected repair attempts.
+- Corpus outcome metrics compare generated artifacts to those declarations and
+  report numerator, denominator, rate, sample size and failed fixture IDs.
 
 Answer bank:
 

@@ -81,15 +81,20 @@ API health: `http://127.0.0.1:8000/api/health`
 11. Click `Mark submitted manually` only after you submit on the company site yourself.
 12. Use verification follow-up separately when a confirmation page or email is available.
 
-For personal Greenhouse auto-submit:
+For final-submit boundary checks, the legacy compatibility flag may be set so
+older `auto_submit_approved` sessions exercise the blocker path. It does not
+enable automated final submit:
 
 ```bash
 ENABLE_AUTO_SUBMIT_APPROVED=1
 ```
 
-Then create the session with `"mode": "auto_submit_approved"`. The worker submits only when required fields are resolved, the resume upload succeeds, and exactly one final submit control is detected. If it blocks, inspect `application_sessions.artifacts_json.auto_submit.reasons`.
+Then create the session with `"mode": "auto_submit_approved"` only to verify
+that the worker blocks with `final_submit_reserved_for_user` after required
+fields are resolved, the resume upload succeeds, and exactly one final submit
+control is detected.
 
-Before testing against a real company page, run the isolated local smoke. It forces SQLite, ignores `.env`/Turso, uses a synthetic Greenhouse fixture and verifies the full worker path reaches `submitted`:
+Before testing against a real company page, run the isolated local smoke. It forces SQLite, ignores `.env`/Turso, uses a synthetic Greenhouse fixture and verifies the full worker path reaches `submit_only` with final submit blocked:
 
 ```bash
 npm run smoke:auto-submit
@@ -108,7 +113,7 @@ For the Warp Software Engineer rehearsal, `--warp-answers` seeds the confirmed p
 npm run rehearse:application -- "https://job-boards.greenhouse.io/warp/jobs/4324888004" --warp-answers
 ```
 
-The rehearsal command writes the exact uploaded PDF to `logs/application-rehearsal-resume.pdf` and prints `resume_preview_lines`. This file is synthetic by design. Do not run real auto-submit until the job has a reviewed ATS CV generated from the candidate's actual profile/materials.
+The rehearsal command writes the exact uploaded PDF to `logs/application-rehearsal-resume.pdf` and prints `resume_preview_lines`. This file is synthetic by design. Do not use automation for the real final submit.
 
 For login/account pages, set:
 

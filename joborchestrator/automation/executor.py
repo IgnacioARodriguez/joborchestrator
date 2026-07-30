@@ -13,8 +13,11 @@ from playwright.async_api import Browser, BrowserContext, Page, TimeoutError as 
 from joborchestrator.automation.adapters import AdapterRegistry
 from joborchestrator.automation.accounts import load_password, site_identity_from_url
 from joborchestrator.automation import local_browser_agent
-from joborchestrator.automation.answer_bank import requires_explicit_human_consent
+from joborchestrator.automation.ledger import build_obligation_ledger
+from joborchestrator.automation.metrics import compute_outcome_metrics
+from joborchestrator.automation.policy import evaluate_answer_action, evaluate_browser_action
 from joborchestrator.automation.journey import ApplicationJourneyEngine
+from joborchestrator.automation.surfaces import reconcile_surface_lifecycle, rebind_control, surface_nodes_from_step
 from joborchestrator.automation.validation import validate_application_surface
 from joborchestrator.intelligence.llm_application_materials import export_ats_cv_pdf_bytes
 from joborchestrator.storage import persistence as db
@@ -256,6 +259,7 @@ async def run_application_execution(
     validation_report: dict[str, Any] = {"status": "not_attempted"}
     repair_report: dict[str, Any] = {"status": "not_attempted"}
     automation_metrics: dict[str, Any] = {}
+    obligation_ledger: dict[str, Any] = {}
     try:
         journey_engine = ApplicationJourneyEngine()
         profile = db.get_candidate_profile_payload() or {}
@@ -272,6 +276,7 @@ async def run_application_execution(
         live_fill = {"dry_run": dry_run, "fields_autofilled": 0, "filled_fields": [], "skipped_fields": []}
         journey_steps: list[dict[str, Any]] = []
         step_transitions: list[dict[str, Any]] = []
+        action_states: dict[str, dict[str, Any]] = {}
         max_auto_steps = max(1, int(os.getenv("APPLICATION_MAX_AUTO_STEPS", "3")))
         for step_index in range(max_auto_steps):
             schema = current_step.schema
@@ -283,7 +288,13 @@ async def run_application_execution(
                     progress,
                     f"Filling safe {adapter.provider} fields in dry-run mode." if dry_run else f"Filling safe {adapter.provider} fields.",
                 )
-                step_fill = await fill_safe_fields_on_page(browser_surface, mapping, dry_run=dry_run)
+                step_fill = await fill_safe_fields_on_page(
+                    browser_surface,
+                    mapping,
+                    dry_run=dry_run,
+                    action_plan=journey_step.get("action_plan") or {},
+                    action_states=action_states,
+                )
                 _merge_fill_result(live_fill, step_fill)
                 fill_stability = await _wait_for_interactive_stability(browser_surface, timeout_ms)
             else:
@@ -301,44 +312,40 @@ async def run_application_execution(
             if capabilities.can_detect_fields:
                 validation = await validate_application_surface(browser_surface, journey_step.get("action_plan") or {})
                 validation_report = validation.to_dict()
-                if validation.status == "validation_failed":
-                    mapping.setdefault("unknown_fields", []).append(
-                        {
-                            "name": "validation",
-                            "label": "Validation errors or failed postconditions were detected after autofill.",
-                            "type": "validation",
-                            "required": True,
-                            "sensitive": False,
-                            "classification": "unknown",
-                            "issues": validation_report.get("issues") or [],
-                        }
-                    )
-                rescanned_step = await journey_engine.inspect_surface(
+                _update_action_states_from_validation(
+                    action_states,
+                    action_plan=journey_step.get("action_plan") or {},
+                    validation_report=validation_report,
+                    fill_result=step_fill,
+                )
+                repair_result = await run_bounded_repair_loop(
+                    page=browser_surface,
+                    journey_engine=journey_engine,
                     adapter=adapter,
                     capabilities=capabilities,
-                    surface=current_step.surface,
-                    browser_surface=browser_surface,
+                    current_step=current_step,
                     html=html,
                     profile=profile,
                     answer_bank=answer_bank,
-                    surfaces=current_step.surfaces,
+                    previous_validation_report=validation_report,
+                    fill_stability=fill_stability,
+                    fill_result=live_fill,
+                    resume_upload=resume_upload,
+                    dry_run=dry_run,
+                    timeout_ms=timeout_ms,
+                    action_states=action_states,
+                    progress=progress,
                 )
-                dynamic_required_fields = _append_dynamic_required_unknowns(
-                    mapping,
-                    previous_schema=schema,
-                    rescanned_schema=rescanned_step.schema,
-                )
-                repair_report = _build_repair_report(
-                    previous_action_plan=journey_step.get("action_plan") or {},
-                    rescanned_action_plan=rescanned_step.to_dict().get("action_plan") or {},
-                    dynamic_required_fields=dynamic_required_fields,
-                )
-                if dynamic_required_fields:
-                    schema = rescanned_step.schema
-                    journey_step = {
-                        **journey_step,
-                        "repair_rescan": rescanned_step.to_dict(),
-                    }
+                current_step = repair_result["step"]
+                schema = current_step.schema
+                mapping = current_step.mapping
+                browser_surface = current_step.browser_surface
+                journey_step = {
+                    **current_step.to_dict(),
+                    "repair_rescan": repair_result.get("rescanned_step"),
+                }
+                validation_report = repair_result["validation_report"]
+                repair_report = repair_result["repair_report"]
                 transition = await detect_safe_step_transition_controls(browser_surface)
                 automation_metrics = _build_application_automation_metrics(
                     action_plan=journey_step.get("action_plan") or {},
@@ -448,9 +455,24 @@ async def run_application_execution(
         fill.data["filled_fields"] = live_fill["filled_fields"]
         fill.data["skipped_fields"] = live_fill["skipped_fields"]
     review = adapter.prepare_review(schema, mapping, fill)
-    next_state = "needs_user_input" if mapping.get("unknown_fields") else "ready_for_review"
-    if auto_submit_result.get("status") == "submitted":
-        next_state = "submitted"
+    obligation_ledger = build_obligation_ledger(
+        schema=schema,
+        mapping=mapping,
+        action_plan=journey_step.get("action_plan") or {},
+        validation_report=validation_report,
+        fill_result=live_fill,
+        resume_upload=resume_upload,
+        repair_report=repair_report,
+        forbidden_submit_controls=forbidden_submit_controls,
+        surfaces=journey_step.get("surfaces") or [],
+        step_transitions=journey_step.get("step_transitions") or [],
+    )
+    readiness = obligation_ledger.get("readiness") or {}
+    next_state = "submit_only" if readiness.get("ready") else "needs_user_input"
+    automation_metrics = {
+        **automation_metrics,
+        "outcome_metrics": compute_outcome_metrics(obligation_ledger),
+    }
     human_intervention = _build_human_intervention_report(
         next_state=next_state,
         review=review,
@@ -492,6 +514,7 @@ async def run_application_execution(
                 "validation": validation_report,
                 "repair": repair_report,
                 "automation_metrics": automation_metrics,
+                "obligation_ledger": obligation_ledger,
                 "human_intervention": human_intervention,
             },
         },
@@ -522,39 +545,18 @@ async def run_application_execution(
         "validation": validation_report,
         "repair": repair_report,
         "automation_metrics": automation_metrics,
+        "obligation_ledger": obligation_ledger,
         "human_intervention": human_intervention,
     }
-    if next_state == "submitted":
-        db.transition_application_session(
-            session_id,
-            "ready_for_review",
-            {"note": "Auto-submit preconditions passed.", "current_step": "auto_submit_ready", "artifacts_json": final_artifacts},
-        )
-        db.transition_application_session(
-            session_id,
-            "approved",
-            {"note": "Approved by auto_submit_approved mode.", "current_step": "auto_submit_approved"},
-        )
-        db.transition_application_session(
-            session_id,
-            "submitting",
-            {"note": "Submitting approved application.", "current_step": "auto_submit"},
-        )
-        session = db.transition_application_session(
-            session_id,
-            "submitted",
-            {"note": "Auto-submit completed.", "current_step": "submitted", "artifacts_json": final_artifacts},
-        )
-    else:
-        session = db.transition_application_session(
-            session_id,
-            next_state,
-            {
-                "note": "Ready for review." if next_state == "ready_for_review" else "Missing fields require user input.",
-                "current_step": "review",
-                "artifacts_json": final_artifacts,
-            },
-        )
+    session = db.transition_application_session(
+        session_id,
+        next_state,
+        {
+            "note": "Ready for final user submit." if next_state == "submit_only" else "Missing fields require user input.",
+            "current_step": "review",
+            "artifacts_json": final_artifacts,
+        },
+    )
     return {
         "session": session,
         "provider": adapter.provider,
@@ -871,9 +873,10 @@ def _progress(progress: Progress | None, message: str) -> None:
 
 
 def classify_browser_action(label: str) -> str:
-    if FORBIDDEN_SUBMIT_TEXT_RE.search(label):
+    decision = evaluate_browser_action(label)
+    if decision.reason_code == "final_submit_reserved_for_user":
         return "forbidden"
-    if APPLY_TEXT_RE.search(label):
+    if decision.outcome == "ALLOW":
         return "safe"
     return "review_required"
 
@@ -998,8 +1001,7 @@ async def maybe_auto_submit_application(
         return {"status": "disabled"}
     if blockers:
         return {"status": "blocked", "reasons": blockers}
-    _progress(progress, "Auto-submit preconditions passed; clicking final submit.")
-    return await click_approved_submit_control(page, timeout_ms=timeout_ms)
+    return {"status": "blocked", "reasons": ["final_submit_reserved_for_user"]}
 
 
 def auto_submit_blockers(
@@ -1035,6 +1037,7 @@ def auto_submit_blockers(
         blockers.append("required_resume_not_uploaded")
     if len(forbidden_submit_controls) != 1:
         blockers.append("ambiguous_submit_control" if forbidden_submit_controls else "missing_submit_control")
+    blockers.append("final_submit_reserved_for_user")
     return blockers
 
 
@@ -1053,49 +1056,8 @@ def _looks_placeholder_resume_for_real_url(apply_url: str, job: dict[str, Any]) 
 
 
 async def click_approved_submit_control(page: Page, *, timeout_ms: int) -> dict[str, Any]:
-    locator = page.locator("button, input[type='submit'], input[type='button']")
-    matches: list[dict[str, Any]] = []
-    try:
-        count = await locator.count()
-    except Exception as exc:
-        return {"status": "failed", "reason": "submit_controls_unavailable", "error": exc.__class__.__name__}
-    for index in range(count):
-        item = locator.nth(index)
-        try:
-            label = await item.evaluate(
-                """node => String(
-                  node.innerText
-                  || node.textContent
-                  || node.getAttribute('value')
-                  || node.getAttribute('aria-label')
-                  || node.getAttribute('type')
-                  || ''
-                ).replace(/\\s+/g, ' ').trim()"""
-            )
-        except Exception:
-            continue
-        if classify_browser_action(str(label)) == "forbidden":
-            matches.append({"index": index, "text": str(label)[:120]})
-    if len(matches) != 1:
-        return {
-            "status": "blocked",
-            "reasons": ["ambiguous_submit_control" if matches else "missing_submit_control"],
-            "matched_controls": matches,
-        }
-    selected = matches[0]
-    try:
-        await locator.nth(int(selected["index"])).click(timeout=5000)
-        await page.wait_for_timeout(1000)
-        await _safe_network_idle(page, timeout_ms)
-        stability = await _wait_for_interactive_stability(page, timeout_ms)
-        return {"status": "submitted", "control_text": selected["text"], "final_url": page.url, "stability": stability}
-    except Exception as exc:
-        return {
-            "status": "failed",
-            "reason": "submit_click_failed",
-            "control_text": selected["text"],
-            "error": exc.__class__.__name__,
-        }
+    _ = (page, timeout_ms)
+    return {"status": "blocked", "reasons": ["final_submit_reserved_for_user"], "policy": "reserved_for_user"}
 
 
 def _schema_requires_resume(schema: dict[str, Any]) -> bool:
@@ -1106,59 +1068,61 @@ def _schema_requires_resume(schema: dict[str, Any]) -> bool:
     )
 
 
-def safe_fill_plan(mapping: dict[str, Any]) -> list[dict[str, str]]:
+def safe_fill_plan(mapping: dict[str, Any], action_plan: dict[str, Any] | None = None) -> list[dict[str, str]]:
     plan: list[dict[str, str]] = []
+    include_state_key = action_plan is not None
+    state_keys = {
+        str(action.get("field_name") or ""): _action_state_key(action)
+        for action in (action_plan or {}).get("actions") or []
+        if isinstance(action, dict) and str(action.get("field_name") or "")
+    }
     for answer in mapping.get("answers") or []:
-        if answer.get("requires_confirmation"):
-            continue
         value = str(answer.get("value") or "").strip()
         field_name = str(answer.get("field_name") or "").strip()
         canonical = str(answer.get("canonical_key") or "").strip()
         if not value or not field_name:
             continue
-        if _requires_explicit_human_consent(answer):
-            continue
-        if answer.get("source") != "approved_answer" and canonical not in {
-            "full_name",
-            "email",
-            "phone",
-            "linkedin",
-            "portfolio",
-            "preferred_location",
-            "talent_pool",
-        }:
-            continue
         field_type = str(answer.get("field_type") or "text")
+        action_type = {
+            "select": "select_option",
+            "radio": "choose_radio",
+            "checkbox": "check",
+        }.get(field_type, "fill_text")
+        decision = evaluate_answer_action(answer, action=action_type)
+        if decision.outcome != "ALLOW":
+            continue
         options = list(answer.get("options") or [])
         if field_type == "select":
             matched = _match_option(value, options)
             if matched is None:
                 continue
-            plan.append({"field_name": field_name, "value": matched["value"], "canonical_key": canonical, "action_type": "select_option"})
+            item = {"field_name": field_name, "value": matched["value"], "canonical_key": canonical, "action_type": "select_option"}
+            if include_state_key:
+                item["state_key"] = state_keys.get(field_name, field_name)
+            plan.append(item)
             continue
         if field_type == "radio":
             matched = _match_option(value, options)
             if matched is None:
                 continue
-            plan.append({"field_name": field_name, "value": matched["value"], "canonical_key": canonical, "action_type": "choose_radio"})
+            item = {"field_name": field_name, "value": matched["value"], "canonical_key": canonical, "action_type": "choose_radio"}
+            if include_state_key:
+                item["state_key"] = state_keys.get(field_name, field_name)
+            plan.append(item)
             continue
         if field_type == "checkbox":
             if _normalized(value) not in {"yes", "true", "checked", "1"}:
                 continue
-            plan.append({"field_name": field_name, "value": value, "canonical_key": canonical, "action_type": "check"})
+            item = {"field_name": field_name, "value": value, "canonical_key": canonical, "action_type": "check"}
+            if include_state_key:
+                item["state_key"] = state_keys.get(field_name, field_name)
+            plan.append(item)
             continue
-        plan.append({"field_name": field_name, "value": value, "canonical_key": canonical, "action_type": "fill_text"})
+        item = {"field_name": field_name, "value": value, "canonical_key": canonical, "action_type": "fill_text"}
+        if include_state_key:
+            item["state_key"] = state_keys.get(field_name, field_name)
+        plan.append(item)
     return plan
-
-
-def _requires_explicit_human_consent(answer: dict[str, Any]) -> bool:
-    return requires_explicit_human_consent(
-        str(answer.get("label") or ""),
-        str(answer.get("field_name") or ""),
-        str(answer.get("canonical_key") or ""),
-    )
-
-
 def _match_option(value: str, options: list[Any]) -> dict[str, str] | None:
     wanted = _normalized(value)
     matches: list[dict[str, str]] = []
@@ -1199,7 +1163,14 @@ def _append_dynamic_required_unknowns(
             continue
         field_key = _field_identity(field)
         field_name = str(field.get("name") or field.get("id") or field.get("label") or "").strip()
-        if not field_key or field_key in previous_keys or field_name in answered_keys or field_name in unknown_keys:
+        if not field_key or field_key in previous_keys or field_name in answered_keys:
+            continue
+        if field_name in unknown_keys:
+            for unknown in mapping.get("unknown_fields") or []:
+                if isinstance(unknown, dict) and str(unknown.get("name") or "").strip() == field_name:
+                    unknown.setdefault("reason", "dynamic_required_after_autofill")
+                    dynamic.append(unknown)
+                    break
             continue
         unknown = {
             "name": field_name,
@@ -1216,8 +1187,184 @@ def _append_dynamic_required_unknowns(
     return dynamic
 
 
+def _unknown_required_after_autofill(mapping: dict[str, Any]) -> list[dict[str, Any]]:
+    dynamic = []
+    for field in mapping.get("unknown_fields") or []:
+        if not isinstance(field, dict) or not (field.get("required") or field.get("sensitive")):
+            continue
+        field.setdefault("reason", "dynamic_required_after_autofill")
+        dynamic.append(field)
+    return dynamic
+
+
 def _field_identity(field: dict[str, Any]) -> str:
     return str(field.get("name") or field.get("id") or field.get("label") or "").strip()
+
+
+async def run_bounded_repair_loop(
+    *,
+    page: Page,
+    journey_engine: ApplicationJourneyEngine,
+    adapter: Any,
+    capabilities: Any,
+    current_step: Any,
+    html: str,
+    profile: dict[str, Any],
+    answer_bank: list[dict[str, Any]],
+    previous_validation_report: dict[str, Any],
+    fill_stability: dict[str, Any],
+    fill_result: dict[str, Any],
+    resume_upload: dict[str, Any],
+    dry_run: bool,
+    timeout_ms: int,
+    action_states: dict[str, dict[str, Any]],
+    progress: Progress | None = None,
+) -> dict[str, Any]:
+    retry_budget = max(0, int(os.getenv("APPLICATION_REPAIR_RETRY_BUDGET", "1")))
+    previous_step_dict = current_step.to_dict()
+    rescanned_step = await journey_engine.inspect_surface(
+        adapter=adapter,
+        capabilities=capabilities,
+        surface=current_step.surface,
+        browser_surface=current_step.browser_surface,
+        html=html,
+        profile=profile,
+        answer_bank=answer_bank,
+        surfaces=current_step.surfaces,
+    )
+    if resume_upload.get("status") == "uploaded":
+        _remove_resolved_file_unknowns(rescanned_step.mapping)
+    dynamic_required_fields = _append_dynamic_required_unknowns(
+        rescanned_step.mapping,
+        previous_schema=current_step.schema,
+        rescanned_schema=rescanned_step.schema,
+    )
+    if not dynamic_required_fields and int(fill_stability.get("mutation_count") or 0) > 0:
+        dynamic_required_fields = _unknown_required_after_autofill(rescanned_step.mapping)
+    lifecycle = reconcile_surface_lifecycle(
+        surface_nodes_from_step(previous_step_dict, generation=0),
+        surface_nodes_from_step(rescanned_step.to_dict(), generation=1),
+        generation=1,
+    )
+    repair_report = _build_repair_report(
+        previous_action_plan=previous_step_dict.get("action_plan") or {},
+        rescanned_action_plan=rescanned_step.to_dict().get("action_plan") or {},
+        dynamic_required_fields=dynamic_required_fields,
+        previous_validation_report=previous_validation_report,
+        lifecycle=[node.to_dict() for node in lifecycle],
+        retry_budget=retry_budget,
+    )
+    repair_report["skipped_already_verified"] = _verified_action_fields(
+        previous_step_dict.get("action_plan") or {},
+        action_states,
+    )
+    current_validation = previous_validation_report
+    if dynamic_required_fields:
+        repair_report["status"] = "needs_user_input"
+        repair_report["terminal_blocker"] = "missing_answer"
+        return {
+            "step": rescanned_step,
+            "rescanned_step": rescanned_step.to_dict(),
+            "validation_report": current_validation,
+            "repair_report": repair_report,
+        }
+    if retry_budget <= 0:
+        repair_report["status"] = "failed_terminal"
+        repair_report["terminal_blocker"] = "retry_budget_exhausted"
+        repair_report["reason_codes"] = sorted(set([*repair_report["reason_codes"], "retry_budget_exhausted"]))
+        return {
+            "step": rescanned_step,
+            "rescanned_step": rescanned_step.to_dict(),
+            "validation_report": current_validation,
+            "repair_report": repair_report,
+        }
+    recoverable = _recoverable_repair_targets(
+        previous_action_plan=previous_step_dict.get("action_plan") or {},
+        rescanned_action_plan=rescanned_step.to_dict().get("action_plan") or {},
+        validation_report=previous_validation_report,
+        action_states=action_states,
+    )
+    if not recoverable:
+        if previous_validation_report.get("status") == "validation_failed":
+            _append_validation_unknown(rescanned_step.mapping, previous_validation_report)
+            repair_report["status"] = "failed_terminal"
+            repair_report["terminal_blocker"] = "validation_not_recoverable"
+        return {
+            "step": rescanned_step,
+            "rescanned_step": rescanned_step.to_dict(),
+            "validation_report": current_validation,
+            "repair_report": repair_report,
+        }
+    attempts = []
+    for target in recoverable[:retry_budget]:
+        field_name = str(target.get("field_name") or "")
+        state_key = str(target.get("state_key") or field_name)
+        rebound = _rebind_target_control(rescanned_step.schema, target)
+        attempt = {
+            "field_name": field_name,
+            "state_key": state_key,
+            "classification": target["classification"],
+            "strategy": "logical_rebind_retry" if rebound else "rediscovered_field_retry",
+            "policy": "not_evaluated",
+            "rebound": bool(rebound),
+        }
+        if not rebound and target["classification"] in {"stale_control", "dynamic_id_changed", "control_missing"}:
+            action_states[state_key] = {"status": "failed-terminal", "reason": "ambiguous_semantic_mapping"}
+            attempt["status"] = "failed-terminal"
+            attempt["reason"] = "ambiguous_semantic_mapping"
+            attempts.append(attempt)
+            continue
+        planned = _find_action_by_field(rescanned_step.action_plan.to_dict(), str((rebound or {}).get("name") or field_name))
+        answer = _find_answer_by_field(rescanned_step.mapping, str((planned or {}).get("field_name") or field_name))
+        decision = evaluate_answer_action(answer or {}, action=str((planned or {}).get("action_type") or target.get("action_type") or "fill_text"))
+        attempt["policy"] = decision.to_dict()
+        if decision.outcome != "ALLOW" or planned is None:
+            _append_validation_unknown(rescanned_step.mapping, previous_validation_report)
+            action_states[state_key] = {"status": "failed-terminal", "reason": decision.reason_code or "policy_review"}
+            attempt["status"] = "failed-terminal"
+            attempt["reason"] = decision.reason_code or "policy_review"
+            attempts.append(attempt)
+            continue
+        _progress(progress, f"Retrying recoverable application action: {planned['field_name']}.")
+        retry_fill = await fill_safe_fields_on_page(
+            page,
+            rescanned_step.mapping,
+            dry_run=dry_run,
+            action_plan=rescanned_step.action_plan.to_dict(),
+            action_states=action_states,
+            only_fields={str(planned["field_name"])},
+        )
+        _merge_fill_result(fill_result, retry_fill)
+        await _wait_for_interactive_stability(page, timeout_ms)
+        current_validation = (await validate_application_surface(page, rescanned_step.action_plan.to_dict())).to_dict()
+        _update_action_states_from_validation(
+            action_states,
+            action_plan=rescanned_step.action_plan.to_dict(),
+            validation_report=current_validation,
+            fill_result=retry_fill,
+        )
+        attempt["status"] = "verified" if current_validation.get("status") == "validation_clean" else "failed-recoverable"
+        attempt["second_validation"] = current_validation
+        attempts.append(attempt)
+        if current_validation.get("status") == "validation_clean":
+            break
+    repair_report["attempts"] = len(attempts)
+    repair_report["retry_attempts"] = attempts
+    repair_report["second_verification"] = any("second_validation" in attempt for attempt in attempts)
+    if current_validation.get("status") == "validation_clean":
+        repair_report["status"] = "repaired"
+        repair_report["failure_classification"] = attempts[-1]["classification"] if attempts else repair_report["failure_classification"]
+    else:
+        _append_validation_unknown(rescanned_step.mapping, current_validation)
+        repair_report["status"] = "failed_terminal"
+        repair_report["terminal_blocker"] = "retry_budget_exhausted"
+        repair_report["reason_codes"] = sorted(set([*repair_report["reason_codes"], "retry_budget_exhausted"]))
+    return {
+        "step": rescanned_step,
+        "rescanned_step": rescanned_step.to_dict(),
+        "validation_report": current_validation,
+        "repair_report": repair_report,
+    }
 
 
 def _build_repair_report(
@@ -1225,18 +1372,198 @@ def _build_repair_report(
     previous_action_plan: dict[str, Any],
     rescanned_action_plan: dict[str, Any],
     dynamic_required_fields: list[dict[str, Any]],
+    previous_validation_report: dict[str, Any] | None = None,
+    lifecycle: list[dict[str, Any]] | None = None,
+    retry_budget: int = 1,
 ) -> dict[str, Any]:
     previous_fingerprint = str(previous_action_plan.get("form_fingerprint") or "")
     rescanned_fingerprint = str(rescanned_action_plan.get("form_fingerprint") or "")
+    reason_codes = []
+    if dynamic_required_fields:
+        reason_codes.append("dynamic_required_after_autofill")
+    if previous_fingerprint and rescanned_fingerprint and previous_fingerprint != rescanned_fingerprint:
+        reason_codes.append("form_fingerprint_changed")
+    if (previous_validation_report or {}).get("status") == "validation_failed":
+        reason_codes.append("postcondition_failed")
     return {
         "status": "needs_user_input" if dynamic_required_fields else "no_repair_needed",
+        "attempts": 0,
+        "retry_budget": retry_budget,
         "rescans": 1,
+        "rediscovery_generation": 1,
+        "surface_lifecycle": lifecycle or [],
         "form_fingerprint_changed": bool(previous_fingerprint and rescanned_fingerprint and previous_fingerprint != rescanned_fingerprint),
+        "failure_classification": _classify_repair_failure(previous_validation_report or {}, dynamic_required_fields),
+        "reason_codes": reason_codes,
         "dynamic_required_fields": dynamic_required_fields,
         "dynamic_required_count": len(dynamic_required_fields),
         "previous_form_fingerprint": previous_fingerprint,
         "rescanned_form_fingerprint": rescanned_fingerprint,
     }
+
+
+def _recoverable_repair_targets(
+    *,
+    previous_action_plan: dict[str, Any],
+    rescanned_action_plan: dict[str, Any],
+    validation_report: dict[str, Any],
+    action_states: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if validation_report.get("status") != "validation_failed":
+        return []
+    previous_actions = [action for action in previous_action_plan.get("actions") or [] if isinstance(action, dict)]
+    issue_fields = {
+        str(issue.get("field_name") or "")
+        for issue in validation_report.get("issues") or []
+        if isinstance(issue, dict)
+    }
+    targets = []
+    for action in previous_actions:
+        field_name = str(action.get("field_name") or "")
+        state_key = _action_state_key(action)
+        state = action_states.get(state_key) or {}
+        if state.get("status") == "verified":
+            targets.append(
+                {
+                    "field_name": field_name,
+                    "state_key": state_key,
+                    "classification": "skipped-already-verified",
+                    "action_type": action.get("action_type"),
+                    "skipped": True,
+                }
+            )
+            continue
+        if issue_fields and field_name not in issue_fields:
+            continue
+        classification = _classify_action_repair_failure(action, rescanned_action_plan)
+        if classification in {"missing_answer", "ambiguous_semantic_mapping", "policy_review"}:
+            action_states[state_key] = {"status": "failed-terminal", "reason": classification}
+            continue
+        targets.append(
+            {
+                "field_name": field_name,
+                "state_key": state_key,
+                "classification": classification,
+                "action_type": action.get("action_type"),
+                "control_identity": ((action.get("control_handle") or {}).get("logical_identity") or {}),
+            }
+        )
+    return [target for target in targets if not target.get("skipped")]
+
+
+def _verified_action_fields(action_plan: dict[str, Any], action_states: dict[str, dict[str, Any]]) -> list[str]:
+    verified = []
+    for action in action_plan.get("actions") or []:
+        if not isinstance(action, dict):
+            continue
+        if (action_states.get(_action_state_key(action)) or {}).get("status") == "verified":
+            field_name = str(action.get("field_name") or "")
+            if field_name:
+                verified.append(field_name)
+    return list(dict.fromkeys(verified))
+
+
+def _classify_repair_failure(validation_report: dict[str, Any], dynamic_required_fields: list[dict[str, Any]]) -> str:
+    if dynamic_required_fields:
+        return "dynamic_required"
+    issues = [issue for issue in validation_report.get("issues") or [] if isinstance(issue, dict)]
+    if not issues:
+        return "none"
+    if any(str(issue.get("issue_type") or "") == "control_missing" for issue in issues):
+        return "stale_control"
+    if any(str(issue.get("issue_type") or "") in {"browser_invalid", "aria_invalid", "visible_error"} for issue in issues):
+        return "async_validation"
+    return "postcondition_failed"
+
+
+def _classify_action_repair_failure(action: dict[str, Any], rescanned_action_plan: dict[str, Any]) -> str:
+    field_name = str(action.get("field_name") or "")
+    rescanned = _find_action_by_field(rescanned_action_plan, field_name)
+    if rescanned:
+        return "postcondition_failed"
+    identity = ((action.get("control_handle") or {}).get("logical_identity") or {})
+    if identity:
+        return "dynamic_id_changed"
+    return "control_missing"
+
+
+def _rebind_target_control(schema: dict[str, Any], target: dict[str, Any]) -> dict[str, Any] | None:
+    identity = target.get("control_identity") if isinstance(target.get("control_identity"), dict) else {}
+    if identity:
+        return rebind_control(schema, identity)
+    field_name = str(target.get("field_name") or "")
+    for field in schema.get("fields") or []:
+        if isinstance(field, dict) and str(field.get("name") or field.get("id") or "") == field_name:
+            return field
+    return None
+
+
+def _find_action_by_field(action_plan: dict[str, Any], field_name: str) -> dict[str, Any] | None:
+    for action in action_plan.get("actions") or []:
+        if isinstance(action, dict) and str(action.get("field_name") or "") == field_name:
+            return action
+    return None
+
+
+def _find_answer_by_field(mapping: dict[str, Any], field_name: str) -> dict[str, Any] | None:
+    for answer in mapping.get("answers") or []:
+        if isinstance(answer, dict) and str(answer.get("field_name") or "") == field_name:
+            return answer
+    return None
+
+
+def _append_validation_unknown(mapping: dict[str, Any], validation_report: dict[str, Any]) -> None:
+    unknowns = mapping.setdefault("unknown_fields", [])
+    if any(isinstance(item, dict) and item.get("name") == "validation" for item in unknowns):
+        return
+    unknowns.append(
+        {
+            "name": "validation",
+            "label": "Validation errors or failed postconditions were detected after autofill.",
+            "type": "validation",
+            "required": True,
+            "sensitive": False,
+            "classification": "unknown",
+            "issues": validation_report.get("issues") or [],
+        }
+    )
+
+
+def _update_action_states_from_validation(
+    action_states: dict[str, dict[str, Any]],
+    *,
+    action_plan: dict[str, Any],
+    validation_report: dict[str, Any],
+    fill_result: dict[str, Any],
+) -> None:
+    issue_fields = {
+        str(issue.get("field_name") or "")
+        for issue in validation_report.get("issues") or []
+        if isinstance(issue, dict) and str(issue.get("field_name") or "")
+    }
+    filled = {str(item) for item in fill_result.get("filled_fields") or [] if str(item).strip()}
+    skipped = {str(item) for item in fill_result.get("skipped_fields") or [] if str(item).strip()}
+    for action in action_plan.get("actions") or []:
+        if not isinstance(action, dict):
+            continue
+        field_name = str(action.get("field_name") or "")
+        key = _action_state_key(action)
+        if field_name in skipped:
+            action_states[key] = {"status": "failed-recoverable", "field_name": field_name, "reason": "planned_action_not_executed"}
+            continue
+        if field_name in filled:
+            action_states.setdefault(key, {"status": "attempted", "field_name": field_name})
+        if field_name in filled and field_name not in issue_fields:
+            action_states[key] = {"status": "verified", "field_name": field_name}
+            continue
+        if field_name in issue_fields:
+            action_states[key] = {"status": "failed-recoverable", "field_name": field_name, "reason": "postcondition_failed"}
+
+
+def _action_state_key(action: dict[str, Any]) -> str:
+    handle = action.get("control_handle") if isinstance(action.get("control_handle"), dict) else {}
+    logical = handle.get("logical_identity") if isinstance(handle.get("logical_identity"), dict) else {}
+    return str(logical.get("fingerprint") or handle.get("fingerprint") or action.get("field_name") or "")
 
 
 def _build_application_automation_metrics(
@@ -1396,7 +1723,7 @@ def _build_human_intervention_report(
     for field_name in skipped_fields:
         if not any(item.get("field") == field_name for item in items):
             items.append({"type": "widget", "field": field_name, "label": field_name, "reason": "planned_action_not_executed"})
-    if next_state == "ready_for_review" and automation_metrics.get("submit_only_ready"):
+    if next_state == "submit_only" and automation_metrics.get("submit_only_ready"):
         items.append(
             {
                 "type": "submit_only",
@@ -1462,9 +1789,15 @@ def _ratio(numerator: int, denominator: int) -> float:
 
 
 def _merge_fill_result(target: dict[str, Any], update: dict[str, Any]) -> None:
-    target["fields_autofilled"] = int(target.get("fields_autofilled") or 0) + int(update.get("fields_autofilled") or 0)
-    target.setdefault("filled_fields", []).extend(list(update.get("filled_fields") or []))
-    target.setdefault("skipped_fields", []).extend(list(update.get("skipped_fields") or []))
+    filled = list(dict.fromkeys([*list(target.get("filled_fields") or []), *list(update.get("filled_fields") or [])]))
+    skipped = list(dict.fromkeys([*list(target.get("skipped_fields") or []), *list(update.get("skipped_fields") or [])]))
+    skipped_verified = list(
+        dict.fromkeys([*list(target.get("skipped_already_verified") or []), *list(update.get("skipped_already_verified") or [])])
+    )
+    target["fields_autofilled"] = len(filled)
+    target["filled_fields"] = filled
+    target["skipped_fields"] = skipped
+    target["skipped_already_verified"] = skipped_verified
 
 
 async def try_saved_login(
@@ -1541,13 +1874,30 @@ async def try_saved_login(
         return {"ok": False, "reason": f"Saved login failed: {exc}", "username": username}
 
 
-async def fill_safe_fields_on_page(page: Page, mapping: dict[str, Any], *, dry_run: bool = True) -> dict[str, Any]:
+async def fill_safe_fields_on_page(
+    page: Page,
+    mapping: dict[str, Any],
+    *,
+    dry_run: bool = True,
+    action_plan: dict[str, Any] | None = None,
+    action_states: dict[str, dict[str, Any]] | None = None,
+    only_fields: set[str] | None = None,
+) -> dict[str, Any]:
     filled: list[str] = []
     skipped: list[str] = []
-    for item in safe_fill_plan(mapping):
+    skipped_verified: list[str] = []
+    for item in safe_fill_plan(mapping, action_plan):
         field_name = item["field_name"]
+        if only_fields is not None and field_name not in only_fields:
+            continue
+        state_key = str(item.get("state_key") or field_name)
+        if (action_states or {}).get(state_key, {}).get("status") == "verified":
+            skipped_verified.append(field_name)
+            continue
         value = item["value"]
         action_type = item.get("action_type") or "fill_text"
+        if action_states is not None:
+            action_states[state_key] = {"status": "attempted", "field_name": field_name}
         if action_type == "select_option":
             locator = page.locator(f'select[name="{field_name}"], select[id="{field_name}"]').first
             try:
@@ -1630,6 +1980,8 @@ async def fill_safe_fields_on_page(page: Page, mapping: dict[str, Any], *, dry_r
         "fields_autofilled": len(filled),
         "filled_fields": filled,
         "skipped_fields": skipped,
+        "action_states": action_states or {},
+        "skipped_already_verified": skipped_verified,
     }
 
 

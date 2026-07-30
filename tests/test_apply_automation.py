@@ -229,6 +229,78 @@ def test_answer_bank_prefers_question_pattern_over_canonical_guess() -> None:
     ]
 
 
+def test_answer_bank_does_not_resolve_name_from_headline() -> None:
+    mapping = map_answers(
+        {
+            "fields": [
+                {"name": "full_name", "label": "Full name", "type": "text", "required": True},
+                {"name": "first_name", "label": "First name", "type": "text", "required": True},
+                {"name": "last_name", "label": "Last name", "type": "text", "required": True},
+            ]
+        },
+        {"headline": "Synthetic backend engineer"},
+        [],
+    )
+
+    answers = {answer["field_name"]: answer for answer in mapping["answers"]}
+
+    assert answers["full_name"]["canonical_key"] == "full_name"
+    assert answers["full_name"]["value"] is None
+    assert answers["full_name"]["match_strategy"] == "unresolved"
+    assert answers["first_name"]["value"] is None
+    assert answers["last_name"]["value"] is None
+    assert {field["name"] for field in mapping["unknown_fields"]} == {"full_name", "first_name", "last_name"}
+    assert safe_fill_plan(mapping) == []
+
+
+def test_answer_bank_splits_first_and_last_name_without_headline_fallback() -> None:
+    mapping = map_answers(
+        {
+            "fields": [
+                {"name": "first_name", "label": "First name", "type": "text", "required": True},
+                {"name": "last_name", "label": "Last name", "type": "text", "required": True},
+                {"name": "email", "label": "Email", "type": "email", "required": True},
+            ]
+        },
+        {
+            "full_name": "Synthetic Candidate",
+            "headline": "Backend engineer",
+            "email": "candidate@example.test",
+        },
+        [],
+    )
+    answers = {answer["field_name"]: answer for answer in mapping["answers"]}
+
+    assert answers["first_name"]["canonical_key"] == "first_name"
+    assert answers["first_name"]["value"] == "Synthetic"
+    assert answers["last_name"]["canonical_key"] == "last_name"
+    assert answers["last_name"]["value"] == "Candidate"
+    assert answers["email"]["value"] == "candidate@example.test"
+    assert mapping["unknown_fields"] == []
+
+
+def test_answer_bank_maps_by_label_not_misleading_control_name() -> None:
+    mapping = map_answers(
+        {
+            "fields": [
+                {"name": "linkedin", "label": "Email", "type": "email", "required": True},
+                {"name": "email", "label": "LinkedIn profile", "type": "url", "required": True},
+            ]
+        },
+        {
+            "email": "candidate@example.test",
+            "linkedin_url": "https://www.linkedin.com/in/synthetic",
+        },
+        [],
+    )
+    answers = {answer["field_name"]: answer for answer in mapping["answers"]}
+
+    assert answers["linkedin"]["canonical_key"] == "email"
+    assert answers["linkedin"]["value"] == "candidate@example.test"
+    assert answers["email"]["canonical_key"] == "linkedin"
+    assert answers["email"]["value"] == "https://www.linkedin.com/in/synthetic"
+
+
 def test_answer_bank_does_not_use_generated_or_expired_answers() -> None:
     mapping = map_answers(
         {"fields": [{"name": "custom", "label": "Tell us about your favorite project", "required": True}]},
