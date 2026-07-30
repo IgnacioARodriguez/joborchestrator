@@ -173,7 +173,7 @@ Before promoting a prompt version:
 
 ## Materials Controlled Generation Progress
 
-The materials pipeline now has an incremental controlled-generation path under feature flags. `keywords_used` is derived in code, failed attempts can be persisted in `materials_generation_attempts`, NVIDIA has a planner-only contract, and `build_application_kit_with_nvidia` can route CV generation through planner + deterministic renderer when controlled flags are enabled. CV rendering can preserve role headers, dates, titles, companies, bullets, canonical technologies, and education without freeform CV authorship.
+The materials pipeline now has an incremental controlled-generation path under feature flags. `keywords_used` and partial `risk_flags` are derived in code, failed and accepted attempts can be persisted in `materials_generation_attempts`, NVIDIA has a planner-only contract, and `build_application_kit_with_nvidia` can route CV generation through planner + deterministic renderer when controlled flags are enabled. CV rendering can preserve role headers, dates, titles, companies, bullets, canonical technologies, and education without freeform CV authorship; parse uncertainty is surfaced as human-review metadata.
 
 The controlled CV/planner/fallback flags remain disabled by default until paired live benchmark evidence exists. OpenAI fallback is limited to CV planning followed by deterministic rendering, and missing fallback credentials preserve the original failure metadata. Offline benchmark results are documented in `docs/MATERIALS_CONTROLLED_GENERATION_BASELINE.md`; live pass-rate and latency targets are not claimed yet.
 
@@ -184,7 +184,7 @@ As of this document, the prompt infrastructure is stronger than the measured pro
 Known gaps to close:
 
 - The golden set is still small.
-- Materials and ATS CV need a fresh v2 baseline run.
+- Materials and ATS CV need a fresh live paired controlled-generation baseline; the offline benchmark is documented, but live pass-rate and latency targets are not claimed.
 - Historical eval summaries showed failures around missing required terms, recruiter message length, and internal notes in ATS CV output.
 - Ranking still relies on retry for some transient NVIDIA responses, but worker item retries now recover temporary timeouts before terminal failure.
 - Ranking has fresh v9 supervised-use evidence from a 30-job probe, but a full active-v9 production rerank is still optional/unfinished.
