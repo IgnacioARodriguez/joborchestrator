@@ -161,6 +161,25 @@ def test_retry_cannot_change_frozen_fields():
     assert frozen_field_regressions(previous, repaired, directive.frozen_fields) == ["ats_cv_text"]
 
 
+def test_repair_regression_is_rejected_with_changed_frozen_fields():
+    previous = {"ats_cv_text": "old cv", "cover_letter": "old cover", "recruiter_message": "too eager"}
+    repaired = {"ats_cv_text": "changed cv", "cover_letter": "old cover", "recruiter_message": "may be relevant"}
+
+    feedback = llm._repair_regression_feedback(
+        previous,
+        repaired,
+        "application materials use overconfident tone for AVOID ranking: eager to",
+    )
+
+    assert feedback == "repair_regression: response changed frozen fields: ats_cv_text"
+
+
+def test_canonical_role_technologies_prefers_rest_api_over_generic_api_alias():
+    technologies = llm._canonical_role_technologies("Technologies: Python, REST APIs, Redis")
+
+    assert technologies == ["Python", "REST APIs", "Redis"]
+
+
 def test_repair_receives_previous_response():
     previous = {"ats_cv_text": "old cv", "cover_letter": "old cover", "recruiter_message": "old note"}
     messages = llm._nvidia_contract_messages(
@@ -529,7 +548,7 @@ The profile stays within source evidence for Fiction Express and Talan Consultin
     assert len(calls) == 1
     fiction_block = response["ats_cv_text"].split("Backend Developer | Fiction Express", 1)[1].split("Full Stack Developer | Talan Consulting", 1)[0]
     assert "Kubernetes" not in fiction_block
-    assert "Technologies: Python, REST APIs, APIs, Redis" in fiction_block
+    assert "Technologies: Python, REST APIs, Redis" in fiction_block
     assert response["_generation_metadata"]["validation_attempts"] == 1
     assert "unsupported role-specific technologies" in response["_generation_metadata"]["validation_errors"][0]
 

@@ -26,6 +26,7 @@ from joborchestrator.intelligence.materials_routing import controlled_cv_enabled
 from joborchestrator.intelligence.materials_repair import (
     build_repair_directive,
     deterministic_repair,
+    frozen_field_regressions,
     repair_prompt_payload,
 )
 from joborchestrator.intelligence.materials_validation import (
@@ -590,6 +591,23 @@ def _apply_deterministic_materials_repair(
         return parsed, validation_feedback, []
     _derive_cv_metadata(repaired, payload)
     return repaired, validator(repaired), [str(validation_feedback)]
+
+
+def _repair_regression_feedback(
+    previous_response: dict[str, Any] | None,
+    repaired_response: dict[str, Any],
+    validation_feedback: str | None,
+) -> str | None:
+    if not previous_response or not validation_feedback:
+        return None
+    directive = build_repair_directive(
+        previous_response,
+        validation_feedback_to_issues(validation_feedback),
+    )
+    changed = frozen_field_regressions(previous_response, repaired_response, directive.frozen_fields)
+    if not changed:
+        return None
+    return "repair_regression: response changed frozen fields: " + ", ".join(changed)
 
 
 def _repair_missing_canonical_role_technologies(response: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
@@ -1216,6 +1234,7 @@ def _call_nvidia_cv(
     validation_retry_limit: int | None = None,
 ) -> dict[str, Any]:
     validation_feedback: str | None = None
+    repair_constraint_feedback: str | None = None
     validation_errors: list[str] = []
     previous_response: dict[str, Any] | None = None
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
@@ -1236,14 +1255,19 @@ def _call_nvidia_cv(
                 str(exc),
                 generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
             ) from exc
-        _derive_cv_metadata(parsed, payload)
-        validation_feedback = _ats_cv_response_validation_error(parsed, _base_cv_text(payload), payload)
-        parsed, validation_feedback, deterministic_feedbacks = _apply_deterministic_materials_repair(
-            parsed,
-            payload,
-            validation_feedback,
-            lambda repaired: _ats_cv_response_validation_error(repaired, _base_cv_text(payload), payload),
-        )
+        repair_regression = _repair_regression_feedback(previous_response, parsed, repair_constraint_feedback)
+        if repair_regression:
+            validation_feedback = repair_regression
+            deterministic_feedbacks: list[str] = []
+        else:
+            _derive_cv_metadata(parsed, payload)
+            validation_feedback = _ats_cv_response_validation_error(parsed, _base_cv_text(payload), payload)
+            parsed, validation_feedback, deterministic_feedbacks = _apply_deterministic_materials_repair(
+                parsed,
+                payload,
+                validation_feedback,
+                lambda repaired: _ats_cv_response_validation_error(repaired, _base_cv_text(payload), payload),
+            )
         degraded_feedbacks = _degraded_validation_feedbacks(validation_feedback)
         blocking_feedback = _blocking_validation_feedback(validation_feedback)
         if not blocking_feedback:
@@ -1254,7 +1278,9 @@ def _call_nvidia_cv(
             validation_errors.extend(deterministic_feedbacks)
             validation_errors.extend(degraded_feedbacks)
             validation_errors.append(blocking_feedback)
-            previous_response = parsed
+            if not repair_regression:
+                previous_response = parsed
+                repair_constraint_feedback = validation_feedback
             logger.warning(
                 "Retrying NVIDIA ATS CV generation after invalid response: %s received_keys=%s",
                 blocking_feedback,
@@ -1277,6 +1303,7 @@ def _call_nvidia_kit(
     validation_retry_limit: int | None = None,
 ) -> dict[str, Any]:
     validation_feedback: str | None = None
+    repair_constraint_feedback: str | None = None
     validation_errors: list[str] = []
     previous_response: dict[str, Any] | None = None
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
@@ -1297,7 +1324,8 @@ def _call_nvidia_kit(
                 str(exc),
                 generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
             ) from exc
-        validation_feedback = _kit_validation_error(parsed, payload)
+        repair_regression = _repair_regression_feedback(previous_response, parsed, repair_constraint_feedback)
+        validation_feedback = repair_regression or _kit_validation_error(parsed, payload)
         if not validation_feedback:
             parsed["_generation_metadata"] = {
                 "validation_attempts": attempt + 1,
@@ -1307,7 +1335,9 @@ def _call_nvidia_kit(
             return parsed
         if attempt < retry_limit and not _is_unrecoverable_validation_feedback(validation_feedback):
             validation_errors.append(validation_feedback)
-            previous_response = parsed
+            if not repair_regression:
+                previous_response = parsed
+                repair_constraint_feedback = validation_feedback
             logger.warning(
                 "Retrying NVIDIA kit generation after invalid response: %s received_keys=%s",
                 validation_feedback,
@@ -2130,11 +2160,15 @@ def _canonical_role_technologies(normalized_or_raw_block: str) -> list[str]:
     if not tech_lines:
         return []
     text = "\n".join(tech_lines)
-    return [
+    technologies = [
         term
         for term in ROLE_ATTRIBUTION_TECH_TERMS
         if _contains_phrase_for_materials(text, term)
     ]
+    # REST APIs is a more specific canonical term than the generic APIs alias.
+    if "REST APIs" in technologies:
+        technologies.remove("APIs")
+    return technologies
 
 
 def _unsupported_hedge_problems(text: str) -> list[str]:
