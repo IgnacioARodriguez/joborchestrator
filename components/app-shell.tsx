@@ -124,10 +124,18 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
     jobsMeta,
     backendOnline,
     loading,
+    preparationLoading,
     refresh,
+    refreshPreparationQueue,
   } = useStore()
   const backendReady = backendOnline || jobsMeta !== null || jobs.length > 0
-  const totalJobs = jobsMeta?.total ?? jobs.length
+  const totalJobs = jobsMeta?.pipeline_counts?.all ?? jobsMeta?.unfiltered_total ?? jobsMeta?.total ?? jobs.length
+  const currentLoading = section === "apply" ? preparationLoading : loading
+
+  function refreshCurrentSection() {
+    if (section === "apply") return refreshPreparationQueue()
+    return refresh()
+  }
 
   function navigate(next: Section) {
     setSection(next)
@@ -274,10 +282,10 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={loading}
-                onClick={() => void refresh()}
+                disabled={currentLoading}
+                onClick={() => void refreshCurrentSection()}
               >
-                {loading ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+                {currentLoading ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
                 Actualizar
               </Button>
               <Button variant="outline" size="icon-sm" aria-label="Configuración" onClick={() => navigate("settings")}>

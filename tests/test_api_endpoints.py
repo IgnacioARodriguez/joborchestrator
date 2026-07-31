@@ -413,6 +413,56 @@ def test_apply_queue_search_filters_server_side(tmp_path, monkeypatch):
     assert [job["title"] for job in body["jobs"]] == ["Frontend Designer"]
 
 
+def test_apply_queue_filters_and_counts_pipeline_before_pagination(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    statuses = [
+        ("new-one", "New One", "new"),
+        ("new-two", "New Two", "new"),
+        ("saved-one", "Saved One", "shortlisted"),
+        ("saved-two", "Saved Two", "ready_to_apply"),
+        ("discarded-one", "Discarded One", "discarded"),
+    ]
+    for index, (external_id, title, pipeline_status) in enumerate(statuses, start=1):
+        db.upsert_job_posting(
+            make_job(external_id=external_id, title=title),
+            seen_at=(datetime.now() - timedelta(minutes=index)).isoformat(timespec="seconds"),
+        )
+        rows = db.get_job_postings(limit=None)
+        job_id = int(rows[rows["external_id"] == external_id].iloc[0]["id"])
+        db.update_job_status(job_id, pipeline_status)
+        db.save_job_ranking(job_id, make_ranking("ranking_v1.1.0-nvidia", 90 - index, "APPLY_NOW"))
+
+    saved = client.get(
+        "/api/apply-queue",
+        params={"freshness": "all", "pipeline": "saved", "limit": 1, "offset": 1},
+    )
+    apply_queue = client.get("/api/apply-queue", params={"freshness": "all", "pipeline": "apply"})
+    invalid = client.get("/api/apply-queue", params={"pipeline": "unknown"})
+
+    assert saved.status_code == 200
+    saved_body = saved.json()
+    assert saved_body["meta"]["pipeline"] == "saved"
+    assert saved_body["meta"]["total"] == 2
+    assert saved_body["meta"]["returned"] == 1
+    assert saved_body["meta"]["has_previous"] is True
+    assert saved_body["meta"]["pipeline_counts"] == {
+        "all": 5,
+        "new": 2,
+        "saved": 2,
+        "discarded": 1,
+        "apply": 4,
+    }
+    assert saved_body["jobs"][0]["pipeline_status"] in {"shortlisted", "ready_to_apply"}
+
+    assert apply_queue.status_code == 200
+    apply_body = apply_queue.json()
+    assert apply_body["meta"]["total"] == 4
+    assert all(job["pipeline_status"] != "discarded" for job in apply_body["jobs"])
+
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"] == "Unsupported pipeline filter."
+
+
 def test_apply_queue_excludes_confirmed_applications(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
     for external_id, title in [

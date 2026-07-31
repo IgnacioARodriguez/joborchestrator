@@ -1,0 +1,858 @@
+diff --git a/components/app-shell.tsx b/components/app-shell.tsx
+index b986cfb..9a22d9e 100644
+--- a/components/app-shell.tsx
++++ b/components/app-shell.tsx
+@@ -124,10 +124,18 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
+     jobsMeta,
+     backendOnline,
+     loading,
++    preparationLoading,
+     refresh,
++    refreshPreparationQueue,
+   } = useStore()
+   const backendReady = backendOnline || jobsMeta !== null || jobs.length > 0
+-  const totalJobs = jobsMeta?.total ?? jobs.length
++  const totalJobs = jobsMeta?.pipeline_counts?.all ?? jobsMeta?.unfiltered_total ?? jobsMeta?.total ?? jobs.length
++  const currentLoading = section === "apply" ? preparationLoading : loading
++
++  function refreshCurrentSection() {
++    if (section === "apply") return refreshPreparationQueue()
++    return refresh()
++  }
+ 
+   function navigate(next: Section) {
+     setSection(next)
+@@ -274,10 +282,10 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
+               <Button
+                 variant="outline"
+                 size="sm"
+-                disabled={loading}
+-                onClick={() => void refresh()}
++                disabled={currentLoading}
++                onClick={() => void refreshCurrentSection()}
+               >
+-                {loading ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
++                {currentLoading ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+                 Actualizar
+               </Button>
+               <Button variant="outline" size="icon-sm" aria-label="Configuración" onClick={() => navigate("settings")}>
+diff --git a/components/screens/pipeline-screen.tsx b/components/screens/pipeline-screen.tsx
+index 99e3add..bc5bfa1 100644
+--- a/components/screens/pipeline-screen.tsx
++++ b/components/screens/pipeline-screen.tsx
+@@ -6,6 +6,8 @@ import {
+   Building2,
+   Check,
+   CheckCircle2,
++  ChevronLeft,
++  ChevronRight,
+   Circle,
+   ClipboardCheck,
+   ExternalLink,
+@@ -399,13 +401,14 @@ export function PipelineScreen({
+   onOpenJob: (id: string) => void
+ }) {
+   const {
+-    jobs,
++    preparationJobs: jobs,
+     applications,
+-    jobsStatus,
+-    applyQueuePage,
++    preparationJobsStatus: jobsStatus,
++    preparationQueuePage: applyQueuePage,
+     applyQueuePageSize,
+-    jobsMeta,
+-    refresh,
++    preparationJobsMeta: jobsMeta,
++    refreshPreparationQueue: refresh,
++    setPreparationQueuePage,
+     recordApplication,
+     generateMaterials,
+     loadJobDetail,
+@@ -418,6 +421,10 @@ export function PipelineScreen({
+   const [operationIssueByJob, setOperationIssueByJob] = useState<Record<string, string>>({})
+   const [confirmation, setConfirmation] = useState<{ job: JobListItem; session: ApplicationSession | null } | null>(null)
+ 
++  useEffect(() => {
++    void refresh()
++  }, [refresh])
++
+   useEffect(() => {
+     let cancelled = false
+     async function loadSessions() {
+@@ -659,6 +666,12 @@ export function PipelineScreen({
+ 
+   const total = jobsMeta?.total ?? preparations.length
+   const empty = jobsStatus === "empty" || preparations.length === 0
++  const offset = jobsMeta?.offset ?? (applyQueuePage - 1) * applyQueuePageSize
++  const returnedJobs = jobsMeta?.returned ?? jobs.length
++  const rangeStart = total === 0 ? 0 : offset + 1
++  const rangeEnd = Math.min(offset + returnedJobs, total)
++  const canPagePrevious = Boolean(jobsMeta?.has_previous) || applyQueuePage > 1
++  const canPageNext = Boolean(jobsMeta?.has_next)
+ 
+   return (
+     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+@@ -715,16 +728,31 @@ export function PipelineScreen({
+         )}
+       </div>
+ 
+-      {jobsMeta?.has_next || jobsMeta?.has_previous ? (
+-        <div className="flex shrink-0 items-center justify-between border-t border-border pt-3 text-xs text-muted-foreground">
+-          <span>
+-            Pagina {applyQueuePage} de la cola
+-          </span>
+-          <span>
+-            Mostrando hasta {applyQueuePageSize} candidaturas
+-          </span>
++      <div className="flex shrink-0 flex-col gap-2 border-t border-border pt-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
++        <span>
++          {total === 0 ? "0 candidaturas" : `${rangeStart}-${rangeEnd} de ${total} candidaturas`}
++        </span>
++        <div className="flex items-center gap-2">
++          <Button
++            variant="outline"
++            size="sm"
++            disabled={jobsStatus === "loading" || jobsStatus === "refreshing" || !canPagePrevious}
++            onClick={() => setPreparationQueuePage(applyQueuePage - 1)}
++          >
++            <ChevronLeft data-icon="inline-start" />
++            Anterior
++          </Button>
++          <Button
++            variant="outline"
++            size="sm"
++            disabled={jobsStatus === "loading" || jobsStatus === "refreshing" || !canPageNext}
++            onClick={() => setPreparationQueuePage(applyQueuePage + 1)}
++          >
++            Siguiente
++            <ChevronRight data-icon="inline-end" />
++          </Button>
+         </div>
+-      ) : null}
++      </div>
+       {confirmation ? (
+         <SubmissionConfirmation
+           job={confirmation.job}
+diff --git a/components/screens/review-screen.tsx b/components/screens/review-screen.tsx
+index 4933c5c..896b0fc 100644
+--- a/components/screens/review-screen.tsx
++++ b/components/screens/review-screen.tsx
+@@ -30,7 +30,7 @@ type JobsFilter = "new" | "saved" | "discarded"
+ type SearchState = "idle" | "searching" | "success" | "empty" | "error"
+ 
+ const FILTERS: Array<{ id: JobsFilter; label: string; description: string }> = [
+-  { id: "new", label: "Nuevos", description: "Pendientes de decisión" },
++  { id: "new", label: "Sin revisar", description: "Pendientes de decisión" },
+   { id: "saved", label: "Guardados", description: "Interesantes o listos para preparar" },
+   { id: "discarded", label: "Descartados", description: "Fuera del flujo principal" },
+ ]
+@@ -176,15 +176,17 @@ export function JobsScreen({
+     applyQueueQuery,
+     jobs,
+     jobsMeta,
++    jobsPipelineFilter,
+     jobsStatus,
+     loading,
+     setApplyQueuePage,
+     setApplyQueueQuery,
++    setJobsPipelineFilter,
+     setPipelineStatus,
+   } = useStore()
+-  const [filter, setFilter] = useState<JobsFilter>("new")
+   const [query, setQuery] = useState(applyQueueQuery)
+   const [pendingJobId, setPendingJobId] = useState<string | null>(null)
++  const filter = jobsPipelineFilter
+   const activeJobsTotal = jobsMeta?.total ?? jobs.length
+   const offset = jobsMeta?.offset ?? (applyQueuePage - 1) * applyQueuePageSize
+   const returnedJobs = jobsMeta?.returned ?? jobs.length
+@@ -193,14 +195,12 @@ export function JobsScreen({
+   const canPagePrevious = Boolean(jobsMeta?.has_previous) || applyQueuePage > 1
+   const canPageNext = Boolean(jobsMeta?.has_next)
+ 
+-  const counts = useMemo(
+-    () => ({
+-      new: jobs.filter((job) => statusForFilter(job, "new")).length,
+-      saved: jobs.filter((job) => statusForFilter(job, "saved")).length,
+-      discarded: jobs.filter((job) => statusForFilter(job, "discarded")).length,
+-    }),
+-    [jobs],
+-  )
++  const counts = {
++    new: jobsMeta?.pipeline_counts?.new ?? jobs.filter((job) => statusForFilter(job, "new")).length,
++    saved: jobsMeta?.pipeline_counts?.saved ?? jobs.filter((job) => statusForFilter(job, "saved")).length,
++    discarded: jobsMeta?.pipeline_counts?.discarded ?? jobs.filter((job) => statusForFilter(job, "discarded")).length,
++  }
++  const allJobsTotal = jobsMeta?.pipeline_counts?.all ?? counts.new + counts.saved + counts.discarded
+ 
+   const visible = useMemo(() => {
+     return jobs
+@@ -246,7 +246,7 @@ export function JobsScreen({
+     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+       <PageHeader
+         title="Jobs"
+-        description={`${activeJobsTotal.toLocaleString()} oportunidades activas para revisar, guardar o descartar.`}
++        description={`${allJobsTotal.toLocaleString()} oportunidades activas para revisar, guardar o descartar.`}
+         actions={
+           <Button onClick={onSearchNewJobs} disabled={!onSearchNewJobs || searchState === "searching"}>
+             {searchState === "searching" ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <Sparkles data-icon="inline-start" />}
+@@ -271,7 +271,7 @@ export function JobsScreen({
+                 type="button"
+                 role="tab"
+                 aria-selected={active}
+-                onClick={() => setFilter(item.id)}
++                onClick={() => setJobsPipelineFilter(item.id)}
+                 className={cn(
+                   "flex min-h-14 flex-col items-center justify-center rounded-md px-2 py-2 text-center text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/40 sm:min-h-11 sm:flex-row sm:gap-2",
+                   active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+@@ -331,7 +331,9 @@ export function JobsScreen({
+ 
+       <div className="flex shrink-0 flex-col gap-2 border-t border-border pt-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+         <span>
+-          {activeJobsTotal === 0 ? "0 jobs" : `${rangeStart}-${rangeEnd} de ${activeJobsTotal} jobs`}
++          {activeJobsTotal === 0
++            ? `0 en ${FILTERS.find((item) => item.id === filter)?.label.toLowerCase()}`
++            : `${rangeStart}-${rangeEnd} de ${activeJobsTotal} en ${FILTERS.find((item) => item.id === filter)?.label.toLowerCase()}`}
+         </span>
+         <div className="flex items-center gap-2">
+           <Button
+diff --git a/joborchestrator/api.py b/joborchestrator/api.py
+index 0afa315..fd81605 100644
+--- a/joborchestrator/api.py
++++ b/joborchestrator/api.py
+@@ -585,11 +585,13 @@ def apply_queue(
+     ranking_version: str | None = None,
+     freshness: str = "active",
+     q: str | None = None,
++    pipeline: str = "all",
+ ) -> dict[str, Any]:
+     _private_no_store(response)
+     if ranking_version and is_heuristic_ranking_version(ranking_version):
+         raise HTTPException(status_code=400, detail="Heuristic rankings are no longer supported in the dashboard.")
+     freshness_filter = _normalize_freshness_filter(freshness)
++    pipeline_filter = _normalize_pipeline_filter(pipeline)
+     effective_limit = max(1, min(int(limit), 100))
+     effective_offset = max(0, int(offset))
+     ranking_versions = filter_llm_ranking_versions(db.get_ranking_versions())
+@@ -600,6 +602,7 @@ def apply_queue(
+         effective_limit,
+         effective_offset,
+         q,
++        pipeline_filter,
+     ).to_dict("records")
+     jobs = sorted(
+         [
+@@ -610,7 +613,8 @@ def apply_queue(
+         reverse=True,
+     )
+     freshness_counts = db.count_job_freshness_buckets()
+-    total = db.count_apply_queue_job_postings(freshness_filter, q)
++    pipeline_counts = db.count_apply_queue_pipeline_buckets(freshness_filter, q)
++    total = db.count_apply_queue_job_postings(freshness_filter, q, pipeline_filter)
+     return {
+         "jobs": jobs,
+         "ranking_versions": ranking_versions,
+@@ -625,6 +629,8 @@ def apply_queue(
+             "has_previous": effective_offset > 0,
+             "freshness": freshness_filter,
+             "query": q.strip() if q else "",
++            "pipeline": pipeline_filter,
++            "pipeline_counts": pipeline_counts,
+             "freshness_counts": freshness_counts,
+             "unfiltered_total": sum(freshness_counts.values()),
+             "db_mode": db_connection.connection_mode(),
+@@ -730,6 +736,14 @@ def _normalize_freshness_filter(value: str | None) -> str:
+     return normalized
+ 
+ 
++def _normalize_pipeline_filter(value: str | None) -> str:
++    normalized = str(value or "all").lower()
++    allowed = {"all", "new", "saved", "discarded", "apply"}
++    if normalized not in allowed:
++        raise HTTPException(status_code=400, detail="Unsupported pipeline filter.")
++    return normalized
++
++
+ def _freshness_total(freshness_filter: str, counts: dict[str, int]) -> int:
+     if freshness_filter == "all":
+         return sum(counts.values())
+diff --git a/joborchestrator/storage/jobs_repository.py b/joborchestrator/storage/jobs_repository.py
+index 552c3e0..123627f 100644
+--- a/joborchestrator/storage/jobs_repository.py
++++ b/joborchestrator/storage/jobs_repository.py
+@@ -657,6 +657,7 @@ def get_apply_queue_job_postings(
+     limit: int,
+     offset: int,
+     search: str | None = None,
++    pipeline: str = "all",
+     now: datetime | None = None,
+ ) -> pd.DataFrame:
+     conn = connect()
+@@ -664,6 +665,7 @@ def get_apply_queue_job_postings(
+         where_sql, params = _freshness_where_clause(freshness, now or datetime.now())
+         where_sql, params = _append_job_search_filter(where_sql, params, search)
+         where_sql = _append_unsubmitted_application_filter(where_sql)
++        where_sql = _append_pipeline_filter(where_sql, pipeline)
+         join_sql = "LEFT JOIN job_rankings jr ON jr.job_id = jp.id AND jr.ranking_version = ?"
+         query = f"""
+             SELECT
+@@ -698,6 +700,7 @@ def count_apply_queue_job_postings(
+     connect: ConnectionFactory,
+     freshness: str,
+     search: str | None = None,
++    pipeline: str = "all",
+     now: datetime | None = None,
+ ) -> int:
+     conn = connect()
+@@ -705,12 +708,49 @@ def count_apply_queue_job_postings(
+         where_sql, params = _freshness_where_clause(freshness, now or datetime.now())
+         where_sql, params = _append_job_search_filter(where_sql, params, search)
+         where_sql = _append_unsubmitted_application_filter(where_sql)
++        where_sql = _append_pipeline_filter(where_sql, pipeline)
+         row = conn.execute(f"SELECT COUNT(*) AS count FROM job_postings jp {where_sql}", params).fetchone()
+         return int(row["count"] if row else 0)
+     finally:
+         conn.close()
+ 
+ 
++def count_apply_queue_pipeline_buckets(
++    connect: ConnectionFactory,
++    freshness: str,
++    search: str | None = None,
++    now: datetime | None = None,
++) -> dict[str, int]:
++    conn = connect()
++    try:
++        where_sql, params = _freshness_where_clause(freshness, now or datetime.now())
++        where_sql, params = _append_job_search_filter(where_sql, params, search)
++        where_sql = _append_unsubmitted_application_filter(where_sql)
++        status_expr = "COALESCE(jp.pipeline_status, 'new')"
++        row = conn.execute(
++            f"""
++            SELECT
++              COUNT(*) AS all_jobs,
++              SUM(CASE WHEN {status_expr} = 'new' THEN 1 ELSE 0 END) AS new_jobs,
++              SUM(CASE WHEN {status_expr} IN ('shortlisted', 'ready_to_apply') THEN 1 ELSE 0 END) AS saved_jobs,
++              SUM(CASE WHEN {status_expr} = 'discarded' THEN 1 ELSE 0 END) AS discarded_jobs,
++              SUM(CASE WHEN {status_expr} != 'discarded' THEN 1 ELSE 0 END) AS apply_jobs
++            FROM job_postings jp
++            {where_sql}
++            """,
++            params,
++        ).fetchone()
++        return {
++            "all": int(row["all_jobs"] or 0) if row else 0,
++            "new": int(row["new_jobs"] or 0) if row else 0,
++            "saved": int(row["saved_jobs"] or 0) if row else 0,
++            "discarded": int(row["discarded_jobs"] or 0) if row else 0,
++            "apply": int(row["apply_jobs"] or 0) if row else 0,
++        }
++    finally:
++        conn.close()
++
++
+ def _append_unsubmitted_application_filter(where_sql: str) -> str:
+     submitted_statuses = "('submitted', 'submitted_manually', 'submission_verified')"
+     clause = f"""
+@@ -726,6 +766,25 @@ def _append_unsubmitted_application_filter(where_sql: str) -> str:
+     return f"WHERE {clause}"
+ 
+ 
++def _append_pipeline_filter(where_sql: str, pipeline: str) -> str:
++    status_expr = "COALESCE(jp.pipeline_status, 'new')"
++    clauses = {
++        "all": None,
++        "new": f"{status_expr} = 'new'",
++        "saved": f"{status_expr} IN ('shortlisted', 'ready_to_apply')",
++        "discarded": f"{status_expr} = 'discarded'",
++        "apply": f"{status_expr} != 'discarded'",
++    }
++    if pipeline not in clauses:
++        raise ValueError(f"Unsupported pipeline filter: {pipeline}")
++    clause = clauses[pipeline]
++    if clause is None:
++        return where_sql
++    if where_sql.strip().upper().startswith("WHERE"):
++        return f"{where_sql} AND {clause}"
++    return f"WHERE {clause}"
++
++
+ def count_job_freshness_buckets(connect: ConnectionFactory, now: datetime | None = None) -> dict[str, int]:
+     conn = connect()
+     try:
+diff --git a/joborchestrator/storage/persistence.py b/joborchestrator/storage/persistence.py
+index b419fc2..91e25f0 100644
+--- a/joborchestrator/storage/persistence.py
++++ b/joborchestrator/storage/persistence.py
+@@ -1362,12 +1362,26 @@ def get_apply_queue_job_postings(
+     limit: int,
+     offset: int,
+     search: str | None = None,
++    pipeline: str = "all",
+ ) -> pd.DataFrame:
+-    return jobs_repository.get_apply_queue_job_postings(_conn, _read_sql_query, ranking_version, freshness, limit, offset, search)
++    return jobs_repository.get_apply_queue_job_postings(
++        _conn,
++        _read_sql_query,
++        ranking_version,
++        freshness,
++        limit,
++        offset,
++        search,
++        pipeline,
++    )
++
++
++def count_apply_queue_job_postings(freshness: str, search: str | None = None, pipeline: str = "all") -> int:
++    return jobs_repository.count_apply_queue_job_postings(_conn, freshness, search, pipeline)
+ 
+ 
+-def count_apply_queue_job_postings(freshness: str, search: str | None = None) -> int:
+-    return jobs_repository.count_apply_queue_job_postings(_conn, freshness, search)
++def count_apply_queue_pipeline_buckets(freshness: str, search: str | None = None) -> dict[str, int]:
++    return jobs_repository.count_apply_queue_pipeline_buckets(_conn, freshness, search)
+ 
+ 
+ def count_job_freshness_buckets() -> dict[str, int]:
+diff --git a/lib/api.ts b/lib/api.ts
+index e8b4373..5bdb5ac 100644
+--- a/lib/api.ts
++++ b/lib/api.ts
+@@ -28,6 +28,7 @@ import type {
+   LLMFeedbackArtifact,
+   LLMFeedbackSummary,
+   LLMOutputFeedback,
++  ApplyQueuePipeline,
+ } from "./types"
+ 
+ const API_BASE =
+@@ -86,11 +87,19 @@ export const api = {
+     return request<{ job: JobDetail }>(`/api/jobs/${encodeURIComponent(id)}${query}`, { fresh: true, signal })
+   },
+ 
+-  async getApplyQueue(rankingVersion?: string | null, limit = 50, offset = 0, freshness = "active", query?: string) {
++  async getApplyQueue(
++    rankingVersion?: string | null,
++    limit = 50,
++    offset = 0,
++    freshness = "active",
++    query?: string,
++    pipeline: ApplyQueuePipeline = "all",
++  ) {
+     const params = new URLSearchParams()
+     params.set("limit", String(limit))
+     params.set("offset", String(offset))
+     params.set("freshness", freshness)
++    params.set("pipeline", pipeline)
+     if (query?.trim()) {
+       params.set("q", query.trim())
+     }
+diff --git a/lib/store.tsx b/lib/store.tsx
+index baf436a..8806adf 100644
+--- a/lib/store.tsx
++++ b/lib/store.tsx
+@@ -11,6 +11,7 @@ import {
+   type ReactNode,
+ } from "react"
+ import type {
++  ApplyQueuePipeline,
+   ApplicationRecord,
+   ApplicationStatus,
+   JobDetail,
+@@ -21,6 +22,7 @@ import type {
+ import { api } from "./api"
+ 
+ type ApplyQueueFreshness = "active" | "all" | "stale"
++type JobsPipelineFilter = Exclude<ApplyQueuePipeline, "all" | "apply">
+ type ResourceStatus = "idle" | "loading" | "refreshing" | "success" | "empty" | "error"
+ 
+ interface JobDetailEntry {
+@@ -32,9 +34,12 @@ interface JobDetailEntry {
+ 
+ interface StoreValue {
+   jobs: JobListItem[]
++  preparationJobs: JobListItem[]
+   applications: ApplicationRecord[]
+   loading: boolean
++  preparationLoading: boolean
+   jobsStatus: ResourceStatus
++  preparationJobsStatus: ResourceStatus
+   applicationsStatus: ResourceStatus
+   backendOnline: boolean
+   applyQueuePage: number
+@@ -42,13 +47,19 @@ interface StoreValue {
+   applyQueueFreshness: ApplyQueueFreshness
+   applyQueueQuery: string
+   jobsMeta: JobsMeta | null
++  jobsPipelineFilter: JobsPipelineFilter
++  preparationQueuePage: number
++  preparationJobsMeta: JobsMeta | null
+   rankingVersions: string[]
+   selectedRankingVersion: string | null
+   setApplyQueuePage: (page: number) => void
+   setApplyQueueFreshness: (freshness: ApplyQueueFreshness) => void
+   setApplyQueueQuery: (query: string) => void
++  setJobsPipelineFilter: (filter: JobsPipelineFilter) => void
++  setPreparationQueuePage: (page: number) => void
+   setSelectedRankingVersion: (version: string) => void
+   refresh: (rankingVersion?: string | null) => Promise<void>
++  refreshPreparationQueue: (rankingVersion?: string | null) => Promise<void>
+   refreshApplications: () => Promise<void>
+   recordApplication: (application: ApplicationRecord) => void
+   getJob: (id: string) => JobDetail | undefined
+@@ -136,14 +147,19 @@ function mergeDetailIntoSummary(summary: JobListItem, detail: JobDetail): JobLis
+ 
+ export function StoreProvider({ children }: { children: ReactNode }) {
+   const [jobs, setJobs] = useState<JobListItem[]>([])
++  const [preparationJobs, setPreparationJobs] = useState<JobListItem[]>([])
+   const [applications, setApplications] = useState<ApplicationRecord[]>([])
+   const [jobsStatus, setJobsStatus] = useState<ResourceStatus>("idle")
++  const [preparationJobsStatus, setPreparationJobsStatus] = useState<ResourceStatus>("idle")
+   const [applicationsStatus, setApplicationsStatus] = useState<ResourceStatus>("idle")
+   const [backendOnline, setBackendOnline] = useState(false)
+   const [applyQueuePage, setApplyQueuePageState] = useState(1)
+   const [applyQueueFreshness, setApplyQueueFreshnessState] = useState<ApplyQueueFreshness>("active")
+   const [applyQueueQuery, setApplyQueueQueryState] = useState("")
+   const [jobsMeta, setJobsMeta] = useState<JobsMeta | null>(null)
++  const [jobsPipelineFilter, setJobsPipelineFilterState] = useState<JobsPipelineFilter>("new")
++  const [preparationQueuePage, setPreparationQueuePageState] = useState(1)
++  const [preparationJobsMeta, setPreparationJobsMeta] = useState<JobsMeta | null>(null)
+   const [rankingVersions, setRankingVersions] = useState<string[]>([])
+   const [selectedRankingVersion, setSelectedRankingVersionState] = useState<string | null>(null)
+   const [jobDetails, setJobDetails] = useState<Record<string, JobDetailEntry>>({})
+@@ -151,7 +167,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+   const applyQueuePageRef = useRef(1)
+   const applyQueueFreshnessRef = useRef<ApplyQueueFreshness>("active")
+   const applyQueueQueryRef = useRef("")
++  const jobsPipelineFilterRef = useRef<JobsPipelineFilter>("new")
++  const preparationQueuePageRef = useRef(1)
+   const listRequestSeq = useRef(0)
++  const preparationRequestSeq = useRef(0)
+   const applicationRequestSeq = useRef(0)
+   const submittedJobIdsRef = useRef(new Set<string>())
+   const detailRequests = useRef(new Map<string, Promise<JobDetail | undefined>>())
+@@ -168,6 +187,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+         offset,
+         applyQueueFreshnessRef.current,
+         applyQueueQueryRef.current,
++        jobsPipelineFilterRef.current,
+       )
+       if (requestId !== listRequestSeq.current) return
+       setJobs(data.jobs)
+@@ -186,6 +206,39 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+     }
+   }, [])
+ 
++  const refreshPreparationQueue = useCallback(async (rankingVersion?: string | null) => {
++    const requestId = ++preparationRequestSeq.current
++    setPreparationJobsStatus((current) =>
++      current === "success" || current === "empty" ? "refreshing" : "loading",
++    )
++    try {
++      const version = rankingVersion === undefined ? selectedRankingVersionRef.current : rankingVersion
++      const offset = (preparationQueuePageRef.current - 1) * APPLY_QUEUE_PAGE_SIZE
++      const data = await api.getApplyQueue(
++        version,
++        APPLY_QUEUE_PAGE_SIZE,
++        offset,
++        "active",
++        undefined,
++        "apply",
++      )
++      if (requestId !== preparationRequestSeq.current) return
++      setPreparationJobs(data.jobs)
++      setPreparationJobsMeta(data.meta ?? null)
++      setPreparationJobsStatus(data.jobs.length ? "success" : "empty")
++      setRankingVersions(data.ranking_versions)
++      const nextRankingVersion = data.selected_ranking_version ?? data.ranking_versions[0] ?? null
++      selectedRankingVersionRef.current = nextRankingVersion
++      setSelectedRankingVersionState(nextRankingVersion)
++      setBackendOnline(true)
++    } catch {
++      if (requestId === preparationRequestSeq.current) {
++        setBackendOnline(false)
++        setPreparationJobsStatus("error")
++      }
++    }
++  }, [])
++
+   const refreshApplications = useCallback(async () => {
+     const requestId = ++applicationRequestSeq.current
+     setApplicationsStatus((current) => (current === "success" || current === "empty" ? "refreshing" : "loading"))
+@@ -217,21 +270,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+     const alreadySubmitted = submittedJobIdsRef.current.has(jobId)
+     submittedJobIdsRef.current.add(jobId)
+     setJobs((current) => current.filter((job) => String(job.id) !== jobId))
++    setPreparationJobs((current) => current.filter((job) => String(job.id) !== jobId))
+     if (!alreadySubmitted) {
+       setJobsMeta((current) => current ? { ...current, total: Math.max(0, current.total - 1) } : current)
++      setPreparationJobsMeta((current) => current ? { ...current, total: Math.max(0, current.total - 1) } : current)
+     }
+-  }, [])
++    void refresh()
++    void refreshPreparationQueue()
++  }, [refresh, refreshPreparationQueue])
+ 
+ 
+   const setSelectedRankingVersion = useCallback((version: string) => {
+     selectedRankingVersionRef.current = version
+     applyQueuePageRef.current = 1
++    preparationQueuePageRef.current = 1
+     setApplyQueuePageState(1)
++    setPreparationQueuePageState(1)
+     setSelectedRankingVersionState(version)
+     setJobDetails({})
+     detailRequests.current.clear()
+     void refresh(version)
+-  }, [refresh])
++    void refreshPreparationQueue(version)
++  }, [refresh, refreshPreparationQueue])
+ 
+   const setApplyQueuePage = useCallback((page: number) => {
+     const next = Math.max(1, page)
+@@ -256,6 +316,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+     void refresh()
+   }, [refresh])
+ 
++  const setJobsPipelineFilter = useCallback((filter: JobsPipelineFilter) => {
++    jobsPipelineFilterRef.current = filter
++    applyQueuePageRef.current = 1
++    setJobsPipelineFilterState(filter)
++    setApplyQueuePageState(1)
++    void refresh()
++  }, [refresh])
++
++  const setPreparationQueuePage = useCallback((page: number) => {
++    const next = Math.max(1, page)
++    preparationQueuePageRef.current = next
++    setPreparationQueuePageState(next)
++    void refreshPreparationQueue()
++  }, [refreshPreparationQueue])
++
+   useEffect(() => {
+     const timer = window.setTimeout(() => {
+       void refresh(null)
+@@ -267,8 +342,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+   const getJob = useCallback((id: string) => jobDetails[id]?.job, [jobDetails])
+ 
+   const getJobSummary = useCallback(
+-    (id: string) => jobs.find((job) => job.id === id),
+-    [jobs],
++    (id: string) => jobs.find((job) => job.id === id) ?? preparationJobs.find((job) => job.id === id),
++    [jobs, preparationJobs],
+   )
+ 
+   const getJobDetailEntry = useCallback(
+@@ -291,6 +366,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+         const entry = { status: "success" as const, job: response.job, requestedAt: Date.now() }
+         setJobDetails((current) => upsertDetail(current, id, entry))
+         setJobs((current) => current.map((job) => (job.id === id ? mergeDetailIntoSummary(job, response.job) : job)))
++        setPreparationJobs((current) =>
++          current.map((job) => (job.id === id ? mergeDetailIntoSummary(job, response.job) : job)),
++        )
+         setBackendOnline(true)
+         return response.job
+       })
+@@ -313,8 +391,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+   }, [jobDetails])
+ 
+   const setPipelineStatus = useCallback(async (id: string, status: PipelineStatus) => {
+-    const previousStatus = jobs.find((job) => job.id === id)?.pipeline_status
++    const previousStatus =
++      jobs.find((job) => job.id === id)?.pipeline_status ??
++      preparationJobs.find((job) => job.id === id)?.pipeline_status
+     setJobs((prev) => prev.map((job) => (job.id === id ? { ...job, pipeline_status: status } : job)))
++    setPreparationJobs((prev) => prev.map((job) => (job.id === id ? { ...job, pipeline_status: status } : job)))
+     setJobDetails((prev) => {
+       const entry = prev[id]
+       if (!entry?.job) return prev
+@@ -323,11 +404,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+     try {
+       await api.setPipelineStatus(id, status)
+       setBackendOnline(true)
++      void refresh()
++      void refreshPreparationQueue()
+       return true
+     } catch {
+       setBackendOnline(false)
+       if (previousStatus) {
+         setJobs((prev) => prev.map((job) => (job.id === id ? { ...job, pipeline_status: previousStatus } : job)))
++        setPreparationJobs((prev) =>
++          prev.map((job) => (job.id === id ? { ...job, pipeline_status: previousStatus } : job)),
++        )
+       }
+       setJobDetails((prev) => {
+         const entry = prev[id]
+@@ -336,7 +422,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+       })
+       return false
+     }
+-  }, [jobs])
++  }, [jobs, preparationJobs, refresh, refreshPreparationQueue])
+ 
+   const setApplicationStatus = useCallback(async (id: number, status: ApplicationStatus, note?: string) => {
+     try {
+@@ -353,6 +439,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+   const markOpened = useCallback((id: string) => {
+     const lastSeen = new Date().toISOString()
+     setJobs((prev) => prev.map((job) => (job.id === id ? { ...job, last_seen_at: lastSeen } : job)))
++    setPreparationJobs((prev) => prev.map((job) => (job.id === id ? { ...job, last_seen_at: lastSeen } : job)))
+     setJobDetails((prev) => {
+       const entry = prev[id]
+       if (!entry?.job) return prev
+@@ -374,6 +461,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+       const entry = { status: "success" as const, job: result.job, requestedAt: Date.now() }
+       setJobDetails((prev) => upsertDetail(prev, id, entry))
+       setJobs((prev) => prev.map((job) => (job.id === id ? mergeDetailIntoSummary(job, result.job!) : job)))
++      setPreparationJobs((prev) =>
++        prev.map((job) => (job.id === id ? mergeDetailIntoSummary(job, result.job!) : job)),
++      )
+     } else {
+       setJobDetails((prev) => upsertDetail(prev, id, { ...prev[id], status: "idle" }))
+     }
+@@ -383,9 +473,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+   const value = useMemo(
+     () => ({
+       jobs,
++      preparationJobs,
+       applications,
+       loading: jobsStatus === "loading",
++      preparationLoading: preparationJobsStatus === "loading",
+       jobsStatus,
++      preparationJobsStatus,
+       applicationsStatus,
+       backendOnline,
+       applyQueuePage,
+@@ -393,13 +486,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+       applyQueueFreshness,
+       applyQueueQuery,
+       jobsMeta,
++      jobsPipelineFilter,
++      preparationQueuePage,
++      preparationJobsMeta,
+       rankingVersions,
+       selectedRankingVersion,
+       setApplyQueuePage,
+       setApplyQueueFreshness,
+       setApplyQueueQuery,
++      setJobsPipelineFilter,
++      setPreparationQueuePage,
+       setSelectedRankingVersion,
+       refresh,
++      refreshPreparationQueue,
+       refreshApplications,
+       recordApplication,
+       getJob,
+@@ -413,21 +512,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
+     }),
+     [
+       jobs,
++      preparationJobs,
+       applications,
+       jobsStatus,
++      preparationJobsStatus,
+       applicationsStatus,
+       backendOnline,
+       applyQueuePage,
+       applyQueueFreshness,
+       applyQueueQuery,
+       jobsMeta,
++      jobsPipelineFilter,
++      preparationQueuePage,
++      preparationJobsMeta,
+       rankingVersions,
+       selectedRankingVersion,
+       setApplyQueuePage,
+       setApplyQueueFreshness,
+       setApplyQueueQuery,
++      setJobsPipelineFilter,
++      setPreparationQueuePage,
+       setSelectedRankingVersion,
+       refresh,
++      refreshPreparationQueue,
+       refreshApplications,
+       recordApplication,
+       getJob,
+diff --git a/lib/types.ts b/lib/types.ts
+index d605f29..d3b5999 100644
+--- a/lib/types.ts
++++ b/lib/types.ts
+@@ -399,6 +399,8 @@ export interface ApplicationSessionResponse {
+   operation_id?: number | null
+ }
+ 
++export type ApplyQueuePipeline = "all" | "new" | "saved" | "discarded" | "apply"
++
+ export interface JobsMeta {
+   total: number
+   returned: number
+@@ -409,6 +411,8 @@ export interface JobsMeta {
+   has_previous?: boolean
+   freshness?: "active" | "all" | "fresh" | "recent" | "stale" | "archival" | string
+   query?: string
++  pipeline?: ApplyQueuePipeline
++  pipeline_counts?: Partial<Record<ApplyQueuePipeline, number>>
+   freshness_counts?: Record<string, number>
+   unfiltered_total?: number
+   db_mode: "sqlite" | "turso" | string
+diff --git a/tests/test_api_endpoints.py b/tests/test_api_endpoints.py
+index c66571e..4afdcef 100644
+--- a/tests/test_api_endpoints.py
++++ b/tests/test_api_endpoints.py
+@@ -413,6 +413,56 @@ def test_apply_queue_search_filters_server_side(tmp_path, monkeypatch):
+     assert [job["title"] for job in body["jobs"]] == ["Frontend Designer"]
+ 
+ 
++def test_apply_queue_filters_and_counts_pipeline_before_pagination(tmp_path, monkeypatch):
++    client = client_for_tmp_db(tmp_path, monkeypatch)
++    statuses = [
++        ("new-one", "New One", "new"),
++        ("new-two", "New Two", "new"),
++        ("saved-one", "Saved One", "shortlisted"),
++        ("saved-two", "Saved Two", "ready_to_apply"),
++        ("discarded-one", "Discarded One", "discarded"),
++    ]
++    for index, (external_id, title, pipeline_status) in enumerate(statuses, start=1):
++        db.upsert_job_posting(
++            make_job(external_id=external_id, title=title),
++            seen_at=(datetime.now() - timedelta(minutes=index)).isoformat(timespec="seconds"),
++        )
++        rows = db.get_job_postings(limit=None)
++        job_id = int(rows[rows["external_id"] == external_id].iloc[0]["id"])
++        db.update_job_status(job_id, pipeline_status)
++        db.save_job_ranking(job_id, make_ranking("ranking_v1.1.0-nvidia", 90 - index, "APPLY_NOW"))
++
++    saved = client.get(
++        "/api/apply-queue",
++        params={"freshness": "all", "pipeline": "saved", "limit": 1, "offset": 1},
++    )
++    apply_queue = client.get("/api/apply-queue", params={"freshness": "all", "pipeline": "apply"})
++    invalid = client.get("/api/apply-queue", params={"pipeline": "unknown"})
++
++    assert saved.status_code == 200
++    saved_body = saved.json()
++    assert saved_body["meta"]["pipeline"] == "saved"
++    assert saved_body["meta"]["total"] == 2
++    assert saved_body["meta"]["returned"] == 1
++    assert saved_body["meta"]["has_previous"] is True
++    assert saved_body["meta"]["pipeline_counts"] == {
++        "all": 5,
++        "new": 2,
++        "saved": 2,
++        "discarded": 1,
++        "apply": 4,
++    }
++    assert saved_body["jobs"][0]["pipeline_status"] in {"shortlisted", "ready_to_apply"}
++
++    assert apply_queue.status_code == 200
++    apply_body = apply_queue.json()
++    assert apply_body["meta"]["total"] == 4
++    assert all(job["pipeline_status"] != "discarded" for job in apply_body["jobs"])
++
++    assert invalid.status_code == 400
++    assert invalid.json()["detail"] == "Unsupported pipeline filter."
++
++
+ def test_apply_queue_excludes_confirmed_applications(tmp_path, monkeypatch):
+     client = client_for_tmp_db(tmp_path, monkeypatch)
+     for external_id, title in [

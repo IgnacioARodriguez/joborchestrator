@@ -399,6 +399,8 @@ export interface ApplicationSessionResponse {
   operation_id?: number | null
 }
 
+export type ApplyQueuePipeline = "all" | "new" | "saved" | "discarded" | "apply"
+
 export interface JobsMeta {
   total: number
   returned: number
@@ -409,6 +411,8 @@ export interface JobsMeta {
   has_previous?: boolean
   freshness?: "active" | "all" | "fresh" | "recent" | "stale" | "archival" | string
   query?: string
+  pipeline?: ApplyQueuePipeline
+  pipeline_counts?: Partial<Record<ApplyQueuePipeline, number>>
   freshness_counts?: Record<string, number>
   unfiltered_total?: number
   db_mode: "sqlite" | "turso" | string

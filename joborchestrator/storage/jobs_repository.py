@@ -657,6 +657,7 @@ def get_apply_queue_job_postings(
     limit: int,
     offset: int,
     search: str | None = None,
+    pipeline: str = "all",
     now: datetime | None = None,
 ) -> pd.DataFrame:
     conn = connect()
@@ -664,6 +665,7 @@ def get_apply_queue_job_postings(
         where_sql, params = _freshness_where_clause(freshness, now or datetime.now())
         where_sql, params = _append_job_search_filter(where_sql, params, search)
         where_sql = _append_unsubmitted_application_filter(where_sql)
+        where_sql = _append_pipeline_filter(where_sql, pipeline)
         join_sql = "LEFT JOIN job_rankings jr ON jr.job_id = jp.id AND jr.ranking_version = ?"
         query = f"""
             SELECT
@@ -698,6 +700,7 @@ def count_apply_queue_job_postings(
     connect: ConnectionFactory,
     freshness: str,
     search: str | None = None,
+    pipeline: str = "all",
     now: datetime | None = None,
 ) -> int:
     conn = connect()
@@ -705,8 +708,45 @@ def count_apply_queue_job_postings(
         where_sql, params = _freshness_where_clause(freshness, now or datetime.now())
         where_sql, params = _append_job_search_filter(where_sql, params, search)
         where_sql = _append_unsubmitted_application_filter(where_sql)
+        where_sql = _append_pipeline_filter(where_sql, pipeline)
         row = conn.execute(f"SELECT COUNT(*) AS count FROM job_postings jp {where_sql}", params).fetchone()
         return int(row["count"] if row else 0)
+    finally:
+        conn.close()
+
+
+def count_apply_queue_pipeline_buckets(
+    connect: ConnectionFactory,
+    freshness: str,
+    search: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    conn = connect()
+    try:
+        where_sql, params = _freshness_where_clause(freshness, now or datetime.now())
+        where_sql, params = _append_job_search_filter(where_sql, params, search)
+        where_sql = _append_unsubmitted_application_filter(where_sql)
+        status_expr = "COALESCE(jp.pipeline_status, 'new')"
+        row = conn.execute(
+            f"""
+            SELECT
+              COUNT(*) AS all_jobs,
+              SUM(CASE WHEN {status_expr} = 'new' THEN 1 ELSE 0 END) AS new_jobs,
+              SUM(CASE WHEN {status_expr} IN ('shortlisted', 'ready_to_apply') THEN 1 ELSE 0 END) AS saved_jobs,
+              SUM(CASE WHEN {status_expr} = 'discarded' THEN 1 ELSE 0 END) AS discarded_jobs,
+              SUM(CASE WHEN {status_expr} != 'discarded' THEN 1 ELSE 0 END) AS apply_jobs
+            FROM job_postings jp
+            {where_sql}
+            """,
+            params,
+        ).fetchone()
+        return {
+            "all": int(row["all_jobs"] or 0) if row else 0,
+            "new": int(row["new_jobs"] or 0) if row else 0,
+            "saved": int(row["saved_jobs"] or 0) if row else 0,
+            "discarded": int(row["discarded_jobs"] or 0) if row else 0,
+            "apply": int(row["apply_jobs"] or 0) if row else 0,
+        }
     finally:
         conn.close()
 
@@ -721,6 +761,25 @@ def _append_unsubmitted_application_filter(where_sql: str) -> str:
             AND a.status IN {submitted_statuses}
         )
     """
+    if where_sql.strip().upper().startswith("WHERE"):
+        return f"{where_sql} AND {clause}"
+    return f"WHERE {clause}"
+
+
+def _append_pipeline_filter(where_sql: str, pipeline: str) -> str:
+    status_expr = "COALESCE(jp.pipeline_status, 'new')"
+    clauses = {
+        "all": None,
+        "new": f"{status_expr} = 'new'",
+        "saved": f"{status_expr} IN ('shortlisted', 'ready_to_apply')",
+        "discarded": f"{status_expr} = 'discarded'",
+        "apply": f"{status_expr} != 'discarded'",
+    }
+    if pipeline not in clauses:
+        raise ValueError(f"Unsupported pipeline filter: {pipeline}")
+    clause = clauses[pipeline]
+    if clause is None:
+        return where_sql
     if where_sql.strip().upper().startswith("WHERE"):
         return f"{where_sql} AND {clause}"
     return f"WHERE {clause}"
