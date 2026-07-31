@@ -511,7 +511,7 @@ def test_scan_fresh_queues_scan_with_auto_ranking(tmp_path, monkeypatch):
     operation = client.get(f"/api/operations/{body['operation_id']}").json()["operation"]
     assert operation["type"] == "job_scan"
     assert operation["input_json"]["auto_rank_new"] is True
-    assert operation["input_json"]["include_linkedin"] is True
+    assert operation["input_json"]["include_linkedin"] is False
     assert operation["input_json"]["linkedin_resume_from_checkpoint"] is False
     assert "Backend Engineer" in operation["input_json"]["queries"]
 
@@ -623,7 +623,7 @@ def test_scan_all_queues_job_scan_operation(tmp_path, monkeypatch):
     assert operation["input_json"]["queries"] == ["backend engineer"]
     assert operation["input_json"]["linkedin_limit"] == 50
     assert operation["input_json"]["application_targets"][0]["location"] == "Malaga, Spain"
-    assert operation["progress_message"] == "Queued unified job scan. Waiting for local worker."
+    assert operation["progress_message"] == "Queued ATS and public search scan. Waiting for local worker."
 
 
 def test_sources_only_returns_configured_search_providers(tmp_path, monkeypatch):
