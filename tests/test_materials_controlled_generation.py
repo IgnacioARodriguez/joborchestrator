@@ -36,7 +36,11 @@ from joborchestrator.intelligence.materials_repair import (
     frozen_field_regressions,
     repair_prompt_payload,
 )
-from joborchestrator.intelligence.materials_routing import max_semantic_repairs, should_auto_generate_materials
+from joborchestrator.intelligence.materials_routing import (
+    max_semantic_repairs,
+    max_transport_retries,
+    should_auto_generate_materials,
+)
 from joborchestrator.intelligence.materials_controlled_pipeline import build_controlled_ats_cv
 from joborchestrator.intelligence.materials_validation import (
     derive_risk_flags_from_issues,
@@ -419,6 +423,134 @@ def test_semantic_retry_limit_is_one(monkeypatch):
     monkeypatch.setenv("MATERIALS_MAX_SEMANTIC_REPAIRS", "1")
 
     assert max_semantic_repairs() == 1
+    assert llm._coerce_validation_retry_limit(None, {}) == 1
+    assert llm._coerce_validation_retry_limit(6, {}) == 1
+    assert llm._coerce_validation_retry_limit(0, {}) == 0
+
+
+def test_semantic_retry_limit_caps_actual_nvidia_cv_loop(monkeypatch):
+    monkeypatch.setenv("MATERIALS_MAX_SEMANTIC_REPAIRS", "1")
+    monkeypatch.setattr(llm, "_nvidia_cv_contract", lambda: "contract")
+    monkeypatch.setattr(
+        llm,
+        "_ats_cv_response_validation_error",
+        lambda *args, **kwargs: "ats_cv_text is too short to be a complete ATS CV",
+    )
+    monkeypatch.setattr(
+        llm,
+        "_apply_deterministic_materials_repair",
+        lambda parsed, payload, feedback, validator: (parsed, feedback, []),
+    )
+    calls = []
+
+    def fake_contract_once(*args, **kwargs):
+        calls.append(1)
+        return {"ats_cv_text": "short", "risk_flags": [], "keywords_used": []}
+
+    monkeypatch.setattr(llm, "_call_nvidia_contract_once", fake_contract_once)
+
+    with pytest.raises(llm.LLMMaterialsError) as exc_info:
+        llm._call_nvidia_cv(
+            {},
+            "test-key",
+            "test-model",
+            1.0,
+            validation_retry_limit=6,
+        )
+
+    assert len(calls) == 2
+    assert exc_info.value.generation_metadata["validation_attempts"] == 2
+
+
+def test_transport_retries_are_separate_from_semantic_attempts(monkeypatch):
+    monkeypatch.setenv("MATERIALS_MAX_SEMANTIC_REPAIRS", "0")
+    monkeypatch.setenv("MATERIALS_MAX_TRANSPORT_RETRIES", "1")
+    monkeypatch.setenv("MATERIALS_TRANSPORT_RETRY_BASE_SECONDS", "0")
+    monkeypatch.setenv("MATERIALS_TRANSPORT_RETRY_JITTER_SECONDS", "0")
+    monkeypatch.setattr(llm, "_nvidia_cv_contract", lambda: "contract")
+    monkeypatch.setattr(llm, "_ats_cv_response_validation_error", lambda *args, **kwargs: None)
+    sleeps = []
+    calls = []
+
+    class FakeProvider:
+        def complete(self, *args, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise llm.LLMProviderError(
+                    "NVIDIA request failed: status=500 body='Already borrowed'"
+                )
+            return type(
+                "Response",
+                (),
+                {
+                    "text": (
+                        '{"ats_cv_text":"ok","risk_flags":[],"keywords_used":[]}'
+                    )
+                },
+            )()
+
+    class FakeRegistry:
+        def get(self, *args, **kwargs):
+            return FakeProvider()
+
+    monkeypatch.setattr(llm, "ProviderRegistry", lambda: FakeRegistry())
+    monkeypatch.setattr(llm.time, "sleep", sleeps.append)
+
+    response = llm._call_nvidia_cv(
+        {},
+        "test-key",
+        "test-model",
+        1.0,
+    )
+
+    assert len(calls) == 2
+    assert sleeps == [0.0]
+    assert response["_generation_metadata"]["validation_attempts"] == 1
+
+
+def test_transport_retry_uses_exponential_backoff(monkeypatch):
+    monkeypatch.setenv("MATERIALS_MAX_TRANSPORT_RETRIES", "2")
+    monkeypatch.setenv("MATERIALS_TRANSPORT_RETRY_BASE_SECONDS", "0.25")
+    monkeypatch.setenv("MATERIALS_TRANSPORT_RETRY_JITTER_SECONDS", "0")
+    sleeps = []
+    calls = []
+
+    def operation():
+        calls.append(1)
+        if len(calls) < 3:
+            raise llm.LLMProviderError(
+                "NVIDIA request failed: status=503 body='temporarily unavailable'"
+            )
+        return "ok"
+
+    monkeypatch.setattr(llm.time, "sleep", sleeps.append)
+
+    assert llm._call_with_transport_retries(
+        operation,
+        provider_name="NVIDIA",
+    ) == "ok"
+    assert calls == [1, 1, 1]
+    assert sleeps == [0.25, 0.5]
+    assert max_transport_retries() == 2
+
+
+def test_transport_retry_does_not_retry_non_transient_errors(monkeypatch):
+    monkeypatch.setenv("MATERIALS_MAX_TRANSPORT_RETRIES", "2")
+    calls = []
+
+    def operation():
+        calls.append(1)
+        raise llm.LLMProviderError(
+            "NVIDIA request failed: status=401 body='unauthorized'"
+        )
+
+    with pytest.raises(llm.LLMProviderError):
+        llm._call_with_transport_retries(
+            operation,
+            provider_name="NVIDIA",
+        )
+
+    assert calls == [1]
 
 
 def test_repair_payload_lists_mutable_and_frozen_fields():

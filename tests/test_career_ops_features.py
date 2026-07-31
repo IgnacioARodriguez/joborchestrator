@@ -725,11 +725,8 @@ def test_openai_materials_call_reports_validation_retry_metadata(monkeypatch):
     assert response["_generation_metadata"]["validation_errors"]
 
 
-def test_materials_validation_retry_limit_scales_for_constrained_cases(monkeypatch):
-    from joborchestrator.intelligence import llm_application_materials
-
-    monkeypatch.setattr(llm_application_materials, "DEFAULT_MATERIALS_VALIDATION_RETRIES", 3)
-    monkeypatch.setattr(llm_application_materials, "MAX_MATERIALS_VALIDATION_RETRIES", 6)
+def test_materials_validation_retry_limit_uses_global_semantic_cap(monkeypatch):
+    monkeypatch.setenv("MATERIALS_MAX_SEMANTIC_REPAIRS", "1")
 
     retry_limit = _materials_validation_retry_limit(
         {
@@ -746,7 +743,7 @@ def test_materials_validation_retry_limit_scales_for_constrained_cases(monkeypat
         }
     )
 
-    assert retry_limit == 6
+    assert retry_limit == 1
 
 
 def test_openai_materials_call_allows_explicit_validation_retry_limit(monkeypatch):

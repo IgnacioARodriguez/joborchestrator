@@ -4,7 +4,9 @@ import inspect
 import json
 import logging
 import os
+import random
 import re
+import time
 import unicodedata
 from dataclasses import asdict, is_dataclass
 from io import BytesIO
@@ -22,7 +24,13 @@ from joborchestrator.intelligence.materials_keywords import derive_keywords_used
 from joborchestrator.intelligence.materials_kit import parse_autofill, render_autofill
 from joborchestrator.intelligence.materials_language import detect_job_language, language_mismatch
 from joborchestrator.intelligence.materials_planner import build_cv_planner_context
-from joborchestrator.intelligence.materials_routing import controlled_cv_enabled, nvidia_planner_enabled, openai_fallback_enabled
+from joborchestrator.intelligence.materials_routing import (
+    controlled_cv_enabled,
+    max_semantic_repairs,
+    max_transport_retries,
+    nvidia_planner_enabled,
+    openai_fallback_enabled,
+)
 from joborchestrator.intelligence.materials_repair import (
     build_repair_directive,
     deterministic_repair,
@@ -549,30 +557,77 @@ def _combined_generation_metadata(responses: list[dict[str, Any]]) -> dict[str, 
 
 
 def _materials_validation_retry_limit(payload: dict[str, Any]) -> int:
-    retries = DEFAULT_MATERIALS_VALIDATION_RETRIES
-    ranking_constraints = payload.get("ranking_constraints") if isinstance(payload.get("ranking_constraints"), dict) else {}
-    avoid_terms = ranking_constraints.get("avoid_overclaiming_terms") or []
-    if avoid_terms:
-        retries += min(2, len(avoid_terms))
-
-    tone = payload.get("application_tone_constraints") if isinstance(payload.get("application_tone_constraints"), dict) else {}
-    if tone.get("tone") == "cautious_review":
-        retries += 1
-
-    experience_constraints = payload.get("experience_claim_constraints")
-    if isinstance(experience_constraints, list) and any(
-        constraint.get("canonical_role_technologies")
-        for constraint in experience_constraints
-        if isinstance(constraint, dict)
-    ):
-        retries += 1
-    return min(retries, MAX_MATERIALS_VALIDATION_RETRIES)
+    del payload
+    return max_semantic_repairs()
 
 
 def _coerce_validation_retry_limit(validation_retry_limit: int | None, payload: dict[str, Any]) -> int:
+    configured_limit = _materials_validation_retry_limit(payload)
     if validation_retry_limit is None:
-        return _materials_validation_retry_limit(payload)
-    return max(0, int(validation_retry_limit))
+        return configured_limit
+    return min(configured_limit, max(0, int(validation_retry_limit)))
+
+
+_TRANSIENT_PROVIDER_STATUS_CODES = {429, 500, 502, 503, 504}
+_TRANSIENT_PROVIDER_ERROR_MARKERS = (
+    "already borrowed",
+    "readtimeout",
+    "connecttimeout",
+    "pooltimeout",
+    "remoteprotocolerror",
+    "readerror",
+    "connecterror",
+    "connection reset",
+    "connection refused",
+    "server disconnected",
+    "temporarily unavailable",
+    "timed out",
+    "timeout",
+)
+
+
+def _is_transient_provider_error(exc: Exception) -> bool:
+    normalized = str(exc or "").casefold()
+    status_match = re.search(r"\bstatus=(\d{3})\b", normalized)
+    if status_match:
+        return int(status_match.group(1)) in _TRANSIENT_PROVIDER_STATUS_CODES
+    return any(marker in normalized for marker in _TRANSIENT_PROVIDER_ERROR_MARKERS)
+
+
+def _nonnegative_float_env(name: str, default: float) -> float:
+    try:
+        return max(0.0, float(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _transport_retry_delay(retry_number: int) -> float:
+    base = _nonnegative_float_env("MATERIALS_TRANSPORT_RETRY_BASE_SECONDS", 0.5)
+    jitter = _nonnegative_float_env("MATERIALS_TRANSPORT_RETRY_JITTER_SECONDS", 0.25)
+    return base * (2 ** max(0, retry_number - 1)) + random.uniform(0.0, jitter)
+
+
+def _call_with_transport_retries(operation: Any, *, provider_name: str) -> Any:
+    retry_limit = max_transport_retries()
+    for attempt in range(retry_limit + 1):
+        try:
+            return operation()
+        except LLMProviderError as exc:
+            if not _is_transient_provider_error(exc) or attempt >= retry_limit:
+                raise
+            retry_number = attempt + 1
+            delay = _transport_retry_delay(retry_number)
+            logger.warning(
+                "Retrying %s materials request after transient transport failure "
+                "(transport retry %s/%s in %.2fs): %s",
+                provider_name,
+                retry_number,
+                retry_limit,
+                delay,
+                exc,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable transport retry state")
 
 
 def _apply_deterministic_materials_repair(
@@ -1260,12 +1315,15 @@ def _call_openai_cv_planner(
             timeout=timeout,
             http_module=httpx,
         )
-        response = provider.complete(
-            _openai_cv_planner_messages(planner_context),
-            model=model,
-            response_format="json",
-            response_schema=_cv_planner_schema(),
-            schema_name="ats_cv_plan",
+        response = _call_with_transport_retries(
+            lambda: provider.complete(
+                _openai_cv_planner_messages(planner_context),
+                model=model,
+                response_format="json",
+                response_schema=_cv_planner_schema(),
+                schema_name="ats_cv_plan",
+            ),
+            provider_name="OpenAI",
         )
     except LLMProviderError as exc:
         raise LLMMaterialsError(f"OpenAI CV planner fallback request failed: {exc}") from exc
@@ -1471,15 +1529,23 @@ def _call_nvidia_contract_once(
             timeout=timeout,
             http_module=httpx,
         )
-        response = provider.complete(
-            _nvidia_contract_messages(contract, payload, validation_feedback, previous_response=previous_response),
-            model=model,
-            temperature=0,
-            response_format="json",
-            max_tokens=int(os.getenv("NVIDIA_MATERIALS_MAX_TOKENS", "8000")),
-            top_p=0.95,
-            frequency_penalty=0,
-            presence_penalty=0,
+        response = _call_with_transport_retries(
+            lambda: provider.complete(
+                _nvidia_contract_messages(
+                    contract,
+                    payload,
+                    validation_feedback,
+                    previous_response=previous_response,
+                ),
+                model=model,
+                temperature=0,
+                response_format="json",
+                max_tokens=int(os.getenv("NVIDIA_MATERIALS_MAX_TOKENS", "8000")),
+                top_p=0.95,
+                frequency_penalty=0,
+                presence_penalty=0,
+            ),
+            provider_name="NVIDIA",
         )
     except LLMProviderError as exc:
         raise LLMMaterialsError(f"NVIDIA materials request failed: {exc}") from exc
@@ -1521,13 +1587,16 @@ def _call_nvidia_once(
             timeout=timeout,
             http_module=httpx,
         )
-        response = provider.complete(
-            _nvidia_materials_messages(user_payload),
-            model=model,
-            temperature=0.1,
-            response_format="json",
-            max_tokens=int(os.getenv("NVIDIA_MATERIALS_MAX_TOKENS", "12000")),
-            top_p=0.95,
+        response = _call_with_transport_retries(
+            lambda: provider.complete(
+                _nvidia_materials_messages(user_payload),
+                model=model,
+                temperature=0.1,
+                response_format="json",
+                max_tokens=int(os.getenv("NVIDIA_MATERIALS_MAX_TOKENS", "12000")),
+                top_p=0.95,
+            ),
+            provider_name="NVIDIA",
         )
     except LLMProviderError as exc:
         raise LLMMaterialsError(f"NVIDIA materials request failed: {exc}") from exc
@@ -1557,12 +1626,15 @@ def _call_openai_once(
             timeout=timeout,
             http_module=httpx,
         )
-        response = provider.complete(
-            _openai_materials_messages(user_payload),
-            model=model,
-            response_format="json",
-            response_schema=_materials_schema(),
-            schema_name="application_kit",
+        response = _call_with_transport_retries(
+            lambda: provider.complete(
+                _openai_materials_messages(user_payload),
+                model=model,
+                response_format="json",
+                response_schema=_materials_schema(),
+                schema_name="application_kit",
+            ),
+            provider_name="OpenAI",
         )
     except LLMProviderError as exc:
         raise LLMMaterialsError(f"OpenAI materials request failed: {exc}") from exc

@@ -19,6 +19,10 @@ def max_semantic_repairs() -> int:
     return max(0, int(os.getenv("MATERIALS_MAX_SEMANTIC_REPAIRS", "1")))
 
 
+def max_transport_retries() -> int:
+    return max(0, int(os.getenv("MATERIALS_MAX_TRANSPORT_RETRIES", "2")))
+
+
 def should_auto_generate_materials(ranking: dict | None, *, override: bool = False) -> bool:
     decision = str((ranking or {}).get("decision") or "").upper()
     if decision in {"AVOID", "SKIP"} and not override:
