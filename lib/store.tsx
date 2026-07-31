@@ -50,6 +50,7 @@ interface StoreValue {
   setSelectedRankingVersion: (version: string) => void
   refresh: (rankingVersion?: string | null) => Promise<void>
   refreshApplications: () => Promise<void>
+  recordApplication: (application: ApplicationRecord) => void
   getJob: (id: string) => JobDetail | undefined
   getJobSummary: (id: string) => JobListItem | undefined
   getJobDetailEntry: (id: string) => JobDetailEntry
@@ -60,6 +61,7 @@ interface StoreValue {
   generateMaterials: (
     id: string,
     provider?: "heuristic" | "openai" | "nvidia",
+    targets?: Array<"ats_cv" | "cover_letter" | "recruiter_message" | "autofill">,
   ) => Promise<{ job?: JobDetail; operation_id?: number; status?: string }>
 }
 
@@ -151,6 +153,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const applyQueueQueryRef = useRef("")
   const listRequestSeq = useRef(0)
   const applicationRequestSeq = useRef(0)
+  const submittedJobIdsRef = useRef(new Set<string>())
   const detailRequests = useRef(new Map<string, Promise<JobDetail | undefined>>())
 
   const refresh = useCallback(async (rankingVersion?: string | null) => {
@@ -190,6 +193,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const data = await api.getApplications()
       if (requestId !== applicationRequestSeq.current) return
       setApplications(data.applications)
+      submittedJobIdsRef.current = new Set(
+        data.applications
+          .filter((application) => ["submitted", "submitted_manually", "submission_verified"].includes(application.status))
+          .map((application) => String(application.job_id)),
+      )
       setApplicationsStatus(data.applications.length ? "success" : "empty")
       setBackendOnline(true)
     } catch {
@@ -199,6 +207,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     }
   }, [])
+
+  const recordApplication = useCallback((application: ApplicationRecord) => {
+    setApplications((current) => [application, ...current.filter((item) => item.id !== application.id)])
+    const submitted = ["submitted", "submitted_manually", "submission_verified"].includes(application.status)
+    if (!submitted) return
+
+    const jobId = String(application.job_id)
+    const alreadySubmitted = submittedJobIdsRef.current.has(jobId)
+    submittedJobIdsRef.current.add(jobId)
+    setJobs((current) => current.filter((job) => String(job.id) !== jobId))
+    if (!alreadySubmitted) {
+      setJobsMeta((current) => current ? { ...current, total: Math.max(0, current.total - 1) } : current)
+    }
+  }, [])
+
 
   const setSelectedRankingVersion = useCallback((version: string) => {
     selectedRankingVersionRef.current = version
@@ -341,8 +364,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const generateMaterials = useCallback(async (id: string, provider: "heuristic" | "openai" | "nvidia" = "openai") => {
-    const result = await api.generateMaterials(id, provider)
+  const generateMaterials = useCallback(async (
+    id: string,
+    provider: "heuristic" | "openai" | "nvidia" = "openai",
+    targets?: Array<"ats_cv" | "cover_letter" | "recruiter_message" | "autofill">,
+  ) => {
+    const result = await api.generateMaterials(id, provider, targets)
     setBackendOnline(true)
     if (result.job) {
       const entry = { status: "success" as const, job: result.job, requestedAt: Date.now() }
@@ -375,6 +402,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setSelectedRankingVersion,
       refresh,
       refreshApplications,
+      recordApplication,
       getJob,
       getJobSummary,
       getJobDetailEntry,
@@ -402,6 +430,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setSelectedRankingVersion,
       refresh,
       refreshApplications,
+      recordApplication,
       getJob,
       getJobSummary,
       getJobDetailEntry,

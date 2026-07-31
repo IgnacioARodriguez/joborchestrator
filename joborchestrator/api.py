@@ -35,6 +35,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     materials_prompt_versions,
 )
 from joborchestrator.intelligence.profile_trace import profile_trace
+from joborchestrator.material_review import next_material_review_states, normalize_material_targets, operation_covers_targets
 from joborchestrator.automation.adapters import AdapterRegistry
 from joborchestrator.automation.accounts import site_identity_from_url, store_password
 from joborchestrator.automation.ledger import build_obligation_ledger
@@ -88,6 +89,8 @@ class ApplicationPayload(BaseModel):
     channel: str = "portal"
     resume_variant_id: int | None = None
     submitted_at: str | None = None
+    note: str | None = Field(default=None, max_length=1000)
+    recruiter_contacted: bool = False
 
 
 class ApplicationPatch(BaseModel):
@@ -162,6 +165,25 @@ class ApplicationSessionPayload(BaseModel):
 class ApplicationSessionTransitionPayload(BaseModel):
     state: str
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class SubmissionConfirmationPayload(BaseModel):
+    submitted_at: str | None = None
+    channel: Literal["portal", "easy_apply", "referral", "direct_contact"] = "portal"
+    note: str | None = Field(default=None, max_length=1000)
+    recruiter_contacted: bool = False
+
+
+class MaterialsPatch(BaseModel):
+    recruiter_message: str | None = None
+    cover_letter: str | None = None
+    ats_cv_notes: str | None = None
+    autofill_notes: str | None = None
+
+
+class MaterialReviewPatch(BaseModel):
+    material: Literal["ats_cv", "cover_letter", "recruiter_message", "autofill"]
+    status: Literal["approved", "not_required", "ready_for_review"]
 
 
 class AutomationAccountPayload(BaseModel):
@@ -259,6 +281,7 @@ class MaterialsPayload(BaseModel):
     model: str | None = None
     api_key: str | None = None
     shortlist: bool = True
+    targets: list[Literal["ats_cv", "cover_letter", "recruiter_message", "autofill"]] | None = None
 
 
 class ProfilePayload(BaseModel):
@@ -582,7 +605,7 @@ def apply_queue(
         reverse=True,
     )
     freshness_counts = db.count_job_freshness_buckets()
-    total = db.count_apply_queue_job_postings(freshness_filter, q) if q else _freshness_total(freshness_filter, freshness_counts)
+    total = db.count_apply_queue_job_postings(freshness_filter, q)
     return {
         "jobs": jobs,
         "ranking_versions": ranking_versions,
@@ -820,6 +843,8 @@ def create_job_application(job_id: int, payload: ApplicationPayload) -> dict[str
         raise HTTPException(status_code=404, detail="Job not found")
     data = payload.model_dump()
     data["job_id"] = job_id
+    if data.get("status") in {"submitted", "submitted_manually", "submission_verified"}:
+        data["record_submission_event"] = True
     try:
         return {"application": db.create_application(data)}
     except ValueError as exc:
@@ -967,30 +992,59 @@ def transition_application_session(session_id: int, payload: ApplicationSessionT
 
 
 @app.post("/api/application-sessions/{session_id}/submitted-manually")
-def mark_application_session_submitted_manually(session_id: int) -> dict[str, Any]:
+def mark_application_session_submitted_manually(
+    session_id: int,
+    payload: SubmissionConfirmationPayload = SubmissionConfirmationPayload(),
+) -> dict[str, Any]:
     session = db.get_application_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Application session not found")
-    if session["state"] not in {"submit_only", "ready_for_review", "needs_user_input"}:
+
+    submitted_states = {"submitted", "submitted_manually", "submission_verified"}
+    already_submitted = session["state"] in submitted_states
+    if not already_submitted and session["state"] not in {"submit_only", "ready_for_review", "needs_user_input"}:
         raise HTTPException(status_code=409, detail=f"Cannot mark a {session['state']} session as manually submitted.")
-    try:
-        updated = db.transition_application_session(
-            session_id,
-            "submitted_manually",
+
+    if already_submitted:
+        updated = session
+    else:
+        try:
+            updated = db.transition_application_session(
+                session_id,
+                "submitted_manually",
+                {
+                    "note": "User marked the application as submitted manually after final review.",
+                    "current_step": "manual_submission_recorded",
+                    "requires_review": False,
+                },
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if updated.get("application_id"):
+        application_id = int(updated["application_id"])
+        db.update_application(
+            application_id,
             {
-                "note": "User marked the application as submitted manually after final review.",
-                "current_step": "manual_submission_recorded",
-                "requires_review": False,
+                "channel": payload.channel,
+                **({"submitted_at": payload.submitted_at} if payload.submitted_at else {}),
             },
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if updated.get("application_id"):
-        db.create_application_event(
-            int(updated["application_id"]),
-            {"event_type": "submitted_manually", "note": "Submitted manually by the user."},
-        )
-    return {"session": updated}
+        if not already_submitted:
+            note_parts = ["Submitted manually by the user."]
+            if payload.recruiter_contacted:
+                note_parts.append("Recruiter contacted.")
+            if payload.note:
+                note_parts.append(payload.note.strip())
+            db.create_application_event(
+                application_id,
+                {
+                    "event_type": "submitted_manually",
+                    "event_at": payload.submitted_at,
+                    "note": " ".join(note_parts),
+                },
+            )
+    return {"session": db.get_application_session(session_id) or updated}
 
 
 @app.post("/api/application-sessions/{session_id}/continue")
@@ -1127,9 +1181,32 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
     job, ranking = _job_for_materials(job_id)
     keywords = parse_json_value(ranking.get("cv_keywords_to_emphasize_json"), []) if ranking else []
     try:
+        targets = normalize_material_targets(payload.targets)
         provider = payload.provider or ("openai" if payload.use_llm else "heuristic")
         selected_model = _materials_model_for_provider(provider, payload.model)
         if provider in {"openai", "nvidia"}:
+            existing = next(
+                (
+                    operation
+                    for operation in db.list_operations(limit=100)
+                    if operation["type"] == "application_materials_generation"
+                    and operation["status"] in {"queued", "running"}
+                    and int((operation.get("input_json") or {}).get("job_id") or 0) == job_id
+                ),
+                None,
+            )
+            if existing:
+                existing_input = existing.get("input_json") or {}
+                same_strategy = (
+                    str(existing_input.get("provider") or "") == provider
+                    and str(existing_input.get("model") or "") == selected_model
+                )
+                if same_strategy and operation_covers_targets(existing_input.get("targets"), targets):
+                    return {"operation_id": existing["id"], "status": existing["status"]}
+                raise HTTPException(
+                    status_code=409,
+                    detail="A different materials generation is already in progress for this job.",
+                )
             operation_id = db.create_operation(
                 "application_materials_generation",
                 {
@@ -1137,6 +1214,7 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
                     "provider": provider,
                     "model": selected_model,
                     "shortlist": payload.shortlist,
+                    "targets": targets,
                 },
                 f"Queued {provider} application materials generation.",
             )
@@ -1146,13 +1224,24 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     profile_metadata = profile_trace(db.get_candidate_profile_payload())
+    generated_values = {
+        "recruiter_message": kit.get("recruiter_message"),
+        "cover_letter": kit.get("cover_letter"),
+        "ats_cv": kit.get("ats_cv_text") or kit.get("ats_cv_notes"),
+        "autofill": kit.get("autofill_notes"),
+    }
+    review_states = next_material_review_states(
+        parse_json_value(job.get("materials_review_states_json"), {}),
+        targets,
+        generated_values,
+    )
     db.update_job_application_materials(
         job_id,
         pipeline_status="shortlisted" if payload.shortlist else None,
-        recruiter_message=kit.get("recruiter_message"),
-        cover_letter=kit.get("cover_letter"),
-        ats_cv_text=kit.get("ats_cv_text") or kit.get("ats_cv_notes"),
-        autofill_notes=kit.get("autofill_notes"),
+        recruiter_message=kit.get("recruiter_message") if not targets or "recruiter_message" in targets else None,
+        cover_letter=kit.get("cover_letter") if not targets or "cover_letter" in targets else None,
+        ats_cv_text=(kit.get("ats_cv_text") or kit.get("ats_cv_notes")) if not targets or "ats_cv" in targets else None,
+        autofill_notes=kit.get("autofill_notes") if not targets or "autofill" in targets else None,
         materials_provider=provider,
         materials_model="heuristic",
         materials_prompt_versions=materials_prompt_versions() if provider != "heuristic" else {},
@@ -1160,7 +1249,50 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
         materials_validation_errors=[],
         materials_candidate_profile_hash=profile_metadata.get("hash"),
         materials_candidate_profile_snapshot=profile_metadata.get("snapshot"),
+        materials_review_states=review_states,
     )
+    fresh = db.get_job_posting(job_id)
+    rankings = latest_rankings_by_job_id()
+    return {"job": job_dto(fresh, rankings.get(job_id))}
+
+
+@app.patch("/api/jobs/{job_id}/materials")
+def update_materials(job_id: int, payload: MaterialsPatch) -> dict[str, Any]:
+    if not db.get_job_posting(job_id):
+        raise HTTPException(status_code=404, detail="Job not found")
+    updates = payload.model_dump(exclude_unset=True)
+    current = db.get_job_posting(job_id) or {}
+    review_states = parse_json_value(current.get("materials_review_states_json"), {})
+    field_to_material = {
+        "recruiter_message": "recruiter_message",
+        "cover_letter": "cover_letter",
+        "ats_cv_notes": "ats_cv",
+        "autofill_notes": "autofill",
+    }
+    for field, value in updates.items():
+        material = field_to_material[field]
+        if str(value or "").strip():
+            review_states[material] = "ready_for_review"
+        elif material == "cover_letter":
+            review_states[material] = "not_required"
+        else:
+            review_states[material] = "pending"
+    if "ats_cv_notes" in updates:
+        updates["ats_cv_text"] = updates.pop("ats_cv_notes")
+    db.update_job_application_materials(job_id, materials_review_states=review_states, **updates)
+    fresh = db.get_job_posting(job_id)
+    rankings = latest_rankings_by_job_id()
+    return {"job": job_dto(fresh, rankings.get(job_id))}
+
+
+@app.patch("/api/jobs/{job_id}/materials/review")
+def update_material_review(job_id: int, payload: MaterialReviewPatch) -> dict[str, Any]:
+    job = db.get_job_posting(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    states = parse_json_value(job.get("materials_review_states_json"), {})
+    states[payload.material] = payload.status
+    db.update_job_application_materials(job_id, materials_review_states=states)
     fresh = db.get_job_posting(job_id)
     rankings = latest_rankings_by_job_id()
     return {"job": job_dto(fresh, rankings.get(job_id))}

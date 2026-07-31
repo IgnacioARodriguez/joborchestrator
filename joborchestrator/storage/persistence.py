@@ -54,6 +54,7 @@ APPLICATION_KIT_COLUMNS = {
     "materials_validation_errors_json": "TEXT",
     "materials_candidate_profile_hash": "TEXT",
     "materials_candidate_profile_snapshot_json": "TEXT",
+    "materials_review_states_json": "TEXT",
 }
 LINKEDIN_ENRICHMENT_COLUMNS = {
     "applicant_count": "INTEGER",
@@ -147,6 +148,7 @@ CREATE TABLE IF NOT EXISTS job_postings (
     cover_letter TEXT,
     ats_cv_text TEXT,
     autofill_notes TEXT,
+    materials_review_states_json TEXT,
     identity_key TEXT,
     UNIQUE(source, company, external_id)
 );
@@ -418,6 +420,22 @@ CREATE TABLE IF NOT EXISTS application_events (
 
 CREATE INDEX IF NOT EXISTS idx_application_events_application ON application_events(application_id, event_at);
 
+CREATE TABLE IF NOT EXISTS application_material_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL UNIQUE,
+    job_id INTEGER NOT NULL,
+    recruiter_message TEXT,
+    cover_letter TEXT,
+    ats_cv_text TEXT,
+    autofill_notes TEXT,
+    generation_json TEXT,
+    captured_at TEXT NOT NULL,
+    FOREIGN KEY(application_id) REFERENCES applications(id),
+    FOREIGN KEY(job_id) REFERENCES job_postings(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_application_material_snapshots_job ON application_material_snapshots(job_id);
+
 CREATE TABLE IF NOT EXISTS application_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL,
@@ -599,6 +617,7 @@ def _conn():
         if not is_cloud and _scanner_migration_needed(conn):
             backup_database("before_speed_ranking_migration")
         _ensure_scanner_columns(conn)
+        _ensure_application_material_snapshots_schema(conn)
         _ensure_hiring_contacts_schema(conn)
         _ensure_ranking_trace_schema(conn)
         _ensure_llm_eval_schema(conn)
@@ -684,6 +703,25 @@ def _ensure_scanner_columns(conn: sqlite3.Connection) -> None:
             columns.add(column)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_postings_repost_key ON job_postings(repost_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_postings_soft_identity ON job_postings(soft_identity_key)")
+
+
+def _ensure_application_material_snapshots_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS application_material_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            application_id INTEGER NOT NULL UNIQUE,
+            job_id INTEGER NOT NULL,
+            recruiter_message TEXT,
+            cover_letter TEXT,
+            ats_cv_text TEXT,
+            autofill_notes TEXT,
+            generation_json TEXT,
+            captured_at TEXT NOT NULL,
+            FOREIGN KEY(application_id) REFERENCES applications(id),
+            FOREIGN KEY(job_id) REFERENCES job_postings(id)
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_application_material_snapshots_job ON application_material_snapshots(job_id)")
 
 
 def _ensure_hiring_contacts_schema(conn: sqlite3.Connection) -> None:
@@ -1360,6 +1398,7 @@ def update_job_application_materials(
     materials_validation_errors: list | None = None,
     materials_candidate_profile_hash: str | None = None,
     materials_candidate_profile_snapshot: dict | None = None,
+    materials_review_states: dict | None = None,
 ) -> None:
     jobs_repository.update_job_application_materials(
         _conn,
@@ -1376,6 +1415,7 @@ def update_job_application_materials(
         materials_validation_errors=materials_validation_errors,
         materials_candidate_profile_hash=materials_candidate_profile_hash,
         materials_candidate_profile_snapshot=materials_candidate_profile_snapshot,
+        materials_review_states=materials_review_states,
     )
 
 
