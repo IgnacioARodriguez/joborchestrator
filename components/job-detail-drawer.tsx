@@ -140,11 +140,15 @@ function MaterialBlock({
   text,
   actions,
   onSave,
+  reviewState,
+  onApprove,
 }: {
   label: string
   text: string
   actions?: ReactNode
   onSave?: (value: string) => Promise<void>
+  reviewState?: string
+  onApprove?: () => Promise<void>
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(text)
@@ -176,6 +180,12 @@ function MaterialBlock({
         <p className="text-xs font-semibold text-foreground">{label}</p>
         <div className="flex flex-wrap justify-end gap-1">
           {actions}
+          {onApprove && reviewState !== "approved" ? (
+            <Button variant="ghost" size="sm" onClick={() => void onApprove()}>
+              <CheckCircle2 data-icon="inline-start" />
+              Aprobar
+            </Button>
+          ) : null}
           {onSave ? (
             editing ? (
               <Button variant="ghost" size="sm" disabled={saving} onClick={() => void saveText()}>
@@ -372,9 +382,13 @@ function parseAutofillPlan(text: string) {
 function AutofillPlanBlock({
   text,
   onSave,
+  reviewState,
+  onApprove,
 }: {
   text: string
   onSave: (value: string) => Promise<void>
+  reviewState?: string
+  onApprove?: () => Promise<void>
 }) {
   const plan = parseAutofillPlan(text)
   const [editing, setEditing] = useState(false)
@@ -386,6 +400,8 @@ function AutofillPlanBlock({
         label="Autofill notes"
         text={text}
         onSave={onSave}
+        reviewState={reviewState}
+        onApprove={onApprove}
       />
     )
   }
@@ -428,6 +444,12 @@ function AutofillPlanBlock({
             <Pencil data-icon="inline-start" />
             Edit
           </Button>
+          {onApprove && reviewState !== "approved" ? (
+            <Button variant="ghost" size="sm" onClick={() => void onApprove()}>
+              <CheckCircle2 data-icon="inline-start" />
+              Aprobar
+            </Button>
+          ) : null}
           {editing ? (
             <Button variant="ghost" size="sm" disabled={saving} onClick={() => void saveText()}>
               <Save data-icon="inline-start" />
@@ -951,6 +973,12 @@ const DetailBody = memo(function DetailBody({
     await loadJobDetail(job.id, { force: true })
   }
 
+  async function approveMaterial(material: "ats_cv" | "cover_letter" | "recruiter_message" | "autofill") {
+    await api.updateMaterialReview(job.id, { material, status: "approved" })
+    await loadJobDetail(job.id, { force: true })
+    toast.success("Material aprobado")
+  }
+
   function openExternal(url: string) {
     markOpened(job.id)
     window.open(url, "_blank", "noopener,noreferrer")
@@ -1447,16 +1475,22 @@ const DetailBody = memo(function DetailBody({
                   label="Recruiter message"
                   text={job.materials.recruiter_message}
                   onSave={(value) => saveMaterial("recruiter_message", value)}
+                  reviewState={job.materials.review.materials?.recruiter_message}
+                  onApprove={() => approveMaterial("recruiter_message")}
                 />
                 <MaterialBlock
                   label="Cover letter"
                   text={job.materials.cover_letter}
                   onSave={(value) => saveMaterial("cover_letter", value)}
+                  reviewState={job.materials.review.materials?.cover_letter}
+                  onApprove={() => approveMaterial("cover_letter")}
                 />
                 <MaterialBlock
                   label="Optimized ATS CV"
                   text={job.materials.ats_cv_notes}
                   onSave={(value) => saveMaterial("ats_cv_notes", value)}
+                  reviewState={job.materials.review.materials?.ats_cv}
+                  onApprove={() => approveMaterial("ats_cv")}
                   actions={
                     <>
                       <Button
@@ -1479,6 +1513,8 @@ const DetailBody = memo(function DetailBody({
                 <AutofillPlanBlock
                   text={job.materials.autofill_notes}
                   onSave={(value) => saveMaterial("autofill_notes", value)}
+                  reviewState={job.materials.review.materials?.autofill}
+                  onApprove={() => approveMaterial("autofill")}
                 />
               </div>
             </DeferredSection>

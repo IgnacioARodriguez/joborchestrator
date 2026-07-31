@@ -22,6 +22,7 @@ from joborchestrator.intelligence.llm_application_materials import (
 )
 from joborchestrator.intelligence.profile_trace import profile_trace
 from joborchestrator.llm.provider import ProviderRegistry
+from joborchestrator.material_review import next_material_review_states, normalize_material_targets
 from joborchestrator.automation.executor import run_application_execution
 from joborchestrator.ranking.nvidia_ranker import (
     DEFAULT_NVIDIA_MAX_CONCURRENCY,
@@ -141,6 +142,7 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
     provider = str(input_payload.get("provider") or ProviderRegistry().provider_name_for_role("materials"))
     model = str(input_payload.get("model") or "")
     shortlist = bool(input_payload.get("shortlist", True))
+    targets = normalize_material_targets(input_payload.get("targets"))
     if not job_id:
         raise RuntimeError("application_materials_generation requires job_id.")
 
@@ -170,13 +172,24 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
     ats_cv_text = kit.get("ats_cv_text") or kit.get("ats_cv_notes")
     generation_metadata = kit.get("_generation_metadata") if isinstance(kit.get("_generation_metadata"), dict) else {}
     profile_metadata = profile_trace(db.get_candidate_profile_payload())
+    generated_values = {
+        "recruiter_message": kit.get("recruiter_message"),
+        "cover_letter": kit.get("cover_letter"),
+        "ats_cv": ats_cv_text,
+        "autofill": kit.get("autofill_notes"),
+    }
+    review_states = next_material_review_states(
+        parse_json_value(job.get("materials_review_states_json"), {}),
+        targets,
+        generated_values,
+    )
     db.update_job_application_materials(
         job_id,
         pipeline_status="shortlisted" if shortlist else None,
-        recruiter_message=kit.get("recruiter_message"),
-        cover_letter=kit.get("cover_letter"),
-        ats_cv_text=ats_cv_text,
-        autofill_notes=kit.get("autofill_notes"),
+        recruiter_message=kit.get("recruiter_message") if not targets or "recruiter_message" in targets else None,
+        cover_letter=kit.get("cover_letter") if not targets or "cover_letter" in targets else None,
+        ats_cv_text=ats_cv_text if not targets or "ats_cv" in targets else None,
+        autofill_notes=kit.get("autofill_notes") if not targets or "autofill" in targets else None,
         materials_provider=provider,
         materials_model=selected_model,
         materials_prompt_versions=prompt_versions,
@@ -184,9 +197,10 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
         materials_validation_errors=list(generation_metadata.get("validation_errors") or []),
         materials_candidate_profile_hash=profile_metadata.get("hash"),
         materials_candidate_profile_snapshot=profile_metadata.get("snapshot"),
+        materials_review_states=review_states,
     )
     resume_variant = None
-    if ats_cv_text:
+    if ats_cv_text and (not targets or "ats_cv" in targets):
         resume_variant = db.register_generated_resume_variant(
             job_id,
             f"{job.get('company') or 'Company'} - {job.get('title') or 'Role'} ATS CV",

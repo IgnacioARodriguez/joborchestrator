@@ -474,6 +474,32 @@ def test_confirming_application_updates_existing_preparation_without_duplicate(t
     assert body["jobs"] == []
 
 
+def test_confirmed_application_preserves_material_snapshot(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(external_id="snapshot-role", title="Snapshot Role"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=None).iloc[0]["id"])
+    db.update_job_application_materials(
+        job_id,
+        recruiter_message="Original recruiter message",
+        cover_letter="Original cover letter",
+        ats_cv_text="Original ATS CV",
+        autofill_notes="Original answers",
+        materials_provider="openai",
+    )
+
+    response = client.post(
+        f"/api/jobs/{job_id}/applications",
+        json={"status": "submitted_manually", "channel": "portal", "submitted_at": "2026-01-02T10:00:00"},
+    )
+
+    assert response.status_code == 200
+    application_id = response.json()["application"]["id"]
+    db.update_job_application_materials(job_id, ats_cv_text="Regenerated ATS CV")
+    stored = client.get(f"/api/applications/{application_id}").json()["application"]["materials_snapshot"]
+    assert stored["ats_cv_text"] == "Original ATS CV"
+    assert stored["generation_json"]["provider"] == "openai"
+
+
 def test_scan_fresh_queues_scan_with_auto_ranking(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
     client.put("/api/profile", json={"profile": profile_payload()})
@@ -823,6 +849,75 @@ def test_update_materials_edits_application_kit(tmp_path, monkeypatch):
     assert materials["autofill_notes"] == "Updated notes"
 
 
+def test_selective_material_generation_preserves_ready_materials(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    job_id = save_job_with_rankings()
+    db.update_job_application_materials(
+        job_id,
+        recruiter_message="Keep this recruiter message",
+        cover_letter="Keep this cover letter",
+        ats_cv_text="Keep this CV",
+        autofill_notes="",
+    )
+    monkeypatch.setattr(
+        api,
+        "build_application_kit",
+        lambda job, keywords=None: {
+            "recruiter_message": "Replacement recruiter message",
+            "cover_letter": "Replacement cover letter",
+            "ats_cv_text": "Replacement CV",
+            "autofill_notes": "Generated autofill answers",
+        },
+    )
+
+    response = client.post(
+        f"/api/jobs/{job_id}/materials",
+        json={"use_llm": False, "targets": ["autofill"]},
+    )
+
+    assert response.status_code == 200
+    materials = response.json()["job"]["materials"]
+    assert materials["recruiter_message"] == "Keep this recruiter message"
+    assert materials["cover_letter"] == "Keep this cover letter"
+    assert materials["ats_cv_notes"] == "Keep this CV"
+    assert materials["autofill_notes"] == "Generated autofill answers"
+
+
+def test_material_generation_reuses_active_operation(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    job_id = save_job_with_rankings()
+
+    first = client.post(f"/api/jobs/{job_id}/materials", json={"provider": "openai", "use_llm": True})
+    second = client.post(f"/api/jobs/{job_id}/materials", json={"provider": "openai", "use_llm": True})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["operation_id"] == first.json()["operation_id"]
+    operations = [op for op in db.list_operations(limit=10) if op["type"] == "application_materials_generation"]
+    assert len(operations) == 1
+
+
+def test_material_review_status_is_persisted_per_material(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(external_id="material-review-state", title="Material Review State"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=None).iloc[0]["id"])
+    db.update_job_application_materials(
+        job_id,
+        recruiter_message="Ready recruiter message",
+        cover_letter="Ready cover letter",
+        ats_cv_text="A" * 600,
+        autofill_notes="Ready answers",
+    )
+
+    response = client.patch(
+        f"/api/jobs/{job_id}/materials/review",
+        json={"material": "ats_cv", "status": "approved"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["job"]["materials"]["review"]["materials"]["ats_cv"] == "approved"
+
+
 def test_application_rest_endpoints(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
     db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
@@ -975,3 +1070,172 @@ def test_generate_materials_reports_missing_job(tmp_path, monkeypatch):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Job not found"
+
+
+def test_materials_require_approval_before_ready(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(external_id="approval-ready", title="Approval Ready"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=None).iloc[0]["id"])
+    db.save_job_ranking(job_id, make_ranking("ranking_v1.1.0-nvidia", 90, "APPLY_NOW"))
+    db.update_job_application_materials(
+        job_id,
+        recruiter_message="Ready recruiter message",
+        cover_letter="Ready cover letter",
+        ats_cv_text="A" * 700,
+        autofill_notes="Ready answers",
+    )
+
+    before = client.get(f"/api/jobs/{job_id}").json()["job"]["materials"]["review"]
+    assert before["status"] == "needs_review"
+    assert set(before["materials"].values()) == {"ready_for_review"}
+
+    for material in ["ats_cv", "cover_letter", "recruiter_message", "autofill"]:
+        response = client.patch(
+            f"/api/jobs/{job_id}/materials/review",
+            json={"material": material, "status": "approved"},
+        )
+        assert response.status_code == 200
+
+    after = client.get(f"/api/jobs/{job_id}").json()["job"]["materials"]["review"]
+    assert after["status"] == "ready"
+    assert after["requires_review"] is False
+
+
+def test_editing_approved_material_resets_review_state(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(external_id="approval-reset", title="Approval Reset"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=None).iloc[0]["id"])
+    db.update_job_application_materials(
+        job_id,
+        recruiter_message="Ready recruiter message",
+        cover_letter="Ready cover letter",
+        ats_cv_text="A" * 700,
+        autofill_notes="Ready answers",
+        materials_review_states={
+            "ats_cv": "approved",
+            "cover_letter": "approved",
+            "recruiter_message": "approved",
+            "autofill": "approved",
+        },
+    )
+
+    response = client.patch(f"/api/jobs/{job_id}/materials", json={"ats_cv_notes": "B" * 700})
+
+    assert response.status_code == 200
+    review = response.json()["job"]["materials"]["review"]
+    assert review["materials"]["ats_cv"] == "ready_for_review"
+    assert review["materials"]["recruiter_message"] == "approved"
+    assert review["status"] == "needs_review"
+
+
+def test_selective_generation_resets_only_generated_material_review(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    job_id = save_job_with_rankings()
+    db.update_job_application_materials(
+        job_id,
+        recruiter_message="Keep recruiter message",
+        cover_letter="Keep cover letter",
+        ats_cv_text="A" * 700,
+        autofill_notes="",
+        materials_review_states={
+            "ats_cv": "approved",
+            "cover_letter": "approved",
+            "recruiter_message": "approved",
+            "autofill": "pending",
+        },
+    )
+    monkeypatch.setattr(
+        api,
+        "build_application_kit",
+        lambda job, keywords=None: {
+            "recruiter_message": "Replacement recruiter message",
+            "cover_letter": "Replacement cover letter",
+            "ats_cv_text": "Replacement CV",
+            "autofill_notes": "Generated answers",
+        },
+    )
+
+    response = client.post(
+        f"/api/jobs/{job_id}/materials",
+        json={"use_llm": False, "targets": ["autofill"]},
+    )
+
+    assert response.status_code == 200
+    review = response.json()["job"]["materials"]["review"]
+    assert review["materials"]["autofill"] == "ready_for_review"
+    assert review["materials"]["ats_cv"] == "approved"
+    assert review["materials"]["cover_letter"] == "approved"
+    assert review["materials"]["recruiter_message"] == "approved"
+
+
+def test_material_generation_rejects_noncovering_active_operation(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    job_id = save_job_with_rankings()
+
+    first = client.post(
+        f"/api/jobs/{job_id}/materials",
+        json={"provider": "openai", "use_llm": True, "targets": ["ats_cv"]},
+    )
+    conflicting = client.post(
+        f"/api/jobs/{job_id}/materials",
+        json={"provider": "openai", "use_llm": True, "targets": ["autofill"]},
+    )
+
+    assert first.status_code == 200
+    assert conflicting.status_code == 409
+    assert "different materials generation" in conflicting.json()["detail"].lower()
+
+
+def test_manual_application_confirmation_persists_metadata_without_duplicate_event(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(external_id="manual-metadata", title="Manual Metadata"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=None).iloc[0]["id"])
+    payload = {
+        "status": "submitted_manually",
+        "channel": "direct_contact",
+        "submitted_at": "2026-07-30T12:30:00",
+        "note": "Sent after a referral introduction.",
+        "recruiter_contacted": True,
+    }
+
+    first = client.post(f"/api/jobs/{job_id}/applications", json=payload)
+    repeated = client.post(f"/api/jobs/{job_id}/applications", json=payload)
+
+    assert first.status_code == 200
+    assert repeated.status_code == 200
+    application = repeated.json()["application"]
+    assert application["channel"] == "direct_contact"
+    assert application["submitted_at"] == "2026-07-30T12:30:00"
+    assert len(application["events"]) == 1
+    assert "Recruiter contacted." in application["events"][0]["note"]
+    assert "Sent after a referral introduction." in application["events"][0]["note"]
+
+
+def test_generation_validation_errors_override_material_approval(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(external_id="validation-warning", title="Validation Warning"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=None).iloc[0]["id"])
+    db.save_job_ranking(job_id, make_ranking("ranking_v1.1.0-nvidia", 90, "APPLY_NOW"))
+    db.update_job_application_materials(
+        job_id,
+        recruiter_message="Ready recruiter message",
+        cover_letter="Ready cover letter",
+        ats_cv_text="A" * 700,
+        autofill_notes="Ready answers",
+        materials_validation_errors=["ats_cv_text is too short"],
+        materials_review_states={
+            "ats_cv": "approved",
+            "cover_letter": "approved",
+            "recruiter_message": "approved",
+            "autofill": "approved",
+        },
+    )
+
+    detail = client.get(f"/api/jobs/{job_id}").json()["job"]["materials"]["review"]
+    listed = client.get("/api/apply-queue", params={"freshness": "all"}).json()["jobs"][0]["materials_review"]
+
+    assert detail["status"] == "needs_review"
+    assert detail["materials"]["ats_cv"] == "warning"
+    assert "ats_cv_generation_warning" in detail["reasons"]
+    assert listed["status"] == "needs_review"
+    assert listed["materials"]["ats_cv"] == "warning"

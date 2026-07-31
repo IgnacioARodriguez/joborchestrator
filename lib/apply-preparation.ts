@@ -44,6 +44,7 @@ export interface PreparationViewState {
     label: string
     ready: boolean
     needsReview: boolean
+    state: string
   }>
 }
 
@@ -88,12 +89,13 @@ export function getPreparationViewState(
   session?: ApplicationSession | null,
 ): PreparationViewState {
   const materials = materialSummaries(job)
-  const hasMaterials = materials.some((material) => material.ready)
+  const hasMaterials = materials.some((material) => material.state !== "pending" && material.state !== "not_required")
   const allRequiredMaterialsReady = materials
     .filter((material) => material.id !== "cover_letter")
     .every((material) => material.ready)
   const materialReview = job.materials_review
   const materialWarnings = materialReview?.reasons ?? []
+  const missingTargets = missingMaterialTargets(job)
   const sessionState = session?.state ?? null
   const blocker =
     humanBlocker(job, session) ||
@@ -124,6 +126,24 @@ export function getPreparationViewState(
       activeStep: "confirmation",
       materials,
       completed: { materials: true, review: true, application: true },
+    })
+  }
+
+  if (job.status !== "active") {
+    return buildState({
+      status: "blocked",
+      label: "Oferta retirada",
+      description: "Comprueba el portal antes de continuar con esta candidatura.",
+      primaryAction: { type: "resolve_problem", label: "Resolver problema" },
+      secondaryActions: [
+        ...(hasMaterials ? [{ type: "review_materials" as const, label: "Revisar materiales" }] : []),
+        { type: "confirm_submitted" as const, label: "Registrar envio realizado" },
+      ],
+      activeStep: "application",
+      blockedStep: "application",
+      blocker: "La oferta ya no aparece activa. Puedes revisar el enlace o registrar un envio ya realizado.",
+      materials,
+      completed: { materials: hasMaterials, review: materialReview?.status === "ready" },
     })
   }
 
@@ -161,7 +181,20 @@ export function getPreparationViewState(
     })
   }
 
-  if (materialWarnings.length > 0 && hasMaterials) {
+  if (materialReview?.status === "needs_review" && hasMaterials) {
+    if (missingTargets.length > 0) {
+      return buildState({
+        status: "needs_review",
+        label: "Materiales pendientes",
+        description: `${materials.length - missingTargets.length} de ${materials.length} materiales preparados.`,
+        primaryAction: { type: "generate_materials", label: "Preparar materiales pendientes" },
+        secondaryActions: [{ type: "review_materials", label: "Revisar materiales" }],
+        activeStep: "materials",
+        blocker: materialWarnings.map(materialReasonLabel).join(" "),
+        materials,
+        completed: {},
+      })
+    }
     return buildState({
       status: "needs_review",
       label: "Requiere revision",
@@ -208,6 +241,12 @@ export function matchesPreparationFilter(view: PreparationViewState, filter: Pre
   return view.status === "blocked"
 }
 
+export function missingMaterialTargets(job: JobListItem): Array<"ats_cv" | "cover_letter" | "recruiter_message" | "autofill"> {
+  return materialSummaries(job)
+    .filter((material) => ["pending", "failed"].includes(material.state))
+    .map((material) => material.id)
+}
+
 export function materialReasonLabel(reason: string): string {
   if (reason === "materials_missing") return "Faltan materiales."
   if (reason === "ranking_requires_review") return "La recomendacion necesita revision."
@@ -217,6 +256,12 @@ export function materialReasonLabel(reason: string): string {
   if (reason === "ats_cv_missing") return "Falta CV optimizado."
   if (reason === "ats_cv_too_short") return "El CV optimizado parece demasiado corto."
   if (reason === "autofill_notes_missing") return "Faltan respuestas para el portal."
+  if (reason === "cover_letter_missing") return "Falta la carta de presentacion."
+  if (reason === "materials_generation_warning") return "La generación tuvo advertencias que requieren revisión."
+  if (reason === "ats_cv_generation_warning") return "El CV generado tuvo advertencias."
+  if (reason === "cover_letter_generation_warning") return "La carta generada tuvo advertencias."
+  if (reason === "recruiter_message_generation_warning") return "El mensaje al recruiter tuvo advertencias."
+  if (reason === "autofill_generation_warning") return "Las respuestas preparadas tuvieron advertencias."
   if (reason.startsWith("ats_cv_contains_avoid_overclaiming_terms:")) {
     return `Revisar afirmaciones sobre ${reason.split(":", 2)[1]}.`
   }
@@ -225,42 +270,61 @@ export function materialReasonLabel(reason: string): string {
 
 function materialSummaries(job: JobListItem): PreparationViewState["materials"] {
   const review = job.materials_review
+  const states: Partial<Record<PreparationViewState["materials"][number]["id"], string>> = review?.materials ?? {}
   const reasons = new Set(review?.reasons ?? [])
-  const hasAny = job.has_materials
-  const reviewRequired = Boolean(review?.requires_review)
+  const stateFor = (id: PreparationViewState["materials"][number]["id"]) => states[id] ?? "pending"
+  const readyForUse = (state: string) => !["pending", "failed", "generating"].includes(state)
+  const needsReview = (id: PreparationViewState["materials"][number]["id"], state: string) =>
+    ["ready_for_review", "warning"].includes(state) || [...reasons].some((reason) => reasonTargetsMaterial(reason, id))
+
   return [
     {
       id: "ats_cv",
       label: "CV",
-      ready: hasAny && !reasons.has("ats_cv_missing"),
-      needsReview: reviewRequired && (reasons.has("ats_cv_too_short") || [...reasons].some((reason) => reason.startsWith("ats_cv_"))),
+      ready: readyForUse(stateFor("ats_cv")),
+      needsReview: needsReview("ats_cv", stateFor("ats_cv")),
+      state: stateFor("ats_cv"),
     },
     {
       id: "cover_letter",
       label: "Cover letter",
-      ready: hasAny,
-      needsReview: reviewRequired,
+      ready: readyForUse(stateFor("cover_letter")),
+      needsReview: needsReview("cover_letter", stateFor("cover_letter")),
+      state: stateFor("cover_letter"),
     },
     {
       id: "autofill",
       label: "Respuestas",
-      ready: hasAny && !reasons.has("autofill_notes_missing"),
-      needsReview: reviewRequired && reasons.has("autofill_notes_missing"),
+      ready: readyForUse(stateFor("autofill")),
+      needsReview: needsReview("autofill", stateFor("autofill")),
+      state: stateFor("autofill"),
     },
     {
       id: "recruiter_message",
       label: "Recruiter",
-      ready: hasAny && !reasons.has("recruiter_message_missing"),
-      needsReview: reviewRequired && reasons.has("recruiter_message_missing"),
+      ready: readyForUse(stateFor("recruiter_message")),
+      needsReview: needsReview("recruiter_message", stateFor("recruiter_message")),
+      state: stateFor("recruiter_message"),
     },
   ]
 }
+
+function reasonTargetsMaterial(
+  reason: string,
+  material: PreparationViewState["materials"][number]["id"],
+): boolean {
+  if (material === "ats_cv") return reason.startsWith("ats_cv_")
+  if (material === "cover_letter") return reason.startsWith("cover_letter_")
+  if (material === "recruiter_message") return reason.startsWith("recruiter_message_")
+  return reason.startsWith("autofill_") || reason.startsWith("autofill_notes_")
+}
+
 
 function humanBlocker(job: JobListItem, session?: ApplicationSession | null): string | null {
   if (job.status !== "active") return "La oferta no esta activa. Revisa el portal antes de avanzar."
   if (job.priority.blocker) return job.priority.blocker
   if (!session) return null
-  if (session.last_error) return session.last_error
+  if (session.last_error) return "No se pudo continuar en el portal. Revisa los datos y vuelve a intentarlo."
   if ((session.validation_errors_json ?? []).length > 0) return "Hay advertencias de validacion en el portal."
   if ((session.unknown_fields_json ?? []).length > 0) return "El portal tiene preguntas que debes responder manualmente."
   return null

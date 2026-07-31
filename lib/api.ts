@@ -239,10 +239,18 @@ export const api = {
     })
   },
 
-  async markApplicationSubmittedManually(id: number) {
+  async markApplicationSubmittedManually(
+    id: number,
+    input: {
+      submitted_at?: string
+      channel?: "portal" | "easy_apply" | "referral" | "direct_contact"
+      note?: string
+      recruiter_contacted?: boolean
+    } = {},
+  ) {
     return request<{ session: ApplicationSession }>(`/api/application-sessions/${id}/submitted-manually`, {
       method: "POST",
-      body: JSON.stringify({}),
+      body: JSON.stringify(input),
     })
   },
 
@@ -253,10 +261,14 @@ export const api = {
     })
   },
 
-  async generateMaterials(id: string, provider: "heuristic" | "openai" | "nvidia" = "openai") {
+  async generateMaterials(
+    id: string,
+    provider: "heuristic" | "openai" | "nvidia" = "openai",
+    targets?: Array<"ats_cv" | "cover_letter" | "recruiter_message" | "autofill">,
+  ) {
     return request<{ job?: JobDetail; operation_id?: number; status?: string }>(`/api/jobs/${id}/materials`, {
       method: "POST",
-      body: JSON.stringify({ provider, use_llm: provider !== "heuristic", shortlist: true }),
+      body: JSON.stringify({ provider, use_llm: provider !== "heuristic", shortlist: true, targets }),
     })
   },
 
@@ -265,6 +277,16 @@ export const api = {
     input: Partial<Pick<ApplicationMaterials, "recruiter_message" | "cover_letter" | "ats_cv_notes" | "autofill_notes">>,
   ) {
     return request<{ job: JobDetail }>(`/api/jobs/${id}/materials`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    })
+  },
+
+  async updateMaterialReview(
+    id: string,
+    input: { material: "ats_cv" | "cover_letter" | "recruiter_message" | "autofill"; status: "approved" | "not_required" | "ready_for_review" },
+  ) {
+    return request<{ job: JobDetail }>(`/api/jobs/${id}/materials/review`, {
       method: "PATCH",
       body: JSON.stringify(input),
     })
@@ -320,6 +342,10 @@ export const api = {
     return request<{ applications: ApplicationRecord[] }>("/api/applications")
   },
 
+  async getApplication(id: number) {
+    return request<{ application: ApplicationRecord }>(`/api/applications/${id}`, { fresh: true })
+  },
+
   async createApplication(
     jobId: string,
     input: Partial<{
@@ -328,6 +354,8 @@ export const api = {
       channel: "portal" | "easy_apply" | "referral" | "direct_contact"
       resume_variant_id: number
       submitted_at: string
+      note: string
+      recruiter_contacted: boolean
     }>,
   ) {
     return request<{ application: ApplicationRecord }>(`/api/jobs/${jobId}/applications`, {

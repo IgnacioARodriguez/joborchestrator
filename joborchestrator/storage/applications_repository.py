@@ -61,7 +61,7 @@ def create_application(connect: ConnectionFactory, payload: dict) -> dict:
     conn = connect()
     try:
         existing = conn.execute(
-            """SELECT id, status FROM applications
+            """SELECT id, status, channel, submitted_at FROM applications
                WHERE job_id = ?
                  AND status NOT IN ('rejected', 'withdrawn')
                ORDER BY updated_at DESC, id DESC
@@ -71,28 +71,34 @@ def create_application(connect: ConnectionFactory, payload: dict) -> dict:
         if existing:
             application_id = int(existing["id"])
             if status in SUBMISSION_STATUSES:
-                submitted_at = payload.get("submitted_at") or now
+                submitted_at = payload.get("submitted_at") or existing["submitted_at"] or now
                 previous_status = str(existing["status"] or "")
-                should_update = previous_status != status and (
-                    previous_status not in SUBMISSION_STATUSES or status == "submission_verified"
+                should_advance = previous_status not in SUBMISSION_STATUSES or (
+                    status == "submission_verified" and previous_status != "submission_verified"
                 )
-                if should_update:
-                    conn.execute(
-                        "UPDATE applications SET status = ?, submitted_at = COALESCE(submitted_at, ?), updated_at = ? WHERE id = ?",
-                        (status, submitted_at, now, application_id),
-                    )
-                    conn.execute(
-                        """INSERT INTO application_events (application_id, event_type, event_at, note)
-                           VALUES (?, ?, ?, ?)""",
-                        (
-                            application_id,
-                            _submission_event_type(status),
-                            submitted_at,
-                            "Confirmed by the user from Apply.",
-                        ),
-                    )
-                    conn.commit()
+                effective_status = status if should_advance else previous_status
+                conn.execute(
+                    """UPDATE applications
+                       SET status = ?, channel = ?, submitted_at = COALESCE(submitted_at, ?), updated_at = ?
+                       WHERE id = ?""",
+                    (effective_status, channel, submitted_at, now, application_id),
+                )
+                if should_advance:
+                    if payload.get("record_submission_event"):
+                        conn.execute(
+                            """INSERT INTO application_events (application_id, event_type, event_at, note)
+                               VALUES (?, ?, ?, ?)""",
+                            (
+                                application_id,
+                                _submission_event_type(status),
+                                submitted_at,
+                                _submission_note(payload),
+                            ),
+                        )
+                    _snapshot_application_materials(conn, application_id, int(payload["job_id"]), submitted_at)
+                conn.commit()
             return get_application(connect, application_id) or {"id": application_id}
+
         cursor = conn.execute(
             """INSERT INTO applications (
                    job_id, ats_type, status, channel, resume_variant_id,
@@ -110,6 +116,15 @@ def create_application(connect: ConnectionFactory, payload: dict) -> dict:
             ),
         )
         app_id = _last_insert_id(conn, cursor)
+        if status in SUBMISSION_STATUSES:
+            submitted_at = payload.get("submitted_at") or now
+            if payload.get("record_submission_event"):
+                conn.execute(
+                    """INSERT INTO application_events (application_id, event_type, event_at, note)
+                       VALUES (?, ?, ?, ?)""",
+                    (app_id, _submission_event_type(status), submitted_at, _submission_note(payload)),
+                )
+            _snapshot_application_materials(conn, app_id, int(payload["job_id"]), submitted_at)
         conn.commit()
         return get_application(connect, app_id) or {"id": app_id}
     finally:
@@ -154,6 +169,13 @@ def get_application(connect: ConnectionFactory, application_id: int) -> dict | N
                 (application_id,),
             ).fetchall()
         ]
+        snapshot = conn.execute(
+            "SELECT * FROM application_material_snapshots WHERE application_id = ?",
+            (application_id,),
+        ).fetchone()
+        if snapshot:
+            app["materials_snapshot"] = dict(snapshot)
+            app["materials_snapshot"]["generation_json"] = loads(app["materials_snapshot"].get("generation_json"), {})
         return app
     finally:
         conn.close()
@@ -209,6 +231,16 @@ def _submission_event_type(status: str) -> str:
     if status == "submitted":
         return "submitted"
     return "submitted_manually"
+
+
+def _submission_note(payload: dict) -> str:
+    parts = ["Submitted manually by the user."]
+    if payload.get("recruiter_contacted"):
+        parts.append("Recruiter contacted.")
+    note = str(payload.get("note") or "").strip()
+    if note:
+        parts.append(note)
+    return " ".join(parts)
 
 
 def record_job_opened(connect: ConnectionFactory, job_id: int) -> dict:
@@ -576,6 +608,7 @@ def transition_application_session(connect: ConnectionFactory, session_id: int, 
                     "UPDATE applications SET status = ?, submitted_at = COALESCE(submitted_at, ?), updated_at = ? WHERE id = ?",
                     (application_status, now, now, row["application_id"]),
                 )
+                _snapshot_application_materials(conn, int(row["application_id"]), int(row["job_id"]), now)
             conn.commit()
         return _session_row(conn, session_id)
     finally:
@@ -729,6 +762,48 @@ def _hydrate_session(conn: sqlite3.Connection | db_connection.LibsqlConnection, 
         ).fetchall()
     ]
     return row
+
+
+def _snapshot_application_materials(
+    conn: sqlite3.Connection | db_connection.LibsqlConnection,
+    application_id: int,
+    job_id: int,
+    captured_at: str,
+) -> None:
+    """Freeze the materials exactly once when the user records a submission."""
+    job = conn.execute(
+        """SELECT recruiter_message, cover_letter, ats_cv_text, autofill_notes,
+                  materials_provider, materials_model, materials_prompt_versions_json,
+                  materials_generated_at, materials_review_states_json
+           FROM job_postings WHERE id = ?""",
+        (job_id,),
+    ).fetchone()
+    if not job:
+        return
+    generation = {
+        "provider": job["materials_provider"],
+        "model": job["materials_model"],
+        "prompt_versions": loads(job["materials_prompt_versions_json"], {}),
+        "generated_at": job["materials_generated_at"],
+        "review_states": loads(job["materials_review_states_json"], {}),
+    }
+    conn.execute(
+        """INSERT INTO application_material_snapshots (
+               application_id, job_id, recruiter_message, cover_letter, ats_cv_text,
+               autofill_notes, generation_json, captured_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(application_id) DO NOTHING""",
+        (
+            application_id,
+            job_id,
+            job["recruiter_message"],
+            job["cover_letter"],
+            job["ats_cv_text"],
+            job["autofill_notes"],
+            dumps(generation),
+            captured_at,
+        ),
+    )
 
 
 def _validated(value: object, allowed: set[str], name: str) -> str:

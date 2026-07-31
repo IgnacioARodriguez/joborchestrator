@@ -608,7 +608,12 @@ JOB_LIST_COLUMNS = """
                 ELSE 0
               END AS has_materials,
               CASE WHEN COALESCE(jp.ats_cv_text, '') != '' THEN 1 ELSE 0 END AS has_ats_cv,
+              LENGTH(COALESCE(jp.ats_cv_text, '')) AS ats_cv_length,
               CASE WHEN COALESCE(jp.cover_letter, '') != '' THEN 1 ELSE 0 END AS has_cover_letter,
+              CASE WHEN COALESCE(jp.recruiter_message, '') != '' THEN 1 ELSE 0 END AS has_recruiter_message,
+              CASE WHEN COALESCE(jp.autofill_notes, '') != '' THEN 1 ELSE 0 END AS has_autofill_notes,
+              jp.materials_review_states_json,
+              jp.materials_validation_errors_json,
               jr.id AS ranking_id,
               jr.job_id AS ranking_job_id,
               jr.final_score AS ranking_final_score,
@@ -1076,6 +1081,7 @@ def update_job_application_materials(
     materials_validation_errors: list | None = None,
     materials_candidate_profile_hash: str | None = None,
     materials_candidate_profile_snapshot: dict | None = None,
+    materials_review_states: dict | None = None,
 ) -> None:
     generated_at = (
         datetime.now().isoformat(timespec="seconds")
@@ -1097,6 +1103,11 @@ def update_job_application_materials(
         if materials_candidate_profile_snapshot is not None
         else None
     )
+    review_states_json = (
+        json.dumps(materials_review_states, ensure_ascii=False, sort_keys=True)
+        if materials_review_states is not None
+        else None
+    )
     conn = connect()
     try:
         conn.execute(
@@ -1113,7 +1124,8 @@ def update_job_application_materials(
                    materials_validation_attempts = COALESCE(?, materials_validation_attempts),
                    materials_validation_errors_json = COALESCE(?, materials_validation_errors_json),
                    materials_candidate_profile_hash = COALESCE(?, materials_candidate_profile_hash),
-                   materials_candidate_profile_snapshot_json = COALESCE(?, materials_candidate_profile_snapshot_json)
+                   materials_candidate_profile_snapshot_json = COALESCE(?, materials_candidate_profile_snapshot_json),
+                   materials_review_states_json = COALESCE(?, materials_review_states_json)
                WHERE id = ?""",
             (
                 pipeline_status,
@@ -1129,6 +1141,7 @@ def update_job_application_materials(
                 validation_errors_json,
                 materials_candidate_profile_hash,
                 profile_snapshot_json,
+                review_states_json,
                 job_id,
             ),
         )

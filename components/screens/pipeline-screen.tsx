@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertCircle,
   Building2,
@@ -34,6 +34,7 @@ import {
   getPreparationViewState,
   isConfirmedApplication,
   matchesPreparationFilter,
+  missingMaterialTargets,
   type PreparationAction,
   type PreparationFilter,
   type PreparationStep,
@@ -102,27 +103,45 @@ function PreparationProgress({ steps }: { steps: PreparationStep[] }) {
 }
 
 function MaterialPills({ view }: { view: PreparationViewState }) {
+  const applicable = view.materials.filter((material) => material.state !== "not_required")
+  const prepared = applicable.filter((material) => material.ready).length
+  const stateLabel = (material: PreparationViewState["materials"][number]) => {
+    if (material.state === "approved") return "aprobado"
+    if (material.state === "warning") return "con advertencias"
+    if (material.state === "not_required") return "no requerido"
+    if (material.state === "failed") return "falló"
+    if (material.state === "generating") return "generando"
+    return material.ready ? "listo" : "pendiente"
+  }
   return (
     <div className="flex flex-wrap gap-1.5" aria-label="Materiales">
+      <span className="inline-flex items-center rounded-md border border-border bg-muted/30 px-2 py-1 text-xs text-muted-foreground">
+        {prepared} de {applicable.length} preparados
+      </span>
       {view.materials.map((material) => (
         <span
           key={material.id}
           className={cn(
             "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs",
-            material.ready
-              ? material.needsReview
-                ? "border-warning/30 bg-warning/10 text-warning-foreground"
-                : "border-success/25 bg-success/10 text-success-foreground"
-              : "border-border bg-muted/30 text-muted-foreground",
+            material.state === "not_required"
+              ? "border-border bg-muted/30 text-muted-foreground"
+              : material.ready
+                ? material.needsReview
+                  ? "border-warning/30 bg-warning/10 text-warning-foreground"
+                  : "border-success/25 bg-success/10 text-success-foreground"
+                : material.state === "failed"
+                  ? "border-destructive/25 bg-destructive/10 text-destructive"
+                  : "border-border bg-muted/30 text-muted-foreground",
           )}
         >
           {material.ready ? <CheckCircle2 className="size-3" /> : <Circle className="size-3" />}
-          {material.label}
+          {material.label} {stateLabel(material)}
         </span>
       ))}
     </div>
   )
 }
+
 
 function PreparationCard({
   job,
@@ -215,6 +234,156 @@ function PreparationCard({
   )
 }
 
+function localDateTimeValue(date = new Date()) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+  return local.toISOString().slice(0, 16)
+}
+
+function SubmissionConfirmation({
+  job,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  job: JobListItem
+  busy: boolean
+  onCancel: () => void
+  onConfirm: (input: {
+    submittedAt: string
+    channel: "portal" | "easy_apply" | "referral" | "direct_contact"
+    note: string
+    recruiterContacted: boolean
+  }) => void
+}) {
+  const [submittedAt, setSubmittedAt] = useState(() => localDateTimeValue())
+  const [channel, setChannel] = useState<"portal" | "easy_apply" | "referral" | "direct_contact">("portal")
+  const [note, setNote] = useState("")
+  const [recruiterContacted, setRecruiterContacted] = useState(false)
+  const dialogRef = useRef<HTMLElement>(null)
+  const dateInputRef = useRef<HTMLInputElement>(null)
+  const busyRef = useRef(busy)
+  const onCancelRef = useRef(onCancel)
+
+  useEffect(() => {
+    busyRef.current = busy
+    onCancelRef.current = onCancel
+  }, [busy, onCancel])
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    dateInputRef.current?.focus()
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !busyRef.current) {
+        event.preventDefault()
+        onCancelRef.current()
+        return
+      }
+      if (event.key !== "Tab") return
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )
+      if (!focusable?.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown)
+    return () => {
+      document.removeEventListener("keydown", onKeyDown)
+      previousFocus?.focus()
+    }
+  }, [])
+
+  function submit() {
+    const parsed = new Date(submittedAt)
+    if (Number.isNaN(parsed.getTime())) return
+    onConfirm({ submittedAt: parsed.toISOString(), channel, note, recruiterContacted })
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end bg-black/35 p-3 sm:items-center sm:justify-center"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onCancel()
+      }}
+    >
+      <section
+        ref={dialogRef}
+        aria-describedby="submission-confirmation-description"
+        aria-labelledby="submission-confirmation-title"
+        aria-modal="true"
+        role="dialog"
+        className="w-full max-w-md rounded-lg border border-border bg-card p-4 shadow-xl"
+      >
+        <h2 id="submission-confirmation-title" className="text-base font-semibold text-foreground">
+          Confirmar envío
+        </h2>
+        <p id="submission-confirmation-description" className="mt-1 text-sm text-muted-foreground">
+          Confirmá que enviaste la candidatura para {job.title}.
+        </p>
+        <div className="mt-4 grid gap-3">
+          <label className="grid gap-1.5 text-sm font-medium text-foreground">
+            Fecha de envío
+            <input
+              ref={dateInputRef}
+              type="datetime-local"
+              value={submittedAt}
+              onChange={(event) => setSubmittedAt(event.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+            />
+          </label>
+          <label className="grid gap-1.5 text-sm font-medium text-foreground">
+            Nota opcional
+            <textarea
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              className="min-h-20 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={recruiterContacted}
+              onChange={(event) => setRecruiterContacted(event.target.checked)}
+            />
+            Contacté a un recruiter
+          </label>
+          <label className="grid gap-1.5 text-sm font-medium text-foreground">
+            Canal
+            <select
+              value={channel}
+              onChange={(event) => setChannel(event.target.value as typeof channel)}
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+            >
+              <option value="portal">Portal de la empresa</option>
+              <option value="easy_apply">Easy Apply</option>
+              <option value="referral">Referido</option>
+              <option value="direct_contact">Contacto directo</option>
+            </select>
+          </label>
+        </div>
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="outline" onClick={onCancel} disabled={busy}>Cancelar</Button>
+          <Button onClick={submit} disabled={busy || !submittedAt}>
+            {busy ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <ClipboardCheck data-icon="inline-start" />}
+            Confirmar que apliqué
+          </Button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+
 function actionIcon(action: PreparationAction) {
   if (action === "generate_materials") return <Sparkles data-icon="inline-start" />
   if (action === "review_materials" || action === "continue_review") return <FileText data-icon="inline-start" />
@@ -237,7 +406,7 @@ export function PipelineScreen({
     applyQueuePageSize,
     jobsMeta,
     refresh,
-    refreshApplications,
+    recordApplication,
     generateMaterials,
     loadJobDetail,
     markOpened,
@@ -246,6 +415,8 @@ export function PipelineScreen({
   const [sessions, setSessions] = useState<ApplicationSession[]>([])
   const [busyJobId, setBusyJobId] = useState<string | null>(null)
   const [operationByJob, setOperationByJob] = useState<Record<string, number>>({})
+  const [operationIssueByJob, setOperationIssueByJob] = useState<Record<string, string>>({})
+  const [confirmation, setConfirmation] = useState<{ job: JobListItem; session: ApplicationSession | null } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -258,51 +429,84 @@ export function PipelineScreen({
       }
     }
     void loadSessions()
+    void api.getOperations(100).then((response) => {
+      if (cancelled) return
+      const recovered = response.operations.reduce<Record<string, number>>((current, operation) => {
+        const jobId = operation.type === "application_materials_generation" ? String(operation.input_json?.job_id ?? "") : ""
+        if (jobId && current[jobId] === undefined && ["queued", "running"].includes(operation.status)) {
+          current[jobId] = operation.id
+        }
+        return current
+      }, {})
+      if (Object.keys(recovered).length > 0) setOperationByJob(recovered)
+    }).catch(() => undefined)
     return () => {
       cancelled = true
     }
-  }, [jobs.length])
+  }, [])
 
   useEffect(() => {
-    const entries = Object.entries(operationByJob)
-    if (entries.length === 0) return
+    if (Object.keys(operationByJob).length === 0) return
     let stopped = false
-    const timer = window.setTimeout(async () => {
+    let timer: number | undefined
+
+    async function poll() {
+      const entries = Object.entries(operationByJob)
+      if (entries.length === 0 || stopped) return
       const completed: string[] = []
       await Promise.all(
         entries.map(async ([jobId, operationId]) => {
           try {
             const response = await api.getOperation(operationId)
-            if (response.operation.status === "completed") {
+            const operation = response.operation
+            if (operation.status === "completed") {
               completed.push(jobId)
               await loadJobDetail(jobId, { force: true })
-              toast.success("Materiales listos")
-            }
-            if (response.operation.status === "failed") {
-              completed.push(jobId)
-              toast.error("No se pudieron generar materiales", {
-                description: "Revisa el problema y vuelve a intentar.",
+              setOperationIssueByJob((current) => {
+                const next = { ...current }
+                delete next[jobId]
+                return next
               })
+              toast.success("Materiales listos")
+              return
+            }
+            if (["failed", "cancelled"].includes(operation.status)) {
+              completed.push(jobId)
+              const issue = "La generación se detuvo antes de completar los materiales. Volvé a intentarlo."
+              setOperationIssueByJob((current) => ({ ...current, [jobId]: issue }))
+              toast.error("No se pudieron generar materiales", { description: issue })
+              return
+            }
+            const updatedAt = Date.parse(operation.updated_at)
+            if (Number.isFinite(updatedAt) && Date.now() - updatedAt > 15 * 60_000) {
+              completed.push(jobId)
+              const issue = "La generación no mostró progreso durante 15 minutos. Podés reintentarla."
+              setOperationIssueByJob((current) => ({ ...current, [jobId]: issue }))
+              toast.error("La generación se detuvo", { description: issue })
             }
           } catch {
-            completed.push(jobId)
+            // Keep the operation active and retry; a transient API error must not lose recovery state.
           }
         }),
       )
-      if (!stopped && completed.length > 0) {
+      if (stopped) return
+      if (completed.length > 0) {
         setOperationByJob((current) => {
           const next = { ...current }
           for (const jobId of completed) delete next[jobId]
           return next
         })
-        void refresh()
       }
-    }, 2500)
+      timer = window.setTimeout(poll, 2500)
+    }
+
+    void poll()
     return () => {
       stopped = true
-      window.clearTimeout(timer)
+      if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [loadJobDetail, operationByJob, refresh])
+  }, [loadJobDetail, operationByJob])
+
 
   const confirmedJobIds = useMemo(
     () => new Set(applications.filter(isConfirmedApplication).map((application) => String(application.job_id))),
@@ -316,6 +520,7 @@ export function PipelineScreen({
       .map((job) => {
         const session = latestSessionForJob(sessions, job.id)
         const baseView = getPreparationViewState(job, session)
+        const operationIssue = operationIssueByJob[job.id]
         const view = operationByJob[job.id]
           ? {
               ...baseView,
@@ -327,11 +532,20 @@ export function PipelineScreen({
                 step.id === "materials" ? { ...step, state: "active" as const } : step,
               ),
             }
-          : baseView
+          : operationIssue
+            ? {
+                ...baseView,
+                status: "blocked" as const,
+                label: "Generación detenida",
+                description: "La preparación automática no pudo completarse.",
+                blocker: operationIssue,
+                primaryAction: { type: "generate_materials" as const, label: "Reintentar generación" },
+              }
+            : baseView
         return { job, session, view }
       })
       .filter(({ view }) => matchesPreparationFilter(view, filter))
-  }, [confirmedJobIds, filter, jobs, operationByJob, sessions])
+  }, [confirmedJobIds, filter, jobs, operationByJob, operationIssueByJob, sessions])
 
   async function handleAction(job: JobListItem, session: ApplicationSession | null, action: PreparationAction) {
     if (action === "review_materials" || action === "continue_review") {
@@ -339,10 +553,20 @@ export function PipelineScreen({
       return
     }
 
+    if (action === "confirm_submitted") {
+      setConfirmation({ job, session })
+      return
+    }
+
     setBusyJobId(job.id)
     try {
       if (action === "generate_materials") {
-        const response = await generateMaterials(job.id)
+        setOperationIssueByJob((current) => {
+          const next = { ...current }
+          delete next[job.id]
+          return next
+        })
+        const response = await generateMaterials(job.id, undefined, missingMaterialTargets(job))
         if (response.operation_id) {
           setOperationByJob((current) => ({ ...current, [job.id]: response.operation_id! }))
           toast.success("Generacion iniciada", { description: job.title })
@@ -367,7 +591,6 @@ export function PipelineScreen({
           markOpened(job.id)
           window.open(url, "_blank", "noopener,noreferrer")
         }
-        await Promise.all([refresh(), refreshApplications()])
         return
       }
 
@@ -382,24 +605,52 @@ export function PipelineScreen({
         return
       }
 
-      if (action === "confirm_submitted") {
-        if (!window.confirm(`Confirmas que enviaste la candidatura para ${job.title}?`)) return
-        if (session && ["submit_only", "ready_for_review", "needs_user_input"].includes(session.state)) {
-          const response = await api.markApplicationSubmittedManually(session.id)
-          setSessions((current) => [response.session, ...current.filter((item) => item.id !== response.session.id)])
-        } else {
-          await api.createApplication(job.id, {
-            status: "submitted_manually",
-            channel: "portal",
-            submitted_at: new Date().toISOString(),
-          })
-        }
-        await Promise.all([refresh(), refreshApplications()])
-        toast.success("Envio confirmado", { description: "La candidatura salio de Aplicar." })
-      }
     } catch (error) {
       toast.error("No se pudo completar la accion", {
-        description: error instanceof Error ? error.message : "Intenta nuevamente.",
+        description: "Revisa los datos de la candidatura y vuelve a intentarlo.",
+      })
+    } finally {
+      setBusyJobId(null)
+    }
+  }
+
+  async function confirmSubmission(input: {
+    submittedAt: string
+    channel: "portal" | "easy_apply" | "referral" | "direct_contact"
+    note: string
+    recruiterContacted: boolean
+  }) {
+    if (!confirmation) return
+    const { job, session } = confirmation
+    setBusyJobId(job.id)
+    try {
+      if (session && ["submit_only", "ready_for_review", "needs_user_input"].includes(session.state)) {
+        const response = await api.markApplicationSubmittedManually(session.id, {
+          submitted_at: input.submittedAt,
+          channel: input.channel,
+          note: input.note || undefined,
+          recruiter_contacted: input.recruiterContacted,
+        })
+        setSessions((current) => [response.session, ...current.filter((item) => item.id !== response.session.id)])
+        if (response.session.application_id) {
+          const application = await api.getApplication(response.session.application_id)
+          recordApplication(application.application)
+        }
+      } else {
+        const response = await api.createApplication(job.id, {
+          status: "submitted_manually",
+          channel: input.channel,
+          submitted_at: input.submittedAt,
+          note: input.note || undefined,
+          recruiter_contacted: input.recruiterContacted,
+        })
+        recordApplication(response.application)
+      }
+      setConfirmation(null)
+      toast.success("Envio confirmado", { description: "La candidatura salio de Aplicar." })
+    } catch (error) {
+      toast.error("No se pudo confirmar el envio", {
+        description: "La candidatura sigue en la cola. Vuelve a intentarlo.",
       })
     } finally {
       setBusyJobId(null)
@@ -473,6 +724,14 @@ export function PipelineScreen({
             Mostrando hasta {applyQueuePageSize} candidaturas
           </span>
         </div>
+      ) : null}
+      {confirmation ? (
+        <SubmissionConfirmation
+          job={confirmation.job}
+          busy={busyJobId === confirmation.job.id}
+          onCancel={() => setConfirmation(null)}
+          onConfirm={(input) => void confirmSubmission(input)}
+        />
       ) : null}
     </div>
   )

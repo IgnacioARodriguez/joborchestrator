@@ -79,6 +79,7 @@ def run_ui_smoke(
         )
         console_errors: list[str] = []
         screenshot_path = PROJECT_ROOT / "logs" / "ui-smoke.png"
+        mobile_screenshot_path = PROJECT_ROOT / "logs" / "ui-smoke-mobile.png"
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             _wait_for_url(f"{api_url}/api/health", api_proc, api_log, label="api")
@@ -90,6 +91,10 @@ def run_ui_smoke(
                 page.goto(dashboard_url, wait_until="networkidle", timeout=60_000)
                 _verify_dashboard(page, seed)
                 page.screenshot(path=str(screenshot_path), full_page=True)
+                page.set_viewport_size({"width": 375, "height": 812})
+                page.goto(f"{dashboard_url}/apply", wait_until="networkidle", timeout=60_000)
+                expect(page.get_by_role("heading", name="Aplicar")).to_be_visible(timeout=15_000)
+                page.screenshot(path=str(mobile_screenshot_path), full_page=True)
                 browser.close()
             serious_console_errors = [
                 error
@@ -103,10 +108,11 @@ def run_ui_smoke(
                 "dashboard_url": dashboard_url,
                 "api_url": api_url,
                 "job_count": seed["job_count"],
-                "checked_sections": ["Today", "Review", "Applications", "Profile", "Automations", "Insights"],
-                "checked_actions": ["applications.add_job", "drawer.ready_to_apply"],
+                "checked_sections": ["Jobs", "Aplicar", "Aplicaciones", "Configuración"],
+                "checked_actions": ["apply.excludes_submitted", "apply.opens_material_review"],
                 "console_errors": serious_console_errors,
                 "screenshot": str(screenshot_path),
+                "mobile_screenshot": str(mobile_screenshot_path),
             }
         finally:
             if not keep_servers:
@@ -140,6 +146,12 @@ def seed_ui_database(db_path: Path) -> dict[str, Any]:
                 cover_letter=f"{company} needs {title} execution with Python, FastAPI and PostgreSQL.",
                 ats_cv_text=profile["base_cv_text"],
                 autofill_notes="Use Python, FastAPI, PostgreSQL and AWS examples.",
+                materials_review_states={
+                    "ats_cv": "approved",
+                    "cover_letter": "approved",
+                    "recruiter_message": "approved",
+                    "autofill": "approved",
+                },
             )
         application = db.create_application(
             {
@@ -159,64 +171,32 @@ def seed_ui_database(db_path: Path) -> dict[str, Any]:
 
 
 def _verify_dashboard(page: Page, seed: dict[str, Any]) -> None:
-    expect(page.get_by_text("Job Orchestrator").first).to_be_visible(timeout=30_000)
-    expect(page.get_by_text(seed["primary_job_title"]).first).to_be_visible(timeout=30_000)
-    expect(page.get_by_text(seed["primary_company"]).first).to_be_visible(timeout=30_000)
+    expect(page.get_by_alt_text("Rocket Development")).to_be_visible(timeout=30_000)
+    expect(page.get_by_role("heading", name="Jobs")).to_be_visible(timeout=15_000)
 
-    _click_nav(page, "Review")
-    expect(page.get_by_role("heading", name="Opportunity review")).to_be_visible(timeout=15_000)
-    expect(page.get_by_placeholder("Search title, company, location")).to_be_visible(timeout=15_000)
+    _click_nav(page, "Aplicar")
+    expect(page.get_by_role("heading", name="Aplicar")).to_be_visible(timeout=15_000)
+    expect(page.get_by_text("Platform Engineer", exact=True)).to_be_visible(timeout=15_000)
+    expect(page.get_by_text("Listo para aplicar", exact=True)).to_be_visible(timeout=15_000)
+    expect(page.get_by_text("Senior Backend Engineer", exact=True)).not_to_be_visible(timeout=15_000)
+    page.get_by_role("button", name="Revisar materiales").click(timeout=15_000)
+    expect(page.get_by_role("dialog").get_by_text("Application materials")).to_be_visible(timeout=15_000)
+    page.keyboard.press("Escape")
 
-    _click_nav(page, "Applications")
+    _click_nav(page, "Aplicaciones")
     expect(page.get_by_role("heading", name="Application kanban")).to_be_visible(timeout=15_000)
-    expect(page.get_by_text("Submitted").first).to_be_visible(timeout=15_000)
+    expect(page.get_by_text("Senior Backend Engineer", exact=True)).to_be_visible(timeout=15_000)
 
-    _click_nav(page, "Profile")
-    expect(page.get_by_role("heading", name="Candidate profile")).to_be_visible(timeout=15_000)
-    expect(page.get_by_text("Senior backend engineer").first).to_be_visible(timeout=15_000)
+    _click_nav(page, "Configuración")
+    expect(page.get_by_role("heading", name="Configuración")).to_be_visible(timeout=15_000)
 
-    _click_nav(page, "Automations")
-    expect(page.get_by_role("heading", name="Automation control room")).to_be_visible(timeout=15_000)
-
-    _click_nav(page, "Insights")
-    expect(page.get_by_role("heading", name="Performance signals")).to_be_visible(timeout=15_000)
-
-    _verify_add_job_flow(page)
+    _click_nav(page, "Aplicar")
+    expect(page.get_by_role("heading", name="Aplicar")).to_be_visible(timeout=15_000)
 
 
 def _click_nav(page: Page, name: str) -> None:
     page.get_by_role("button", name=name).first.click(timeout=15_000)
     page.wait_for_timeout(250)
-
-
-def _verify_add_job_flow(page: Page) -> None:
-    title = "Manual QA Smoke Role"
-    company = "Manual Smoke Co"
-    _click_nav(page, "Applications")
-    expect(page.get_by_role("heading", name="Application kanban")).to_be_visible(timeout=15_000)
-    page.get_by_text("Add an opportunity you already have").scroll_into_view_if_needed(timeout=15_000)
-    page.get_by_placeholder("Title").fill(title)
-    page.get_by_placeholder("Company").first.fill(company)
-    page.get_by_placeholder("Posting URL").fill("https://example.com/jobs/manual-ui-smoke")
-    page.get_by_placeholder("Apply URL (optional)").fill("https://example.com/apply/manual-ui-smoke")
-    page.get_by_placeholder("Description or notes").fill(
-        "Manual UI smoke job created through the browser. Python FastAPI PostgreSQL backend role.",
-    )
-    page.get_by_role("button", name="Add job").last.click(timeout=15_000)
-    expect(page.get_by_role("dialog").get_by_text(title)).to_be_visible(timeout=30_000)
-    expect(page.get_by_role("dialog").get_by_text(company, exact=True).first).to_be_visible(timeout=15_000)
-    with page.expect_response(
-        lambda response: "/api/jobs/" in response.url
-        and response.url.endswith("/pipeline")
-        and response.status == 200,
-        timeout=15_000,
-    ):
-        page.get_by_role("dialog").get_by_role("button", name="Ready to apply").click(timeout=15_000)
-    expect(page.get_by_role("dialog").get_by_text("Pipeline Ready to apply")).to_be_visible(timeout=15_000)
-    page.keyboard.press("Escape")
-    _click_nav(page, "Review")
-    page.get_by_placeholder("Search title, company, location").fill(title)
-    expect(page.get_by_text(title).first).to_be_visible(timeout=15_000)
 
 
 def _ui_job(*, index: int, title: str, company: str) -> JobPosting:

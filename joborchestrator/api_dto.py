@@ -85,9 +85,26 @@ def job_list_item_dto(job: dict[str, Any], ranking_row: dict[str, Any] | None) -
     location_mode = _string(job.get("location") or job.get("workplace_type")).lower()
     recruiter_name = _nullable_string(job.get("recruiter_name"))
     recruiter_profile_url = _nullable_string(job.get("recruiter_profile_url"))
-    has_materials = bool(job.get("has_materials")) or any(
-        _string(job.get(key)).strip()
-        for key in ["recruiter_message", "cover_letter", "ats_cv_text", "autofill_notes"]
+    presence = {
+        "ats_cv": bool(job.get("has_ats_cv")),
+        "cover_letter": bool(job.get("has_cover_letter")),
+        "recruiter_message": bool(job.get("has_recruiter_message")),
+        "autofill": bool(job.get("has_autofill_notes")),
+    }
+    has_materials = bool(job.get("has_materials")) or any(presence.values())
+    reasons = [*_ranking_review_reasons(ranking), *_generation_review_reasons(job)]
+    if not presence["recruiter_message"]:
+        reasons.append("recruiter_message_missing")
+    if not presence["ats_cv"]:
+        reasons.append("ats_cv_missing")
+    elif int(job.get("ats_cv_length") or 0) < 500:
+        reasons.append("ats_cv_too_short")
+    if not presence["autofill"]:
+        reasons.append("autofill_notes_missing")
+    materials_review = _materials_review_summary(
+        presence,
+        parse_json_value(job.get("materials_review_states_json"), {}),
+        reasons,
     )
     return {
         "id": str(job["id"]),
@@ -117,42 +134,30 @@ def job_list_item_dto(job: dict[str, Any], ranking_row: dict[str, Any] | None) -
             "blocker": priority.get("blocker"),
         },
         "has_materials": has_materials,
-        "materials_review": {
-            "status": "ready" if has_materials else "missing",
-            "requires_review": False if has_materials else True,
-            "reasons": [] if has_materials else ["materials_missing"],
-        },
+        "materials_review": materials_review,
         "has_recruiter_contact": bool(recruiter_name or recruiter_profile_url),
     }
 
 
 def materials_review_dto(job: dict[str, Any], ranking: dict[str, Any]) -> dict[str, Any]:
-    recruiter_message = _string(job.get("recruiter_message")).strip()
-    cover_letter = _string(job.get("cover_letter")).strip()
-    ats_cv_text = _string(job.get("ats_cv_text")).strip()
-    autofill_notes = _string(job.get("autofill_notes")).strip()
-    has_materials = bool(recruiter_message or cover_letter or ats_cv_text or autofill_notes)
-    reasons: list[str] = []
-    if not has_materials:
-        return {"status": "missing", "requires_review": True, "reasons": ["materials_missing"]}
-
-    evidence = ranking.get("evidence") or {}
-    if bool(evidence.get("requires_llm_review")):
-        reasons.append("ranking_requires_review")
-    if float(ranking.get("confidence") or 0) < 0.75:
-        reasons.append("ranking_low_confidence")
-    if ranking.get("decision") not in {"APPLY_NOW", "APPLY_WITH_TAILORED_CV"}:
-        reasons.append("ranking_not_actionable")
-    if not recruiter_message:
+    contents = {
+        "ats_cv": _string(job.get("ats_cv_text")).strip(),
+        "cover_letter": _string(job.get("cover_letter")).strip(),
+        "recruiter_message": _string(job.get("recruiter_message")).strip(),
+        "autofill": _string(job.get("autofill_notes")).strip(),
+    }
+    presence = {key: bool(value) for key, value in contents.items()}
+    reasons = [*_ranking_review_reasons(ranking), *_generation_review_reasons(job)]
+    if not presence["recruiter_message"]:
         reasons.append("recruiter_message_missing")
-    if not ats_cv_text:
+    if not presence["ats_cv"]:
         reasons.append("ats_cv_missing")
-    elif len(ats_cv_text) < 500:
+    elif len(contents["ats_cv"]) < 500:
         reasons.append("ats_cv_too_short")
-    if not autofill_notes:
+    if not presence["autofill"]:
         reasons.append("autofill_notes_missing")
 
-    normalized_ats_cv = _normalize_for_review(ats_cv_text)
+    normalized_ats_cv = _normalize_for_review(contents["ats_cv"])
     overclaim_terms = [
         term
         for term in ranking.get("cv_keywords_to_avoid_overclaiming") or []
@@ -161,11 +166,115 @@ def materials_review_dto(job: dict[str, Any], ranking: dict[str, Any]) -> dict[s
     if overclaim_terms:
         reasons.append("ats_cv_contains_avoid_overclaiming_terms:" + ",".join(overclaim_terms[:6]))
 
-    return {
-        "status": "needs_review" if reasons else "ready",
-        "requires_review": bool(reasons),
-        "reasons": reasons,
+    return _materials_review_summary(
+        presence,
+        parse_json_value(job.get("materials_review_states_json"), {}),
+        reasons,
+    )
+
+
+_REQUIRED_MATERIALS = {"ats_cv", "recruiter_message", "autofill"}
+_VALID_MATERIAL_STATES = {"pending", "ready_for_review", "approved", "warning", "failed", "generating", "not_required"}
+
+
+def _ranking_review_reasons(ranking: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    evidence = ranking.get("evidence") or {}
+    if bool(evidence.get("requires_llm_review")):
+        reasons.append("ranking_requires_review")
+    if float(ranking.get("confidence") or 0) < 0.75:
+        reasons.append("ranking_low_confidence")
+    if ranking.get("decision") not in {"APPLY_NOW", "APPLY_WITH_TAILORED_CV"}:
+        reasons.append("ranking_not_actionable")
+    return reasons
+
+
+def _generation_review_reasons(job: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    for raw_error in parse_json_value(job.get("materials_validation_errors_json"), []):
+        error = _normalize_for_review(str(raw_error)).replace("_", " ").replace("-", " ")
+        if not error:
+            continue
+        if "ats cv" in error or error.startswith("cv ") or "resume" in error:
+            reason = "ats_cv_generation_warning"
+        elif "cover letter" in error:
+            reason = "cover_letter_generation_warning"
+        elif "recruiter" in error:
+            reason = "recruiter_message_generation_warning"
+        elif "autofill" in error or "application answer" in error:
+            reason = "autofill_generation_warning"
+        else:
+            reason = "materials_generation_warning"
+        if reason not in reasons:
+            reasons.append(reason)
+    return reasons
+
+
+def _materials_review_summary(
+    presence: dict[str, bool],
+    saved_states: dict[str, Any],
+    reasons: list[str],
+) -> dict[str, Any]:
+    deduped_reasons = list(dict.fromkeys(reasons))
+    states = {
+        material: _material_review_state(material, present, saved_states, deduped_reasons)
+        for material, present in presence.items()
     }
+    missing_required = [material for material in _REQUIRED_MATERIALS if not presence.get(material)]
+    review_pending = any(
+        state not in {"approved", "not_required"}
+        for material, state in states.items()
+        if material in _REQUIRED_MATERIALS or presence.get(material)
+    )
+    has_any_material = any(presence.values())
+    blocking_reason = any(_reason_blocks_readiness(reason) for reason in deduped_reasons)
+    status = "missing" if not has_any_material else "needs_review" if missing_required or blocking_reason or review_pending else "ready"
+    if not has_any_material and "materials_missing" not in deduped_reasons:
+        deduped_reasons.insert(0, "materials_missing")
+    return {
+        "status": status,
+        "requires_review": status != "ready",
+        "reasons": deduped_reasons,
+        "materials": states,
+    }
+
+
+def _reason_blocks_readiness(reason: str) -> bool:
+    return reason == "materials_generation_warning" or reason.startswith(
+        (
+            "ats_cv_",
+            "cover_letter_",
+            "recruiter_message_",
+            "autofill_",
+            "autofill_notes_",
+        )
+    )
+
+
+def _material_review_state(
+    material: str,
+    present: bool,
+    saved_states: dict[str, Any],
+    reasons: list[str],
+) -> str:
+    if not present:
+        return "not_required" if material == "cover_letter" else "pending"
+    if any(_reason_targets_material(reason, material) for reason in reasons):
+        return "warning"
+    saved = str(saved_states.get(material) or "")
+    if saved in _VALID_MATERIAL_STATES and saved != "not_required":
+        return saved
+    return "ready_for_review"
+
+
+def _reason_targets_material(reason: str, material: str) -> bool:
+    prefixes = {
+        "ats_cv": ("ats_cv_",),
+        "cover_letter": ("cover_letter_",),
+        "recruiter_message": ("recruiter_message_",),
+        "autofill": ("autofill_", "autofill_notes_"),
+    }
+    return reason.startswith(prefixes.get(material, ()))
 
 
 def materials_generation_dto(job: dict[str, Any]) -> dict[str, Any]:
