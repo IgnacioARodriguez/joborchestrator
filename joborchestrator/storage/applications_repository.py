@@ -45,6 +45,10 @@ APPLICATION_EVENTS = {
     "rejection",
     "interview_scheduled",
     "ghosted",
+    "status_changed",
+    "follow_up_scheduled",
+    "follow_up_completed",
+    "note_added",
 }
 SUBMISSION_STATUSES = {"submitted", "submitted_manually", "submission_verified"}
 ANSWER_SOURCES = {"approved", "generated"}
@@ -143,7 +147,7 @@ def list_applications(connect: ConnectionFactory, read_sql_query: ReadSqlQuery) 
             conn,
             None,
         )
-        return frame.to_dict("records")
+        return [_hydrate_application(conn, row, include_snapshot=False) for row in frame.to_dict("records")]
     finally:
         conn.close()
 
@@ -161,22 +165,7 @@ def get_application(connect: ConnectionFactory, application_id: int) -> dict | N
         ).fetchone()
         if not row:
             return None
-        app = dict(row)
-        app["events"] = [
-            dict(event)
-            for event in conn.execute(
-                "SELECT * FROM application_events WHERE application_id = ? ORDER BY event_at ASC, id ASC",
-                (application_id,),
-            ).fetchall()
-        ]
-        snapshot = conn.execute(
-            "SELECT * FROM application_material_snapshots WHERE application_id = ?",
-            (application_id,),
-        ).fetchone()
-        if snapshot:
-            app["materials_snapshot"] = dict(snapshot)
-            app["materials_snapshot"]["generation_json"] = loads(app["materials_snapshot"].get("generation_json"), {})
-        return app
+        return _hydrate_application(conn, dict(row), include_snapshot=True)
     finally:
         conn.close()
 
@@ -197,11 +186,46 @@ def update_application(connect: ConnectionFactory, application_id: int, payload:
         values.append(value)
     if not updates:
         return get_application(connect, application_id)
-    updates.append("updated_at = ?")
-    values.extend([_now(), application_id])
+
     conn = connect()
     try:
+        current = conn.execute("SELECT status FROM applications WHERE id = ?", (application_id,)).fetchone()
+        if not current:
+            return None
+        now = _now()
+        updates.append("updated_at = ?")
+        values.extend([now, application_id])
         conn.execute(f"UPDATE applications SET {', '.join(updates)} WHERE id = ?", values)
+
+        previous_status = str(current["status"] or "")
+        next_status = str(payload.get("status") or previous_status)
+        if next_status != previous_status:
+            if next_status in {"rejected", "withdrawn"}:
+                pending_follow_ups = conn.execute(
+                    "SELECT id, due_at, note FROM follow_ups WHERE application_id = ? AND done_at IS NULL",
+                    (application_id,),
+                ).fetchall()
+                conn.execute(
+                    "UPDATE follow_ups SET done_at = ? WHERE application_id = ? AND done_at IS NULL",
+                    (now, application_id),
+                )
+                for follow_up in pending_follow_ups:
+                    detail = _follow_up_note(
+                        "Closed automatically",
+                        str(follow_up["due_at"] or ""),
+                        follow_up["note"],
+                    )
+                    conn.execute(
+                        """INSERT INTO application_events (application_id, event_type, event_at, note)
+                           VALUES (?, ?, ?, ?)""",
+                        (application_id, "follow_up_completed", now, detail),
+                    )
+            note = str(payload.get("note") or "").strip() or f"Status changed from {previous_status} to {next_status}."
+            conn.execute(
+                """INSERT INTO application_events (application_id, event_type, event_at, note)
+                   VALUES (?, ?, ?, ?)""",
+                (application_id, "status_changed", now, note),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -439,16 +463,59 @@ def list_contacts(connect: ConnectionFactory, read_sql_query: ReadSqlQuery) -> l
 
 
 def create_follow_up(connect: ConnectionFactory, payload: dict) -> dict:
+    application_id = int(payload["application_id"])
+    due_at = str(payload.get("due_at") or "").strip()
+    if not due_at:
+        raise ValueError("due_at is required")
     conn = connect()
     try:
+        application = conn.execute("SELECT id FROM applications WHERE id = ?", (application_id,)).fetchone()
+        if not application:
+            raise LookupError(f"Application not found: {application_id}")
         cursor = conn.execute(
             """INSERT INTO follow_ups (application_id, due_at, note, done_at)
                VALUES (?, ?, ?, ?)""",
-            (payload["application_id"], payload["due_at"], payload.get("note"), payload.get("done_at")),
+            (application_id, due_at, payload.get("note"), payload.get("done_at")),
         )
         follow_up_id = _last_insert_id(conn, cursor)
+        conn.execute(
+            """INSERT INTO application_events (application_id, event_type, event_at, note)
+               VALUES (?, ?, ?, ?)""",
+            (application_id, "follow_up_scheduled", _now(), _follow_up_note("Scheduled", due_at, payload.get("note"))),
+        )
         conn.commit()
         return dict(conn.execute("SELECT * FROM follow_ups WHERE id = ?", (follow_up_id,)).fetchone())
+    finally:
+        conn.close()
+
+
+def update_follow_up(connect: ConnectionFactory, follow_up_id: int, *, done: bool) -> dict | None:
+    conn = connect()
+    try:
+        row = conn.execute("SELECT * FROM follow_ups WHERE id = ?", (follow_up_id,)).fetchone()
+        if not row:
+            return None
+        current = dict(row)
+        was_done = bool(current.get("done_at"))
+        if was_done == done:
+            return current
+        done_at = _now() if done else None
+        conn.execute("UPDATE follow_ups SET done_at = ? WHERE id = ?", (done_at, follow_up_id))
+        event_type = "follow_up_completed" if done else "follow_up_scheduled"
+        verb = "Completed" if done else "Reopened"
+        conn.execute(
+            """INSERT INTO application_events (application_id, event_type, event_at, note)
+               VALUES (?, ?, ?, ?)""",
+            (
+                int(current["application_id"]),
+                event_type,
+                done_at or _now(),
+                _follow_up_note(verb, str(current.get("due_at") or ""), current.get("note")),
+            ),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM follow_ups WHERE id = ?", (follow_up_id,)).fetchone()
+        return dict(updated) if updated else None
     finally:
         conn.close()
 
@@ -762,6 +829,47 @@ def _hydrate_session(conn: sqlite3.Connection | db_connection.LibsqlConnection, 
         ).fetchall()
     ]
     return row
+
+
+def _hydrate_application(
+    conn: sqlite3.Connection | db_connection.LibsqlConnection,
+    row: dict,
+    *,
+    include_snapshot: bool,
+) -> dict:
+    application_id = int(row["id"])
+    row["events"] = [
+        dict(event)
+        for event in conn.execute(
+            "SELECT * FROM application_events WHERE application_id = ? ORDER BY event_at ASC, id ASC",
+            (application_id,),
+        ).fetchall()
+    ]
+    row["follow_ups"] = [
+        dict(follow_up)
+        for follow_up in conn.execute(
+            "SELECT * FROM follow_ups WHERE application_id = ? ORDER BY done_at IS NOT NULL ASC, due_at ASC, id ASC",
+            (application_id,),
+        ).fetchall()
+    ]
+    if include_snapshot:
+        snapshot = conn.execute(
+            "SELECT * FROM application_material_snapshots WHERE application_id = ?",
+            (application_id,),
+        ).fetchone()
+        if snapshot:
+            row["materials_snapshot"] = dict(snapshot)
+            row["materials_snapshot"]["generation_json"] = loads(
+                row["materials_snapshot"].get("generation_json"),
+                {},
+            )
+    return row
+
+
+def _follow_up_note(verb: str, due_at: str, note: object) -> str:
+    detail = str(note or "").strip()
+    message = f"{verb} follow-up for {due_at}."
+    return f"{message} {detail}" if detail else message
 
 
 def _snapshot_application_materials(

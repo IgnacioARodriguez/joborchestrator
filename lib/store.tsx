@@ -56,7 +56,7 @@ interface StoreValue {
   getJobDetailEntry: (id: string) => JobDetailEntry
   loadJobDetail: (id: string, options?: { force?: boolean }) => Promise<JobDetail | undefined>
   setPipelineStatus: (id: string, status: PipelineStatus) => Promise<boolean>
-  setApplicationStatus: (id: number, status: ApplicationStatus) => void
+  setApplicationStatus: (id: number, status: ApplicationStatus, note?: string) => Promise<boolean>
   markOpened: (id: string) => void
   generateMaterials: (
     id: string,
@@ -338,18 +338,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [jobs])
 
-  const setApplicationStatus = useCallback((id: number, status: ApplicationStatus) => {
-    setApplications((prev) =>
-      prev.map((application) =>
-        application.id === id
-          ? { ...application, status, updated_at: new Date().toISOString() }
-          : application,
-      ),
-    )
-    void api.patchApplication(id, { status }).catch(() => {
+  const setApplicationStatus = useCallback(async (id: number, status: ApplicationStatus, note?: string) => {
+    try {
+      const response = await api.patchApplication(id, { status, note })
+      recordApplication(response.application)
+      setBackendOnline(true)
+      return true
+    } catch {
       setBackendOnline(false)
-    })
-  }, [])
+      return false
+    }
+  }, [recordApplication])
 
   const markOpened = useCallback((id: string) => {
     const lastSeen = new Date().toISOString()

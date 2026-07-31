@@ -2,6 +2,7 @@ import type {
   CompanySource,
   CandidateProfile,
   ApplicationMaterials,
+  ApplicationEvent,
   ApplicationRecord,
   ApplicationStatus,
   AnswerDefinition,
@@ -386,9 +387,16 @@ export const api = {
     })
   },
 
-  async patchApplication(id: number, input: Partial<{ status: ApplicationStatus }>) {
+  async patchApplication(id: number, input: Partial<{ status: ApplicationStatus; note: string }>) {
     return request<{ application: ApplicationRecord }>(`/api/applications/${id}`, {
       method: "PATCH",
+      body: JSON.stringify(input),
+    })
+  },
+
+  async createApplicationEvent(id: number, input: { event_type: string; note?: string; event_at?: string }) {
+    return request<{ event: ApplicationEvent }>(`/api/applications/${id}/events`, {
+      method: "POST",
       body: JSON.stringify(input),
     })
   },
@@ -421,6 +429,13 @@ export const api = {
     return request<{ follow_up: FollowUp }>("/api/follow-ups", {
       method: "POST",
       body: JSON.stringify(input),
+    })
+  },
+
+  async patchFollowUp(id: number, done: boolean) {
+    return request<{ follow_up: FollowUp }>(`/api/follow-ups/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ done }),
     })
   },
 

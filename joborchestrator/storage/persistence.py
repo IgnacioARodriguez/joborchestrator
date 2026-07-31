@@ -1469,6 +1469,10 @@ def create_follow_up(payload: dict) -> dict:
     return applications_repository.create_follow_up(_conn, payload)
 
 
+def update_follow_up(follow_up_id: int, *, done: bool) -> dict | None:
+    return applications_repository.update_follow_up(_conn, follow_up_id, done=done)
+
+
 def list_follow_ups() -> list[dict]:
     return applications_repository.list_follow_ups(_conn, _read_sql_query)
 
