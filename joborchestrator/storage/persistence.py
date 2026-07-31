@@ -641,25 +641,40 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
         "applications",
         "application_sessions",
         "application_session_events",
+        "application_material_snapshots",
         "linkedin_scan_runs",
         "linkedin_scan_pages",
         "linkedin_job_enrichments",
         "llm_eval_runs",
         "llm_output_feedback",
     }
+
     placeholders = ",".join("?" for _ in required_tables)
     rows = conn.execute(
-        f"SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ({placeholders})",
+        f"SELECT name FROM sqlite_master "
+        f"WHERE type = 'table' AND name IN ({placeholders})",
         tuple(sorted(required_tables)),
     ).fetchall()
+
     existing = {row["name"] for row in rows}
     if not required_tables.issubset(existing):
         return False
+
+    job_posting_columns = _table_columns(conn, "job_postings")
     ranking_columns = _table_columns(conn, "job_rankings")
     eval_columns = _table_columns(conn, "llm_eval_runs")
     feedback_columns = _table_columns(conn, "llm_output_feedback")
+
+    required_job_posting_columns = (
+        {"pipeline_status"}
+        | set(SPEED_RANKING_MIGRATION_COLUMNS)
+        | set(APPLICATION_KIT_COLUMNS)
+        | set(LINKEDIN_ENRICHMENT_COLUMNS)
+    )
+
     return (
-        set(RANKING_TRACE_COLUMNS).issubset(ranking_columns)
+        required_job_posting_columns.issubset(job_posting_columns)
+        and set(RANKING_TRACE_COLUMNS).issubset(ranking_columns)
         and set(LLM_EVAL_RUN_COLUMNS).issubset(eval_columns)
         and set(LLM_OUTPUT_FEEDBACK_COLUMNS).issubset(feedback_columns)
     )
