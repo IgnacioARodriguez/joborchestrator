@@ -70,14 +70,25 @@ def test_provider_capabilities_api_and_manual_submission_action(tmp_path, monkey
         json={"provider": "greenhouse", "mode": "review_before_submit", "html": html, "dry_run": True},
     ).json()["session"]
 
-    response = client.post(f"/api/application-sessions/{session['id']}/submitted-manually", json={})
+    response = client.post(
+        f"/api/application-sessions/{session['id']}/submitted-manually",
+        json={
+            "submitted_at": "2026-07-30T10:15:00",
+            "channel": "referral",
+            "note": "Sent after speaking with the hiring manager.",
+            "recruiter_contacted": True,
+        },
+    )
 
     assert response.status_code == 200
     updated = response.json()["session"]
     assert updated["state"] == "submitted_manually"
     application = client.get(f"/api/applications/{updated['application_id']}").json()["application"]
     assert application["status"] == "submitted_manually"
+    assert application["submitted_at"] == "2026-07-30T10:15:00"
+    assert application["channel"] == "referral"
     assert application["events"][-1]["event_type"] == "submitted_manually"
+    assert "Recruiter contacted." in application["events"][-1]["note"]
 
 
 def test_external_apply_session_queues_application_execution(tmp_path, monkeypatch) -> None:
@@ -242,3 +253,44 @@ def test_duplicate_application_creation_returns_existing(tmp_path, monkeypatch) 
     second = client.post(f"/api/jobs/{created['id']}/applications", json={}).json()["application"]
 
     assert first["id"] == second["id"]
+
+
+def test_manual_submission_action_is_idempotent_at_event_level(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    html = """
+    <form action="/submit">
+      <input name="first_name" required />
+      <input name="email" type="email" required />
+      <button type="submit">Submit</button>
+    </form>
+    """
+    created = client.post(
+        "/api/jobs",
+        json={
+            "title": "Manual Submission Idempotency",
+            "company": "Acme",
+            "url": "https://boards.greenhouse.io/acme/jobs/idempotent",
+            "apply_url": "https://boards.greenhouse.io/acme/jobs/idempotent",
+            "source": "greenhouse",
+            "description_text": "Build reliable systems.",
+        },
+    ).json()["job"]
+    session = client.post(
+        f"/api/jobs/{created['id']}/application-sessions",
+        json={"provider": "greenhouse", "mode": "review_before_submit", "html": html, "dry_run": True},
+    ).json()["session"]
+    payload = {
+        "submitted_at": "2026-07-30T10:15:00",
+        "channel": "referral",
+        "note": "Submitted once.",
+        "recruiter_contacted": True,
+    }
+
+    first = client.post(f"/api/application-sessions/{session['id']}/submitted-manually", json=payload)
+    repeated = client.post(f"/api/application-sessions/{session['id']}/submitted-manually", json=payload)
+
+    assert first.status_code == 200
+    assert repeated.status_code == 200
+    application_id = repeated.json()["session"]["application_id"]
+    application = client.get(f"/api/applications/{application_id}").json()["application"]
+    assert len([event for event in application["events"] if event["event_type"] == "submitted_manually"]) == 1

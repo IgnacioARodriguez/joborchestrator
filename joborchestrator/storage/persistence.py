@@ -55,6 +55,7 @@ APPLICATION_KIT_COLUMNS = {
     "materials_validation_errors_json": "TEXT",
     "materials_candidate_profile_hash": "TEXT",
     "materials_candidate_profile_snapshot_json": "TEXT",
+    "materials_review_states_json": "TEXT",
 }
 LINKEDIN_ENRICHMENT_COLUMNS = {
     "applicant_count": "INTEGER",
@@ -148,6 +149,7 @@ CREATE TABLE IF NOT EXISTS job_postings (
     cover_letter TEXT,
     ats_cv_text TEXT,
     autofill_notes TEXT,
+    materials_review_states_json TEXT,
     identity_key TEXT,
     UNIQUE(source, company, external_id)
 );
@@ -419,6 +421,22 @@ CREATE TABLE IF NOT EXISTS application_events (
 
 CREATE INDEX IF NOT EXISTS idx_application_events_application ON application_events(application_id, event_at);
 
+CREATE TABLE IF NOT EXISTS application_material_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL UNIQUE,
+    job_id INTEGER NOT NULL,
+    recruiter_message TEXT,
+    cover_letter TEXT,
+    ats_cv_text TEXT,
+    autofill_notes TEXT,
+    generation_json TEXT,
+    captured_at TEXT NOT NULL,
+    FOREIGN KEY(application_id) REFERENCES applications(id),
+    FOREIGN KEY(job_id) REFERENCES job_postings(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_application_material_snapshots_job ON application_material_snapshots(job_id);
+
 CREATE TABLE IF NOT EXISTS application_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL,
@@ -626,6 +644,7 @@ def _conn():
         if not is_cloud and _scanner_migration_needed(conn):
             backup_database("before_speed_ranking_migration")
         _ensure_scanner_columns(conn)
+        _ensure_application_material_snapshots_schema(conn)
         _ensure_hiring_contacts_schema(conn)
         _ensure_ranking_trace_schema(conn)
         _ensure_llm_eval_schema(conn)
@@ -649,25 +668,40 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
         "applications",
         "application_sessions",
         "application_session_events",
+        "application_material_snapshots",
         "linkedin_scan_runs",
         "linkedin_scan_pages",
         "linkedin_job_enrichments",
         "llm_eval_runs",
         "llm_output_feedback",
     }
+
     placeholders = ",".join("?" for _ in required_tables)
     rows = conn.execute(
-        f"SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ({placeholders})",
+        f"SELECT name FROM sqlite_master "
+        f"WHERE type = 'table' AND name IN ({placeholders})",
         tuple(sorted(required_tables)),
     ).fetchall()
+
     existing = {row["name"] for row in rows}
     if not required_tables.issubset(existing):
         return False
+
+    job_posting_columns = _table_columns(conn, "job_postings")
     ranking_columns = _table_columns(conn, "job_rankings")
     eval_columns = _table_columns(conn, "llm_eval_runs")
     feedback_columns = _table_columns(conn, "llm_output_feedback")
+
+    required_job_posting_columns = (
+        {"pipeline_status"}
+        | set(SPEED_RANKING_MIGRATION_COLUMNS)
+        | set(APPLICATION_KIT_COLUMNS)
+        | set(LINKEDIN_ENRICHMENT_COLUMNS)
+    )
+
     return (
-        set(RANKING_TRACE_COLUMNS).issubset(ranking_columns)
+        required_job_posting_columns.issubset(job_posting_columns)
+        and set(RANKING_TRACE_COLUMNS).issubset(ranking_columns)
         and set(LLM_EVAL_RUN_COLUMNS).issubset(eval_columns)
         and set(LLM_OUTPUT_FEEDBACK_COLUMNS).issubset(feedback_columns)
     )
@@ -711,6 +745,25 @@ def _ensure_scanner_columns(conn: sqlite3.Connection) -> None:
             columns.add(column)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_postings_repost_key ON job_postings(repost_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_postings_soft_identity ON job_postings(soft_identity_key)")
+
+
+def _ensure_application_material_snapshots_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS application_material_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            application_id INTEGER NOT NULL UNIQUE,
+            job_id INTEGER NOT NULL,
+            recruiter_message TEXT,
+            cover_letter TEXT,
+            ats_cv_text TEXT,
+            autofill_notes TEXT,
+            generation_json TEXT,
+            captured_at TEXT NOT NULL,
+            FOREIGN KEY(application_id) REFERENCES applications(id),
+            FOREIGN KEY(job_id) REFERENCES job_postings(id)
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_application_material_snapshots_job ON application_material_snapshots(job_id)")
 
 
 def _ensure_hiring_contacts_schema(conn: sqlite3.Connection) -> None:
@@ -1468,6 +1521,7 @@ def update_job_application_materials(
     materials_candidate_profile_hash: str | None = None,
     materials_candidate_profile_snapshot: dict | None = None,
     clear_existing_materials: bool = False,
+    materials_review_states: dict | None = None
 ) -> None:
     jobs_repository.update_job_application_materials(
         _conn,
@@ -1485,6 +1539,7 @@ def update_job_application_materials(
         materials_candidate_profile_hash=materials_candidate_profile_hash,
         materials_candidate_profile_snapshot=materials_candidate_profile_snapshot,
         clear_existing_materials=clear_existing_materials,
+        materials_review_states=materials_review_states,
     )
 
 

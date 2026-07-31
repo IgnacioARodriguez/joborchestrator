@@ -103,6 +103,7 @@ export interface ApplicationMaterials {
     status: "missing" | "needs_review" | "ready" | string
     requires_review: boolean
     reasons: string[]
+    materials?: Record<"ats_cv" | "cover_letter" | "recruiter_message" | "autofill", string>
   }
   generation: {
     provider?: string | null
@@ -278,6 +279,13 @@ export interface ApplicationRecord {
   job_url?: string | null
   job_first_seen_at?: string | null
   events?: ApplicationEvent[]
+  materials_snapshot?: {
+    captured_at: string
+    recruiter_message?: string | null
+    cover_letter?: string | null
+    ats_cv_text?: string | null
+    autofill_notes?: string | null
+  }
 }
 
 export interface ResumeVariant {
