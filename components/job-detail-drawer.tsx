@@ -342,20 +342,25 @@ function FeedbackButtons({
   onFeedback: (action: LLMFeedbackAction) => void
 }) {
   return (
-    <div className="flex flex-wrap gap-1.5">
-      <Button size="sm" variant="ghost" onClick={() => onFeedback("accepted")}>
-        <CheckCircle2 data-icon="inline-start" />
-        Good
-      </Button>
-      <Button size="sm" variant="ghost" onClick={() => onFeedback("edited")}>
-        <FileSearch data-icon="inline-start" />
-        Edited
-      </Button>
-      <Button size="sm" variant="ghost" onClick={() => onFeedback("rejected")}>
-        <X data-icon="inline-start" />
-        Wrong
-      </Button>
-    </div>
+    <details className="rounded-md border border-border bg-muted/20 px-2 py-1">
+      <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+        Valorar
+      </summary>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        <Button size="sm" variant="ghost" onClick={() => onFeedback("accepted")}>
+          <CheckCircle2 data-icon="inline-start" />
+          Correcto
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => onFeedback("edited")}>
+          <FileSearch data-icon="inline-start" />
+          Editado
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => onFeedback("rejected")}>
+          <X data-icon="inline-start" />
+          Incorrecto
+        </Button>
+      </div>
+    </details>
   )
 }
 
@@ -543,17 +548,17 @@ function detectProvider(job: JobPosting) {
 }
 
 function primaryActionLabel(session: ApplicationSession | null, job: JobPosting) {
-  if (!session) return job.materials.ats_cv_notes ? "Prepare application" : "Prepare materials"
-  if (session.state === "needs_user_input") return `Resolve ${session.unknown_fields_json.length || "missing"} fields`
-  if (session.state === "submit_only") return "Ready for final submit"
-  if (session.state === "ready_for_review") return "Ready for final review"
+  if (!session) return job.materials.ats_cv_notes ? "Preparar postulación" : "Preparar materiales"
+  if (session.state === "needs_user_input") return session.unknown_fields_json.length ? `Resolver ${session.unknown_fields_json.length} campos` : "Resolver campos pendientes"
+  if (session.state === "submit_only") return "Listo para enviar"
+  if (session.state === "ready_for_review") return "Listo para revisión final"
   if (["created", "preparing", "preflight", "preparing_materials", "materials_ready", "opened", "ready_to_fill", "filling", "prefilled"].includes(session.state)) {
-    return "Continue preparation"
+    return "Continuar preparación"
   }
-  if (session.state === "submitted_manually") return "Verify confirmation"
-  if (session.state === "submission_verified") return "Submission verified"
-  if (session.state === "submitted") return "Verify confirmation"
-  return "Continue preparation"
+  if (session.state === "submitted_manually") return "Verificar confirmación"
+  if (session.state === "submission_verified") return "Postulación verificada"
+  if (session.state === "submitted") return "Verificar confirmación"
+  return "Continuar preparación"
 }
 
 const CAPABILITY_LABELS: Array<[keyof ProviderCapabilities, string]> = [
@@ -704,6 +709,7 @@ const DetailBody = memo(function DetailBody({
   const [sessionBusy, setSessionBusy] = useState(false)
   const [dryRunHtml, setDryRunHtml] = useState("")
   const [showDryRunInput, setShowDryRunInput] = useState(false)
+  const [showAiProviders, setShowAiProviders] = useState(false)
   const { evidence } = job.ranking
   const applicants = applicantLabel(job)
   const salary = salaryLabel(job)
@@ -1065,7 +1071,7 @@ const DetailBody = memo(function DetailBody({
             <div>
               <p className="text-xs font-semibold text-foreground">{primaryActionLabel(latestSession, job)}</p>
               <p className="text-xs text-muted-foreground">
-                {provider === "greenhouse" ? "Greenhouse review-before-submit support." : "Assisted preparation for this provider."}
+                Prepara los materiales y revisa el formulario antes de enviarlo.
               </p>
             </div>
             <Button size="sm" disabled={sessionBusy} onClick={() => void prepareApplication()}>
@@ -1073,39 +1079,46 @@ const DetailBody = memo(function DetailBody({
               {primaryActionLabel(latestSession, job)}
             </Button>
           </div>
-          <ProviderCapabilityList capabilities={providerCapabilities} />
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => openExternal(job.url)}>
               <ExternalLink data-icon="inline-start" />
-              Open posting
+              Ver oferta
             </Button>
             <Button size="sm" variant="outline" onClick={() => openExternal(applyUrlForJob(job))}>
               <Send data-icon="inline-start" />
-              Open apply page
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setShowDryRunInput((value) => !value)}>
-              <FileSearch data-icon="inline-start" />
-              Greenhouse dry-run
+              Abrir postulación
             </Button>
           </div>
-          {showDryRunInput ? (
-            <div className="flex flex-col gap-2">
-              <Textarea
-                value={dryRunHtml}
-                onChange={(event) => setDryRunHtml(event.target.value)}
-                placeholder="Paste Greenhouse form HTML here for a local dry-run review."
-                className="min-h-28 text-xs"
-              />
-              <Button
-                size="sm"
-                disabled={sessionBusy || dryRunHtml.trim().length < 20}
-                onClick={() => void prepareApplication(dryRunHtml)}
-              >
+          <details className="rounded-md border border-border bg-muted/20 p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-foreground">
+              Compatibilidad y prueba técnica
+            </summary>
+            <div className="mt-3 flex flex-col gap-3">
+              <ProviderCapabilityList capabilities={providerCapabilities} />
+              <Button size="sm" variant="outline" onClick={() => setShowDryRunInput((value) => !value)}>
                 <FileSearch data-icon="inline-start" />
-                Run dry-run review
+                Probar formulario Greenhouse
               </Button>
+              {showDryRunInput ? (
+                <div className="flex flex-col gap-2">
+                  <Textarea
+                    value={dryRunHtml}
+                    onChange={(event) => setDryRunHtml(event.target.value)}
+                    placeholder="Paste Greenhouse form HTML here for a local dry-run review."
+                    className="min-h-28 text-xs"
+                  />
+                  <Button
+                    size="sm"
+                    disabled={sessionBusy || dryRunHtml.trim().length < 20}
+                    onClick={() => void prepareApplication(dryRunHtml)}
+                  >
+                    <FileSearch data-icon="inline-start" />
+                    Run dry-run review
+                  </Button>
+                </div>
+              ) : null}
             </div>
-          ) : null}
+          </details>
         </div>
 
         {latestSession ? (
@@ -1120,17 +1133,19 @@ const DetailBody = memo(function DetailBody({
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           <Button
+            className="order-1"
             size="sm"
             variant="outline"
             onClick={() => {
               setPipelineStatus(job.id, "shortlisted")
-              toast.success("Shortlisted", { description: job.title })
+              toast.success("Guardado", { description: job.title })
             }}
           >
             <Star data-icon="inline-start" />
-            Shortlist
+            Guardar
           </Button>
           <Button
+            className={cn("order-4", !showAiProviders && "hidden")}
             size="sm"
             variant="outline"
             onClick={async () => {
@@ -1151,9 +1166,10 @@ const DetailBody = memo(function DetailBody({
             }}
           >
             <Sparkles data-icon="inline-start" />
-            NVIDIA kit
+            NVIDIA
           </Button>
           <Button
+            className={cn("order-5", !showAiProviders && "hidden")}
             size="sm"
             variant="outline"
             onClick={async () => {
@@ -1174,33 +1190,44 @@ const DetailBody = memo(function DetailBody({
             }}
           >
             <Sparkles data-icon="inline-start" />
-            OpenAI kit
+            OpenAI
           </Button>
           <Button
+            className="order-2"
             size="sm"
             variant="outline"
             onClick={() => {
               setPipelineStatus(job.id, "ready_to_apply")
-              toast.success("Ready to apply", { description: job.title })
+              toast.success("Listo para aplicar", { description: job.title })
             }}
           >
             <CheckCircle2 data-icon="inline-start" />
-            Ready to apply
+            Listo para aplicar
           </Button>
           <Button
             size="sm"
             variant="outline"
-            className="text-muted-foreground"
+            className="order-3 text-muted-foreground"
             onClick={() => {
               setPipelineStatus(job.id, "discarded")
-              toast("Discarded", { description: job.title })
+              toast("Descartado", { description: job.title })
               onClose()
             }}
           >
             <X data-icon="inline-start" />
-            Discard
+            Descartar
           </Button>
         </div>
+        <Button
+          className="self-end"
+          size="sm"
+          variant="ghost"
+          aria-expanded={showAiProviders}
+          onClick={() => setShowAiProviders((value) => !value)}
+        >
+          <Sparkles data-icon="inline-start" />
+          {showAiProviders ? "Ocultar proveedores IA" : "Elegir proveedor IA"}
+        </Button>
 
         <Separator />
 
@@ -1262,11 +1289,8 @@ const DetailBody = memo(function DetailBody({
         </section>
 
         {/* Constraints and evidence */}
-        <section className="flex flex-col gap-3">
-          <h3 className="text-sm font-semibold text-foreground">
-            Constraints and evidence
-          </h3>
-          <div className="flex flex-col gap-3">
+        <LazyDetails title="Por qué encaja (y qué falta)">
+          <div className="mt-3 flex flex-col gap-3">
             <EvidenceList
               title="Hard constraints and dealbreakers"
               items={[...evidence.dealbreakers, ...evidence.red_flags]}
@@ -1304,19 +1328,7 @@ const DetailBody = memo(function DetailBody({
               tone="text-muted-foreground"
             />
           </div>
-        </section>
-
-        <DeferredSection className="flex flex-col gap-2">
-          <h3 className="text-sm font-semibold text-foreground">
-            Job data
-          </h3>
-          <div className="flex flex-wrap gap-1.5">
-            {salary ? <span className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">Salary {salary}</span> : null}
-            {applicants ? <span className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">{applicants}</span> : null}
-            <span className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">Source {job.source}</span>
-            <span className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">Pipeline {PIPELINE_LABELS[job.pipeline_status]}</span>
-          </div>
-        </DeferredSection>
+        </LazyDetails>
 
         {hiringContacts.length > 0 ? (
           <DeferredSection className="flex flex-col gap-2">
