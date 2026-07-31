@@ -83,25 +83,28 @@ class AtsCvPlan:
     role_plans: list[RolePlan] = field(default_factory=list)
 
 
-def parse_candidate_cv_ir(base_cv_text: str, supported_terms: list[str] | None = None) -> CandidateCvIR:
+def parse_candidate_cv_ir(
+    base_cv_text: str,
+    supported_terms: list[str] | None = None,
+) -> CandidateCvIR:
     text = str(base_cv_text or "").strip()
-    lines = [line.rstrip() for line in text.splitlines()]
-    non_empty = [line.strip() for line in lines if line.strip()]
-    candidate = CandidateIdentity(name=non_empty[0] if non_empty else "Candidate")
     roles = _parse_roles(text, supported_terms or [])
+    candidate = _parse_candidate_identity(text)
     skills = [
-        SkillEvidence(id=f"skill_{_slug(term)}", name=term, source_text=term)
+        SkillEvidence(
+            id=f"skill_{_slug(term)}",
+            name=term,
+            source_text=term,
+        )
         for term in derive_keywords_used(text, supported_terms or [])
     ]
     education = _parse_education(text)
-    summary_facts = [
-        EvidenceFact(id="fact_01", source_text=non_empty[1])
-        for _ in [0]
-        if len(non_empty) > 1
-    ]
-    warnings = []
+    summary_facts = _parse_summary_facts(text, roles)
+
+    warnings: list[str] = []
     if text and not roles:
         warnings.append("experience_roles_not_parsed")
+
     return CandidateCvIR(
         candidate=candidate,
         summary_facts=summary_facts,
@@ -112,6 +115,147 @@ def parse_candidate_cv_ir(base_cv_text: str, supported_terms: list[str] | None =
         human_review_required=bool(text and not roles),
         parse_warnings=warnings,
     )
+
+
+_CV_SECTION_HEADINGS = {
+    "summary",
+    "professional summary",
+    "profile",
+    "professional profile",
+    "perfil",
+    "perfil profesional",
+    "resumen",
+    "experience",
+    "professional experience",
+    "work experience",
+    "experiencia",
+    "experiencia profesional",
+    "skills",
+    "technical skills",
+    "habilidades",
+    "competencias",
+    "education",
+    "formacion",
+    "formación",
+    "educacion",
+    "educación",
+}
+
+
+def _parse_candidate_identity(text: str) -> CandidateIdentity:
+    header_lines: list[str] = []
+
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if _normalized_heading(line) in _CV_SECTION_HEADINGS:
+            break
+        header_lines.append(line)
+
+    if not header_lines:
+        return CandidateIdentity(name="Candidate")
+
+    name = header_lines[0]
+    contact_lines = [
+        line
+        for line in header_lines[1:]
+        if _looks_like_contact_line(line)
+    ]
+
+    return CandidateIdentity(
+        name=name,
+        contact=" | ".join(contact_lines),
+    )
+
+
+def _looks_like_contact_line(line: str) -> bool:
+    value = str(line or "").strip()
+    normalized = value.casefold()
+
+    if not value:
+        return False
+    if "@" in value:
+        return True
+    if any(token in normalized for token in ("linkedin", "github", "http://", "https://", "contact")):
+        return True
+    if "|" in value:
+        return True
+
+    digits = sum(character.isdigit() for character in value)
+    if digits >= 7:
+        return True
+
+    if "," in value and len(value) <= 60 and not value.endswith("."):
+        return True
+
+    return False
+
+
+def _parse_summary_facts(
+    text: str,
+    roles: list[ExperienceRole],
+) -> list[EvidenceFact]:
+    section = _section(
+        text,
+        (
+            "summary",
+            "professional summary",
+            "profile",
+            "professional profile",
+            "perfil",
+            "perfil profesional",
+            "resumen",
+        ),
+        (
+            "experience",
+            "professional experience",
+            "work experience",
+            "experiencia",
+            "experiencia profesional",
+            "skills",
+            "technical skills",
+            "habilidades",
+            "competencias",
+            "education",
+            "formacion",
+            "formación",
+            "educacion",
+            "educación",
+        ),
+    )
+
+    fact_texts = [
+        _strip_bullet_prefix(line)
+        for line in section.splitlines()
+        if _strip_bullet_prefix(line)
+    ]
+
+    if not fact_texts:
+        fact_texts = [
+            bullet.source_text
+            for role in roles
+            for bullet in role.bullets
+        ][:3]
+
+    return [
+        EvidenceFact(
+            id=f"fact_{index + 1:02d}",
+            source_text=fact_text,
+        )
+        for index, fact_text in enumerate(fact_texts[:5])
+    ]
+
+
+def _normalized_heading(line: str) -> str:
+    return str(line or "").strip().strip(":").casefold()
+
+
+def _strip_bullet_prefix(line: str) -> str:
+    value = str(line or "").strip()
+    while value.startswith(BULLET_PREFIXES):
+        value = value[1:].lstrip()
+    return value
 
 
 def validate_ats_cv_plan(cv_ir: CandidateCvIR, plan: AtsCvPlan) -> list[str]:
@@ -201,10 +345,11 @@ def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
             for bullet_index, line in enumerate(block)
             if line.startswith(BULLET_PREFIXES)
         ]
-        canonical = []
+        canonical: list[str] = []
         for line in block:
-            if "technolog" in line.lower():
-                canonical = derive_keywords_used(line, supported_terms)
+            parsed_technologies = _parse_canonical_technology_line(line)
+            if parsed_technologies:
+                canonical = parsed_technologies
         roles.append(
             ExperienceRole(
                 id=f"role_{role_index + 1:02d}_{_slug(company)}",
@@ -217,6 +362,32 @@ def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
             )
         )
     return roles
+
+
+def _parse_canonical_technology_line(line: str) -> list[str]:
+    value = _strip_bullet_prefix(line)
+
+    match = re.search(
+        r"(?i)\b(?:technologies|technology|tecnologias|tecnologías)\s*:\s*(.+)$",
+        value,
+    )
+    if not match:
+        return []
+
+    technologies: list[str] = []
+    seen: set[str] = set()
+
+    for item in re.split(r"[,;]", match.group(1)):
+        technology = item.strip(" .\t")
+        key = technology.casefold()
+
+        if not technology or key in seen:
+            continue
+
+        seen.add(key)
+        technologies.append(technology)
+
+    return technologies
 
 
 def _parse_education(text: str) -> list[EducationEntry]:

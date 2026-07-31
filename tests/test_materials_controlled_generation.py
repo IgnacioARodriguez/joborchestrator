@@ -19,6 +19,7 @@ from joborchestrator.intelligence.materials_cv_ir import (
     ExperienceRole,
     RolePlan,
     SkillEvidence,
+    parse_candidate_cv_ir,
     render_ats_cv,
     validate_ats_cv_plan,
 )
@@ -52,6 +53,94 @@ def test_materials_evidence_baseline_documents_packet_cases():
     assert baseline["validation_error_themes"]["overcompressed_cv"] == 10
     case_ids = {case["operation_id"] for case in baseline["representative_cases"]}
     assert {37, 41, 60, 62, 63}.issubset(case_ids)
+
+
+def test_cv_ir_separates_contact_from_summary_evidence():
+    cv_ir = parse_candidate_cv_ir(
+        """
+Ignacio Rodriguez
+ignacio@example.com | +34 600 000 000 | Málaga, Spain
+
+Professional Summary
+Backend developer with Python API experience.
+Focused on reliable backend services and data workflows.
+
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express
+- Built analytics APIs with Python.
+- Improved Redis data reliability.
+Technologies: Python, REST APIs, Redis
+
+Education
+Computer Science
+""".strip(),
+        ["Python", "REST APIs", "Redis"],
+    )
+
+    assert cv_ir.candidate.name == "Ignacio Rodriguez"
+    assert "ignacio@example.com" in cv_ir.candidate.contact
+    assert "+34 600 000 000" in cv_ir.candidate.contact
+    assert [fact.source_text for fact in cv_ir.summary_facts] == [
+        "Backend developer with Python API experience.",
+        "Focused on reliable backend services and data workflows.",
+    ]
+    assert all("ignacio@example.com" not in fact.source_text for fact in cv_ir.summary_facts)
+
+
+def test_cv_ir_uses_role_bullets_as_summary_evidence_when_summary_is_missing():
+    cv_ir = parse_candidate_cv_ir(
+        """
+Ignacio Rodriguez
+Contact line
+
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express
+- Built analytics APIs with Python.
+- Improved Redis data reliability.
+Technologies: Python, REST APIs, Redis
+
+Education
+Computer Science
+""".strip(),
+        ["Python", "REST APIs", "Redis"],
+    )
+
+    assert cv_ir.candidate.contact == "Contact line"
+    assert cv_ir.summary_facts[0].source_text == "Built analytics APIs with Python."
+    assert all(fact.source_text != "Contact line" for fact in cv_ir.summary_facts)
+
+
+def test_canonical_role_technologies_are_independent_of_target_job_keywords():
+    cv_ir = parse_candidate_cv_ir(
+        """
+Ignacio Rodriguez
+ignacio@example.com
+
+Professional Experience
+Full Stack Developer November 2021 - August 2022
+Balloon Group
+- Developed backend services and web applications.
+- Built API integrations and SQL reporting.
+Technologies: Python, PHP, JavaScript, SQL, APIs
+
+Education
+Computer Science
+""".strip(),
+        ["Python", "SQL"],
+    )
+
+    assert cv_ir.roles[0].canonical_technologies == [
+        "Python",
+        "PHP",
+        "JavaScript",
+        "SQL",
+        "APIs",
+    ]
+
+    rendered = render_ats_cv(cv_ir)
+    assert "Technologies: Python, PHP, JavaScript, SQL, APIs" in rendered
 
 
 def test_combined_generation_metadata_preserves_stage_attempts():
