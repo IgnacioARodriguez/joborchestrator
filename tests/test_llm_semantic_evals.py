@@ -162,6 +162,23 @@ Software engineering coursework.
     assert any(issue.startswith("application_materials_overconfident_for_risky_ranking:") for issue in result.issues)
 
 
+def test_auto_eval_does_not_treat_unicode_bullets_as_employers():
+    case = build_auto_eval_case(
+        {"title": "Backend Engineer", "company": "Acme"},
+        {
+            "base_cv_text": (
+                "Professional Experience\n"
+                "Backend Engineer January 2024 - Present\n"
+                "Fiction Express\n"
+                "\u2022 Built APIs for education workflows.\n"
+                "Education\nComputer Science"
+            )
+        },
+    )
+
+    assert case["candidate"]["required_experience_terms"] == ["Fiction Express"]
+
+
 def test_material_eval_ignores_generation_metadata_text():
     case = _cases()["backend-fastapi-strong-fit"]
     materials = {

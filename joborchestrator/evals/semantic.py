@@ -8,6 +8,8 @@ from typing import Any
 from joborchestrator.evals.llm_judge import JUDGE_ISSUE_CODES
 from joborchestrator.ranking.schemas import VALID_DECISIONS
 
+_CV_BULLET_PREFIXES = ("-", "*", "\u2022", "\u25aa", "\u25e6", "\u2023", "\u00b7")
+
 
 @dataclass(slots=True)
 class SemanticEvalResult:
@@ -619,7 +621,7 @@ def _extract_likely_employers(base_cv_text: str) -> list[str]:
         "typescript",
     }
     for line in section.group(2).splitlines():
-        if line.lstrip().startswith(("-", "*")):
+        if line.lstrip().startswith(_CV_BULLET_PREFIXES):
             continue
         stripped = line.strip(" -\t")
         if not stripped or len(stripped) > 80:
