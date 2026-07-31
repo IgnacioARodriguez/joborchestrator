@@ -492,31 +492,111 @@ def test_controlled_pipeline_records_parse_warnings_as_validation_errors():
     assert result["_generation_metadata"]["validation_errors"] == ["experience_roles_not_parsed"]
 
 
-def test_nvidia_controlled_cv_preserves_parse_warnings_in_validation_errors(monkeypatch):
-    from joborchestrator.intelligence import llm_application_materials as llm
-
+def test_nvidia_controlled_cv_blocks_parse_warnings(monkeypatch):
     monkeypatch.setattr(
         llm,
         "_call_nvidia_cv_planner",
         lambda *args, **kwargs: {"summary_lines": [], "skill_ids": [], "role_plans": []},
     )
 
+    with pytest.raises(llm.LLMMaterialsError, match="controlled ATS CV failed validation") as exc_info:
+        llm._call_nvidia_controlled_cv(
+            {
+                "base_cv": {
+                    "text": (
+                        "Career Journey\\n"
+                        "Backend Developer 04/2022 - 03/2025\\n"
+                        "Acme Systems\\n"
+                        "- Built API workflows."
+                    )
+                },
+                "job": {
+                    "company": "Acme",
+                    "title": "Backend Engineer",
+                    "description_text": "Build Python APIs.",
+                },
+                "ats_fit_analysis": {"supported_keywords": ["Python", "APIs"]},
+            },
+            "test-key",
+            "test-model",
+            1.0,
+        )
+
+    metadata = exc_info.value.generation_metadata
+    assert metadata["human_review_required"] is True
+    assert "experience_roles_not_parsed" in metadata["validation_errors"]
+    assert metadata["stage"] == "cv_render"
+
+
+def test_nvidia_controlled_cv_blocks_render_that_fails_full_validation(monkeypatch):
+    monkeypatch.setattr(
+        llm,
+        "_call_nvidia_cv_planner",
+        lambda *args, **kwargs: {"summary_lines": [], "skill_ids": [], "role_plans": []},
+    )
+
+    with pytest.raises(llm.LLMMaterialsError, match="controlled ATS CV failed validation") as exc_info:
+        llm._call_nvidia_controlled_cv(
+            {
+                "base_cv": {"text": _base_cv_text()},
+                "job": {
+                    "company": "Acme",
+                    "title": "Backend Engineer",
+                    "description_text": "Build Python APIs.",
+                },
+                "ats_fit_analysis": {
+                    "supported_keywords": ["Python", "REST APIs", "Redis"]
+                },
+            },
+            "test-key",
+            "test-model",
+            1.0,
+        )
+
+    metadata = exc_info.value.generation_metadata
+    assert metadata["human_review_required"] is True
+    assert any(
+        "ats_cv_text is too short to be a complete ATS CV" in error
+        for error in metadata["validation_errors"]
+    )
+
+
+def test_nvidia_controlled_cv_accepts_complete_valid_render(monkeypatch):
+    monkeypatch.setattr(
+        llm,
+        "_call_nvidia_cv_planner",
+        lambda *args, **kwargs: {
+            "summary_lines": [
+                {
+                    "text": "Backend developer with Python API experience.",
+                    "evidence_ids": ["fact_01"],
+                }
+            ],
+            "skill_ids": ["skill_python"],
+            "role_plans": [],
+        },
+    )
+
     response = llm._call_nvidia_controlled_cv(
         {
-            "base_cv": {
-                "text": "Career Journey\nBackend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API workflows."
+            "base_cv": {"text": _complete_base_cv_text()},
+            "job": {
+                "company": "Acme",
+                "title": "Backend Engineer",
+                "description_text": "Build Python APIs.",
             },
-            "job": {"company": "Acme", "title": "Backend Engineer", "description_text": "Build Python APIs."},
-            "ats_fit_analysis": {"supported_keywords": ["Python", "APIs"]},
+            "ats_fit_analysis": {
+                "supported_keywords": ["Python", "REST APIs", "Redis"]
+            },
         },
         "test-key",
         "test-model",
         1.0,
     )
 
-    assert response["risk_flags"] == ["human_review_required"]
-    assert response["_generation_metadata"]["validation_errors"] == ["experience_roles_not_parsed"]
+    assert response["_generation_metadata"]["validation_errors"] == []
     assert response["_generation_metadata"]["stage"] == "cv_render"
+    assert "Talan Consulting" in response["ats_cv_text"]
 
 
 def test_nvidia_controlled_flags_use_planner_instead_of_freeform_cv(monkeypatch):
@@ -529,7 +609,7 @@ def test_nvidia_controlled_flags_use_planner_instead_of_freeform_cv(monkeypatch)
         llm,
         "_materials_payload",
         lambda job, ranking: {
-            "base_cv": {"text": _base_cv_text()},
+            "base_cv": {"text": _complete_base_cv_text()},
             "job": {"company": "Acme", "title": "Backend Engineer", "description_text": "Build Python APIs."},
             "ats_fit_analysis": {"supported_keywords": ["Python", "REST APIs", "Redis"]},
             "ranking": {"decision": "APPLY_NOW"},
@@ -563,7 +643,15 @@ def test_nvidia_controlled_flags_use_planner_instead_of_freeform_cv(monkeypatch)
     assert "cv_ir" in planner_contexts[0]
     assert "base_cv" not in planner_contexts[0]
     assert "Professional Experience" in kit["ats_cv_text"]
-    assert "Technologies: Python, REST APIs, Redis" in kit["ats_cv_text"]
+    fiction_block = kit["ats_cv_text"].split(
+        "Full Stack Developer | Talan Consulting",
+        1,
+    )[0]
+    assert "Technologies:" in fiction_block
+    assert all(
+        technology in fiction_block
+        for technology in ["Python", "Django", "REST APIs", "SQL", "MongoDB", "Redis"]
+    )
     assert kit["_generation_metadata"]["validation_errors"] == []
 
 
@@ -776,9 +864,7 @@ The profile remains focused on the base CV evidence: analytics APIs, Python impl
     assert "unsupported ranking avoid-overclaiming terms" in response["_generation_metadata"]["validation_errors"][0]
 
 
-def test_invalid_nvidia_planner_plan_falls_back_to_renderer_defaults(monkeypatch):
-    from joborchestrator.intelligence import llm_application_materials as llm
-
+def test_invalid_nvidia_planner_plan_is_blocked(monkeypatch):
     monkeypatch.setattr(
         llm,
         "_call_nvidia_cv_planner",
@@ -788,20 +874,27 @@ def test_invalid_nvidia_planner_plan_falls_back_to_renderer_defaults(monkeypatch
         },
     )
 
-    response = llm._call_nvidia_controlled_cv(
-        {
-            "base_cv": {"text": _base_cv_text()},
-            "job": {"company": "Acme", "title": "Backend Engineer", "description_text": "Build Python APIs."},
-            "ats_fit_analysis": {"supported_keywords": ["Python", "REST APIs", "Redis"]},
-        },
-        "test-key",
-        "test-model",
-        1.0,
-    )
+    with pytest.raises(llm.LLMMaterialsError, match="controlled ATS CV failed validation") as exc_info:
+        llm._call_nvidia_controlled_cv(
+            {
+                "base_cv": {"text": _complete_base_cv_text()},
+                "job": {
+                    "company": "Acme",
+                    "title": "Backend Engineer",
+                    "description_text": "Build Python APIs.",
+                },
+                "ats_fit_analysis": {
+                    "supported_keywords": ["Python", "REST APIs", "Redis"]
+                },
+            },
+            "test-key",
+            "test-model",
+            1.0,
+        )
 
-    assert "Professional Experience" in response["ats_cv_text"]
-    assert "summary line references unknown evidence ids: missing" in response["_generation_metadata"]["validation_errors"]
-    assert "planner response must not include ats_cv_text" in response["_generation_metadata"]["validation_errors"]
+    errors = exc_info.value.generation_metadata["validation_errors"]
+    assert "summary line references unknown evidence ids: missing" in errors
+    assert "planner response must not include ats_cv_text" in errors
 
 
 def test_openai_fallback_renders_controlled_cv_after_nvidia_cv_failure(monkeypatch):
@@ -813,7 +906,7 @@ def test_openai_fallback_renders_controlled_cv_after_nvidia_cv_failure(monkeypat
         llm,
         "_materials_payload",
         lambda job, ranking: {
-            "base_cv": {"text": _base_cv_text()},
+            "base_cv": {"text": _complete_base_cv_text()},
             "job": {"company": "Acme", "title": "Backend Engineer", "description_text": "Build Python APIs."},
             "ats_fit_analysis": {"supported_keywords": ["Python", "REST APIs", "Redis"]},
             "ranking": {"decision": "APPLY_NOW"},
@@ -852,7 +945,15 @@ def test_openai_fallback_renders_controlled_cv_after_nvidia_cv_failure(monkeypat
     kit = llm.build_application_kit_with_nvidia({"title": "Backend Engineer"}, api_key="nvidia-test-key")
 
     assert "Professional Experience" in kit["ats_cv_text"]
-    assert "Technologies: Python, REST APIs, Redis" in kit["ats_cv_text"]
+    fiction_block = kit["ats_cv_text"].split(
+        "Full Stack Developer | Talan Consulting",
+        1,
+    )[0]
+    assert "Technologies:" in fiction_block
+    assert all(
+        technology in fiction_block
+        for technology in ["Python", "Django", "REST APIs", "SQL", "MongoDB", "Redis"]
+    )
     assert "CV_TOO_SHORT" in kit["_generation_metadata"]["validation_errors"]
 
 
@@ -927,6 +1028,39 @@ def _cv_ir() -> CandidateCvIR:
         education=[EducationEntry(id="education_01", source_text="Computer Science")],
         base_cv_text="source",
     )
+
+
+def _complete_base_cv_text() -> str:
+    return """Ignacio Rodriguez
+ignacio@example.com | Málaga, Spain
+
+Professional Summary
+Backend developer with Python API experience.
+Focused on reliable backend services, data workflows, and maintainable delivery.
+
+Technical Skills
+Python, Django, Flask, REST APIs, SQL, MongoDB, Redis, React, Docker, Git
+
+Professional Experience
+Backend Developer April 2025 - March 2026
+Fiction Express
+- Built analytics APIs with Python and REST APIs for education workflows.
+- Improved data reliability with Redis and MongoDB-backed services.
+- Developed Django endpoints supporting reporting and product operations.
+- Collaborated with product and QA to deliver maintainable backend changes.
+Technologies: Python, Django, REST APIs, SQL, MongoDB, Redis
+
+Full Stack Developer October 2022 - April 2025
+Talan Consulting
+- Built real-time dashboards with React, JavaScript, and TypeScript.
+- Automated reporting workflows with Python, Flask, SQL, and MySQL.
+- Containerized services with Docker and maintained Git-based delivery.
+- Improved Redis-backed application workflows for finance teams.
+Technologies: Python, Flask, React, JavaScript, TypeScript, SQL, MySQL, Docker, Redis, Git, REST APIs
+
+Education
+Computer Science
+"""
 
 
 def _base_cv_text() -> str:

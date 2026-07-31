@@ -1097,6 +1097,70 @@ def _call_nvidia(
 
 
 
+def _controlled_cv_validation_error(
+    rendered: dict[str, Any],
+    payload: dict[str, Any],
+) -> str | None:
+    metadata = (
+        rendered.get("_generation_metadata")
+        if isinstance(rendered.get("_generation_metadata"), dict)
+        else {}
+    )
+    problems = [
+        str(error).strip()
+        for error in metadata.get("validation_errors") or metadata.get("planner_errors") or []
+        if str(error or "").strip()
+    ]
+    full_validation = _ats_cv_response_validation_error(
+        rendered,
+        _base_cv_text(payload),
+        payload,
+    )
+    if full_validation:
+        problems.extend(_split_validation_feedback(full_validation))
+    deduped = _dedupe_strings(problems)
+    return "; ".join(deduped) if deduped else None
+
+
+def _validate_controlled_cv_result(
+    rendered: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    provider: str,
+    stage: str,
+) -> dict[str, Any]:
+    metadata = (
+        dict(rendered.get("_generation_metadata"))
+        if isinstance(rendered.get("_generation_metadata"), dict)
+        else {}
+    )
+    feedback = _controlled_cv_validation_error(rendered, payload)
+    metadata.update(
+        {
+            "validation_attempts": max(1, int(metadata.get("validation_attempts") or 0)),
+            "pipeline": "controlled_cv",
+            "stage": stage,
+        }
+    )
+    if feedback:
+        metadata["validation_errors"] = _dedupe_strings(
+            [
+                *[str(error) for error in metadata.get("validation_errors") or []],
+                *_split_validation_feedback(feedback),
+            ]
+        )
+        metadata["human_review_required"] = True
+        rendered["_generation_metadata"] = metadata
+        raise LLMMaterialsError(
+            f"{provider} controlled ATS CV failed validation: {feedback}",
+            generation_metadata=metadata,
+        )
+
+    metadata["validation_errors"] = []
+    rendered["_generation_metadata"] = metadata
+    return rendered
+
+
 def _call_openai_controlled_cv_fallback(
     payload: dict[str, Any],
     model: str,
@@ -1113,6 +1177,7 @@ def _call_openai_controlled_cv_fallback(
             f"{previous_error}; OpenAI fallback unavailable: OPENAI_API_KEY is required",
             generation_metadata=metadata,
         ) from previous_error
+
     supported_keywords = _supported_keywords_from_payload(payload)
     cv_ir = parse_candidate_cv_ir(_base_cv_text(payload), supported_keywords)
     planner_context = build_cv_planner_context(payload, cv_ir)
@@ -1122,15 +1187,55 @@ def _call_openai_controlled_cv_fallback(
         supported_keywords,
         planner_response=planner_response,
     )
-    previous_metadata = previous_error.generation_metadata if isinstance(previous_error.generation_metadata, dict) else {}
-    metadata = rendered.get("_generation_metadata") if isinstance(rendered.get("_generation_metadata"), dict) else {}
+
+    previous_metadata = (
+        previous_error.generation_metadata
+        if isinstance(previous_error.generation_metadata, dict)
+        else {}
+    )
+    previous_errors = [
+        str(error)
+        for error in previous_metadata.get("validation_errors") or [str(previous_error)]
+    ]
+
+    try:
+        rendered = _validate_controlled_cv_result(
+            rendered,
+            payload,
+            provider="OpenAI fallback",
+            stage="fallback",
+        )
+    except LLMMaterialsError as exc:
+        metadata = dict(exc.generation_metadata or {})
+        metadata.update(
+            {
+                "validation_attempts": 1 + int(previous_metadata.get("validation_attempts") or 0),
+                "validation_errors": _dedupe_strings(
+                    [
+                        *previous_errors,
+                        *[str(error) for error in metadata.get("validation_errors") or []],
+                    ]
+                ),
+                "pipeline": "controlled_cv",
+                "stage": "fallback",
+                "fallback_provider": "openai",
+                "human_review_required": True,
+            }
+        )
+        raise LLMMaterialsError(
+            str(exc),
+            generation_metadata=metadata,
+        ) from exc
+
+    metadata = (
+        dict(rendered.get("_generation_metadata"))
+        if isinstance(rendered.get("_generation_metadata"), dict)
+        else {}
+    )
     metadata.update(
         {
             "validation_attempts": 1 + int(previous_metadata.get("validation_attempts") or 0),
-            "validation_errors": [
-                *[str(error) for error in previous_metadata.get("validation_errors") or [str(previous_error)]],
-                *[str(error) for error in metadata.get("validation_errors") or metadata.get("planner_errors") or []],
-            ],
+            "validation_errors": previous_errors,
             "pipeline": "controlled_cv",
             "stage": "fallback",
             "fallback_provider": "openai",
@@ -1138,6 +1243,7 @@ def _call_openai_controlled_cv_fallback(
     )
     rendered["_generation_metadata"] = metadata
     return rendered
+
 
 
 def _call_openai_cv_planner(
@@ -1191,17 +1297,13 @@ def _call_nvidia_controlled_cv(
         supported_keywords,
         planner_response=planner_response,
     )
-    metadata = rendered.get("_generation_metadata") if isinstance(rendered.get("_generation_metadata"), dict) else {}
-    metadata.update(
-        {
-            "validation_attempts": 1,
-            "validation_errors": list(metadata.get("validation_errors") or metadata.get("planner_errors") or []),
-            "pipeline": "controlled_cv",
-            "stage": "cv_render",
-        }
+    return _validate_controlled_cv_result(
+        rendered,
+        payload,
+        provider="NVIDIA",
+        stage="cv_render",
     )
-    rendered["_generation_metadata"] = metadata
-    return rendered
+
 
 
 def _call_nvidia_cv_planner(
