@@ -99,12 +99,13 @@ class ApplicationPatch(BaseModel):
     channel: str | None = None
     resume_variant_id: int | None = None
     submitted_at: str | None = None
+    note: str | None = Field(default=None, max_length=1000)
 
 
 class ApplicationEventPayload(BaseModel):
     event_type: str
     event_at: str | None = None
-    note: str | None = None
+    note: str | None = Field(default=None, max_length=1000)
 
 
 class LLMOutputFeedbackPayload(BaseModel):
@@ -151,8 +152,12 @@ class ContactPayload(BaseModel):
 class FollowUpPayload(BaseModel):
     application_id: int
     due_at: str
-    note: str | None = None
+    note: str | None = Field(default=None, max_length=1000)
     done_at: str | None = None
+
+
+class FollowUpPatch(BaseModel):
+    done: bool
 
 
 class ApplicationSessionPayload(BaseModel):
@@ -1165,9 +1170,20 @@ def list_follow_ups() -> dict[str, Any]:
 
 @app.post("/api/follow-ups")
 def create_follow_up(payload: FollowUpPayload) -> dict[str, Any]:
-    if not db.get_application(payload.application_id):
-        raise HTTPException(status_code=404, detail="Application not found")
-    return {"follow_up": db.create_follow_up(payload.model_dump())}
+    try:
+        return {"follow_up": db.create_follow_up(payload.model_dump())}
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/api/follow-ups/{follow_up_id}")
+def update_follow_up(follow_up_id: int, payload: FollowUpPatch) -> dict[str, Any]:
+    follow_up = db.update_follow_up(follow_up_id, done=payload.done)
+    if not follow_up:
+        raise HTTPException(status_code=404, detail="Follow-up not found")
+    return {"follow_up": follow_up}
 
 
 @app.post("/api/gmail/rules/preview")

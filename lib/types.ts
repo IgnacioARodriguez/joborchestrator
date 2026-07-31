@@ -279,6 +279,7 @@ export interface ApplicationRecord {
   job_url?: string | null
   job_first_seen_at?: string | null
   events?: ApplicationEvent[]
+  follow_ups?: FollowUp[]
   materials_snapshot?: {
     captured_at: string
     recruiter_message?: string | null

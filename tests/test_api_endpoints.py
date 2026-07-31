@@ -933,6 +933,7 @@ def test_application_rest_endpoints(tmp_path, monkeypatch):
     patched = client.patch(f"/api/applications/{app_id}", json={"status": "submitted"})
     assert patched.status_code == 200
     assert patched.json()["application"]["status"] == "submitted"
+    assert patched.json()["application"]["events"][0]["event_type"] == "status_changed"
 
     event = client.post(
         f"/api/applications/{app_id}/events",
@@ -943,8 +944,58 @@ def test_application_rest_endpoints(tmp_path, monkeypatch):
 
     listed = client.get("/api/applications")
     assert listed.status_code == 200
-    assert listed.json()["applications"][0]["job_title"] == "Backend Engineer"
-    assert listed.json()["applications"][0]["job_first_seen_at"] == "2026-01-01T10:00:00"
+    listed_application = listed.json()["applications"][0]
+    assert listed_application["job_title"] == "Backend Engineer"
+    assert listed_application["job_first_seen_at"] == "2026-01-01T10:00:00"
+    assert [item["event_type"] for item in listed_application["events"]] == ["status_changed", "submitted"]
+    assert listed_application["follow_ups"] == []
+
+
+def test_application_tracking_follow_up_lifecycle(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    db.upsert_job_posting(make_job(external_id="tracking-lifecycle"), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
+    application = client.post(
+        f"/api/jobs/{job_id}/applications",
+        json={"status": "submitted", "channel": "portal"},
+    ).json()["application"]
+
+    scheduled = client.post(
+        "/api/follow-ups",
+        json={
+            "application_id": application["id"],
+            "due_at": "2026-08-03T09:00:00",
+            "note": "Write to recruiter",
+        },
+    )
+    assert scheduled.status_code == 200
+    follow_up_id = scheduled.json()["follow_up"]["id"]
+
+    detailed = client.get(f"/api/applications/{application['id']}").json()["application"]
+    assert detailed["follow_ups"][0]["note"] == "Write to recruiter"
+    assert detailed["follow_ups"][0]["done_at"] is None
+    assert "follow_up_scheduled" in [event["event_type"] for event in detailed["events"]]
+
+    completed = client.patch(f"/api/follow-ups/{follow_up_id}", json={"done": True})
+    assert completed.status_code == 200
+    assert completed.json()["follow_up"]["done_at"]
+
+    second = client.post(
+        "/api/follow-ups",
+        json={"application_id": application["id"], "due_at": "2026-08-10T09:00:00"},
+    ).json()["follow_up"]
+    closed = client.patch(
+        f"/api/applications/{application['id']}",
+        json={"status": "rejected", "note": "Rejected after recruiter screen."},
+    )
+    assert closed.status_code == 200
+    closed_application = closed.json()["application"]
+    assert closed_application["status"] == "rejected"
+    assert next(item for item in closed_application["follow_ups"] if item["id"] == second["id"])["done_at"]
+    event_types = [event["event_type"] for event in closed_application["events"]]
+    assert event_types.count("follow_up_completed") == 2
+    assert event_types[-1] == "status_changed"
+    assert closed_application["events"][-1]["note"] == "Rejected after recruiter screen."
 
 
 def test_mark_opened_creates_application_event_without_pipeline_state(tmp_path, monkeypatch):

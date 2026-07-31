@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -153,12 +153,22 @@ def seed_ui_database(db_path: Path) -> dict[str, Any]:
                     "autofill": "approved",
                 },
             )
+        submitted_at = datetime.now().isoformat(timespec="seconds")
         application = db.create_application(
             {
                 "job_id": job_ids[0],
                 "ats_type": "greenhouse",
                 "status": "submitted",
                 "channel": "portal",
+                "submitted_at": submitted_at,
+                "record_submission_event": True,
+            }
+        )
+        db.create_follow_up(
+            {
+                "application_id": application["id"],
+                "due_at": (datetime.now() + timedelta(days=2)).isoformat(timespec="seconds"),
+                "note": "Enviar seguimiento al recruiter",
             }
         )
         return {
@@ -184,8 +194,10 @@ def _verify_dashboard(page: Page, seed: dict[str, Any]) -> None:
     page.keyboard.press("Escape")
 
     _click_nav(page, "Aplicaciones")
-    expect(page.get_by_role("heading", name="Application kanban")).to_be_visible(timeout=15_000)
+    expect(page.get_by_role("heading", name="Seguimiento de candidaturas")).to_be_visible(timeout=15_000)
     expect(page.get_by_text("Senior Backend Engineer", exact=True)).to_be_visible(timeout=15_000)
+    expect(page.get_by_text("Próxima acción", exact=True)).to_be_visible(timeout=15_000)
+    expect(page.get_by_text("Enviar seguimiento al recruiter", exact=True)).to_be_visible(timeout=15_000)
 
     _click_nav(page, "Configuración")
     expect(page.get_by_role("heading", name="Configuración")).to_be_visible(timeout=15_000)

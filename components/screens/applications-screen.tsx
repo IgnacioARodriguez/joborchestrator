@@ -1,24 +1,50 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { Building2, BriefcaseBusiness, Inbox, MailSearch, Plus, Send } from "lucide-react"
+import { useMemo, useState } from "react"
+import {
+  ArrowUpRight,
+  BriefcaseBusiness,
+  CalendarClock,
+  Check,
+  CircleDot,
+  Clock3,
+  Inbox,
+  MessageSquarePlus,
+  Search,
+  Send,
+  Trophy,
+} from "lucide-react"
 import { toast } from "sonner"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { PageHeader } from "@/components/page-chrome"
 import { useStore } from "@/lib/store"
 import { api } from "@/lib/api"
-import type { ApplicationRecord, ApplicationStatus, FollowUp, JobContact } from "@/lib/types"
+import type { ApplicationEvent, ApplicationRecord, ApplicationStatus, FollowUp } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
-const APPLICATION_COLUMNS: ApplicationStatus[] = [
-  "preparing",
-  "needs_user_input",
-  "submit_only",
-  "ready_for_review",
+type TrackingFilter = "active" | "action" | "closed" | "all"
+type CanonicalTrackingStatus =
+  | "submitted"
+  | "recruiter_screen"
+  | "interview"
+  | "technical"
+  | "offer"
+  | "rejected"
+  | "withdrawn"
+
+const TRACKING_STATUSES = new Set<ApplicationStatus>([
   "submitted_manually",
   "submission_verified",
   "submitted",
@@ -28,316 +54,616 @@ const APPLICATION_COLUMNS: ApplicationStatus[] = [
   "offer",
   "rejected",
   "withdrawn",
+])
+
+const CLOSED_STATUSES = new Set<ApplicationStatus>(["rejected", "withdrawn"])
+
+const STATUS_OPTIONS: Array<{
+  value: CanonicalTrackingStatus
+  label: string
+  description: string
+}> = [
+  { value: "submitted", label: "Enviada", description: "Esperando respuesta" },
+  { value: "recruiter_screen", label: "Contacto inicial", description: "Conversación con recruiting" },
+  { value: "interview", label: "Entrevista", description: "Entrevista agendada o en curso" },
+  { value: "technical", label: "Prueba técnica", description: "Take-home, live coding o técnica" },
+  { value: "offer", label: "Oferta", description: "Oferta recibida" },
+  { value: "rejected", label: "Rechazada", description: "Proceso cerrado por la empresa" },
+  { value: "withdrawn", label: "Retirada", description: "Proceso cerrado por decisión propia" },
 ]
 
-const LABELS: Record<ApplicationStatus, string> = {
-  preparing: "Preparing",
-  materials_ready: "Materials ready",
-  opened: "Opened",
-  prefilled: "Prefilled",
-  needs_user_input: "Needs input",
-  submit_only: "Submit only",
-  ready_for_review: "Ready for review",
-  submitted_manually: "Submitted manually",
-  submission_verified: "Verified",
-  submitted: "Submitted",
-  recruiter_screen: "Recruiter screen",
-  interview: "Interview",
-  technical: "Technical",
-  offer: "Offer",
-  rejected: "Rejected",
-  withdrawn: "Withdrawn",
+const STATUS_LABELS: Record<CanonicalTrackingStatus, string> = Object.fromEntries(
+  STATUS_OPTIONS.map((option) => [option.value, option.label]),
+) as Record<CanonicalTrackingStatus, string>
+
+const FILTERS: Array<{ value: TrackingFilter; label: string }> = [
+  { value: "active", label: "Activas" },
+  { value: "action", label: "Con próxima acción" },
+  { value: "closed", label: "Cerradas" },
+  { value: "all", label: "Todas" },
+]
+
+function canonicalStatus(status: ApplicationStatus): CanonicalTrackingStatus {
+  if (status === "submitted_manually" || status === "submission_verified") return "submitted"
+  if (TRACKING_STATUSES.has(status)) return status as CanonicalTrackingStatus
+  return "submitted"
 }
 
-function ApplicationCard({ application, onOpenJob }: { application: ApplicationRecord; onOpenJob: (id: string) => void }) {
-  const { setApplicationStatus } = useStore()
+function isTrackingApplication(application: ApplicationRecord) {
+  return TRACKING_STATUSES.has(application.status)
+}
+
+function pendingFollowUps(application: ApplicationRecord) {
+  return (application.follow_ups ?? [])
+    .filter((followUp) => !followUp.done_at)
+    .sort((a, b) => dateValue(a.due_at) - dateValue(b.due_at))
+}
+
+function nextFollowUp(application: ApplicationRecord) {
+  return pendingFollowUps(application)[0]
+}
+
+function dateValue(value?: string | null) {
+  if (!value) return Number.POSITIVE_INFINITY
+  const parsed = new Date(value).getTime()
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY
+}
+
+function formatDate(value?: string | null, includeTime = false) {
+  if (!value) return "Sin fecha"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat("es-ES", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    ...(includeTime ? { hour: "2-digit", minute: "2-digit" } : {}),
+  }).format(date)
+}
+
+function dueLabel(followUp: FollowUp) {
+  const due = new Date(followUp.due_at)
+  if (Number.isNaN(due.getTime())) return followUp.due_at
+  const now = new Date()
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const startDue = new Date(due.getFullYear(), due.getMonth(), due.getDate()).getTime()
+  const diffDays = Math.round((startDue - startToday) / 86_400_000)
+  if (diffDays < 0) return `Vencida hace ${Math.abs(diffDays)} día${Math.abs(diffDays) === 1 ? "" : "s"}`
+  if (diffDays === 0) return "Para hoy"
+  if (diffDays === 1) return "Para mañana"
+  return `En ${diffDays} días`
+}
+
+function isOverdue(followUp?: FollowUp) {
+  return Boolean(followUp && dateValue(followUp.due_at) < Date.now())
+}
+
+function recommendedAction(application: ApplicationRecord) {
+  const status = canonicalStatus(application.status)
+  if (status === "submitted") return "Programar un follow-up si todavía no recibiste respuesta."
+  if (status === "recruiter_screen") return "Registrar el próximo contacto o la fecha acordada."
+  if (status === "interview") return "Preparar la entrevista y anotar los puntos clave."
+  if (status === "technical") return "Registrar la entrega o la próxima instancia técnica."
+  if (status === "offer") return "Revisar condiciones y definir una fecha de respuesta."
+  return "No hay acciones pendientes para esta candidatura."
+}
+
+function defaultFollowUpDateTime() {
+  const date = new Date(Date.now() + 3 * 86_400_000)
+  date.setMinutes(0, 0, 0)
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+}
+
+function eventLabel(event: ApplicationEvent) {
+  const labels: Record<string, string> = {
+    submitted: "Candidatura enviada",
+    submitted_manually: "Candidatura enviada manualmente",
+    submission_verified: "Envío verificado",
+    status_changed: "Estado actualizado",
+    recruiter_reply: "Respuesta de recruiter",
+    interview_scheduled: "Entrevista agendada",
+    rejection: "Rechazo recibido",
+    ghosted: "Sin respuesta",
+    follow_up_scheduled: "Follow-up programado",
+    follow_up_completed: "Follow-up completado",
+    note_added: "Nota agregada",
+    opened: "Portal abierto",
+    answer_saved: "Información de aplicación guardada",
+  }
+  return labels[event.event_type] ?? event.event_type.replaceAll("_", " ")
+}
+
+function statusBadgeClass(status: CanonicalTrackingStatus) {
+  if (status === "offer") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+  if (status === "rejected" || status === "withdrawn") return "border-muted-foreground/20 bg-muted text-muted-foreground"
+  if (status === "interview" || status === "technical") return "border-primary/30 bg-primary/10 text-primary"
+  return "border-border bg-background text-foreground"
+}
+
+function ApplicationListCard({
+  application,
+  selected,
+  onSelect,
+}: {
+  application: ApplicationRecord
+  selected: boolean
+  onSelect: () => void
+}) {
+  const followUp = nextFollowUp(application)
+  const status = canonicalStatus(application.status)
   return (
-    <article className="rounded-lg border border-border bg-card p-3 shadow-[0_1px_2px_rgba(16,24,40,0.03)]">
-      <button type="button" onClick={() => onOpenJob(String(application.job_id))} className="block w-full text-left">
-        <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
-          {application.job_title || `Application ${application.id}`}
-        </h3>
-        <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-          <Building2 className="size-3.5 shrink-0" />
-          <span className="truncate">{application.company || "Unknown company"}</span>
-        </p>
-        <p className="mt-1 text-[11px] uppercase text-muted-foreground/80">{application.channel.replace("_", " ")}</p>
-      </button>
-      <div className="mt-3 flex flex-wrap gap-1">
-        {APPLICATION_COLUMNS.filter((status) => status !== application.status).map((status) => (
-          <button
-            key={status}
-            type="button"
-            onClick={() => {
-              setApplicationStatus(application.id, status)
-              toast.success(`Moved to ${LABELS[status]}`, { description: application.job_title || undefined })
-            }}
-            className="rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-          >
-            {LABELS[status]}
-          </button>
-        ))}
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={cn(
+        "w-full rounded-xl border p-4 text-left transition-colors",
+        selected ? "border-primary bg-primary/5" : "border-border bg-card hover:bg-muted/40",
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold text-foreground">
+            {application.job_title || `Candidatura ${application.id}`}
+          </h3>
+          <p className="mt-1 truncate text-xs text-muted-foreground">{application.company || "Empresa desconocida"}</p>
+        </div>
+        <Badge variant="outline" className={statusBadgeClass(status)}>{STATUS_LABELS[status]}</Badge>
       </div>
-    </article>
+      <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span>Enviada {formatDate(application.submitted_at || application.created_at)}</span>
+        {followUp ? (
+          <span className={cn("flex items-center gap-1", isOverdue(followUp) && "font-medium text-destructive")}>
+            <Clock3 className="size-3.5" />
+            {dueLabel(followUp)}
+          </span>
+        ) : (
+          <span>Sin próxima acción</span>
+        )}
+      </div>
+    </button>
   )
 }
 
 export function ApplicationsScreen({ onOpenJob }: { onOpenJob: (id: string) => void }) {
-  const { applications, refresh } = useStore()
-  const [contacts, setContacts] = useState<JobContact[]>([])
-  const [followUps, setFollowUps] = useState<FollowUp[]>([])
-  const [jobDraft, setJobDraft] = useState({ title: "", company: "", url: "", apply_url: "", description_text: "" })
-  const [contactDraft, setContactDraft] = useState({ company: "", name: "", role: "", linkedin_url: "" })
-  const [followUpDraft, setFollowUpDraft] = useState({ application_id: "", due_at: "", note: "" })
-  const [gmailDraft, setGmailDraft] = useState({ sender: "", subject: "", body: "" })
-  const [gmailSignal, setGmailSignal] = useState("")
-  const [suggestion, setSuggestion] = useState("")
+  const {
+    applications,
+    applicationsStatus,
+    refreshApplications,
+    setApplicationStatus,
+  } = useStore()
+  const [query, setQuery] = useState("")
+  const [filter, setFilter] = useState<TrackingFilter>("active")
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [followUpDraft, setFollowUpDraft] = useState({ due_at: defaultFollowUpDateTime(), note: "" })
+  const [noteDraft, setNoteDraft] = useState("")
+  const [busyAction, setBusyAction] = useState<string | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
-    async function loadCrm() {
-      try {
-        const [contactData, followUpData] = await Promise.all([api.getContacts(), api.getFollowUps()])
-        if (!cancelled) {
-          setContacts(contactData.contacts)
-          setFollowUps(followUpData.follow_ups)
-        }
-      } catch {
-        // The kanban remains useful if CRM data is temporarily unavailable.
-      }
-    }
-    void loadCrm()
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const trackedApplications = useMemo(
+    () => applications.filter(isTrackingApplication),
+    [applications],
+  )
 
-  const byStatus = (status: ApplicationStatus) =>
-    applications
-      .filter((application) => application.status === status)
-      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-
-  const contactsByCompany = useMemo(() => {
-    const groups = new Map<string, JobContact[]>()
-    for (const contact of contacts) {
-      const company = contact.company || "Unknown company"
-      groups.set(company, [...(groups.get(company) ?? []), contact])
-    }
-    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))
-  }, [contacts])
-
-  async function createContact() {
-    if (!contactDraft.name.trim()) return
-    try {
-      const response = await api.createContact({
-        ...contactDraft,
-        source: "manual",
-        contacted_at: new Date().toISOString(),
+  const visibleApplications = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase("es")
+    return trackedApplications
+      .filter((application) => {
+        const closed = CLOSED_STATUSES.has(application.status)
+        if (filter === "active" && closed) return false
+        if (filter === "closed" && !closed) return false
+        if (filter === "action" && (closed || pendingFollowUps(application).length === 0)) return false
+        if (!normalizedQuery) return true
+        return [application.job_title, application.company]
+          .filter(Boolean)
+          .some((value) => String(value).toLocaleLowerCase("es").includes(normalizedQuery))
       })
-      setContacts((current) => [response.contact, ...current])
-      setContactDraft({ company: "", name: "", role: "", linkedin_url: "" })
-      toast.success("Contact recorded", { description: response.contact.name || undefined })
-    } catch (e) {
-      toast.error("Could not save contact", { description: e instanceof Error ? e.message : "Backend request failed." })
-    }
-  }
-
-  async function createJob() {
-    if (!jobDraft.title.trim() || !jobDraft.company.trim() || !jobDraft.url.trim()) return
-    try {
-      const response = await api.createJob({
-        title: jobDraft.title,
-        company: jobDraft.company,
-        url: jobDraft.url,
-        apply_url: jobDraft.apply_url || jobDraft.url,
-        source: "manual",
-        description_text: jobDraft.description_text,
+      .sort((a, b) => {
+        const aDue = dateValue(nextFollowUp(a)?.due_at)
+        const bDue = dateValue(nextFollowUp(b)?.due_at)
+        if (aDue !== bDue) return aDue - bDue
+        return dateValue(b.updated_at) - dateValue(a.updated_at)
       })
-      setJobDraft({ title: "", company: "", url: "", apply_url: "", description_text: "" })
-      await refresh()
-      onOpenJob(response.job.id)
-      toast.success("Job added", { description: response.job.title })
-    } catch (e) {
-      toast.error("Could not add job", { description: e instanceof Error ? e.message : "Backend request failed." })
-    }
-  }
+  }, [filter, query, trackedApplications])
 
-  async function createFollowUp() {
-    const application_id = Number(followUpDraft.application_id)
-    if (!application_id || !followUpDraft.due_at) return
-    try {
-      const response = await api.createFollowUp({
-        application_id,
-        due_at: followUpDraft.due_at,
-        note: followUpDraft.note,
+  const effectiveSelectedId = visibleApplications.some((application) => application.id === selectedId)
+    ? selectedId
+    : visibleApplications[0]?.id ?? null
+  const selectedApplication = visibleApplications.find((application) => application.id === effectiveSelectedId) ?? null
+  const selectedFollowUp = selectedApplication ? nextFollowUp(selectedApplication) : undefined
+  const selectedStatus = selectedApplication ? canonicalStatus(selectedApplication.status) : "submitted"
+  const timeline = (() => {
+    if (!selectedApplication) return []
+    const events = [...(selectedApplication.events ?? [])]
+    if (events.length === 0 && selectedApplication.submitted_at) {
+      events.push({
+        id: -selectedApplication.id,
+        application_id: selectedApplication.id,
+        event_type: "submitted",
+        event_at: selectedApplication.submitted_at,
+        note: "Candidatura registrada como enviada.",
       })
-      setFollowUps((current) => [response.follow_up, ...current])
-      setFollowUpDraft({ application_id: "", due_at: "", note: "" })
-      toast.success("Follow-up recorded")
-    } catch (e) {
-      toast.error("Could not save follow-up", { description: e instanceof Error ? e.message : "Backend request failed." })
     }
-  }
+    return events.sort((a, b) => dateValue(b.event_at) - dateValue(a.event_at))
+  })()
 
-  async function previewGmail() {
-    try {
-      const response = await api.previewGmailRules(gmailDraft)
-      setGmailSignal(
-        response.signal
-          ? `${response.signal.event_type} (${Math.round(response.signal.confidence * 100)}%) - ${response.signal.note}`
-          : "No recruiter signal detected.",
-      )
-    } catch (e) {
-      toast.error("Could not preview Gmail rules", { description: e instanceof Error ? e.message : "Backend request failed." })
-    }
-  }
+  const activeCount = trackedApplications.filter((application) => !CLOSED_STATUSES.has(application.status)).length
+  const actionCount = trackedApplications.filter(
+    (application) => !CLOSED_STATUSES.has(application.status) && pendingFollowUps(application).length > 0,
+  ).length
+  const interviewCount = trackedApplications.filter((application) => ["interview", "technical"].includes(canonicalStatus(application.status))).length
+  const offerCount = trackedApplications.filter((application) => canonicalStatus(application.status) === "offer").length
 
-  function suggestFollowUp(followUp: FollowUp) {
-    const application = applications.find((item) => item.id === followUp.application_id)
-    const company = application?.company || "your team"
-    setSuggestion(
-      `Hi ${company} team,\n\nI wanted to follow up on my application for ${application?.job_title || "the role"}. I'm still interested and would be happy to share any additional context that helps with the process.\n\nBest,\nIgnacio`,
+  async function changeStatus(status: CanonicalTrackingStatus) {
+    if (!selectedApplication || status === selectedStatus) return
+    setBusyAction("status")
+    const label = STATUS_LABELS[status]
+    const ok = await setApplicationStatus(
+      selectedApplication.id,
+      status,
+      `Estado actualizado a ${label}.`,
     )
+    setBusyAction(null)
+    if (ok) {
+      toast.success("Estado actualizado", { description: `${selectedApplication.company || "Candidatura"}: ${label}` })
+    } else {
+      toast.error("No se pudo actualizar el estado")
+    }
+  }
+
+  async function scheduleFollowUp() {
+    if (!selectedApplication || !followUpDraft.due_at) return
+    const due = new Date(followUpDraft.due_at)
+    if (Number.isNaN(due.getTime())) {
+      toast.error("La fecha del follow-up no es válida")
+      return
+    }
+    setBusyAction("follow-up")
+    try {
+      await api.createFollowUp({
+        application_id: selectedApplication.id,
+        due_at: due.toISOString(),
+        note: followUpDraft.note.trim() || undefined,
+      })
+      await refreshApplications()
+      setFollowUpDraft({ due_at: defaultFollowUpDateTime(), note: "" })
+      toast.success("Follow-up programado", { description: formatDate(due.toISOString(), true) })
+    } catch (error) {
+      toast.error("No se pudo programar el follow-up", {
+        description: error instanceof Error ? error.message : "Backend request failed.",
+      })
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  async function completeFollowUp(followUp: FollowUp) {
+    setBusyAction(`follow-up-${followUp.id}`)
+    try {
+      await api.patchFollowUp(followUp.id, true)
+      await refreshApplications()
+      toast.success("Follow-up completado")
+    } catch (error) {
+      toast.error("No se pudo completar el follow-up", {
+        description: error instanceof Error ? error.message : "Backend request failed.",
+      })
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  async function addNote() {
+    if (!selectedApplication || !noteDraft.trim()) return
+    setBusyAction("note")
+    try {
+      await api.createApplicationEvent(selectedApplication.id, {
+        event_type: "note_added",
+        note: noteDraft.trim(),
+      })
+      await refreshApplications()
+      setNoteDraft("")
+      toast.success("Nota agregada")
+    } catch (error) {
+      toast.error("No se pudo guardar la nota", {
+        description: error instanceof Error ? error.message : "Backend request failed.",
+      })
+    } finally {
+      setBusyAction(null)
+    }
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
       <PageHeader
-        eyebrow="Applications"
-        title="Application kanban"
-        description="Only real applications live here, separate from discovered opportunities."
+        eyebrow="Aplicaciones"
+        title="Seguimiento de candidaturas"
+        description="Estados simples, próxima acción, timeline y follow-ups para candidaturas realmente enviadas."
       />
-      <div className="min-h-[420px] overflow-x-auto pb-2">
-        <div className="grid min-w-[1680px] grid-cols-11 gap-3">
-          {APPLICATION_COLUMNS.map((status) => {
-            const items = byStatus(status)
-            return (
-              <section
-                key={status}
-                className={cn("flex h-[calc(100dvh-190px)] min-h-[420px] flex-col rounded-lg border border-border bg-muted/25", (status === "rejected" || status === "withdrawn") && "opacity-90")}
-              >
-                <div className="shrink-0 border-b border-border bg-card px-3 py-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <h2 className="text-sm font-semibold text-foreground">{LABELS[status]}</h2>
-                    <span className="rounded-md bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{items.length}</span>
-                  </div>
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
-                  {items.length === 0 ? (
-                    <Empty className="h-full border border-dashed bg-background/70">
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon"><Inbox /></EmptyMedia>
-                        <EmptyTitle>Empty lane</EmptyTitle>
-                        <EmptyDescription>{LABELS[status]} applications appear here.</EmptyDescription>
-                      </EmptyHeader>
-                    </Empty>
-                  ) : (
-                    <div className="flex flex-col gap-2">
-                      {items.map((application) => <ApplicationCard key={application.id} application={application} onOpenJob={onOpenJob} />)}
-                    </div>
-                  )}
-                </div>
-              </section>
-            )
-          })}
-        </div>
+
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <Card className="gap-2 py-4">
+          <CardContent className="flex items-center justify-between px-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Activas</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">{activeCount}</p>
+            </div>
+            <BriefcaseBusiness className="size-5 text-primary" />
+          </CardContent>
+        </Card>
+        <Card className="gap-2 py-4">
+          <CardContent className="flex items-center justify-between px-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Próximas acciones</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">{actionCount}</p>
+            </div>
+            <CalendarClock className="size-5 text-primary" />
+          </CardContent>
+        </Card>
+        <Card className="gap-2 py-4">
+          <CardContent className="flex items-center justify-between px-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Entrevistas / técnica</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">{interviewCount}</p>
+            </div>
+            <CircleDot className="size-5 text-primary" />
+          </CardContent>
+        </Card>
+        <Card className="gap-2 py-4">
+          <CardContent className="flex items-center justify-between px-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Ofertas</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">{offerCount}</p>
+            </div>
+            <Trophy className="size-5 text-primary" />
+          </CardContent>
+        </Card>
       </div>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm"><BriefcaseBusiness className="size-4" /> Add job</CardTitle>
-            <CardDescription className="text-xs">Add an opportunity you already have and open it for applying/contacting.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr]">
-              <Input placeholder="Title" value={jobDraft.title} onChange={(event) => setJobDraft((current) => ({ ...current, title: event.target.value }))} />
-              <Input placeholder="Company" value={jobDraft.company} onChange={(event) => setJobDraft((current) => ({ ...current, company: event.target.value }))} />
+
+      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(320px,0.85fr)_minmax(520px,1.15fr)]">
+        <Card className="min-h-0 gap-3 overflow-hidden">
+          <CardHeader className="shrink-0 gap-3 border-b border-border pb-4">
+            <div>
+              <CardTitle className="text-base">Candidaturas enviadas</CardTitle>
+              <CardDescription className="text-xs">Las preparaciones pendientes continúan en Aplicar.</CardDescription>
             </div>
-            <Input placeholder="Posting URL" value={jobDraft.url} onChange={(event) => setJobDraft((current) => ({ ...current, url: event.target.value }))} />
-            <Input placeholder="Apply URL (optional)" value={jobDraft.apply_url} onChange={(event) => setJobDraft((current) => ({ ...current, apply_url: event.target.value }))} />
-            <Textarea placeholder="Description or notes" value={jobDraft.description_text} onChange={(event) => setJobDraft((current) => ({ ...current, description_text: event.target.value }))} className="min-h-24 text-xs" />
-            <Button onClick={() => void createJob()} disabled={!jobDraft.title.trim() || !jobDraft.company.trim() || !jobDraft.url.trim()}>
-              <Plus data-icon="inline-start" />
-              Add job
-            </Button>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm"><MailSearch className="size-4" /> Gmail rules</CardTitle>
-            <CardDescription className="text-xs">Read-only preview for recruiter reply, rejection and interview signals.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <Input placeholder="Sender" value={gmailDraft.sender} onChange={(event) => setGmailDraft((current) => ({ ...current, sender: event.target.value }))} />
-            <Input placeholder="Subject" value={gmailDraft.subject} onChange={(event) => setGmailDraft((current) => ({ ...current, subject: event.target.value }))} />
-            <Textarea placeholder="Email body" value={gmailDraft.body} onChange={(event) => setGmailDraft((current) => ({ ...current, body: event.target.value }))} className="min-h-24 text-xs" />
-            <Button variant="outline" onClick={() => void previewGmail()} disabled={!gmailDraft.sender && !gmailDraft.subject && !gmailDraft.body}>
-              Preview signal
-            </Button>
-            {gmailSignal ? <p className="rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">{gmailSignal}</p> : null}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Contacts</CardTitle>
-            <CardDescription className="text-xs">Recruiter CRM grouped by company.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-              <Input placeholder="Company" value={contactDraft.company} onChange={(event) => setContactDraft((current) => ({ ...current, company: event.target.value }))} />
-              <Input placeholder="Name" value={contactDraft.name} onChange={(event) => setContactDraft((current) => ({ ...current, name: event.target.value }))} />
-              <Input placeholder="Role" value={contactDraft.role} onChange={(event) => setContactDraft((current) => ({ ...current, role: event.target.value }))} />
-              <Input placeholder="LinkedIn URL" value={contactDraft.linkedin_url} onChange={(event) => setContactDraft((current) => ({ ...current, linkedin_url: event.target.value }))} />
-            </div>
-            <Button onClick={() => void createContact()} disabled={!contactDraft.name.trim()}>
-              <Plus data-icon="inline-start" />
-              Add contact
-            </Button>
-            <div className="flex max-h-80 flex-col gap-2 overflow-y-auto">
-              {contactsByCompany.map(([company, items]) => (
-                <div key={company} className="rounded-lg border border-border p-3">
-                  <p className="text-xs font-semibold text-foreground">{company}</p>
-                  {items.map((contact) => (
-                    <p key={contact.id} className="mt-1 text-xs text-muted-foreground">
-                      {contact.name} {contact.role ? `- ${contact.role}` : ""} {contact.last_reply_at ? "- replied" : ""}
-                    </p>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Follow-ups</CardTitle>
-            <CardDescription className="text-xs">Suggested text only; nothing is sent automatically.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr]">
-              <Input placeholder="Application ID" value={followUpDraft.application_id} onChange={(event) => setFollowUpDraft((current) => ({ ...current, application_id: event.target.value }))} />
-              <Input type="datetime-local" value={followUpDraft.due_at} onChange={(event) => setFollowUpDraft((current) => ({ ...current, due_at: event.target.value }))} />
-            </div>
-            <Input placeholder="Note" value={followUpDraft.note} onChange={(event) => setFollowUpDraft((current) => ({ ...current, note: event.target.value }))} />
-            <Button onClick={() => void createFollowUp()} disabled={!followUpDraft.application_id || !followUpDraft.due_at}>
-              <Plus data-icon="inline-start" />
-              Add follow-up
-            </Button>
-            <div className="flex max-h-52 flex-col gap-2 overflow-y-auto">
-              {followUps.map((followUp) => (
-                <button key={followUp.id} type="button" onClick={() => suggestFollowUp(followUp)} className="rounded-lg border border-border p-3 text-left text-xs hover:bg-muted/40">
-                  <span className="font-medium text-foreground">Application #{followUp.application_id}</span>
-                  <span className="ml-2 text-muted-foreground">{followUp.due_at}</span>
-                  <span className="mt-1 block text-muted-foreground">{followUp.note}</span>
+            <label className="relative block">
+              <span className="sr-only">Buscar candidaturas</span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Buscar empresa o puesto"
+                className="pl-9"
+              />
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {FILTERS.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  onClick={() => setFilter(item.value)}
+                  aria-pressed={filter === item.value}
+                  className={cn(
+                    "rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
+                    filter === item.value
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-background text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  {item.label}
                 </button>
               ))}
             </div>
-            {suggestion ? (
-              <div className="rounded-lg border border-border bg-muted/30 p-3">
-                <p className="mb-2 flex items-center gap-1 text-xs font-semibold text-foreground"><Send className="size-3.5" /> Suggested follow-up</p>
-                <Textarea readOnly value={suggestion} className="min-h-32 text-xs" />
+          </CardHeader>
+          <CardContent className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+            {applicationsStatus === "loading" ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">Cargando candidaturas…</p>
+            ) : visibleApplications.length === 0 ? (
+              <Empty className="min-h-64 border border-dashed bg-muted/20">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon"><Inbox /></EmptyMedia>
+                  <EmptyTitle>No hay candidaturas en esta vista</EmptyTitle>
+                  <EmptyDescription>
+                    Las candidaturas aparecen cuando confirmás que el envío fue realizado.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : (
+              <div className="flex flex-col gap-2.5">
+                {visibleApplications.map((application) => (
+                  <ApplicationListCard
+                    key={application.id}
+                    application={application}
+                    selected={application.id === effectiveSelectedId}
+                    onSelect={() => setSelectedId(application.id)}
+                  />
+                ))}
               </div>
-            ) : null}
+            )}
           </CardContent>
+        </Card>
+
+        <Card className="min-h-0 gap-0 overflow-hidden">
+          {!selectedApplication ? (
+            <CardContent className="flex h-full min-h-96 items-center justify-center">
+              <Empty>
+                <EmptyHeader>
+                  <EmptyMedia variant="icon"><BriefcaseBusiness /></EmptyMedia>
+                  <EmptyTitle>Seleccioná una candidatura</EmptyTitle>
+                  <EmptyDescription>Vas a ver su estado, próxima acción y timeline.</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            </CardContent>
+          ) : (
+            <>
+              <CardHeader className="shrink-0 border-b border-border pb-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <CardTitle className="truncate text-lg">
+                      {selectedApplication.job_title || `Candidatura ${selectedApplication.id}`}
+                    </CardTitle>
+                    <CardDescription className="mt-1">
+                      {selectedApplication.company || "Empresa desconocida"} · Enviada {formatDate(selectedApplication.submitted_at || selectedApplication.created_at)}
+                    </CardDescription>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={() => onOpenJob(String(selectedApplication.job_id))}>
+                      Ver job
+                      <ArrowUpRight data-icon="inline-end" />
+                    </Button>
+                    <Select
+                      value={selectedStatus}
+                      onValueChange={(value) => void changeStatus(value as CanonicalTrackingStatus)}
+                      disabled={busyAction === "status"}
+                    >
+                      <SelectTrigger aria-label="Estado de candidatura" className="min-w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent align="end">
+                        {STATUS_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            <span className="flex flex-col">
+                              <span>{option.label}</span>
+                              <span className="text-[11px] text-muted-foreground">{option.description}</span>
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </CardHeader>
+
+              <CardContent className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                  <div className="flex flex-col gap-4">
+                    <Card className="gap-3 border-primary/20 bg-primary/5 py-4 shadow-none">
+                      <CardHeader className="px-4 pb-0">
+                        <CardTitle className="flex items-center gap-2 text-sm">
+                          <CalendarClock className="size-4 text-primary" />
+                          Próxima acción
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="px-4">
+                        {selectedFollowUp ? (
+                          <div className="space-y-3">
+                            <div>
+                              <p className="text-sm font-medium text-foreground">
+                                {selectedFollowUp.note || "Hacer seguimiento de la candidatura"}
+                              </p>
+                              <p className={cn("mt-1 text-xs text-muted-foreground", isOverdue(selectedFollowUp) && "font-medium text-destructive")}>
+                                {dueLabel(selectedFollowUp)} · {formatDate(selectedFollowUp.due_at, true)}
+                              </p>
+                            </div>
+                            <Button
+                              size="sm"
+                              onClick={() => void completeFollowUp(selectedFollowUp)}
+                              disabled={busyAction === `follow-up-${selectedFollowUp.id}`}
+                            >
+                              <Check data-icon="inline-start" />
+                              Marcar como completada
+                            </Button>
+                          </div>
+                        ) : (
+                          <div>
+                            <p className="text-sm font-medium text-foreground">Sin próxima acción programada</p>
+                            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                              {recommendedAction(selectedApplication)}
+                            </p>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    {!CLOSED_STATUSES.has(selectedApplication.status) ? (
+                      <Card className="gap-3 py-4 shadow-none">
+                        <CardHeader className="px-4 pb-0">
+                          <CardTitle className="text-sm">Programar follow-up</CardTitle>
+                          <CardDescription className="text-xs">Solo crea el recordatorio; no envía mensajes automáticamente.</CardDescription>
+                        </CardHeader>
+                        <CardContent className="flex flex-col gap-2 px-4">
+                          <Input
+                            type="datetime-local"
+                            value={followUpDraft.due_at}
+                            onChange={(event) => setFollowUpDraft((current) => ({ ...current, due_at: event.target.value }))}
+                            aria-label="Fecha del follow-up"
+                          />
+                          <Textarea
+                            value={followUpDraft.note}
+                            onChange={(event) => setFollowUpDraft((current) => ({ ...current, note: event.target.value }))}
+                            placeholder="Ej.: escribir al recruiter por LinkedIn"
+                            className="min-h-20 text-sm"
+                          />
+                          <Button
+                            variant="outline"
+                            onClick={() => void scheduleFollowUp()}
+                            disabled={!followUpDraft.due_at || busyAction === "follow-up"}
+                          >
+                            <CalendarClock data-icon="inline-start" />
+                            Programar
+                          </Button>
+                        </CardContent>
+                      </Card>
+                    ) : null}
+
+                    <Card className="gap-3 py-4 shadow-none">
+                      <CardHeader className="px-4 pb-0">
+                        <CardTitle className="text-sm">Agregar nota</CardTitle>
+                      </CardHeader>
+                      <CardContent className="flex flex-col gap-2 px-4">
+                        <Textarea
+                          value={noteDraft}
+                          onChange={(event) => setNoteDraft(event.target.value)}
+                          placeholder="Entrevista, feedback, contacto o contexto importante"
+                          className="min-h-24 text-sm"
+                        />
+                        <Button
+                          variant="outline"
+                          onClick={() => void addNote()}
+                          disabled={!noteDraft.trim() || busyAction === "note"}
+                        >
+                          <MessageSquarePlus data-icon="inline-start" />
+                          Guardar nota
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  <Card className="gap-3 py-4 shadow-none">
+                    <CardHeader className="px-4 pb-0">
+                      <CardTitle className="flex items-center gap-2 text-sm">
+                        <Send className="size-4 text-primary" />
+                        Timeline
+                      </CardTitle>
+                      <CardDescription className="text-xs">Historial de estados, notas y follow-ups.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="px-4">
+                      {timeline.length === 0 ? (
+                        <p className="rounded-lg border border-dashed border-border py-10 text-center text-xs text-muted-foreground">
+                          Todavía no hay movimientos registrados.
+                        </p>
+                      ) : (
+                        <ol className="relative ml-2 border-l border-border pl-5">
+                          {timeline.map((event) => (
+                            <li key={event.id} className="relative pb-5 last:pb-0">
+                              <span className="absolute -left-[1.55rem] top-1.5 size-2.5 rounded-full border-2 border-background bg-primary" />
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <p className="text-sm font-medium text-foreground">{eventLabel(event)}</p>
+                                <time className="text-[11px] text-muted-foreground">{formatDate(event.event_at, true)}</time>
+                              </div>
+                              {event.note ? (
+                                <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">{event.note}</p>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              </CardContent>
+            </>
+          )}
         </Card>
       </div>
     </div>
