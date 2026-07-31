@@ -393,6 +393,7 @@ def worker_status() -> dict[str, Any]:
         "cv_profile_import",
         "application_materials_generation",
         "job_scan",
+        "linkedin_scan",
         "linkedin_enrichment",
         "application_execution",
     }
@@ -406,6 +407,7 @@ def worker_status() -> dict[str, Any]:
         "needs_local_worker": bool(pending or running),
         "expected_commands": [
             "python -m joborchestrator.worker",
+            "python -m joborchestrator.linkedin_worker",
             "python -m joborchestrator.ranking.worker",
         ],
     }
@@ -419,6 +421,7 @@ def ops_status() -> dict[str, Any]:
         "cv_profile_import",
         "application_materials_generation",
         "job_scan",
+        "linkedin_scan",
         "linkedin_enrichment",
         "application_execution",
     }
@@ -1443,25 +1446,192 @@ def set_linkedin_profile(payload: LinkedInProfilePayload) -> dict[str, Any]:
 
 
 @app.post("/api/scans/all")
-def queue_scan_all(payload: UnifiedScanPayload) -> dict[str, Any]:
+def queue_scan_all(
+    payload: UnifiedScanPayload,
+) -> dict[str, Any]:
+    stale_seconds = int(
+        os.getenv(
+            "JOB_SCAN_ACTIVE_STALE_SECONDS",
+            os.getenv(
+                "JOB_WORKER_STALE_SECONDS",
+                "3600",
+            ),
+        )
+    )
+
     db.requeue_stale_operations(
-        ["job_scan"],
-        stale_seconds=int(os.getenv("JOB_SCAN_ACTIVE_STALE_SECONDS", os.getenv("JOB_WORKER_STALE_SECONDS", "3600"))),
+        ["job_scan", "linkedin_scan"],
+        stale_seconds=stale_seconds,
     )
-    active = db.get_active_operation("job_scan")
-    if active:
-        return {
-            "operation_id": active["id"],
-            "status": active["status"],
-            "already_running": True,
-            "progress_message": active.get("progress_message"),
+
+    requested = payload.model_dump()
+
+    operation_ids: dict[str, int] = {}
+    lane_statuses: dict[str, str] = {}
+    lane_messages: dict[
+        str,
+        str | None,
+    ] = {}
+
+    queued_any = False
+
+    public_requested = bool(
+        requested["include_ats"]
+        or requested["include_search"]
+    )
+
+    if public_requested:
+        public_payload = {
+            **requested,
+            "include_linkedin": False,
         }
-    operation_id = db.create_operation(
-        "job_scan",
-        payload.model_dump(),
-        "Queued unified job scan. Waiting for local worker.",
+
+        active_public = (
+            db.get_active_operation(
+                "job_scan"
+            )
+        )
+
+        if active_public:
+            operation_ids["job_scan"] = int(
+                active_public["id"]
+            )
+
+            lane_statuses["job_scan"] = str(
+                active_public["status"]
+            )
+
+            lane_messages["job_scan"] = (
+                active_public.get(
+                    "progress_message"
+                )
+            )
+        else:
+            public_operation_id = (
+                db.create_operation(
+                    "job_scan",
+                    public_payload,
+                    (
+                        "Queued ATS and public "
+                        "search scan. Waiting for "
+                        "local worker."
+                    ),
+                )
+            )
+
+            operation_ids[
+                "job_scan"
+            ] = public_operation_id
+
+            lane_statuses[
+                "job_scan"
+            ] = "queued"
+
+            lane_messages[
+                "job_scan"
+            ] = (
+                "Queued ATS and public search "
+                "scan. Waiting for local worker."
+            )
+
+            queued_any = True
+
+    if requested["include_linkedin"]:
+        linkedin_payload = {
+            **requested,
+            "include_ats": False,
+            "include_search": False,
+            "include_linkedin": True,
+        }
+
+        active_linkedin = (
+            db.get_active_operation(
+                "linkedin_scan"
+            )
+        )
+
+        if active_linkedin:
+            operation_ids[
+                "linkedin_scan"
+            ] = int(
+                active_linkedin["id"]
+            )
+
+            lane_statuses[
+                "linkedin_scan"
+            ] = str(
+                active_linkedin["status"]
+            )
+
+            lane_messages[
+                "linkedin_scan"
+            ] = active_linkedin.get(
+                "progress_message"
+            )
+        else:
+            linkedin_operation_id = (
+                db.create_operation(
+                    "linkedin_scan",
+                    linkedin_payload,
+                    (
+                        "Queued LinkedIn scan. "
+                        "Waiting for dedicated "
+                        "local worker."
+                    ),
+                )
+            )
+
+            operation_ids[
+                "linkedin_scan"
+            ] = linkedin_operation_id
+
+            lane_statuses[
+                "linkedin_scan"
+            ] = "queued"
+
+            lane_messages[
+                "linkedin_scan"
+            ] = (
+                "Queued LinkedIn scan. Waiting "
+                "for dedicated local worker."
+            )
+
+            queued_any = True
+
+    if not operation_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Select at least one scan lane."
+            ),
+        )
+
+    primary_lane = (
+        "job_scan"
+        if "job_scan" in operation_ids
+        else "linkedin_scan"
     )
-    return {"operation_id": operation_id, "status": "queued", "already_running": False}
+
+    return {
+        "operation_id": (
+            operation_ids[primary_lane]
+        ),
+        "linkedin_operation_id": (
+            operation_ids.get(
+                "linkedin_scan"
+            )
+        ),
+        "operation_ids": operation_ids,
+        "status": lane_statuses[
+            primary_lane
+        ],
+        "already_running": (
+            not queued_any
+        ),
+        "progress_message": (
+            lane_messages[primary_lane]
+        ),
+    }
 
 
 @app.post("/api/scans/fresh")

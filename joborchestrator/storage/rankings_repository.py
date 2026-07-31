@@ -284,24 +284,88 @@ def get_jobs_for_post_scan_ranking(
     read_sql_query: ReadSqlQuery,
     *,
     seen_since: str,
-    ranking_version: str = NVIDIA_RANKING_VERSION,
+    ranking_version: str = (
+        NVIDIA_RANKING_VERSION
+    ),
     limit: int = 500,
+    included_sources: (
+        list[str] | None
+    ) = None,
+    excluded_sources: (
+        list[str] | None
+    ) = None,
 ) -> pd.DataFrame:
     conn = connect()
+
     try:
+        params: list[object] = [
+            ranking_version,
+            seen_since,
+        ]
+
+        query = """
+            SELECT jp.*
+            FROM job_postings jp
+            LEFT JOIN job_rankings jr
+              ON jr.job_id = jp.id
+             AND jr.ranking_version = ?
+            WHERE jp.last_seen_at >= ?
+              AND (
+                jp.status IN (
+                    'new',
+                    'updated'
+                )
+                OR jr.id IS NULL
+              )
+        """
+
+        if included_sources:
+            placeholders = ",".join(
+                "?"
+                for _ in included_sources
+            )
+
+            query += (
+                " AND jp.source IN "
+                f"({placeholders})"
+            )
+
+            params.extend(
+                included_sources
+            )
+
+        if excluded_sources:
+            placeholders = ",".join(
+                "?"
+                for _ in excluded_sources
+            )
+
+            query += (
+                " AND jp.source NOT IN "
+                f"({placeholders})"
+            )
+
+            params.extend(
+                excluded_sources
+            )
+
+        query += """
+            ORDER BY
+              CASE jp.status
+                WHEN 'new' THEN 2
+                WHEN 'updated' THEN 1
+                ELSE 0
+              END DESC,
+              jp.last_seen_at DESC
+            LIMIT ?
+        """
+
+        params.append(limit)
+
         return read_sql_query(
-            """SELECT jp.*
-               FROM job_postings jp
-               LEFT JOIN job_rankings jr
-                 ON jr.job_id = jp.id AND jr.ranking_version = ?
-               WHERE jp.last_seen_at >= ?
-                 AND (jp.status IN ('new', 'updated') OR jr.id IS NULL)
-               ORDER BY
-                 CASE jp.status WHEN 'new' THEN 2 WHEN 'updated' THEN 1 ELSE 0 END DESC,
-                 jp.last_seen_at DESC
-               LIMIT ?""",
+            query,
             conn,
-            params=(ranking_version, seen_since, limit),
+            params=params,
         )
     finally:
         conn.close()

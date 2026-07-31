@@ -1629,15 +1629,34 @@ def get_unranked_jobs(ranking_version: str = NVIDIA_RANKING_VERSION, limit: int 
 
 def get_jobs_for_post_scan_ranking(
     seen_since: str,
-    ranking_version: str = NVIDIA_RANKING_VERSION,
+    ranking_version: str = (
+        NVIDIA_RANKING_VERSION
+    ),
     limit: int = 500,
+    included_sources: (
+        list[str] | None
+    ) = None,
+    excluded_sources: (
+        list[str] | None
+    ) = None,
 ) -> pd.DataFrame:
-    return rankings_repository.get_jobs_for_post_scan_ranking(
-        _conn,
-        _read_sql_query,
-        seen_since=seen_since,
-        ranking_version=ranking_version,
-        limit=limit,
+    return (
+        rankings_repository
+        .get_jobs_for_post_scan_ranking(
+            _conn,
+            _read_sql_query,
+            seen_since=seen_since,
+            ranking_version=(
+                ranking_version
+            ),
+            limit=limit,
+            included_sources=(
+                included_sources
+            ),
+            excluded_sources=(
+                excluded_sources
+            ),
+        )
     )
 
 

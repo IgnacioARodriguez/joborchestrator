@@ -33,6 +33,7 @@ from joborchestrator.ranking.nvidia_ranker import (
 )
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.scanning.orchestrator import run_unified_job_scan
+from joborchestrator.scanning.post_scan_ranking import queue_post_scan_ranking
 from joborchestrator.scanning.linkedin_enrichment import run_linkedin_enrichment_sync
 from joborchestrator.storage import persistence as db
 
@@ -354,70 +355,144 @@ def _materials_prompt_versions_text(prompt_versions: dict[str, str]) -> str | No
     return ",".join(f"{key}={value}" for key, value in sorted(prompt_versions.items())) or None
 
 
-def _process_job_scan(operation: dict[str, Any]) -> None:
+def _process_job_scan(
+    operation: dict[str, Any],
+) -> None:
     operation_id = int(operation["id"])
-    input_payload = {**(operation.get("input_json") or {}), "operation_id": operation_id}
-    scan_started_at = str(operation.get("started_at") or operation.get("created_at") or "")
-    logger.info("Processing job scan operation=%s", operation_id)
+
+    input_payload = {
+        **(operation.get("input_json") or {}),
+        "operation_id": operation_id,
+    }
+
+    scan_started_at = str(
+        operation.get("started_at")
+        or operation.get("created_at")
+        or ""
+    )
+
+    logger.info(
+        "Processing job scan operation=%s",
+        operation_id,
+    )
+
+    # Compatibilidad con operaciones creadas
+    # antes de separar los workers.
+    linkedin_operation_id = None
+
+    if input_payload.get(
+        "include_linkedin"
+    ):
+        active_linkedin = (
+            db.get_active_operation(
+                "linkedin_scan"
+            )
+        )
+
+        if active_linkedin:
+            linkedin_operation_id = int(
+                active_linkedin["id"]
+            )
+        else:
+            linkedin_payload = {
+                **input_payload,
+                "include_ats": False,
+                "include_search": False,
+                "include_linkedin": True,
+            }
+
+            linkedin_payload.pop(
+                "operation_id",
+                None,
+            )
+
+            linkedin_operation_id = (
+                db.create_operation(
+                    "linkedin_scan",
+                    linkedin_payload,
+                    (
+                        "Queued LinkedIn scan. "
+                        "Waiting for dedicated "
+                        "local worker."
+                    ),
+                )
+            )
+
+        input_payload[
+            "include_linkedin"
+        ] = False
+
+        logger.warning(
+            (
+                "Moved legacy LinkedIn lane "
+                "from job_scan=%s to "
+                "linkedin_scan=%s"
+            ),
+            operation_id,
+            linkedin_operation_id,
+        )
 
     def progress(message: str) -> None:
-        logger.info("Job scan operation=%s progress=%s", operation_id, message)
-        db.update_operation_progress(operation_id, message)
+        logger.info(
+            (
+                "Job scan operation=%s "
+                "progress=%s"
+            ),
+            operation_id,
+            message,
+        )
 
-    output = asyncio.run(run_unified_job_scan(input_payload, progress=progress))
+        db.update_operation_progress(
+            operation_id,
+            message,
+        )
+
+    output = asyncio.run(
+        run_unified_job_scan(
+            input_payload,
+            progress=progress,
+        )
+    )
+
     summary = output.get("summary") or {}
-    output["ranking_job"] = _queue_post_scan_ranking(input_payload, scan_started_at, summary, progress)
+
+    output[
+        "linkedin_operation_id"
+    ] = linkedin_operation_id
+
+    output["ranking_job"] = (
+        queue_post_scan_ranking(
+            input_payload,
+            scan_started_at,
+            summary,
+            progress,
+            excluded_sources=[
+                "linkedin_scraper"
+            ],
+        )
+    )
+
     db.complete_operation(
         operation_id,
         output,
         (
             "Job scan completed: "
             f"{summary.get('new', 0)} new, "
-            f"{summary.get('updated', 0)} updated, "
-            f"{summary.get('errors', 0)} errors."
+            f"{summary.get('updated', 0)} "
+            "updated, "
+            f"{summary.get('errors', 0)} "
+            "errors."
         ),
     )
-    logger.info("Completed job scan operation=%s summary=%s", operation_id, summary)
 
-
-def _queue_post_scan_ranking(
-    input_payload: dict[str, Any],
-    scan_started_at: str,
-    summary: dict[str, Any],
-    progress: Any,
-) -> dict[str, Any]:
-    if not input_payload.get("auto_rank_new", True):
-        return {"queued": 0, "skipped": "disabled"}
-    if not db.get_candidate_profile_payload():
-        return {"queued": 0, "skipped": "missing_candidate_profile"}
-    if int(summary.get("new") or 0) + int(summary.get("updated") or 0) <= 0:
-        return {"queued": 0, "skipped": "no_new_or_updated_jobs"}
-
-    ranking_version = str(input_payload.get("ranking_version") or NVIDIA_RANKING_VERSION)
-    limit = max(1, min(int(input_payload.get("ranking_limit") or 250), 2000))
-    candidates = db.get_jobs_for_post_scan_ranking(
-        seen_since=scan_started_at,
-        ranking_version=ranking_version,
-        limit=limit,
+    logger.info(
+        (
+            "Completed job scan "
+            "operation=%s summary=%s"
+        ),
+        operation_id,
+        summary,
     )
-    job_ids = [int(value) for value in candidates["id"].tolist()]
-    if not job_ids:
-        return {"queued": 0, "skipped": "no_unranked_scan_jobs"}
-
-    progress(f"Queueing NVIDIA ranking for {len(job_ids)} new or updated job(s).")
-    ranking_job_id = db.create_ranking_job(
-        provider="nvidia",
-        model=str(input_payload.get("ranking_model") or DEFAULT_NVIDIA_MODEL),
-        ranking_version=ranking_version,
-        job_ids=job_ids,
-        request_batch_size=int(input_payload.get("ranking_request_batch_size") or DEFAULT_NVIDIA_REQUEST_BATCH_SIZE),
-        max_concurrency=int(input_payload.get("ranking_max_concurrency") or DEFAULT_NVIDIA_MAX_CONCURRENCY),
-    )
-    return {
-        "ranking_job_id": ranking_job_id,
-        "queued": len(job_ids),
-        "ranking_version": ranking_version,
-    }
 
 
 def _process_linkedin_enrichment(operation: dict[str, Any]) -> None:
