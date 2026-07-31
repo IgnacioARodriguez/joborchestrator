@@ -16,10 +16,12 @@ from joborchestrator.intelligence.cv_profile_extractor import CVProfileError, bu
 from joborchestrator.intelligence.llm_application_materials import (
     DEFAULT_MATERIALS_MODEL,
     DEFAULT_NVIDIA_MATERIALS_MODEL,
+    LLMMaterialsError,
     build_application_kit_with_llm,
     build_application_kit_with_nvidia,
     materials_prompt_versions,
 )
+from joborchestrator.intelligence.materials_validation import issues_to_dicts, validation_feedback_to_issues
 from joborchestrator.intelligence.profile_trace import profile_trace
 from joborchestrator.llm.provider import ProviderRegistry
 from joborchestrator.material_review import next_material_review_states, normalize_material_targets
@@ -154,14 +156,22 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
     selected_model = model or DEFAULT_MATERIALS_MODEL
     prompt_versions = materials_prompt_versions() if provider in {"openai", "nvidia"} else {}
     if provider == "openai":
-        kit = build_application_kit_with_llm(job, ranking=ranking, model=selected_model)
+        try:
+            kit = build_application_kit_with_llm(job, ranking=ranking, model=selected_model)
+        except LLMMaterialsError as exc:
+            _record_failed_materials_attempt(operation_id, job_id, provider, selected_model, prompt_versions, exc)
+            raise
     elif provider == "nvidia":
         selected_model = model if model and model != DEFAULT_MATERIALS_MODEL else DEFAULT_NVIDIA_MATERIALS_MODEL
-        kit = build_application_kit_with_nvidia(
-            job,
-            ranking=ranking,
-            model=selected_model,
-        )
+        try:
+            kit = build_application_kit_with_nvidia(
+                job,
+                ranking=ranking,
+                model=selected_model,
+            )
+        except LLMMaterialsError as exc:
+            _record_failed_materials_attempt(operation_id, job_id, provider, selected_model, prompt_versions, exc)
+            raise
     elif provider == "heuristic":
         selected_model = "heuristic"
         kit = build_application_kit(job, keywords=keywords)
@@ -199,6 +209,15 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
         materials_candidate_profile_snapshot=profile_metadata.get("snapshot"),
         materials_review_states=review_states,
     )
+    _record_successful_materials_attempt(
+        operation_id,
+        job_id,
+        provider,
+        selected_model,
+        prompt_versions,
+        kit,
+        generation_metadata,
+    )
     resume_variant = None
     if ats_cv_text and (not targets or "ats_cv" in targets):
         resume_variant = db.register_generated_resume_variant(
@@ -217,6 +236,122 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
         "Application materials ready.",
     )
     logger.info("Completed application materials operation=%s job_id=%s provider=%s", operation_id, job_id, provider)
+
+
+def _record_failed_materials_attempt(
+    operation_id: int,
+    job_id: int,
+    provider: str,
+    model: str,
+    prompt_versions: dict[str, str],
+    exc: LLMMaterialsError,
+) -> None:
+    metadata = exc.generation_metadata if isinstance(exc.generation_metadata, dict) else {}
+    errors = [str(error) for error in metadata.get("validation_errors") or [str(exc)]]
+    issues = [
+        issue
+        for error in errors
+        for issue in validation_feedback_to_issues(error)
+    ]
+    db.record_materials_generation_attempt(
+        operation_id=operation_id,
+        job_id=job_id,
+        stage=str(metadata.get("stage") or "fallback"),
+        attempt_number=int(metadata.get("validation_attempts") or 1),
+        provider=provider,
+        model=model,
+        prompt_version=_materials_prompt_versions_text(prompt_versions),
+        output_text=str(metadata.get("output_text") or ""),
+        validation_issues=issues_to_dicts(issues),
+        accepted=False,
+    )
+
+
+def _record_successful_materials_attempt(
+    operation_id: int,
+    job_id: int,
+    provider: str,
+    model: str,
+    prompt_versions: dict[str, str],
+    kit: dict[str, Any],
+    metadata: dict[str, Any],
+) -> None:
+    stage_attempts = metadata.get("stage_attempts")
+    if isinstance(stage_attempts, list) and stage_attempts:
+        for stage_attempt in stage_attempts:
+            if isinstance(stage_attempt, dict):
+                _record_successful_materials_stage_attempt(
+                    operation_id,
+                    job_id,
+                    provider,
+                    model,
+                    prompt_versions,
+                    kit,
+                    stage_attempt,
+                )
+        return
+    _record_successful_materials_stage_attempt(
+        operation_id,
+        job_id,
+        provider,
+        model,
+        prompt_versions,
+        kit,
+        {
+            "stage": str(metadata.get("stage") or metadata.get("pipeline") or "materials_generation"),
+            "attempt_number": int(metadata.get("validation_attempts") or 1),
+            "validation_errors": [str(error) for error in metadata.get("validation_errors") or []],
+            "accepted": True,
+        },
+    )
+
+
+def _record_successful_materials_stage_attempt(
+    operation_id: int,
+    job_id: int,
+    provider: str,
+    model: str,
+    prompt_versions: dict[str, str],
+    kit: dict[str, Any],
+    stage_attempt: dict[str, Any],
+) -> None:
+    errors = [str(error) for error in stage_attempt.get("validation_errors") or []]
+    issues = [
+        issue
+        for error in errors
+        for issue in validation_feedback_to_issues(error)
+    ]
+    stage = str(stage_attempt.get("stage") or "materials_generation")
+    db.record_materials_generation_attempt(
+        operation_id=operation_id,
+        job_id=job_id,
+        stage=stage,
+        attempt_number=int(stage_attempt.get("attempt_number") or 1),
+        provider=provider,
+        model=model,
+        prompt_version=_materials_prompt_versions_text(prompt_versions),
+        output_text=_materials_stage_output_text(kit, stage),
+        validation_issues=issues_to_dicts(issues),
+        accepted=bool(stage_attempt.get("accepted", True)),
+    )
+
+
+def _materials_stage_output_text(kit: dict[str, Any], stage: str) -> str:
+    if stage.startswith("cv") or stage == "fallback":
+        fields = ["ats_cv_text"]
+    elif stage.startswith("kit"):
+        fields = ["recruiter_message", "cover_letter", "autofill_notes"]
+    else:
+        fields = ["recruiter_message", "cover_letter", "ats_cv_text", "autofill_notes"]
+    return "\n\n".join(
+        str(kit.get(field) or "")
+        for field in fields
+        if str(kit.get(field) or "").strip()
+    )
+
+
+def _materials_prompt_versions_text(prompt_versions: dict[str, str]) -> str | None:
+    return ",".join(f"{key}={value}" for key, value in sorted(prompt_versions.items())) or None
 
 
 def _process_job_scan(operation: dict[str, Any]) -> None:

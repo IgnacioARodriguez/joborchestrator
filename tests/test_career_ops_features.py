@@ -17,6 +17,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     _kit_validation_error,
     _materials_validation_error,
     _materials_payload,
+    _materials_schema,
     _materials_repair_instruction,
     _materials_validation_retry_limit,
     _openai_materials_messages,
@@ -250,6 +251,52 @@ def test_application_kit_flattens_nested_recruiter_message():
     assert kit["autofill_notes"] == "Use tailored answers\n\nReview before submit"
 
 
+def test_openai_materials_schema_requires_structured_autofill():
+    schema = _materials_schema()
+
+    assert "autofill" in schema["required"]
+    assert "autofill_notes" not in schema["required"]
+    assert schema["properties"]["autofill"]["additionalProperties"] is False
+    assert schema["properties"]["autofill"]["properties"]["availability"]["type"] == ["string", "null"]
+
+
+def test_application_kit_renders_structured_autofill_object():
+    kit = _kit_from_response(
+        {
+            "recruiter_message": "Hi Acme, Python API work maps well to the Backend Engineer role.",
+            "cover_letter": "Dear Acme team",
+            "ats_cv_text": "Professional Summary\nBackend engineer",
+            "autofill": {
+                "core_pitch": "Python backend profile for API and automation work.",
+                "availability": "Two weeks after offer acceptance.",
+                "work_authorization": "Authorized to work in Spain.",
+                "location_note": "Madrid-based, open to remote EU teams.",
+                "application_caveats": ["Confirm exact cloud stack before claiming direct AWS production depth."],
+            },
+        }
+    )
+
+    assert "Python backend profile" in kit["autofill_notes"]
+    assert "Availability: Two weeks" in kit["autofill_notes"]
+    assert "Work authorization: Authorized" in kit["autofill_notes"]
+    assert "Location: Madrid" in kit["autofill_notes"]
+    assert "Caveats: Confirm exact cloud stack" in kit["autofill_notes"]
+
+
+def test_application_kit_validation_rejects_json_encoded_autofill_notes():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Acme, Python API work maps well to the Backend Engineer role.",
+            "cover_letter": "Dear Acme team,\n\nMy Python API background maps well to this Backend Engineer role through backend services, database work, and product collaboration on reliable application workflows.",
+            "autofill_notes": '{"core_pitch": "Python API profile"}',
+        },
+        {"job": {"title": "Backend Engineer", "company": "Acme"}},
+    )
+
+    assert error is not None
+    assert "autofill_notes must not be a JSON-encoded object string" in error
+
+
 def test_application_kit_cleans_internal_ats_cv_notes():
     kit = _kit_from_response(
         {
@@ -288,6 +335,38 @@ def test_recruiter_message_cleanup_removes_cover_letter_contamination():
     assert "Dear Hiring Manager" not in kit["recruiter_message"]
     assert "reaching out to express interest" not in kit["recruiter_message"]
     assert kit["recruiter_message"].startswith("Hi, I'm Ignacio Rodriguez")
+
+
+def test_kit_validation_rejects_language_mismatch_for_supported_job_language():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Acme, my developer experience maps well to this remote team role.",
+            "cover_letter": "Dear Acme team,\n\nMy experience as a backend developer maps well to this remote team role, with responsibilities across APIs, product collaboration, and reliable delivery for business workflows.",
+            "autofill_notes": "Experience as a developer on remote work, team responsibilities, and backend delivery.",
+        },
+        {
+            "job": {
+                "title": "Desarrollador Python remoto",
+                "description_text": "Requisitos experiencia trabajo remoto jornada equipo desarrollo Python.",
+            }
+        },
+    )
+
+    assert error is not None
+    assert "application materials language mismatch" in error
+
+
+def test_kit_validation_does_not_reject_unsupported_job_language_signal():
+    error = _kit_validation_error(
+        {
+            "recruiter_message": "Hi Acme, Python API work maps well to this role.",
+            "cover_letter": "Dear Acme team,\n\nMy Python API background maps well to this role through backend services, database work, and product collaboration on reliable application workflows.",
+            "autofill_notes": "Use the Python API angle for portal questions.",
+        },
+        {"job": {"title": "Python", "description_text": "Build APIs."}},
+    )
+
+    assert error is None
 
 
 def test_recruiter_message_validation_rejects_generic_message_with_job_context():
@@ -646,11 +725,8 @@ def test_openai_materials_call_reports_validation_retry_metadata(monkeypatch):
     assert response["_generation_metadata"]["validation_errors"]
 
 
-def test_materials_validation_retry_limit_scales_for_constrained_cases(monkeypatch):
-    from joborchestrator.intelligence import llm_application_materials
-
-    monkeypatch.setattr(llm_application_materials, "DEFAULT_MATERIALS_VALIDATION_RETRIES", 3)
-    monkeypatch.setattr(llm_application_materials, "MAX_MATERIALS_VALIDATION_RETRIES", 6)
+def test_materials_validation_retry_limit_uses_global_semantic_cap(monkeypatch):
+    monkeypatch.setenv("MATERIALS_MAX_SEMANTIC_REPAIRS", "1")
 
     retry_limit = _materials_validation_retry_limit(
         {
@@ -667,7 +743,7 @@ def test_materials_validation_retry_limit_scales_for_constrained_cases(monkeypat
         }
     )
 
-    assert retry_limit == 6
+    assert retry_limit == 1
 
 
 def test_openai_materials_call_allows_explicit_validation_retry_limit(monkeypatch):

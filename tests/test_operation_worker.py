@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from joborchestrator import worker
+from joborchestrator.intelligence.llm_application_materials import LLMMaterialsError
 
 
 def test_worker_processes_cv_profile_import(monkeypatch):
@@ -84,6 +85,7 @@ def test_worker_processes_application_materials_generation(monkeypatch):
     saved = {}
     completed = {}
     progress = []
+    recorded = {}
 
     monkeypatch.setattr(worker.db, "requeue_stale_operations", lambda operation_types, stale_seconds: 0)
     monkeypatch.setattr(
@@ -140,6 +142,7 @@ def test_worker_processes_application_materials_generation(monkeypatch):
         "complete_operation",
         lambda op_id, output, message: completed.update({"id": op_id, "output": output, "message": message}),
     )
+    monkeypatch.setattr(worker.db, "record_materials_generation_attempt", lambda **kwargs: recorded.update(kwargs) or 1)
     monkeypatch.setattr(worker.db, "fail_operation", lambda *args: (_ for _ in ()).throw(AssertionError("unexpected failure")))
 
     assert worker.process_once("worker-1") is True
@@ -159,7 +162,93 @@ def test_worker_processes_application_materials_generation(monkeypatch):
     assert saved["materials_candidate_profile_snapshot"]["headline"] == "Backend engineer"
     assert completed["output"]["materials_saved"] is True
     assert completed["output"]["resume_variant_id"] == 9
+    assert recorded["operation_id"] == 21
+    assert recorded["job_id"] == 5
+    assert recorded["attempt_number"] == 2
+    assert recorded["provider"] == "nvidia"
+    assert recorded["accepted"] is True
+    assert recorded["validation_issues"][0]["code"] == "UNSUPPORTED_GENERAL_CLAIM"
+    assert "Professional Summary" in recorded["output_text"]
     assert "Generating nvidia application materials." in progress
+
+
+def test_worker_records_successful_materials_stage_attempts_separately(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(worker.db, "record_materials_generation_attempt", lambda **kwargs: recorded.append(kwargs) or len(recorded))
+
+    worker._record_successful_materials_attempt(
+        21,
+        5,
+        "nvidia",
+        "test-model",
+        {"materials/nvidia_cv_contract": "v14", "materials/nvidia_kit_contract": "v14"},
+        {
+            "recruiter_message": "Hi Acme",
+            "cover_letter": "Dear team",
+            "ats_cv_text": "Professional Summary\nBackend engineer",
+            "autofill_notes": "Paste answers",
+        },
+        {
+            "stage_attempts": [
+                {"stage": "cv_render", "attempt_number": 1, "validation_errors": []},
+                {"stage": "kit_generation", "attempt_number": 2, "validation_errors": ["recruiter_message is generic"]},
+            ]
+        },
+    )
+
+    assert [attempt["stage"] for attempt in recorded] == ["cv_render", "kit_generation"]
+    assert recorded[0]["output_text"] == "Professional Summary\nBackend engineer"
+    assert "Hi Acme" in recorded[1]["output_text"]
+    assert recorded[1]["attempt_number"] == 2
+    assert recorded[1]["validation_issues"][0]["code"] == "UNSUPPORTED_GENERAL_CLAIM"
+
+
+def test_worker_records_failed_materials_attempt_metadata(monkeypatch):
+    recorded = {}
+    failed = {}
+
+    monkeypatch.setattr(worker.db, "requeue_stale_operations", lambda operation_types, stale_seconds: 0)
+    monkeypatch.setattr(
+        worker.db,
+        "claim_next_operation",
+        lambda worker_id, operation_types: {
+            "id": 22,
+            "type": "application_materials_generation",
+            "input_json": {"job_id": 5, "provider": "nvidia", "model": "test-model", "shortlist": True},
+        },
+    )
+    monkeypatch.setattr(worker.db, "update_operation_progress", lambda op_id, message: None)
+    monkeypatch.setattr(
+        worker,
+        "_job_for_materials",
+        lambda job_id: ({"id": job_id, "title": "Backend Engineer", "company": "Acme"}, None),
+    )
+
+    def fail_generation(job, ranking=None, model=None):
+        raise LLMMaterialsError(
+            "NVIDIA failed",
+            generation_metadata={
+                "validation_attempts": 2,
+                "validation_errors": ["keywords_used contains terms not present as normalized token-aware phrases in ats_cv_text: DevOps."],
+            },
+        )
+
+    monkeypatch.setattr(worker, "build_application_kit_with_nvidia", fail_generation)
+    monkeypatch.setattr(
+        worker,
+        "materials_prompt_versions",
+        lambda: {"materials/nvidia_cv_contract": "v14", "materials/nvidia_kit_contract": "v13"},
+    )
+    monkeypatch.setattr(worker.db, "record_materials_generation_attempt", lambda **kwargs: recorded.update(kwargs) or 1)
+    monkeypatch.setattr(worker.db, "fail_operation", lambda op_id, error, message: failed.update({"op_id": op_id, "error": error}))
+
+    assert worker.process_once("worker-1") is True
+
+    assert failed["op_id"] == 22
+    assert recorded["operation_id"] == 22
+    assert recorded["job_id"] == 5
+    assert recorded["attempt_number"] == 2
+    assert recorded["validation_issues"][0]["code"] == "KEYWORD_METADATA_MISMATCH"
 
 
 def test_worker_processes_job_scan(monkeypatch):

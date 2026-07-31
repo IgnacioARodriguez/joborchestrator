@@ -1,0 +1,241 @@
+{
+  "required_scenarios": [
+    "high_fit_backend",
+    "low_fit_or_avoid",
+    "spanish_job",
+    "complex_canonical_technologies",
+    "forbidden_aliases",
+    "incomplete_cv_parse"
+  ],
+  "cases": [
+    {
+      "case_id": "high_fit_backend_controlled_cv",
+      "scenarios": [
+        "high_fit_backend"
+      ],
+      "payload": {
+        "job": {
+          "company": "Acme",
+          "title": "Backend Engineer",
+          "description_text": "Backend engineer role. Work with Python, REST APIs, Redis and product data workflows."
+        },
+        "ranking": {
+          "decision": "APPLY_NOW"
+        },
+        "ats_fit_analysis": {
+          "supported_keywords": [
+            "Python",
+            "REST APIs",
+            "Redis",
+            "SQL"
+          ]
+        }
+      },
+      "base_cv_text": "Ignacio Rodriguez\nContact line\n\nProfessional Experience\nBackend Developer April 2025 - March 2026\nFiction Express\n- Built analytics APIs with Python and REST APIs.\n- Improved Redis data reliability for product workflows.\nTechnologies: Python, REST APIs, Redis, SQL\n\nEducation\nComputer Science\n",
+      "planner_response": {
+        "summary_lines": [
+          {
+            "text": "Backend developer with Python API experience.",
+            "evidence_ids": [
+              "fact_01"
+            ]
+          }
+        ],
+        "skill_ids": [
+          "skill_python",
+          "skill_rest_apis",
+          "skill_redis"
+        ],
+        "role_plans": []
+      },
+      "expect": {
+        "auto_generate": true,
+        "target_language": "en",
+        "contains": [
+          "Backend Developer | Fiction Express",
+          "April 2025 - March 2026",
+          "Technologies: Python, REST APIs, Redis, SQL"
+        ],
+        "keywords_used": [
+          "Python",
+          "REST APIs",
+          "Redis",
+          "SQL"
+        ],
+        "human_review_required": false
+      }
+    },
+    {
+      "case_id": "avoid_job_no_auto_generation",
+      "scenarios": [
+        "low_fit_or_avoid"
+      ],
+      "payload": {
+        "job": {
+          "company": "DevHub",
+          "title": "Data Entry Typist",
+          "description_text": "Remote data entry role with typing accuracy requirements."
+        },
+        "ranking": {
+          "decision": "AVOID"
+        },
+        "ats_fit_analysis": {
+          "supported_keywords": [
+            "Python"
+          ]
+        }
+      },
+      "expect": {
+        "auto_generate": false,
+        "target_language": "en"
+      }
+    },
+    {
+      "case_id": "spanish_job_language_context",
+      "scenarios": [
+        "spanish_job"
+      ],
+      "payload": {
+        "job": {
+          "company": "IRIUM",
+          "title": "ANALISTA PROGRAMADOR PYTHON REMOTO",
+          "description_text": "Requisitos experiencia como programador Python remoto, conocimientos de APIs y trabajo en equipo."
+        },
+        "ranking": {
+          "decision": "APPLY_NOW"
+        },
+        "ats_fit_analysis": {
+          "supported_keywords": [
+            "Python",
+            "APIs"
+          ]
+        }
+      },
+      "language_text": "Experiencia profesional como programador Python remoto con conocimientos de APIs.",
+      "expect": {
+        "auto_generate": true,
+        "target_language": "es",
+        "language_mismatch": false
+      }
+    },
+    {
+      "case_id": "complex_canonical_technology_rendering",
+      "scenarios": [
+        "complex_canonical_technologies"
+      ],
+      "payload": {
+        "job": {
+          "company": "PlatformCo",
+          "title": "Full Stack Engineer",
+          "description_text": "Developer role for Python, React, SQL, Docker and REST APIs."
+        },
+        "ranking": {
+          "decision": "APPLY_NOW"
+        },
+        "ats_fit_analysis": {
+          "supported_keywords": [
+            "Python",
+            "Flask",
+            "React",
+            "JavaScript",
+            "TypeScript",
+            "SQL",
+            "MySQL",
+            "Docker",
+            "Redis",
+            "Git",
+            "REST APIs"
+          ]
+        }
+      },
+      "base_cv_text": "Ignacio Rodriguez\nContact line\n\nProfessional Experience\nFull Stack Developer October 2022 - April 2025\nTalan Consulting\n- Built dashboards for finance teams with React and Python.\n- Automated reporting workflows over SQL and MySQL.\nTechnologies: Python, Flask, React, JavaScript, TypeScript, SQL, MySQL, Docker, Redis, Git, REST APIs\n\nEducation\nComputer Science\n",
+      "planner_response": {
+        "summary_lines": [],
+        "skill_ids": [],
+        "role_plans": []
+      },
+      "expect": {
+        "target_language": "en",
+        "contains": [
+          "Full Stack Developer | Talan Consulting",
+          "Technologies: Python, Flask, React, JavaScript, TypeScript, SQL, MySQL, Docker, Redis, Git, REST APIs"
+        ],
+        "human_review_required": false
+      }
+    },
+    {
+      "case_id": "forbidden_aliases_removed_from_generation_context",
+      "scenarios": [
+        "forbidden_aliases"
+      ],
+      "payload": {
+        "job": {
+          "company": "ServerlessCo",
+          "title": "Backend Engineer",
+          "description_text": "Backend engineer role. Work with Python APIs."
+        },
+        "ranking": {
+          "decision": "APPLY_NOW"
+        },
+        "ats_fit_analysis": {
+          "supported_keywords": [
+            "Python",
+            "REST APIs"
+          ]
+        },
+        "ranking_constraints": {
+          "avoid_overclaiming_aliases": {
+            "Serverless Architecture": [
+              "AWS Lambda",
+              "DynamoDB",
+              "API Gateway",
+              "AWS CDK"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "target_language": "en",
+        "forbidden_aliases_absent": true
+      }
+    },
+    {
+      "case_id": "incomplete_cv_parse_requires_review",
+      "scenarios": [
+        "incomplete_cv_parse"
+      ],
+      "payload": {
+        "job": {
+          "company": "Acme",
+          "title": "Backend Engineer",
+          "description_text": "Backend engineer role. Work with Python APIs."
+        },
+        "ranking": {
+          "decision": "APPLY_NOW"
+        },
+        "ats_fit_analysis": {
+          "supported_keywords": [
+            "Python",
+            "APIs"
+          ]
+        }
+      },
+      "base_cv_text": "Ignacio Rodriguez\nCareer Journey\nBackend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API workflows.\n",
+      "planner_response": {
+        "summary_lines": [],
+        "skill_ids": [],
+        "role_plans": []
+      },
+      "expect": {
+        "target_language": "en",
+        "human_review_required": true,
+        "risk_flags": [
+          "human_review_required"
+        ],
+        "validation_errors": [
+          "experience_roles_not_parsed"
+        ]
+      }
+    }
+  ]
+}

@@ -1218,6 +1218,16 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
                 },
                 f"Queued {provider} application materials generation.",
             )
+            db.update_job_application_materials(
+                job_id,
+                pipeline_status="preparing_materials",
+                materials_provider=provider,
+                materials_model=selected_model,
+                materials_prompt_versions=materials_prompt_versions(),
+                materials_validation_attempts=0,
+                materials_validation_errors=["queued_generation_pending"],
+                clear_existing_materials=True,
+            )
             return {"operation_id": operation_id, "status": "queued"}
         kit = build_application_kit(job, keywords=keywords)
     except (ApplicationMaterialsError, LLMMaterialsError) as exc:

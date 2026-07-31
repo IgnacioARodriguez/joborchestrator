@@ -143,6 +143,45 @@ def test_application_materials_are_saved(tmp_path, monkeypatch):
     assert stored["materials_candidate_profile_snapshot_json"] == '{"headline": "Backend engineer"}'
 
 
+def test_queued_operation_does_not_reuse_stale_materials(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+
+    db.update_job_application_materials(
+        job_id,
+        pipeline_status="shortlisted",
+        recruiter_message="Old recruiter",
+        cover_letter="Old cover",
+        ats_cv_text="Old ATS",
+        autofill_notes="Old autofill",
+        materials_provider="nvidia",
+        materials_model="old-model",
+        materials_validation_attempts=2,
+        materials_validation_errors=[],
+    )
+    db.update_job_application_materials(
+        job_id,
+        pipeline_status="preparing_materials",
+        materials_provider="nvidia",
+        materials_model="new-model",
+        materials_validation_attempts=0,
+        materials_validation_errors=["queued_generation_pending"],
+        clear_existing_materials=True,
+    )
+
+    stored = db.get_job_posting(job_id)
+    assert stored["pipeline_status"] == "preparing_materials"
+    assert stored["recruiter_message"] is None
+    assert stored["cover_letter"] is None
+    assert stored["ats_cv_text"] is None
+    assert stored["autofill_notes"] is None
+    assert stored["materials_model"] == "new-model"
+    assert stored["materials_validation_attempts"] == 0
+    assert stored["materials_validation_errors_json"] == '["queued_generation_pending"]'
+
+
 def test_application_material_update_preserves_unspecified_fields(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
     db.init_db()
@@ -411,6 +450,49 @@ def test_operation_run_lifecycle(tmp_path, monkeypatch):
     completed = db.get_operation(operation_id)
     assert completed["status"] == "completed"
     assert completed["output_json"] == {"profile_saved": True}
+
+
+def test_failed_operation_persists_attempt_metadata(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+    operation_id = db.create_operation("application_materials_generation", {"job_id": job_id}, "Queued.")
+
+    attempt_id = db.record_materials_generation_attempt(
+        operation_id=operation_id,
+        job_id=job_id,
+        stage="cv_plan",
+        attempt_number=1,
+        provider="nvidia",
+        model="test-model",
+        validation_issues=[{"code": "CV_TOO_SHORT", "field": "ats_cv_text"}],
+        accepted=False,
+    )
+
+    attempts = db.list_materials_generation_attempts(operation_id=operation_id)
+    assert attempts[0]["id"] == attempt_id
+    assert attempts[0]["stage"] == "cv_plan"
+    assert attempts[0]["validation_issues_json"][0]["code"] == "CV_TOO_SHORT"
+    assert attempts[0]["accepted"] == 0
+
+
+def test_cv_and_kit_attempt_counts_are_separate(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "scanner.db")
+    db.init_db()
+    db.upsert_job_posting(make_job(), seen_at="2026-01-01T10:00:00")
+    job_id = int(db.get_job_postings(limit=10).iloc[0]["id"])
+    operation_id = db.create_operation("application_materials_generation", {"job_id": job_id}, "Queued.")
+
+    db.record_materials_generation_attempt(operation_id=operation_id, job_id=job_id, stage="cv_plan", attempt_number=1)
+    db.record_materials_generation_attempt(operation_id=operation_id, job_id=job_id, stage="kit_generation", attempt_number=1)
+    db.record_materials_generation_attempt(operation_id=operation_id, job_id=job_id, stage="kit_generation", attempt_number=2)
+
+    attempts = db.list_materials_generation_attempts(operation_id=operation_id)
+    counts = {}
+    for attempt in attempts:
+        counts[attempt["stage"]] = counts.get(attempt["stage"], 0) + 1
+    assert counts == {"cv_plan": 1, "kit_generation": 2}
 
 
 def test_stale_operation_runs_are_requeued(tmp_path, monkeypatch):
