@@ -588,11 +588,13 @@ def apply_queue(
     ranking_version: str | None = None,
     freshness: str = "active",
     q: str | None = None,
+    pipeline: str = "all",
 ) -> dict[str, Any]:
     _private_no_store(response)
     if ranking_version and is_heuristic_ranking_version(ranking_version):
         raise HTTPException(status_code=400, detail="Heuristic rankings are no longer supported in the dashboard.")
     freshness_filter = _normalize_freshness_filter(freshness)
+    pipeline_filter = _normalize_pipeline_filter(pipeline)
     effective_limit = max(1, min(int(limit), 100))
     effective_offset = max(0, int(offset))
     ranking_versions = filter_llm_ranking_versions(db.get_ranking_versions())
@@ -603,6 +605,7 @@ def apply_queue(
         effective_limit,
         effective_offset,
         q,
+        pipeline_filter,
     ).to_dict("records")
     jobs = sorted(
         [
@@ -613,7 +616,8 @@ def apply_queue(
         reverse=True,
     )
     freshness_counts = db.count_job_freshness_buckets()
-    total = db.count_apply_queue_job_postings(freshness_filter, q)
+    pipeline_counts = db.count_apply_queue_pipeline_buckets(freshness_filter, q)
+    total = db.count_apply_queue_job_postings(freshness_filter, q, pipeline_filter)
     return {
         "jobs": jobs,
         "ranking_versions": ranking_versions,
@@ -628,6 +632,8 @@ def apply_queue(
             "has_previous": effective_offset > 0,
             "freshness": freshness_filter,
             "query": q.strip() if q else "",
+            "pipeline": pipeline_filter,
+            "pipeline_counts": pipeline_counts,
             "freshness_counts": freshness_counts,
             "unfiltered_total": sum(freshness_counts.values()),
             "db_mode": db_connection.connection_mode(),
@@ -730,6 +736,14 @@ def _normalize_freshness_filter(value: str | None) -> str:
     allowed = {"active", "all", "fresh", "recent", "stale", "archival"}
     if normalized not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported freshness filter.")
+    return normalized
+
+
+def _normalize_pipeline_filter(value: str | None) -> str:
+    normalized = str(value or "all").lower()
+    allowed = {"all", "new", "saved", "discarded", "apply"}
+    if normalized not in allowed:
+        raise HTTPException(status_code=400, detail="Unsupported pipeline filter.")
     return normalized
 
 

@@ -1362,12 +1362,26 @@ def get_apply_queue_job_postings(
     limit: int,
     offset: int,
     search: str | None = None,
+    pipeline: str = "all",
 ) -> pd.DataFrame:
-    return jobs_repository.get_apply_queue_job_postings(_conn, _read_sql_query, ranking_version, freshness, limit, offset, search)
+    return jobs_repository.get_apply_queue_job_postings(
+        _conn,
+        _read_sql_query,
+        ranking_version,
+        freshness,
+        limit,
+        offset,
+        search,
+        pipeline,
+    )
 
 
-def count_apply_queue_job_postings(freshness: str, search: str | None = None) -> int:
-    return jobs_repository.count_apply_queue_job_postings(_conn, freshness, search)
+def count_apply_queue_job_postings(freshness: str, search: str | None = None, pipeline: str = "all") -> int:
+    return jobs_repository.count_apply_queue_job_postings(_conn, freshness, search, pipeline)
+
+
+def count_apply_queue_pipeline_buckets(freshness: str, search: str | None = None) -> dict[str, int]:
+    return jobs_repository.count_apply_queue_pipeline_buckets(_conn, freshness, search)
 
 
 def count_job_freshness_buckets() -> dict[str, int]:

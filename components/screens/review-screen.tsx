@@ -30,7 +30,7 @@ type JobsFilter = "new" | "saved" | "discarded"
 type SearchState = "idle" | "searching" | "success" | "empty" | "error"
 
 const FILTERS: Array<{ id: JobsFilter; label: string; description: string }> = [
-  { id: "new", label: "Nuevos", description: "Pendientes de decisión" },
+  { id: "new", label: "Sin revisar", description: "Pendientes de decisión" },
   { id: "saved", label: "Guardados", description: "Interesantes o listos para preparar" },
   { id: "discarded", label: "Descartados", description: "Fuera del flujo principal" },
 ]
@@ -176,15 +176,17 @@ export function JobsScreen({
     applyQueueQuery,
     jobs,
     jobsMeta,
+    jobsPipelineFilter,
     jobsStatus,
     loading,
     setApplyQueuePage,
     setApplyQueueQuery,
+    setJobsPipelineFilter,
     setPipelineStatus,
   } = useStore()
-  const [filter, setFilter] = useState<JobsFilter>("new")
   const [query, setQuery] = useState(applyQueueQuery)
   const [pendingJobId, setPendingJobId] = useState<string | null>(null)
+  const filter = jobsPipelineFilter
   const activeJobsTotal = jobsMeta?.total ?? jobs.length
   const offset = jobsMeta?.offset ?? (applyQueuePage - 1) * applyQueuePageSize
   const returnedJobs = jobsMeta?.returned ?? jobs.length
@@ -193,14 +195,12 @@ export function JobsScreen({
   const canPagePrevious = Boolean(jobsMeta?.has_previous) || applyQueuePage > 1
   const canPageNext = Boolean(jobsMeta?.has_next)
 
-  const counts = useMemo(
-    () => ({
-      new: jobs.filter((job) => statusForFilter(job, "new")).length,
-      saved: jobs.filter((job) => statusForFilter(job, "saved")).length,
-      discarded: jobs.filter((job) => statusForFilter(job, "discarded")).length,
-    }),
-    [jobs],
-  )
+  const counts = {
+    new: jobsMeta?.pipeline_counts?.new ?? jobs.filter((job) => statusForFilter(job, "new")).length,
+    saved: jobsMeta?.pipeline_counts?.saved ?? jobs.filter((job) => statusForFilter(job, "saved")).length,
+    discarded: jobsMeta?.pipeline_counts?.discarded ?? jobs.filter((job) => statusForFilter(job, "discarded")).length,
+  }
+  const allJobsTotal = jobsMeta?.pipeline_counts?.all ?? counts.new + counts.saved + counts.discarded
 
   const visible = useMemo(() => {
     return jobs
@@ -246,7 +246,7 @@ export function JobsScreen({
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
       <PageHeader
         title="Jobs"
-        description={`${activeJobsTotal.toLocaleString()} oportunidades activas para revisar, guardar o descartar.`}
+        description={`${allJobsTotal.toLocaleString()} oportunidades activas para revisar, guardar o descartar.`}
         actions={
           <Button onClick={onSearchNewJobs} disabled={!onSearchNewJobs || searchState === "searching"}>
             {searchState === "searching" ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <Sparkles data-icon="inline-start" />}
@@ -271,7 +271,7 @@ export function JobsScreen({
                 type="button"
                 role="tab"
                 aria-selected={active}
-                onClick={() => setFilter(item.id)}
+                onClick={() => setJobsPipelineFilter(item.id)}
                 className={cn(
                   "flex min-h-14 flex-col items-center justify-center rounded-md px-2 py-2 text-center text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/40 sm:min-h-11 sm:flex-row sm:gap-2",
                   active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
@@ -331,7 +331,9 @@ export function JobsScreen({
 
       <div className="flex shrink-0 flex-col gap-2 border-t border-border pt-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
         <span>
-          {activeJobsTotal === 0 ? "0 jobs" : `${rangeStart}-${rangeEnd} de ${activeJobsTotal} jobs`}
+          {activeJobsTotal === 0
+            ? `0 en ${FILTERS.find((item) => item.id === filter)?.label.toLowerCase()}`
+            : `${rangeStart}-${rangeEnd} de ${activeJobsTotal} en ${FILTERS.find((item) => item.id === filter)?.label.toLowerCase()}`}
         </span>
         <div className="flex items-center gap-2">
           <Button

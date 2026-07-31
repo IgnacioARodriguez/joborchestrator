@@ -28,6 +28,7 @@ import type {
   LLMFeedbackArtifact,
   LLMFeedbackSummary,
   LLMOutputFeedback,
+  ApplyQueuePipeline,
 } from "./types"
 
 const API_BASE =
@@ -86,11 +87,19 @@ export const api = {
     return request<{ job: JobDetail }>(`/api/jobs/${encodeURIComponent(id)}${query}`, { fresh: true, signal })
   },
 
-  async getApplyQueue(rankingVersion?: string | null, limit = 50, offset = 0, freshness = "active", query?: string) {
+  async getApplyQueue(
+    rankingVersion?: string | null,
+    limit = 50,
+    offset = 0,
+    freshness = "active",
+    query?: string,
+    pipeline: ApplyQueuePipeline = "all",
+  ) {
     const params = new URLSearchParams()
     params.set("limit", String(limit))
     params.set("offset", String(offset))
     params.set("freshness", freshness)
+    params.set("pipeline", pipeline)
     if (query?.trim()) {
       params.set("q", query.trim())
     }

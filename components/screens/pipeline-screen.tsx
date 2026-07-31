@@ -6,6 +6,8 @@ import {
   Building2,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Circle,
   ClipboardCheck,
   ExternalLink,
@@ -399,13 +401,14 @@ export function PipelineScreen({
   onOpenJob: (id: string) => void
 }) {
   const {
-    jobs,
+    preparationJobs: jobs,
     applications,
-    jobsStatus,
-    applyQueuePage,
+    preparationJobsStatus: jobsStatus,
+    preparationQueuePage: applyQueuePage,
     applyQueuePageSize,
-    jobsMeta,
-    refresh,
+    preparationJobsMeta: jobsMeta,
+    refreshPreparationQueue: refresh,
+    setPreparationQueuePage,
     recordApplication,
     generateMaterials,
     loadJobDetail,
@@ -417,6 +420,10 @@ export function PipelineScreen({
   const [operationByJob, setOperationByJob] = useState<Record<string, number>>({})
   const [operationIssueByJob, setOperationIssueByJob] = useState<Record<string, string>>({})
   const [confirmation, setConfirmation] = useState<{ job: JobListItem; session: ApplicationSession | null } | null>(null)
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
 
   useEffect(() => {
     let cancelled = false
@@ -659,6 +666,12 @@ export function PipelineScreen({
 
   const total = jobsMeta?.total ?? preparations.length
   const empty = jobsStatus === "empty" || preparations.length === 0
+  const offset = jobsMeta?.offset ?? (applyQueuePage - 1) * applyQueuePageSize
+  const returnedJobs = jobsMeta?.returned ?? jobs.length
+  const rangeStart = total === 0 ? 0 : offset + 1
+  const rangeEnd = Math.min(offset + returnedJobs, total)
+  const canPagePrevious = Boolean(jobsMeta?.has_previous) || applyQueuePage > 1
+  const canPageNext = Boolean(jobsMeta?.has_next)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
@@ -715,16 +728,31 @@ export function PipelineScreen({
         )}
       </div>
 
-      {jobsMeta?.has_next || jobsMeta?.has_previous ? (
-        <div className="flex shrink-0 items-center justify-between border-t border-border pt-3 text-xs text-muted-foreground">
-          <span>
-            Pagina {applyQueuePage} de la cola
-          </span>
-          <span>
-            Mostrando hasta {applyQueuePageSize} candidaturas
-          </span>
+      <div className="flex shrink-0 flex-col gap-2 border-t border-border pt-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <span>
+          {total === 0 ? "0 candidaturas" : `${rangeStart}-${rangeEnd} de ${total} candidaturas`}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={jobsStatus === "loading" || jobsStatus === "refreshing" || !canPagePrevious}
+            onClick={() => setPreparationQueuePage(applyQueuePage - 1)}
+          >
+            <ChevronLeft data-icon="inline-start" />
+            Anterior
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={jobsStatus === "loading" || jobsStatus === "refreshing" || !canPageNext}
+            onClick={() => setPreparationQueuePage(applyQueuePage + 1)}
+          >
+            Siguiente
+            <ChevronRight data-icon="inline-end" />
+          </Button>
         </div>
-      ) : null}
+      </div>
       {confirmation ? (
         <SubmissionConfirmation
           job={confirmation.job}
