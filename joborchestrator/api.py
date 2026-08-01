@@ -741,7 +741,7 @@ def _normalize_freshness_filter(value: str | None) -> str:
 
 def _normalize_pipeline_filter(value: str | None) -> str:
     normalized = str(value or "all").lower()
-    allowed = {"all", "new", "saved", "discarded", "apply"}
+    allowed = {"all", "new", "saved", "ready", "discarded", "apply"}
     if normalized not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported pipeline filter.")
     return normalized

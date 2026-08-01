@@ -677,7 +677,7 @@ export function PipelineScreen({
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
       <PageHeader
         title="Aplicar"
-        description={`${total.toLocaleString()} candidaturas pendientes de preparacion`}
+        description={`${total.toLocaleString()} jobs listos para preparar y enviar`}
       />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -707,7 +707,7 @@ export function PipelineScreen({
               </EmptyMedia>
               <EmptyTitle>No hay candidaturas pendientes</EmptyTitle>
               <EmptyDescription>
-                Guarda o selecciona jobs desde Jobs. Las candidaturas confirmadas aparecen en Aplicaciones.
+                Marca un job como Listo para aplicar desde Jobs. Las candidaturas confirmadas aparecen en Aplicaciones.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

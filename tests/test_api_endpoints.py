@@ -419,7 +419,8 @@ def test_apply_queue_filters_and_counts_pipeline_before_pagination(tmp_path, mon
         ("new-one", "New One", "new"),
         ("new-two", "New Two", "new"),
         ("saved-one", "Saved One", "shortlisted"),
-        ("saved-two", "Saved Two", "ready_to_apply"),
+        ("saved-two", "Saved Two", "shortlisted"),
+        ("ready-one", "Ready One", "ready_to_apply"),
         ("discarded-one", "Discarded One", "discarded"),
     ]
     for index, (external_id, title, pipeline_status) in enumerate(statuses, start=1):
@@ -436,6 +437,7 @@ def test_apply_queue_filters_and_counts_pipeline_before_pagination(tmp_path, mon
         "/api/apply-queue",
         params={"freshness": "all", "pipeline": "saved", "limit": 1, "offset": 1},
     )
+    ready = client.get("/api/apply-queue", params={"freshness": "all", "pipeline": "ready"})
     apply_queue = client.get("/api/apply-queue", params={"freshness": "all", "pipeline": "apply"})
     invalid = client.get("/api/apply-queue", params={"pipeline": "unknown"})
 
@@ -446,18 +448,25 @@ def test_apply_queue_filters_and_counts_pipeline_before_pagination(tmp_path, mon
     assert saved_body["meta"]["returned"] == 1
     assert saved_body["meta"]["has_previous"] is True
     assert saved_body["meta"]["pipeline_counts"] == {
-        "all": 5,
+        "all": 6,
         "new": 2,
         "saved": 2,
+        "ready": 1,
         "discarded": 1,
-        "apply": 4,
+        "apply": 1,
     }
-    assert saved_body["jobs"][0]["pipeline_status"] in {"shortlisted", "ready_to_apply"}
+    assert saved_body["jobs"][0]["pipeline_status"] == "shortlisted"
+
+    assert ready.status_code == 200
+    ready_body = ready.json()
+    assert ready_body["meta"]["pipeline"] == "ready"
+    assert ready_body["meta"]["total"] == 1
+    assert [job["pipeline_status"] for job in ready_body["jobs"]] == ["ready_to_apply"]
 
     assert apply_queue.status_code == 200
     apply_body = apply_queue.json()
-    assert apply_body["meta"]["total"] == 4
-    assert all(job["pipeline_status"] != "discarded" for job in apply_body["jobs"])
+    assert apply_body["meta"]["total"] == 1
+    assert [job["pipeline_status"] for job in apply_body["jobs"]] == ["ready_to_apply"]
 
     assert invalid.status_code == 400
     assert invalid.json()["detail"] == "Unsupported pipeline filter."

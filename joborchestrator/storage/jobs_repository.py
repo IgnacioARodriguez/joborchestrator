@@ -732,9 +732,10 @@ def count_apply_queue_pipeline_buckets(
             SELECT
               COUNT(*) AS all_jobs,
               SUM(CASE WHEN {status_expr} = 'new' THEN 1 ELSE 0 END) AS new_jobs,
-              SUM(CASE WHEN {status_expr} IN ('shortlisted', 'ready_to_apply') THEN 1 ELSE 0 END) AS saved_jobs,
+              SUM(CASE WHEN {status_expr} = 'shortlisted' THEN 1 ELSE 0 END) AS saved_jobs,
+              SUM(CASE WHEN {status_expr} = 'ready_to_apply' THEN 1 ELSE 0 END) AS ready_jobs,
               SUM(CASE WHEN {status_expr} = 'discarded' THEN 1 ELSE 0 END) AS discarded_jobs,
-              SUM(CASE WHEN {status_expr} != 'discarded' THEN 1 ELSE 0 END) AS apply_jobs
+              SUM(CASE WHEN {status_expr} = 'ready_to_apply' THEN 1 ELSE 0 END) AS apply_jobs
             FROM job_postings jp
             {where_sql}
             """,
@@ -744,6 +745,7 @@ def count_apply_queue_pipeline_buckets(
             "all": int(row["all_jobs"] or 0) if row else 0,
             "new": int(row["new_jobs"] or 0) if row else 0,
             "saved": int(row["saved_jobs"] or 0) if row else 0,
+            "ready": int(row["ready_jobs"] or 0) if row else 0,
             "discarded": int(row["discarded_jobs"] or 0) if row else 0,
             "apply": int(row["apply_jobs"] or 0) if row else 0,
         }
@@ -771,9 +773,10 @@ def _append_pipeline_filter(where_sql: str, pipeline: str) -> str:
     clauses = {
         "all": None,
         "new": f"{status_expr} = 'new'",
-        "saved": f"{status_expr} IN ('shortlisted', 'ready_to_apply')",
+        "saved": f"{status_expr} = 'shortlisted'",
+        "ready": f"{status_expr} = 'ready_to_apply'",
         "discarded": f"{status_expr} = 'discarded'",
-        "apply": f"{status_expr} != 'discarded'",
+        "apply": f"{status_expr} = 'ready_to_apply'",
     }
     if pipeline not in clauses:
         raise ValueError(f"Unsupported pipeline filter: {pipeline}")
