@@ -326,7 +326,11 @@ def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
     if not section:
         return []
     lines = [line.strip() for line in section.splitlines() if line.strip()]
-    header_indices = [idx for idx, line in enumerate(lines) if _date_range_match(line)]
+    header_indices = [
+        idx
+        for idx, line in enumerate(lines)
+        if _looks_like_role_header_line(line)
+    ]
     roles: list[ExperienceRole] = []
     for role_index, header_idx in enumerate(header_indices):
         header = lines[header_idx]
@@ -402,8 +406,65 @@ def _section(text: str, headings: tuple[str, ...], stop_headings: tuple[str, ...
     return match.group(2) if match else ""
 
 
+_MONTH_NAME_PATTERN = (
+    r"(?:"
+    r"jan(?:uary)?|ene(?:ro)?|"
+    r"feb(?:ruary|rero)?|"
+    r"mar(?:ch|zo)?|"
+    r"apr(?:il)?|abr(?:il)?|"
+    r"may(?:o)?|"
+    r"jun(?:e|io)?|"
+    r"jul(?:y|io)?|"
+    r"aug(?:ust)?|ago(?:sto)?|"
+    r"sep(?:t(?:ember|iembre)?)?|"
+    r"oct(?:ober|ubre)?|"
+    r"nov(?:ember|iembre)?|"
+    r"dec(?:ember)?|dic(?:iembre)?"
+    r")"
+)
+_MONTH_NAME_YEAR_PATTERN = rf"{_MONTH_NAME_PATTERN}\.?\s+\d{{4}}"
+_NUMERIC_MONTH_YEAR_PATTERN = r"(?:0?[1-9]|1[0-2])[/.-]\d{4}"
+_NUMERIC_YEAR_MONTH_PATTERN = r"\d{4}[/.-](?:0?[1-9]|1[0-2])"
+_NUMERIC_DAY_MONTH_YEAR_PATTERN = (
+    r"(?:0?[1-9]|[12]\d|3[01])[/.-]"
+    r"(?:0?[1-9]|1[0-2])[/.-]\d{4}"
+)
+_NUMERIC_YEAR_MONTH_DAY_PATTERN = (
+    r"\d{4}[/.-](?:0?[1-9]|1[0-2])[/.-]"
+    r"(?:0?[1-9]|[12]\d|3[01])"
+)
+_DATE_COMPONENT_PATTERN = (
+    rf"(?:"
+    rf"{_NUMERIC_DAY_MONTH_YEAR_PATTERN}|"
+    rf"{_NUMERIC_YEAR_MONTH_DAY_PATTERN}|"
+    rf"{_MONTH_NAME_YEAR_PATTERN}|"
+    rf"{_NUMERIC_MONTH_YEAR_PATTERN}|"
+    rf"{_NUMERIC_YEAR_MONTH_PATTERN}|"
+    rf"\d{{4}}"
+    rf")"
+)
+_OPEN_ENDED_DATE_PATTERN = r"(?:present|current|actualidad|actual|presente|ongoing)"
+_DATE_RANGE_PATTERN = re.compile(
+    rf"(?<![A-Za-z0-9/.])"
+    rf"{_DATE_COMPONENT_PATTERN}"
+    rf"\s*[-\u2013\u2014]\s*"
+    rf"(?:{_DATE_COMPONENT_PATTERN}|{_OPEN_ENDED_DATE_PATTERN})"
+    rf"(?![A-Za-z0-9]|[/.]\d)",
+    flags=re.IGNORECASE,
+)
+
+
 def _date_range_match(line: str) -> re.Match[str] | None:
-    return re.search(r"(?i)\b(?:\w+\s+)?\d{4}\s*[-–—]\s*(?:\w+\s+)?(?:\d{4}|present|current|actualidad|presente)\b", line)
+    return _DATE_RANGE_PATTERN.search(str(line or ""))
+
+
+def _looks_like_role_header_line(line: str) -> bool:
+    value = str(line or "").strip()
+    return bool(
+        value
+        and not value.startswith(BULLET_PREFIXES)
+        and _date_range_match(value)
+    )
 
 
 def _split_title_dates(header: str) -> tuple[str, str]:
@@ -438,7 +499,11 @@ def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
     if not section:
         return []
     lines = [line.strip() for line in section.splitlines() if line.strip()]
-    header_indices = [idx for idx, line in enumerate(lines) if _date_range_match(line)]
+    header_indices = [
+        idx
+        for idx, line in enumerate(lines)
+        if _looks_like_role_header_line(line)
+    ]
     roles: list[ExperienceRole] = []
     for role_index, header_idx in enumerate(header_indices):
         header = lines[header_idx]
