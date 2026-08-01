@@ -205,10 +205,96 @@ def _extract_pdf_text(content: bytes) -> str:
 def _extract_docx_text(content: bytes) -> str:
     try:
         from docx import Document
+        from docx.opc.exceptions import PackageNotFoundError
     except ModuleNotFoundError as exc:
         raise CVProfileError("DOCX upload requires python-docx.") from exc
-    document = Document(BytesIO(content))
-    return "\n".join(paragraph.text for paragraph in document.paragraphs)
+
+    try:
+        from zipfile import BadZipFile
+
+        document = Document(BytesIO(content))
+    except (BadZipFile, PackageNotFoundError, ValueError) as exc:
+        raise CVProfileError("The DOCX file could not be read.") from exc
+
+    blocks: list[str] = []
+    blocks.extend(_iter_unique_docx_section_blocks(document, kind="header"))
+    blocks.extend(_iter_docx_block_text(document))
+    blocks.extend(_iter_unique_docx_section_blocks(document, kind="footer"))
+    return "\n".join(blocks)
+
+
+def _iter_unique_docx_section_blocks(document: Any, *, kind: str) -> list[str]:
+    if kind not in {"header", "footer"}:
+        raise ValueError(f"Unsupported DOCX section kind: {kind}")
+
+    attributes = (kind, f"first_page_{kind}", f"even_page_{kind}")
+    seen: set[tuple[str, ...]] = set()
+    blocks: list[str] = []
+
+    for section in document.sections:
+        for attribute in attributes:
+            container = getattr(section, attribute)
+            container_blocks = tuple(_iter_docx_block_text(container))
+            if not container_blocks or container_blocks in seen:
+                continue
+            seen.add(container_blocks)
+            blocks.extend(container_blocks)
+
+    return blocks
+
+
+def _iter_docx_block_text(parent: Any) -> list[str]:
+    try:
+        from docx.oxml.table import CT_Tbl
+        from docx.oxml.text.paragraph import CT_P
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
+    except ModuleNotFoundError as exc:
+        raise CVProfileError("DOCX upload requires python-docx.") from exc
+
+    parent_element = getattr(getattr(parent, "element", None), "body", None)
+    if parent_element is None:
+        parent_element = getattr(parent, "_element", None)
+    if parent_element is None:
+        return []
+
+    blocks: list[str] = []
+    for child in parent_element.iterchildren():
+        if isinstance(child, CT_P):
+            text = _clean_docx_text(Paragraph(child, parent).text)
+            if text:
+                blocks.append(text)
+        elif isinstance(child, CT_Tbl):
+            blocks.extend(_iter_docx_table_text(Table(child, parent)))
+    return blocks
+
+
+def _iter_docx_table_text(table: Any) -> list[str]:
+    blocks: list[str] = []
+
+    for row in table.rows:
+        seen_cells: set[int] = set()
+        cell_values: list[str] = []
+
+        for cell in row.cells:
+            cell_identity = id(cell._tc)
+            if cell_identity in seen_cells:
+                continue
+            seen_cells.add(cell_identity)
+
+            cell_blocks = _iter_docx_block_text(cell)
+            cell_text = " ".join(cell_blocks).strip()
+            if cell_text:
+                cell_values.append(cell_text)
+
+        if cell_values:
+            blocks.append(" | ".join(cell_values))
+
+    return blocks
+
+
+def _clean_docx_text(value: Any) -> str:
+    return str(value or "").replace("\x00", "").replace("\xa0", " ").strip()
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
