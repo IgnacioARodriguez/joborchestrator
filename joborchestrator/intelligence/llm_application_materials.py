@@ -17,6 +17,7 @@ import httpx
 from joborchestrator.llm.provider import LLMProviderError, ProviderRegistry
 from joborchestrator.prompts import active_prompt_version, load_prompt
 from joborchestrator.intelligence.llm_costs import estimate_application_kit_tokens, estimate_cost
+from joborchestrator.intelligence.cv_export_validation import clean_ats_cv_text_for_export
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
 from joborchestrator.intelligence.materials_controlled_pipeline import build_controlled_ats_cv
 from joborchestrator.intelligence.materials_cv_ir import parse_candidate_cv_ir
@@ -973,39 +974,7 @@ def export_ats_cv_pdf_bytes(job: dict[str, Any], ats_cv_text: str) -> bytes:
 
 
 def _clean_cv_text_for_export(text: str) -> str:
-    cleaned = str(text or "")
-    replacements = {
-        "\x7f": "-",
-        "\u2022": "-",
-        "\u2023": "-",
-        "\u25e6": "-",
-    }
-    for old, new in replacements.items():
-        cleaned = cleaned.replace(old, new)
-    forbidden_sections = [
-        "Optimization notes",
-        "ATS CV targeting notes",
-        "ATS optimized CV draft",
-        "Optimized CV",
-    ]
-    lines = []
-    skip_rest = False
-    for raw_line in cleaned.splitlines():
-        stripped = raw_line.strip()
-        if any(stripped.lower().startswith(section.lower()) for section in forbidden_sections):
-            if stripped.lower().startswith("optimization notes"):
-                skip_rest = True
-            continue
-        if skip_rest:
-            continue
-        if stripped.startswith("Target role:") or stripped.startswith("Positioning angle:"):
-            continue
-        if stripped.startswith("ATS keywords to emphasize truthfully:"):
-            continue
-        if set(stripped) <= {"-"}:
-            continue
-        lines.append(raw_line)
-    return "\n".join(lines).strip()
+    return clean_ats_cv_text_for_export(text)
 
 
 def _wrap_pdf_line(line: str, max_chars: int) -> list[str]:

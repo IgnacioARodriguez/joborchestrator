@@ -21,6 +21,10 @@ from joborchestrator.api_dto import (
 from joborchestrator.batching import MIN_DESCRIPCION_LEN_DEFAULT, filtrar_ofertas
 from joborchestrator.intelligence.application_materials import ApplicationMaterialsError, build_application_kit
 from joborchestrator.intelligence.gmail_rules import classify_recruiter_message
+from joborchestrator.intelligence.cv_export_validation import (
+    CVExportValidationError,
+    validate_exported_ats_cv,
+)
 from joborchestrator.intelligence.cv_profile_extractor import (
     CVProfileError,
     extract_text_from_cv,
@@ -1367,7 +1371,8 @@ def download_ats_cv(job_id: int, file_format: Literal["docx", "pdf"]) -> Respons
         else:
             content = export_ats_cv_pdf_bytes(job, ats_cv_text)
             media_type = "application/pdf"
-    except LLMMaterialsError as exc:
+        validate_exported_ats_cv(file_format, content, ats_cv_text)
+    except (LLMMaterialsError, CVExportValidationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return Response(
         content=content,
