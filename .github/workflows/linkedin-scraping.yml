@@ -1,0 +1,84 @@
+name: LinkedIn scraping
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: Maximum LinkedIn jobs to collect
+        required: true
+        default: "75"
+        type: string
+      resume_from_checkpoint:
+        description: Reuse the local LinkedIn checkpoint
+        required: true
+        default: false
+        type: boolean
+      ranking_limit:
+        description: Maximum jobs queued for post-scan ranking
+        required: true
+        default: "250"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: joborchestrator-linkedin-scan
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: [self-hosted, Windows, X64, linkedin]
+    timeout-minutes: 330
+    env:
+      PYTHONUNBUFFERED: "1"
+      TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+      TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+      LINKEDIN_LIMIT: ${{ inputs.limit || '75' }}
+      RANKING_LIMIT: ${{ inputs.ranking_limit || '250' }}
+      RESUME_FLAG: ${{ inputs.resume_from_checkpoint && '--resume-from-checkpoint' || '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install backend and Chromium
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m playwright install chromium
+
+      - name: Validate shared database configuration
+        shell: pwsh
+        run: |
+          if (-not $env:TURSO_DATABASE_URL) { throw "Missing TURSO_DATABASE_URL" }
+          if (-not $env:TURSO_AUTH_TOKEN) { throw "Missing TURSO_AUTH_TOKEN" }
+
+      - name: Run LinkedIn scraper
+        shell: pwsh
+        run: |
+          $arguments = @(
+            "-m", "joborchestrator.scheduled_jobs", "linkedin-scan",
+            "--limit", $env:LINKEDIN_LIMIT,
+            "--ranking-limit", $env:RANKING_LIMIT
+          )
+          if ($env:RESUME_FLAG) { $arguments += $env:RESUME_FLAG }
+          python @arguments
+
+      - name: Upload scraper logs and checkpoints
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkedin-scan-${{ github.run_id }}
+          path: |
+            logs/
+            salidas_todas_posiciones_raw/
+          if-no-files-found: ignore
+          retention-days: 7

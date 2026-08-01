@@ -1,0 +1,81 @@
+name: NVIDIA rankings
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: Maximum unranked jobs to queue
+        required: true
+        default: "250"
+        type: string
+      chunk_size:
+        description: Ranking items processed per worker chunk
+        required: true
+        default: "25"
+        type: string
+      max_chunks:
+        description: Safety limit for one workflow execution
+        required: true
+        default: "100"
+        type: string
+  workflow_run:
+    workflows:
+      - Job discovery (ATS + public search)
+      - LinkedIn scraping
+    types: [completed]
+  schedule:
+    - cron: "47 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: joborchestrator-rankings
+  cancel-in-progress: false
+
+jobs:
+  rank:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      PYTHONUNBUFFERED: "1"
+      TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+      TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      RANKING_LIMIT: ${{ inputs.limit || '250' }}
+      CHUNK_SIZE: ${{ inputs.chunk_size || '25' }}
+      MAX_CHUNKS: ${{ inputs.max_chunks || '100' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install backend
+        run: python -m pip install --upgrade pip && python -m pip install -e .
+
+      - name: Validate ranking configuration
+        run: |
+          test -n "$TURSO_DATABASE_URL" || { echo "Missing TURSO_DATABASE_URL"; exit 1; }
+          test -n "$TURSO_AUTH_TOKEN" || { echo "Missing TURSO_AUTH_TOKEN"; exit 1; }
+          test -n "$NVIDIA_API_KEY" || { echo "Missing NVIDIA_API_KEY"; exit 1; }
+
+      - name: Queue missing rankings and drain ranking jobs
+        run: >-
+          python -m joborchestrator.scheduled_jobs rankings
+          --limit "$RANKING_LIMIT"
+          --chunk-size "$CHUNK_SIZE"
+          --max-chunks "$MAX_CHUNKS"
+
+      - name: Upload ranking logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ranking-logs-${{ github.run_id }}
+          path: logs/
+          if-no-files-found: ignore
+          retention-days: 7

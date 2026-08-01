@@ -1,0 +1,71 @@
+name: Job discovery (ATS + public search)
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: Pages per public search provider
+        required: true
+        default: "1"
+        type: choice
+        options: ["1", "2", "3"]
+      ranking_limit:
+        description: Maximum jobs queued for post-scan ranking
+        required: true
+        default: "250"
+        type: string
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: joborchestrator-public-scan
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PYTHONUNBUFFERED: "1"
+      TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+      TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+      ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+      ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+      INFOJOBS_CLIENT_ID: ${{ secrets.INFOJOBS_CLIENT_ID }}
+      INFOJOBS_CLIENT_SECRET: ${{ secrets.INFOJOBS_CLIENT_SECRET }}
+      MAX_PAGES: ${{ inputs.max_pages || '1' }}
+      RANKING_LIMIT: ${{ inputs.ranking_limit || '250' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install backend
+        run: python -m pip install --upgrade pip && python -m pip install -e .
+
+      - name: Validate shared database configuration
+        run: |
+          test -n "$TURSO_DATABASE_URL" || { echo "Missing TURSO_DATABASE_URL"; exit 1; }
+          test -n "$TURSO_AUTH_TOKEN" || { echo "Missing TURSO_AUTH_TOKEN"; exit 1; }
+
+      - name: Run ATS and public search discovery
+        run: >-
+          python -m joborchestrator.scheduled_jobs public-scan
+          --max-pages "$MAX_PAGES"
+          --ranking-limit "$RANKING_LIMIT"
+
+      - name: Upload worker logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-scan-logs-${{ github.run_id }}
+          path: logs/
+          if-no-files-found: ignore
+          retention-days: 7
