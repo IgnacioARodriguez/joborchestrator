@@ -9,7 +9,6 @@ from joborchestrator.api_dto import scan_result_dto
 from joborchestrator.scanning import linkedin
 from joborchestrator.scanning import scanner as source_scanner
 from joborchestrator.scanning import search_scanner
-from joborchestrator.scanning.linkedin_importer import import_linkedin_dataframe_to_job_postings
 from joborchestrator.scanning.search_providers import SEARCH_PROVIDERS, configured_search_provider_names
 from joborchestrator.scanning.search_targets import build_search_intents, targets_from_profile
 from joborchestrator.storage import persistence as db
@@ -129,13 +128,7 @@ async def _run_linkedin_scan(
     )
     run_id = scraped.attrs.get("linkedin_scan_run_id")
     scrape_summary = scraped.attrs.get("linkedin_scan_summary") or {}
-    import_stats = import_linkedin_dataframe_to_job_postings(scraped) if not scraped.empty else {
-        "new": 0,
-        "updated": 0,
-        "seen": 0,
-        "total": 0,
-    }
-    serializable_import_stats = _serializable_import_stats(import_stats)
+    serializable_import_stats = _serializable_import_stats(scrape_summary.get("import_stats") or {})
     inactive = db.mark_jobs_inactive_by_last_seen(
         "linkedin_scraper",
         linkedin.FRESHNESS_WINDOW_SECONDS,
@@ -151,10 +144,10 @@ async def _run_linkedin_scan(
             duplicate_visible_jobs=int(scrape_summary.get("duplicate_visible_jobs") or 0),
             added_jobs=int(scrape_summary.get("added_jobs") or 0),
             exported_jobs=len(scraped),
-            imported_total=int(import_stats.get("total") or 0),
-            imported_new=int(import_stats.get("new") or 0),
-            imported_updated=int(import_stats.get("updated") or 0),
-            imported_seen=int(import_stats.get("seen") or 0),
+            imported_total=int(serializable_import_stats.get("total") or 0),
+            imported_new=int(serializable_import_stats.get("new") or 0),
+            imported_updated=int(serializable_import_stats.get("updated") or 0),
+            imported_seen=int(serializable_import_stats.get("seen") or 0),
             inactive_count=int(inactive or 0),
             stop_reason=str(scrape_summary.get("stop_reason") or "completed"),
             error=None,

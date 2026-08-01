@@ -126,6 +126,60 @@ def test_health_and_profile_round_trip(tmp_path, monkeypatch):
     assert client.get("/api/profile").json()["profile"]["target_roles"] == ["Backend Engineer"]
 
 
+def test_fresh_scan_uses_configurable_linkedin_limit(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    client.put("/api/profile", json={"profile": profile_payload()})
+    captured = {}
+
+    def fake_queue_scan_all(payload):
+        captured.update(payload.model_dump())
+        return {
+            "operation_id": 1,
+            "status": "queued",
+            "already_running": False,
+            "progress_message": "Queued.",
+        }
+
+    monkeypatch.setenv("LINKEDIN_FRESH_SCAN_LIMIT", "120")
+    monkeypatch.setattr(api, "queue_scan_all", fake_queue_scan_all)
+
+    response = client.post("/api/scans/fresh", json={})
+
+    assert response.status_code == 200
+    assert captured["linkedin_limit"] == 120
+    assert captured["linkedin_resume_from_checkpoint"] is False
+
+
+def test_linkedin_plan_exposes_profile_roles_aliases_and_locations(tmp_path, monkeypatch):
+    client = client_for_tmp_db(tmp_path, monkeypatch)
+    profile = profile_payload()
+    profile["role_aliases"] = {"Backend Engineer": ["Python Engineer"]}
+    profile["application_targets"] = [
+        {
+            "label": "Malaga",
+            "location": "Malaga, Spain",
+            "work_modes": ["onsite", "hybrid", "remote"],
+        }
+    ]
+    client.put("/api/profile", json={"profile": profile})
+
+    response = client.get("/api/scans/linkedin/plan", params={"limit": 75})
+
+    assert response.status_code == 200
+    plan = response.json()["plan"]
+    assert plan["limit"] == 75
+    assert plan["terms"] == ["Backend Engineer", "Python Engineer"]
+    assert "Malaga, Spain" in plan["locations"]
+    assert len(
+        [
+            search
+            for search in plan["searches"]
+            if search["keywords"] == "Backend Engineer"
+            and search["ubicacion"] == "Malaga, Spain"
+        ]
+    ) == 1
+
+
 def test_jobs_can_select_ranking_version_and_hide_heuristic_versions(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
     job_id = save_job_with_rankings()

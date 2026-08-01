@@ -78,6 +78,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+DEFAULT_FRESH_LINKEDIN_LIMIT = 75
+
 
 def _private_no_store(response: Response) -> None:
     response.headers["Cache-Control"] = "private, no-store"
@@ -1661,7 +1663,7 @@ def queue_fresh_scan() -> dict[str, Any]:
         include_ats=True,
         include_search=bool(queries),
         include_linkedin=True,
-        linkedin_limit=75,
+        linkedin_limit=_fresh_linkedin_limit(),
         linkedin_resume_from_checkpoint=False,
         search_providers=[],
         queries=queries,
@@ -1673,6 +1675,25 @@ def queue_fresh_scan() -> dict[str, Any]:
         ranking_limit=250,
     )
     return queue_scan_all(payload)
+
+
+def _fresh_linkedin_limit() -> int:
+    raw = os.getenv("LINKEDIN_FRESH_SCAN_LIMIT", str(DEFAULT_FRESH_LINKEDIN_LIMIT))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = DEFAULT_FRESH_LINKEDIN_LIMIT
+    return max(1, min(value, 500))
+
+
+@app.get("/api/scans/linkedin/plan")
+def linkedin_scan_plan(limit: int | None = None) -> dict[str, Any]:
+    effective_limit = _fresh_linkedin_limit() if limit is None else max(1, min(int(limit), 500))
+    try:
+        searches = linkedin.load_profile_busquedas()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"plan": linkedin.build_linkedin_search_plan(searches, effective_limit)}
 
 
 def _fresh_scan_queries(profile: dict[str, Any]) -> list[str]:

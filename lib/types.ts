@@ -463,6 +463,24 @@ export interface LinkedInProfileSetting {
   profile_dir: string
 }
 
+export interface LinkedInSearch {
+  keywords: string
+  ubicacion: string
+  categoria: string
+  role_priority?: "target" | "secondary" | string
+  freshness_window_seconds?: number
+  application_target?: string
+}
+
+export interface LinkedInSearchPlan {
+  limit: number
+  max_jobs_per_search: number
+  total_searches: number
+  terms: string[]
+  locations: string[]
+  searches: LinkedInSearch[]
+}
+
 export interface RankingJobRecord {
   id: number
   provider: string
