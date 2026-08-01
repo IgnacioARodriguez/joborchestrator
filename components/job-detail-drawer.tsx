@@ -60,6 +60,8 @@ type DetailActions = Pick<
   "setPipelineStatus" | "markOpened" | "generateMaterials" | "refreshApplications" | "loadJobDetail"
 >
 
+type MaterialKey = "ats_cv" | "cover_letter" | "recruiter_message" | "autofill"
+
 function DeferredSection({
   children,
   className,
@@ -561,6 +563,78 @@ function primaryActionLabel(session: ApplicationSession | null, job: JobPosting)
   return "Continuar preparación"
 }
 
+
+function compactUnique(items: Array<string | null | undefined>, limit: number) {
+  const seen = new Set<string>()
+  const values: string[] = []
+
+  for (const item of items) {
+    const value = item?.trim()
+    if (!value) continue
+
+    const key = value.toLowerCase()
+    if (seen.has(key)) continue
+
+    seen.add(key)
+    values.push(value)
+    if (values.length === limit) break
+  }
+
+  return values
+}
+
+function fitReasonsFor(job: JobPosting) {
+  const { evidence } = job.ranking
+  return compactUnique(
+    [
+      ...evidence.strong_matches,
+      ...evidence.partial_matches,
+      rankingSummaryText(
+        job.ranking.decision,
+        job.ranking.final_score,
+        job.ranking.reasoning_summary,
+      ),
+    ],
+    4,
+  )
+}
+
+function recommendationsFor(job: JobPosting) {
+  const keywords = job.ranking.cv_keywords_to_emphasize.slice(0, 4)
+  return compactUnique(
+    [
+      ...job.ranking.evidence.missing_requirements.map(
+        (item) => `Revisar antes de aplicar: ${item}`,
+      ),
+      ...job.ranking.evidence.red_flags.map(
+        (item) => `Validar antes de aplicar: ${item}`,
+      ),
+      job.ranking.recommended_application_angle,
+      keywords.length ? `Destacar en el CV: ${keywords.join(", ")}` : null,
+    ],
+    3,
+  )
+}
+
+function materialStatus(text: string, reviewState?: string) {
+  if (!text) {
+    return {
+      label: "Pendiente",
+      tone: "border-border bg-muted text-muted-foreground",
+    }
+  }
+  if (reviewState && reviewState !== "approved") {
+    return {
+      label: "Revisar",
+      tone: "border-warning/30 bg-warning/10 text-warning-foreground",
+    }
+  }
+  return {
+    label: "Listo",
+    tone: "border-success/25 bg-success/10 text-success-foreground",
+  }
+}
+
 const CAPABILITY_LABELS: Array<[keyof ProviderCapabilities, string]> = [
   ["can_open_application", "Open application"],
   ["can_follow_apply_redirects", "Follow apply redirects"],
@@ -688,6 +762,94 @@ function SessionReview({
   )
 }
 
+
+function SimpleApplicationStatus({
+  job,
+  session,
+  busy,
+  onContinue,
+  onOpenPortal,
+  onMarkSubmitted,
+}: {
+  job: JobPosting
+  session: ApplicationSession
+  busy: boolean
+  onContinue: () => void
+  onOpenPortal: () => void
+  onMarkSubmitted: () => void
+}) {
+  const needsManualStep = session.state === "needs_user_input"
+  const readyForReview = ["submit_only", "ready_for_review"].includes(session.state)
+  const completed = ["submitted", "submitted_manually", "submission_verified"].includes(
+    session.state,
+  )
+  const unknownCount = session.unknown_fields_json?.length ?? 0
+
+  let description = "La automatización está preparando la postulación en el portal."
+  if (needsManualStep) {
+    description = unknownCount
+      ? `El portal requiere que revises ${unknownCount} campo${unknownCount === 1 ? "" : "s"} antes de continuar.`
+      : "El portal requiere un paso manual, como iniciar sesión o resolver una verificación."
+  } else if (readyForReview) {
+    description = "El formulario está preparado. Revisalo en el portal antes del envío final."
+  } else if (completed) {
+    description = "La postulación quedó registrada en JobOrchestrator."
+  }
+
+  const statusLabel = completed
+    ? "Completado"
+    : needsManualStep
+      ? "Necesita tu intervención"
+      : readyForReview
+        ? "Revisión final"
+        : "En curso"
+
+  return (
+    <section className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <ClipboardCheck className="mt-0.5 size-5 shrink-0 text-primary" />
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-foreground">
+              {completed ? "Postulación registrada" : primaryActionLabel(session, job)}
+            </h3>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              {description}
+            </p>
+          </div>
+        </div>
+        <Badge variant="outline">{statusLabel}</Badge>
+      </div>
+
+      {needsManualStep ? (
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" onClick={onOpenPortal}>
+            <ExternalLink data-icon="inline-start" />
+            Abrir portal
+          </Button>
+          <Button size="sm" disabled={busy} onClick={onContinue}>
+            <Play data-icon="inline-start" />
+            Ya resolví el paso
+          </Button>
+        </div>
+      ) : null}
+
+      {readyForReview ? (
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={onOpenPortal}>
+            <ExternalLink data-icon="inline-start" />
+            Revisar y enviar
+          </Button>
+          <Button size="sm" variant="outline" disabled={busy} onClick={onMarkSubmitted}>
+            <ClipboardCheck data-icon="inline-start" />
+            Marcar como enviada
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
 const DetailBody = memo(function DetailBody({
   job,
   onClose,
@@ -710,6 +872,7 @@ const DetailBody = memo(function DetailBody({
   const [dryRunHtml, setDryRunHtml] = useState("")
   const [showDryRunInput, setShowDryRunInput] = useState(false)
   const [showAiProviders, setShowAiProviders] = useState(false)
+  const [activeMaterial, setActiveMaterial] = useState<MaterialKey | null>(null)
   const { evidence } = job.ranking
   const applicants = applicantLabel(job)
   const salary = salaryLabel(job)
@@ -742,6 +905,44 @@ const DetailBody = memo(function DetailBody({
   )
   const latestSession = sessions[0] ?? null
   const provider = detectProvider(job)
+  const fitReasons = fitReasonsFor(job)
+  const recommendations = recommendationsFor(job)
+  const applicationFinished = Boolean(
+    latestSession &&
+      ["submitted", "submitted_manually", "submission_verified"].includes(
+        latestSession.state,
+      ),
+  )
+  const materialCards = [
+    {
+      id: "ats_cv" as const,
+      label: "CV ATS adaptado",
+      text: job.materials.ats_cv_notes,
+      icon: FileSearch,
+      reviewState: job.materials.review.materials?.ats_cv,
+    },
+    {
+      id: "cover_letter" as const,
+      label: "Cover letter",
+      text: job.materials.cover_letter,
+      icon: Send,
+      reviewState: job.materials.review.materials?.cover_letter,
+    },
+    {
+      id: "recruiter_message" as const,
+      label: "Recruiter message",
+      text: job.materials.recruiter_message,
+      icon: Copy,
+      reviewState: job.materials.review.materials?.recruiter_message,
+    },
+    {
+      id: "autofill" as const,
+      label: "Autofill notes",
+      text: job.materials.autofill_notes,
+      icon: ClipboardCheck,
+      reviewState: job.materials.review.materials?.autofill,
+    },
+  ]
 
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: 0 })
@@ -895,12 +1096,27 @@ const DetailBody = memo(function DetailBody({
 
   async function prepareApplication(html?: string) {
     if (latestSession && !html) {
-      if (latestSession.state === "needs_user_input") {
-        setShowDryRunInput(true)
-        toast("Resolve missing fields", { description: `${latestSession.unknown_fields_json.length} fields need review.` })
+      if (
+        ["submitted", "submitted_manually", "submission_verified"].includes(
+          latestSession.state,
+        )
+      ) {
+        toast("La postulación ya está registrada", { description: job.title })
         return
       }
-      toast("Application session loaded", { description: latestSession.state.replaceAll("_", " ") })
+      if (["submit_only", "ready_for_review"].includes(latestSession.state)) {
+        openExternal(applyUrlForJob(job))
+        return
+      }
+      if (latestSession.state === "needs_user_input") {
+        openExternal(applyUrlForJob(job))
+        toast("Completá el paso manual en el portal", {
+          description: "Después volvé y pulsá “Ya resolví el paso”.",
+        })
+        return
+      }
+
+      await continueApplicationSession()
       return
     }
     setSessionBusy(true)
@@ -1009,127 +1225,328 @@ const DetailBody = memo(function DetailBody({
       className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
     >
       <div className="flex flex-col gap-5 p-4">
-        {/* Header block */}
-        <div className="flex items-start gap-3">
-          <ScoreRing score={job.ranking.final_score} />
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <DecisionBadge
-                decision={job.ranking.decision}
-                score={job.ranking.final_score}
-              />
-              <span className="rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                {PIPELINE_LABELS[job.pipeline_status]}
+        <section className="flex flex-col gap-5 rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
+          <div className="grid gap-4 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center">
+            <div className="flex flex-col items-center gap-1">
+              <ScoreRing score={job.ranking.final_score} />
+              <span className="text-xs font-semibold text-success">
+                Match{" "}
+                {job.ranking.final_score >= 85
+                  ? "excelente"
+                  : job.ranking.final_score >= 70
+                    ? "alto"
+                    : "moderado"}
               </span>
-              {applicants ? (
-                <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                  <Users className="size-3" />
-                  {applicants}
-                </span>
-              ) : null}
-              {salary ? (
-                <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                  <WalletCards className="size-3" />
-                  {salary}
-                </span>
-              ) : null}
             </div>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1">
-                <Building2 className="size-3.5" />
-                {job.company}
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <MapPin className="size-3.5" />
-                {job.location}
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <Radio className="size-3.5" />
-                {job.source}
-              </span>
-              {job.recruiter_name ? (
-                <a
-                  href={job.recruiter_profile_url || undefined}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={cn(
-                    "inline-flex items-center gap-1",
-                    job.recruiter_profile_url && "text-primary hover:underline",
-                  )}
-                >
-                  <ExternalLink className="size-3.5" />
-                  {job.recruiter_name}
-                </a>
-              ) : null}
-            </div>
-          </div>
-        </div>
 
-        {/* Primary actions */}
-        <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-xs font-semibold text-foreground">{primaryActionLabel(latestSession, job)}</p>
-              <p className="text-xs text-muted-foreground">
-                Prepara los materiales y revisa el formulario antes de enviarlo.
-              </p>
+            <div className="min-w-0">
+              <h2 className="pr-8 text-pretty text-xl font-semibold leading-tight text-foreground sm:text-2xl">
+                {job.title}
+              </h2>
+
+              <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5">
+                  <Building2 className="size-3.5" />
+                  {job.company}
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5">
+                  <MapPin className="size-3.5" />
+                  {job.location}
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5">
+                  <Radio className="size-3.5" />
+                  {job.source}
+                </span>
+                {applicants ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5">
+                    <Users className="size-3.5" />
+                    {applicants}
+                  </span>
+                ) : null}
+                {salary ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5">
+                    <WalletCards className="size-3.5" />
+                    {salary}
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Badge
+                  variant="outline"
+                  className="border-success/25 bg-success/10 text-success-foreground"
+                >
+                  <CheckCircle2 className="size-3.5" />
+                  {PIPELINE_LABELS[job.pipeline_status]}
+                </Badge>
+                <DecisionBadge
+                  decision={job.ranking.decision}
+                  score={job.ranking.final_score}
+                />
+              </div>
             </div>
-            <Button size="sm" disabled={sessionBusy} onClick={() => void prepareApplication()}>
-              <Play data-icon="inline-start" />
-              {primaryActionLabel(latestSession, job)}
-            </Button>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => openExternal(job.url)}>
+
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto]">
+            <Button
+              className="h-11"
+              disabled={sessionBusy || applicationFinished}
+              onClick={() => void prepareApplication()}
+            >
+              <Sparkles data-icon="inline-start" />
+              {applicationFinished
+                ? "Postulación completada"
+                : "Aplicar automáticamente"}
+            </Button>
+            <Button
+              className="h-11"
+              variant="outline"
+              onClick={() => openExternal(job.url)}
+            >
               <ExternalLink data-icon="inline-start" />
               Ver oferta
             </Button>
-            <Button size="sm" variant="outline" onClick={() => openExternal(applyUrlForJob(job))}>
+            <Button
+              className="h-11"
+              variant="ghost"
+              onClick={() => openExternal(applyUrlForJob(job))}
+            >
               <Send data-icon="inline-start" />
-              Abrir postulación
+              Abrir portal
             </Button>
           </div>
-          <details className="rounded-md border border-border bg-muted/20 p-3">
-            <summary className="cursor-pointer text-xs font-semibold text-foreground">
-              Compatibilidad y prueba técnica
-            </summary>
-            <div className="mt-3 flex flex-col gap-3">
-              <ProviderCapabilityList capabilities={providerCapabilities} />
-              <Button size="sm" variant="outline" onClick={() => setShowDryRunInput((value) => !value)}>
-                <FileSearch data-icon="inline-start" />
-                Probar formulario Greenhouse
-              </Button>
-              {showDryRunInput ? (
-                <div className="flex flex-col gap-2">
-                  <Textarea
-                    value={dryRunHtml}
-                    onChange={(event) => setDryRunHtml(event.target.value)}
-                    placeholder="Paste Greenhouse form HTML here for a local dry-run review."
-                    className="min-h-28 text-xs"
-                  />
-                  <Button
-                    size="sm"
-                    disabled={sessionBusy || dryRunHtml.trim().length < 20}
-                    onClick={() => void prepareApplication(dryRunHtml)}
+
+          <div className="grid gap-3 lg:grid-cols-2">
+            <section className="rounded-xl border border-border bg-background p-4">
+              <div className="flex items-center gap-2">
+                <Target className="size-5 text-success" />
+                <h3 className="text-sm font-semibold text-foreground">
+                  Por qué encaja
+                </h3>
+              </div>
+              <ul className="mt-3 flex flex-col gap-2">
+                {fitReasons.map((reason) => (
+                  <li
+                    key={reason}
+                    className="flex items-start gap-2 text-xs leading-relaxed text-muted-foreground"
                   >
-                    <FileSearch data-icon="inline-start" />
-                    Run dry-run review
-                  </Button>
-                </div>
-              ) : null}
+                    <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
+                    <span>{reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            <section className="rounded-xl border border-border bg-background p-4">
+              <div className="flex items-center gap-2">
+                <Lightbulb className="size-5 text-primary" />
+                <h3 className="text-sm font-semibold text-foreground">
+                  Recomendaciones
+                </h3>
+              </div>
+              <ul className="mt-3 flex flex-col gap-2">
+                {recommendations.map((recommendation) => (
+                  <li
+                    key={recommendation}
+                    className="flex items-start gap-2 text-xs leading-relaxed text-muted-foreground"
+                  >
+                    <CircleDot className="mt-0.5 size-4 shrink-0 text-primary" />
+                    <span>{recommendation}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </div>
+
+          <section className="rounded-xl border border-border bg-background p-4">
+            <div className="flex items-center gap-2">
+              <FileSearch className="size-5 text-primary" />
+              <h3 className="text-sm font-semibold text-foreground">
+                Materiales generados
+              </h3>
             </div>
-          </details>
-        </div>
+
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {materialCards.map((material) => {
+                const Icon = material.icon
+                const status = materialStatus(material.text, material.reviewState)
+                const selected = activeMaterial === material.id
+                return (
+                  <button
+                    key={material.id}
+                    type="button"
+                    disabled={!material.text}
+                    aria-pressed={selected}
+                    onClick={() =>
+                      setActiveMaterial((current) =>
+                        current === material.id ? null : material.id,
+                      )
+                    }
+                    className={cn(
+                      "flex min-h-20 flex-col items-start justify-between gap-3 rounded-lg border border-border bg-card p-3 text-left transition-colors",
+                      material.text &&
+                        "hover:border-primary/40 hover:bg-primary/5",
+                      selected && "border-primary/40 bg-primary/5",
+                      !material.text && "cursor-not-allowed opacity-60",
+                    )}
+                  >
+                    <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                      <Icon className="size-4 text-primary" />
+                      {material.label}
+                    </span>
+                    <span
+                      className={cn(
+                        "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                        status.tone,
+                      )}
+                    >
+                      {status.label}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {activeMaterial ? (
+              <div className="mt-3">
+                {activeMaterial === "ats_cv" ? (
+                  <MaterialBlock
+                    label="CV ATS adaptado"
+                    text={job.materials.ats_cv_notes}
+                    onSave={(value) => saveMaterial("ats_cv_notes", value)}
+                    reviewState={job.materials.review.materials?.ats_cv}
+                    onApprove={() => approveMaterial("ats_cv")}
+                    actions={
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            window.open(
+                              api.materialDownloadUrl(job.id, "docx"),
+                              "_blank",
+                            )
+                          }
+                        >
+                          DOCX
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            window.open(
+                              api.materialDownloadUrl(job.id, "pdf"),
+                              "_blank",
+                            )
+                          }
+                        >
+                          PDF
+                        </Button>
+                      </>
+                    }
+                  />
+                ) : null}
+                {activeMaterial === "cover_letter" ? (
+                  <MaterialBlock
+                    label="Cover letter"
+                    text={job.materials.cover_letter}
+                    onSave={(value) => saveMaterial("cover_letter", value)}
+                    reviewState={job.materials.review.materials?.cover_letter}
+                    onApprove={() => approveMaterial("cover_letter")}
+                  />
+                ) : null}
+                {activeMaterial === "recruiter_message" ? (
+                  <MaterialBlock
+                    label="Recruiter message"
+                    text={job.materials.recruiter_message}
+                    onSave={(value) => saveMaterial("recruiter_message", value)}
+                    reviewState={
+                      job.materials.review.materials?.recruiter_message
+                    }
+                    onApprove={() => approveMaterial("recruiter_message")}
+                  />
+                ) : null}
+                {activeMaterial === "autofill" ? (
+                  <AutofillPlanBlock
+                    text={job.materials.autofill_notes}
+                    onSave={(value) => saveMaterial("autofill_notes", value)}
+                    reviewState={job.materials.review.materials?.autofill}
+                    onApprove={() => approveMaterial("autofill")}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+          </section>
+
+          <div className="flex items-start gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2.5">
+            <CircleAlert className="mt-0.5 size-4 shrink-0 text-primary" />
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              La automatización completará la postulación en el portal
+              correspondiente y te pedirá revisión final antes de enviar.
+            </p>
+          </div>
+        </section>
 
         {latestSession ? (
-          <SessionReview
+          <SimpleApplicationStatus
+            job={job}
             session={latestSession}
             busy={sessionBusy}
-            capabilities={providerCapabilities}
             onContinue={() => void continueApplicationSession()}
+            onOpenPortal={() => openExternal(applyUrlForJob(job))}
             onMarkSubmitted={() => void markSubmittedManually()}
           />
         ) : null}
+
+        <details className="rounded-xl border border-border bg-muted/10 p-4">
+          <summary className="cursor-pointer text-sm font-semibold text-muted-foreground">
+            Ver información y controles avanzados
+          </summary>
+          <div className="mt-4 flex flex-col gap-5">
+            {latestSession ? (
+              <SessionReview
+                session={latestSession}
+                busy={sessionBusy}
+                capabilities={providerCapabilities}
+                onContinue={() => void continueApplicationSession()}
+                onMarkSubmitted={() => void markSubmittedManually()}
+              />
+            ) : null}
+
+            <details className="rounded-lg border border-border bg-muted/20 p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-foreground">
+                Compatibilidad técnica y prueba de formulario
+              </summary>
+              <div className="mt-3 flex flex-col gap-3">
+                <ProviderCapabilityList capabilities={providerCapabilities} />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowDryRunInput((value) => !value)}
+                >
+                  <FileSearch data-icon="inline-start" />
+                  Probar formulario Greenhouse
+                </Button>
+                {showDryRunInput ? (
+                  <div className="flex flex-col gap-2">
+                    <Textarea
+                      value={dryRunHtml}
+                      onChange={(event) => setDryRunHtml(event.target.value)}
+                      placeholder="Paste Greenhouse form HTML here for a local dry-run review."
+                      className="min-h-28 text-xs"
+                    />
+                    <Button
+                      size="sm"
+                      disabled={sessionBusy || dryRunHtml.trim().length < 20}
+                      onClick={() => void prepareApplication(dryRunHtml)}
+                    >
+                      <FileSearch data-icon="inline-start" />
+                      Run dry-run review
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </details>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           <Button
@@ -1532,6 +1949,8 @@ const DetailBody = memo(function DetailBody({
             </DeferredSection>
           </>
         )}
+          </div>
+        </details>
       </div>
     </div>
   )
@@ -1581,20 +2000,20 @@ export function JobDetailDrawer({
       }}
       showSwipeHandle
     >
-      <DrawerContent className="data-[swipe-axis=y]:[--drawer-content-max-height:calc(100dvh-3rem)] data-[swipe-axis=y]:[--drawer-height:88dvh]">
-        <DrawerHeader className="flex-row items-start justify-between gap-3 text-left">
-          <DrawerTitle className="min-w-0 flex-1 text-pretty leading-snug">
+      <DrawerContent className="relative data-[swipe-axis=y]:[--drawer-content-max-height:calc(100dvh-3rem)] data-[swipe-axis=y]:[--drawer-height:92dvh]">
+        <DrawerHeader className="absolute right-4 top-4 z-20 p-0 text-left">
+          <DrawerTitle className="sr-only">
             {job?.title ?? summary?.title ?? "Job detail"}
           </DrawerTitle>
+          <DrawerDescription className="sr-only">
+            Ranking, description, and application materials for this job.
+          </DrawerDescription>
           <DrawerClose
             aria-label="Close job detail"
             className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/20 focus-visible:outline-none"
           >
             <X className="size-4" />
           </DrawerClose>
-          <DrawerDescription className="sr-only">
-            Ranking, description, and application materials for this job.
-          </DrawerDescription>
         </DrawerHeader>
         {job ? (
           <DetailBody
