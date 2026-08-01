@@ -333,7 +333,7 @@ def test_worker_queues_ranking_for_new_scan_jobs(monkeypatch):
     monkeypatch.setattr(
         worker.db,
         "get_jobs_for_post_scan_ranking",
-        lambda seen_since, ranking_version, limit, included_sources=None: pd.DataFrame(
+        lambda seen_since, ranking_version, limit, **kwargs: pd.DataFrame(
             [{"id": 10}, {"id": 11}]
         ),
     )
