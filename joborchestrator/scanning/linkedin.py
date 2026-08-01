@@ -19,8 +19,8 @@ La idea es exportar raw data para analizar despuÃ©s con IA.
 
 import asyncio
 import json
+import math
 import os
-import random
 import re
 import sys
 import time
@@ -45,6 +45,7 @@ from joborchestrator.scanning.hiring_contacts import (
     normalize_linkedin_profile_url,
     primary_contact,
 )
+from joborchestrator.scanning.linkedin_importer import linkedin_row_to_job_posting
 from joborchestrator.scanning.models import HiringContact
 from joborchestrator.scanning.search_targets import build_search_intents
 from joborchestrator.storage import persistence as db
@@ -82,38 +83,74 @@ def build_busquedas_from_profile(profile: CandidateProfile, max_terms: int = 40)
         for term in entry.search_terms:
             role_terms.append((term, entry.priority, window_seconds))
     role_terms = role_terms[:max_terms]
+
     intents = build_search_intents(
         application_targets=profile.application_targets,
         location=(profile.preferred_locations or ["Spain"])[0],
         remote=any(str(mode).lower() == "remote" for mode in profile.preferred_work_modes),
     )
-    searches = []
-    seen = set()
-    legacy_seen = set()
-    for term, priority, window_seconds in role_terms:
-        category = _category_from_role(term)
-        for legacy_location in ["Spain", "European Union"]:
-            legacy_key = (term.lower(), legacy_location.lower(), category)
-            if legacy_key not in legacy_seen:
-                legacy_seen.add(legacy_key)
-                searches.append({"keywords": term, "ubicacion": legacy_location, "categoria": category})
-        for intent in intents:
-            key = (term.lower(), intent.location.lower(), intent.work_mode)
-            if key in seen:
+    locations: list[tuple[str, str | None]] = []
+    seen_locations: set[str] = set()
+    for intent in intents:
+        key = intent.location.lower()
+        if key not in seen_locations:
+            seen_locations.add(key)
+            locations.append((intent.location, intent.label))
+    for location, label in [("Spain", None), ("European Union", None)]:
+        key = location.lower()
+        if key not in seen_locations:
+            seen_locations.add(key)
+            locations.append((location, label))
+
+    searches: list[dict[str, str | int]] = []
+    seen_searches: set[tuple[str, str]] = set()
+    for location, application_target in locations:
+        for term, priority, window_seconds in role_terms:
+            key = (term.lower(), location.lower())
+            if key in seen_searches:
                 continue
-            seen.add(key)
-            searches.append(
-                {
-                    "keywords": term,
-                    "ubicacion": intent.location,
-                    "work_mode": intent.work_mode,
-                    "application_target": intent.label,
-                    "categoria": category,
-                    "role_priority": priority,
-                    "freshness_window_seconds": window_seconds,
-                }
-            )
+            seen_searches.add(key)
+            search: dict[str, str | int] = {
+                "keywords": term,
+                "ubicacion": location,
+                "categoria": _category_from_role(term),
+                "role_priority": priority,
+                "freshness_window_seconds": window_seconds,
+            }
+            if application_target:
+                search["application_target"] = application_target
+            searches.append(search)
     return searches
+
+
+def jobs_per_search_limit(total_limit: int, searches: list[dict]) -> int:
+    """Return the initial fair quota across effective search combinations."""
+    return max(1, math.ceil(max(1, int(total_limit)) / max(1, len(searches))))
+
+
+def build_linkedin_search_plan(searches: list[dict], limit: int) -> dict:
+    terms: list[str] = []
+    locations: list[str] = []
+    seen_terms: set[str] = set()
+    seen_locations: set[str] = set()
+    for search in searches:
+        term = str(search.get("keywords") or "").strip()
+        location = str(search.get("ubicacion") or "").strip()
+        if term and term.lower() not in seen_terms:
+            seen_terms.add(term.lower())
+            terms.append(term)
+        if location and location.lower() not in seen_locations:
+            seen_locations.add(location.lower())
+            locations.append(location)
+    effective_limit = max(1, int(limit))
+    return {
+        "limit": effective_limit,
+        "max_jobs_per_search": jobs_per_search_limit(effective_limit, searches),
+        "total_searches": len(searches),
+        "terms": terms,
+        "locations": locations,
+        "searches": searches,
+    }
 
 
 def load_profile_busquedas() -> list[dict[str, str | int]]:
@@ -1537,6 +1574,23 @@ async def extraer_datos_job_desde_panel(page) -> dict:
 # PROCESAMIENTO
 # ============================================================
 
+async def persist_linkedin_offer(oferta: dict) -> str:
+    """Persist one scraped offer before the scraper moves to the next job."""
+    posting = linkedin_row_to_job_posting(oferta)
+    if posting is None:
+        raise RuntimeError(
+            f"No se pudo normalizar la oferta LinkedIn {oferta.get('id') or oferta.get('url') or 'sin id'}."
+        )
+    return str(await asyncio.to_thread(db.upsert_job_posting, posting))
+
+
+def _record_import_status(import_stats: dict[str, int], status: str) -> None:
+    if status not in {"new", "updated", "seen"}:
+        raise RuntimeError(f"Unexpected LinkedIn persistence status: {status}")
+    import_stats["total"] = int(import_stats.get("total") or 0) + 1
+    import_stats[status] = int(import_stats.get(status) or 0) + 1
+
+
 async def procesar_pagina_actual(
     page,
     visibles: list[dict],
@@ -1546,6 +1600,9 @@ async def procesar_pagina_actual(
     busqueda: dict,
     limit: int = LIMITE_RESULTADOS,
     page_added: list[dict] | None = None,
+    operation_id: int | None = None,
+    run_limit: int | None = None,
+    import_stats: dict[str, int] | None = None,
 ) -> int:
     ids = [x["id"] for x in visibles]
     nuevos_visibles = [x for x in visibles if x["id"] not in seen_ids]
@@ -1649,9 +1706,14 @@ async def procesar_pagina_actual(
             "descripcion": descripcion,
         }
 
+        persist_status = await persist_linkedin_offer(oferta)
+        if import_stats is not None:
+            _record_import_status(import_stats, persist_status)
+
         todas.append(oferta)
         guardar_oferta_checkpoint(oferta)
         seen_ids.add(job["id"])
+
         if page_added is not None:
             page_added.append(
                 {
@@ -1666,6 +1728,7 @@ async def procesar_pagina_actual(
                     "extraction_ok": extraccion_ok,
                     "applicant_count": cantidad_solicitantes,
                     "recruiter_name": recruiter_name,
+                    "persist_status": persist_status,
                 }
             )
 
@@ -1681,8 +1744,24 @@ async def procesar_pagina_actual(
 
         nuevos_agregados += 1
 
-        if len(todas) >= limit:
-            print(f"âœ… Alcanzado lÃ­mite de {limit} ofertas Ãºnicas.")
+        if operation_id is not None and import_stats is not None:
+            saved = int(import_stats.get("total") or 0)
+            global_limit = max(1, int(run_limit or saved))
+            try:
+                db.update_operation_progress(
+                    operation_id,
+                    (
+                        f"LinkedIn saved {saved}/{global_limit}: "
+                        f"{import_stats.get('new', 0)} new, "
+                        f"{import_stats.get('updated', 0)} updated. "
+                        f"Searching {busqueda.get('keywords')} in {busqueda.get('ubicacion')}."
+                    ),
+                )
+            except Exception as exc:
+                print(f"linkedin_progress_update_failed error={type(exc).__name__}")
+
+        if nuevos_agregados >= max(1, int(limit)):
+            print(f"âœ… Alcanzado lÃ­mite de {limit} ofertas nuevas para esta bÃºsqueda.")
             return nuevos_agregados
 
         await asyncio.sleep(jitter_seconds(1.2))
@@ -1768,6 +1847,12 @@ async def run_linkedin_scrape(
         "added_jobs": 0,
         "stop_reason": "not_started",
     }
+    import_stats = {
+        "new": 0,
+        "updated": 0,
+        "seen": 0,
+        "total": 0,
+    }
     print("\n" + "=" * 60)
     print("LinkedIn Job Scraper â€” Backend Python RAW")
     print("=" * 60)
@@ -1776,7 +1861,8 @@ async def run_linkedin_scrape(
     limit = max(1, int(limit or LIMITE_RESULTADOS))
     print(f"LIMITE_RESULTADOS_ACTIVO: {limit}")
     busquedas = load_profile_busquedas()
-    random.shuffle(busquedas)
+    initial_search_limit = jobs_per_search_limit(limit, busquedas)
+    print(f"CUOTA_INICIAL_POR_BUSQUEDA: {initial_search_limit}")
     print("BUSQUEDAS ACTIVAS:")
     for b in busquedas:
         print(
@@ -1801,6 +1887,7 @@ async def run_linkedin_scrape(
         summary={
             "active_searches": busquedas,
             "fresh_mode": not resume_from_checkpoint,
+            "max_jobs_per_search": initial_search_limit,
         },
     )
 
@@ -1810,7 +1897,14 @@ async def run_linkedin_scrape(
             try:
                 await asegurar_sesion_manual(page)
 
-                for busqueda in busquedas:
+                for search_index, busqueda in enumerate(busquedas):
+                    search_added = 0
+                    remaining_global_before_search = limit - int(run_stats["added_jobs"])
+                    remaining_searches = len(busquedas) - search_index
+                    per_search_limit = max(
+                        1,
+                        math.ceil(remaining_global_before_search / max(1, remaining_searches)),
+                    )
                     run_stats["searches_run"] += 1
                     print("\n" + "=" * 70)
                     print(f"INICIANDO BÃšSQUEDA: {busqueda['keywords']} â€” {busqueda['ubicacion']}")
@@ -1924,6 +2018,12 @@ async def run_linkedin_scrape(
                             print("No hay jobs visibles en esta pagina. Cambio de busqueda.")
                             break
 
+                        remaining_global = limit - int(run_stats["added_jobs"])
+                        remaining_search = per_search_limit - search_added
+                        page_job_limit = min(remaining_global, remaining_search)
+                        if page_job_limit <= 0:
+                            break
+
                         nuevos = await procesar_pagina_actual(
                             page=page,
                             visibles=visibles,
@@ -1931,9 +2031,13 @@ async def run_linkedin_scrape(
                             todas=todas,
                             seen_ids=seen_ids,
                             busqueda=busqueda,
-                            limit=limit,
+                            limit=page_job_limit,
                             page_added=added_summaries,
+                            operation_id=operation_id,
+                            run_limit=limit,
+                            import_stats=import_stats,
                         )
+                        search_added += nuevos
                         run_stats["added_jobs"] += nuevos
 
                         guardar_estado_checkpoint(busqueda, start, len(todas))
@@ -1952,8 +2056,10 @@ async def run_linkedin_scrape(
 
                         if paginas_sin_nuevos >= PAGINAS_CONSECUTIVAS_SIN_NUEVOS:
                             page_stop_reason = "consecutive_pages_without_new_jobs"
-                        elif len(todas) >= limit:
+                        elif int(run_stats["added_jobs"]) >= limit:
                             page_stop_reason = "limit_reached"
+                        elif search_added >= per_search_limit:
+                            page_stop_reason = "search_quota_reached"
 
                         _record_linkedin_page_event(
                             run_id,
@@ -1974,11 +2080,17 @@ async def run_linkedin_scrape(
                             print("Busqueda agotada: paginas consecutivas sin ofertas nuevas.")
                             break
 
-                        if len(todas) >= limit:
+                        if search_added >= per_search_limit:
+                            print(
+                                f"Cuota equilibrada alcanzada para esta bÃºsqueda: {search_added} jobs."
+                            )
+                            break
+
+                        if int(run_stats["added_jobs"]) >= limit:
                             run_stats["stop_reason"] = "limit_reached"
                             break
 
-                    if len(todas) >= limit:
+                    if int(run_stats["added_jobs"]) >= limit:
                         break
 
                 print("\nANTES DE EXPORTAR")
@@ -1986,13 +2098,23 @@ async def run_linkedin_scrape(
                 if run_stats["stop_reason"] != "limit_reached":
                     run_stats["stop_reason"] = "completed"
                 result = pd.DataFrame(deduplicar_ofertas(todas))
-                _finish_linkedin_run(run_id, run_started_at, run_timer, "completed", run_stats, len(result), None)
+                _finish_linkedin_run(
+                    run_id,
+                    run_started_at,
+                    run_timer,
+                    "completed",
+                    run_stats,
+                    import_stats,
+                    len(result),
+                    None,
+                )
                 result.attrs["linkedin_scan_run_id"] = run_id
                 result.attrs["linkedin_scan_summary"] = {
                     **run_stats,
                     "run_id": run_id,
                     "checkpoint_loaded_count": checkpoint_stats.get("checkpoint_loaded_count", 0),
                     "db_seen_ids_count": checkpoint_stats.get("db_seen_ids_count", 0),
+                    "import_stats": dict(import_stats),
                 }
                 return result
             finally:
@@ -2008,7 +2130,16 @@ async def run_linkedin_scrape(
             run_stats["stop_reason"] = "session_error"
         else:
             run_stats["stop_reason"] = "error"
-        _finish_linkedin_run(run_id, run_started_at, run_timer, "failed", run_stats, len(deduplicar_ofertas(todas)), str(exc))
+        _finish_linkedin_run(
+            run_id,
+            run_started_at,
+            run_timer,
+            "failed",
+            run_stats,
+            import_stats,
+            len(deduplicar_ofertas(todas)),
+            str(exc),
+        )
         raise
 
 
@@ -2058,6 +2189,7 @@ def _finish_linkedin_run(
     started_timer: float,
     status: str,
     run_stats: dict,
+    import_stats: dict[str, int],
     exported_jobs: int,
     error: str | None,
 ) -> None:
@@ -2077,6 +2209,10 @@ def _finish_linkedin_run(
         duplicate_visible_jobs=int(run_stats.get("duplicate_visible_jobs") or 0),
         added_jobs=int(run_stats.get("added_jobs") or 0),
         exported_jobs=int(exported_jobs),
+        imported_total=int(import_stats.get("total") or 0),
+        imported_new=int(import_stats.get("new") or 0),
+        imported_updated=int(import_stats.get("updated") or 0),
+        imported_seen=int(import_stats.get("seen") or 0),
         stop_reason=str(run_stats.get("stop_reason") or status),
         error=error,
         duration_seconds=duration_seconds,
@@ -2085,6 +2221,7 @@ def _finish_linkedin_run(
             "run_id": run_id,
             "started_at": started_at,
             "finished_at": finished_at,
+            "import_stats": dict(import_stats),
         },
     )
 

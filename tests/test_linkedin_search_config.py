@@ -3,8 +3,10 @@ from joborchestrator.scanning.linkedin import (
     FRESHNESS_WINDOW_SECONDS,
     SECONDARY_ROLE_FRESHNESS_WINDOW_SECONDS,
     TARGET_ROLE_FRESHNESS_WINDOW_SECONDS,
+    build_linkedin_search_plan,
     build_busquedas_from_profile,
     build_linkedin_search_params,
+    jobs_per_search_limit,
     resolve_output_dir,
 )
 
@@ -25,15 +27,65 @@ def test_build_busquedas_from_profile_adds_freshness_by_role_priority():
     )
 
     searches = build_busquedas_from_profile(profile)
-    by_keyword = {search["keywords"]: search for search in searches}
+    by_key = {
+        (search["keywords"], search["ubicacion"]): search
+        for search in searches
+    }
 
-    assert by_keyword["Backend Engineer"]["ubicacion"] == "Spain"
-    assert by_keyword["Backend Engineer"]["categoria"] == "backend_engineer"
-    assert by_keyword["Backend Engineer"]["role_priority"] == "target"
-    assert by_keyword["Backend Engineer"]["freshness_window_seconds"] == TARGET_ROLE_FRESHNESS_WINDOW_SECONDS
-    assert by_keyword["Python Engineer"]["freshness_window_seconds"] == TARGET_ROLE_FRESHNESS_WINDOW_SECONDS
-    assert by_keyword["Solutions Engineer"]["role_priority"] == "secondary"
-    assert by_keyword["Solutions Engineer"]["freshness_window_seconds"] == SECONDARY_ROLE_FRESHNESS_WINDOW_SECONDS
+    backend = by_key[("Backend Engineer", "Spain")]
+    assert backend["categoria"] == "backend_engineer"
+    assert backend["role_priority"] == "target"
+    assert backend["freshness_window_seconds"] == TARGET_ROLE_FRESHNESS_WINDOW_SECONDS
+    assert by_key[("Python Engineer", "Spain")]["freshness_window_seconds"] == TARGET_ROLE_FRESHNESS_WINDOW_SECONDS
+    assert by_key[("Solutions Engineer", "Spain")]["role_priority"] == "secondary"
+    assert by_key[("Solutions Engineer", "Spain")]["freshness_window_seconds"] == SECONDARY_ROLE_FRESHNESS_WINDOW_SECONDS
+
+    assert [
+        (search["keywords"], search["ubicacion"])
+        for search in searches[:3]
+    ] == [
+        ("Backend Engineer", "Spain"),
+        ("Python Engineer", "Spain"),
+        ("Solutions Engineer", "Spain"),
+    ]
+
+
+def test_linkedin_searches_deduplicate_work_modes_for_the_same_location():
+    profile = CandidateProfile(
+        target_roles=["Backend Engineer"],
+        application_targets=[
+            {
+                "label": "Malaga",
+                "location": "Malaga, Spain",
+                "work_modes": ["onsite", "hybrid", "remote"],
+            }
+        ],
+    )
+
+    searches = build_busquedas_from_profile(profile)
+    malaga = [
+        search
+        for search in searches
+        if search["keywords"] == "Backend Engineer"
+        and search["ubicacion"] == "Malaga, Spain"
+    ]
+
+    assert len(malaga) == 1
+
+
+def test_linkedin_search_plan_balances_limit_across_search_combinations():
+    searches = [
+        {"keywords": "Backend Engineer", "ubicacion": "Spain"},
+        {"keywords": "Python Engineer", "ubicacion": "Spain"},
+        {"keywords": "Solutions Engineer", "ubicacion": "Spain"},
+        {"keywords": "Backend Engineer", "ubicacion": "European Union"},
+    ]
+
+    assert jobs_per_search_limit(75, searches) == 19
+    plan = build_linkedin_search_plan(searches, 75)
+    assert plan["terms"] == ["Backend Engineer", "Python Engineer", "Solutions Engineer"]
+    assert plan["locations"] == ["Spain", "European Union"]
+    assert plan["total_searches"] == 4
 
 
 def test_build_linkedin_search_params_uses_date_sort_and_freshness_filter():

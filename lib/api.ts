@@ -12,6 +12,7 @@ import type {
   JobDetail,
   JobsResponse,
   LinkedInProfileSetting,
+  LinkedInSearchPlan,
   OperationRun,
   OpsStatus,
   WorkerStatus,
@@ -486,6 +487,10 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ profile_name: profileName }),
     })
+  },
+
+  async getLinkedInScanPlan(limit: number) {
+    return request<{ plan: LinkedInSearchPlan }>(`/api/scans/linkedin/plan?limit=${encodeURIComponent(limit)}`, { fresh: true })
   },
 
   async importLatestLinkedIn() {

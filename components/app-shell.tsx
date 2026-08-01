@@ -128,6 +128,11 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
   } = useStore()
   const backendReady = backendOnline || jobsMeta !== null || jobs.length > 0
   const totalJobs = jobsMeta?.total ?? jobs.length
+  const linkedinScanActive = Boolean(
+    opsStatus?.active_local_operations.some(
+      (operation) => operation.type === "linkedin_scan" && ["queued", "running"].includes(operation.status),
+    ),
+  )
 
   function navigate(next: Section) {
     setSection(next)
@@ -180,6 +185,19 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
       window.clearInterval(timer)
     }
   }, [loadOpsStatus])
+
+  useEffect(() => {
+    if (!linkedinScanActive || section !== "jobs") return
+    const pollJobs = () => {
+      void refresh()
+    }
+    const initialTimer = window.setTimeout(pollJobs, 0)
+    const timer = window.setInterval(pollJobs, 4000)
+    return () => {
+      window.clearTimeout(initialTimer)
+      window.clearInterval(timer)
+    }
+  }, [linkedinScanActive, refresh, section])
 
   async function scanFreshJobs() {
     setSearchState("searching")
