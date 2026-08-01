@@ -41,7 +41,7 @@ import { Badge } from "@/components/ui/badge"
 import { PageHeader } from "@/components/page-chrome"
 import { api } from "@/lib/api"
 import { useStore } from "@/lib/store"
-import type { ApplicationTarget, AutomationAccount, CompanySource, OperationRun, RankingJobRecord, ScanResult, WorkMode, WorkerStatus } from "@/lib/types"
+import type { ApplicationTarget, AutomationAccount, CompanySource, LinkedInSearchPlan, OperationRun, RankingJobRecord, ScanResult, WorkMode, WorkerStatus } from "@/lib/types"
 
 const DEFAULT_QUERIES = [
   "software engineer",
@@ -427,7 +427,8 @@ export function OpsScreen() {
   const [linkedinProfile, setLinkedinProfile] = useState("main")
   const [linkedinProfileInput, setLinkedinProfileInput] = useState("main")
   const [linkedinProfileDir, setLinkedinProfileDir] = useState("")
-  const [linkedinLimit, setLinkedinLimit] = useState(50)
+  const [linkedinLimit, setLinkedinLimit] = useState(75)
+  const [linkedinPlan, setLinkedinPlan] = useState<LinkedInSearchPlan | null>(null)
   const [scanOperationId, setScanOperationId] = useState<number | null>(null)
   const liveRefreshAtRef = useRef(0)
   const busyCopy = operationCopy(busy)
@@ -476,6 +477,24 @@ export function OpsScreen() {
     }, 0)
     return () => window.clearTimeout(timer)
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void api
+        .getLinkedInScanPlan(linkedinLimit)
+        .then((response) => {
+          if (!cancelled) setLinkedinPlan(response.plan)
+        })
+        .catch(() => {
+          if (!cancelled) setLinkedinPlan(null)
+        })
+    }, 250)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [linkedinLimit])
 
   useEffect(() => {
     if (!busyStartedAt) {
@@ -786,11 +805,10 @@ export function OpsScreen() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
             <LinkIcon className="size-4 text-primary" />
-            LinkedIn Excel import
+            LinkedIn scraper and Excel import
           </CardTitle>
           <CardDescription className="text-xs">
-            Uploads an Excel file exported by the local LinkedIn scraper into
-            the cloud database.
+            Review the effective role/location plan or import a historical scraper export.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -842,6 +860,34 @@ export function OpsScreen() {
           <p className="break-all text-xs text-muted-foreground">
             Active scraper session: {linkedinProfileDir || "linkedin_user_profile"}
           </p>
+          {linkedinPlan ? (
+            <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/20 p-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-medium text-foreground">
+                  {linkedinPlan.terms.length} terms · {linkedinPlan.locations.length} locations ·{" "}
+                  {linkedinPlan.total_searches} searches
+                </p>
+                <Badge variant="secondary">
+                  {linkedinPlan.limit} global / ~{linkedinPlan.max_jobs_per_search} initial per search
+                </Badge>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {linkedinPlan.terms.map((term) => (
+                  <Badge key={term} variant="outline">
+                    {term}
+                  </Badge>
+                ))}
+              </div>
+              <div className="max-h-40 overflow-y-auto rounded-md border border-border bg-background p-2 text-muted-foreground">
+                {linkedinPlan.searches.map((search, index) => (
+                  <p key={`${search.keywords}-${search.ubicacion}-${index}`}>
+                    {index + 1}. {search.keywords} — {search.ubicacion}
+                    {search.role_priority ? ` (${search.role_priority})` : ""}
+                  </p>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <Input
             type="file"
             accept=".xlsx,.xls"
