@@ -215,6 +215,10 @@ def _process_linkedin_scan(
 
     summary = output.get("summary") or {}
 
+    linkedin_error = (output.get("errors") or {}).get("linkedin")
+    if linkedin_error:
+        raise RuntimeError(f"LinkedIn scan failed: {linkedin_error}")
+
     output["ranking_job"] = (
         queue_post_scan_ranking(
             input_payload,
