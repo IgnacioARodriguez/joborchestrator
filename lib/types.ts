@@ -399,7 +399,7 @@ export interface ApplicationSessionResponse {
   operation_id?: number | null
 }
 
-export type ApplyQueuePipeline = "all" | "new" | "saved" | "discarded" | "apply"
+export type ApplyQueuePipeline = "all" | "new" | "saved" | "ready" | "discarded" | "apply"
 
 export interface JobsMeta {
   total: number
