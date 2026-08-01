@@ -21,6 +21,7 @@ import asyncio
 import json
 import math
 import os
+import random
 import re
 import sys
 import time
@@ -32,6 +33,7 @@ import pandas as pd
 from playwright.async_api import Error as PlaywrightError, async_playwright, TimeoutError as PlaywrightTimeoutError
 
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
+from joborchestrator.automation.accounts import load_password
 from joborchestrator.ranking.role_catalog import role_catalog_from_profile
 from joborchestrator.ranking.schemas import CandidateProfile
 from joborchestrator.scanning.hiring_contacts import (
@@ -688,6 +690,14 @@ async def asegurar_sesion_manual(page):
         )
 
     if "/login" in page.url:
+        saved_login = await intentar_login_guardado_linkedin(page)
+        if saved_login:
+            await _goto_linkedin_session_check(page)
+
+        if "/login" not in page.url:
+            print("Sesion de LinkedIn activa mediante credenciales guardadas.")
+            return
+
         print("\n" + "=" * 60)
         print("Inicia sesiÃ³n manualmente en la ventana abierta.")
         print("No cierres el navegador.")
@@ -714,6 +724,36 @@ async def asegurar_sesion_manual(page):
             )
 
     print("Sesion de LinkedIn activa.")
+
+
+async def intentar_login_guardado_linkedin(page) -> bool:
+    """Usa la cuenta guardada por la UI, sin saltar verificaciones de LinkedIn."""
+    account = db.get_automation_site_account("linkedin", "www.linkedin.com") or db.get_automation_site_account(
+        "generic", "www.linkedin.com"
+    )
+    if not account or not account.get("username"):
+        return False
+    password = load_password(account.get("password_ref"), str(account["username"]))
+    if not password:
+        return False
+
+    username = page.locator('input[autocomplete="username"], input[type="email"]').first
+    password_input = page.locator('input[autocomplete="current-password"], input[type="password"]').first
+    if await username.count() == 0 or await password_input.count() == 0:
+        return False
+    try:
+        await username.fill(str(account["username"]), timeout=3000)
+        await password_input.fill(password, timeout=3000)
+        submit = page.locator('button[type="submit"], input[type="submit"]').first
+        if await submit.count():
+            await submit.click(timeout=5000)
+        else:
+            await password_input.press("Enter", timeout=3000)
+        await page.wait_for_timeout(1800)
+        return "/login" not in page.url
+    except Exception as exc:
+        print(f"LinkedIn saved login failed: {type(exc).__name__}")
+        return False
 
 
 async def _goto_linkedin_session_check(page):

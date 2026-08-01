@@ -1032,6 +1032,8 @@ def test_invalid_nvidia_planner_plan_is_blocked(monkeypatch):
 def test_openai_fallback_renders_controlled_cv_after_nvidia_cv_failure(monkeypatch):
     from joborchestrator.intelligence import llm_application_materials as llm
 
+    monkeypatch.setenv("MATERIALS_CONTROLLED_CV_ENABLED", "0")
+    monkeypatch.setenv("MATERIALS_NVIDIA_PLANNER_ENABLED", "0")
     monkeypatch.setenv("MATERIALS_OPENAI_FALLBACK_ENABLED", "1")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-test-key")
     monkeypatch.setattr(

@@ -871,6 +871,8 @@ def test_nvidia_cv_request_failure_preserves_prior_validation_metadata(monkeypat
 def test_nvidia_application_kit_failure_combines_partial_generation_metadata(monkeypatch):
     from joborchestrator.intelligence import llm_application_materials
 
+    monkeypatch.setenv("MATERIALS_CONTROLLED_CV_ENABLED", "0")
+    monkeypatch.setenv("MATERIALS_NVIDIA_PLANNER_ENABLED", "0")
     monkeypatch.setattr(
         llm_application_materials,
         "_materials_payload",

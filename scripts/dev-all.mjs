@@ -31,6 +31,12 @@ const services = [
     args: ["-m", "joborchestrator.worker"],
   },
   {
+    name: "linkedin",
+    color: "\x1b[36m",
+    command: python,
+    args: ["-u", "-m", "joborchestrator.linkedin_worker"],
+  },
+  {
     name: "ranking",
     color: "\x1b[33m",
     command: python,
