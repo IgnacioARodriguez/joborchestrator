@@ -117,6 +117,12 @@ def parse_candidate_cv_ir(
     )
 
 
+_EXPERIENCE_HEADINGS = (
+    "experience", "professional experience", "work experience",
+    "employment history", "work history", "career history", "career journey",
+    "experiencia", "experiencia profesional", "historial laboral", "trayectoria profesional",
+)
+
 _CV_SECTION_HEADINGS = {
     "summary",
     "professional summary",
@@ -125,11 +131,7 @@ _CV_SECTION_HEADINGS = {
     "perfil",
     "perfil profesional",
     "resumen",
-    "experience",
-    "professional experience",
-    "work experience",
-    "experiencia",
-    "experiencia profesional",
+    *_EXPERIENCE_HEADINGS,
     "skills",
     "technical skills",
     "habilidades",
@@ -208,11 +210,7 @@ def _parse_summary_facts(
             "resumen",
         ),
         (
-            "experience",
-            "professional experience",
-            "work experience",
-            "experiencia",
-            "experiencia profesional",
+            *_EXPERIENCE_HEADINGS,
             "skills",
             "technical skills",
             "habilidades",
@@ -323,6 +321,7 @@ def render_ats_cv(cv_ir: CandidateCvIR, plan: AtsCvPlan | None = None, *, min_bu
 
 
 def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
+    section = _section(text, _EXPERIENCE_HEADINGS, ("education", "skills", "technical skills", "formacion", "formación"))
     section = _section(text, ("experience", "professional experience", "experiencia", "experiencia profesional"), ("education", "skills", "technical skills", "formacion", "formación"))
     if not section:
         return []
@@ -424,3 +423,48 @@ def _first_non_bullet(lines: list[str]) -> str:
 def _slug(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
     return slug or "item"
+
+
+# Extended section aliases and optional-colon headings.
+def _section(text: str, headings: tuple[str, ...], stop_headings: tuple[str, ...]) -> str:
+    heading_pattern = "|".join(re.escape(heading) for heading in headings)
+    stop_pattern = "|".join(re.escape(heading) for heading in stop_headings)
+    match = re.search(rf"(?ims)^\s*({heading_pattern})\s*:?\s*$([\s\S]*?)(?=^\s*({stop_pattern})\s*:?\s*$|\Z)", text)
+    return match.group(2) if match else ""
+
+
+def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
+    section = _section(text, _EXPERIENCE_HEADINGS, ("education", "skills", "technical skills", "formacion", "formación"))
+    if not section:
+        return []
+    lines = [line.strip() for line in section.splitlines() if line.strip()]
+    header_indices = [idx for idx, line in enumerate(lines) if _date_range_match(line)]
+    roles: list[ExperienceRole] = []
+    for role_index, header_idx in enumerate(header_indices):
+        header = lines[header_idx]
+        next_idx = header_indices[role_index + 1] if role_index + 1 < len(header_indices) else len(lines)
+        block = lines[header_idx + 1:next_idx]
+        title, dates = _split_title_dates(header)
+        company = _first_non_bullet(block) or "Unknown company"
+        bullets = [EvidenceBullet(id=f"role_{role_index + 1:02d}_b{bullet_index + 1:02d}", source_text=_strip_bullet_prefix(line), technologies=derive_keywords_used(line, supported_terms), mandatory=bullet_index == 0) for bullet_index, line in enumerate(block) if line.startswith(BULLET_PREFIXES)]
+        canonical = []
+        for line in block:
+            parsed = _parse_canonical_technology_line(line)
+            if parsed:
+                canonical = parsed
+        roles.append(ExperienceRole(id=f"role_{role_index + 1:02d}_{_slug(company)}", title=title or "Experience", company=company, location=None, dates=dates, bullets=bullets, canonical_technologies=canonical))
+    return roles
+
+
+def _parse_summary_facts(text: str, roles: list[ExperienceRole]) -> list[EvidenceFact]:
+    section = _section(text, ("summary", "professional summary", "profile", "professional profile", "perfil", "perfil profesional", "resumen"), (*_EXPERIENCE_HEADINGS, "skills", "technical skills", "habilidades", "competencias", "education", "formacion", "formación", "educacion", "educación"))
+    fact_texts = [_strip_bullet_prefix(line) for line in section.splitlines() if _strip_bullet_prefix(line)]
+    if not fact_texts:
+        fact_texts = [bullet.source_text for role in roles for bullet in role.bullets][:3]
+    return [EvidenceFact(id=f"fact_{index + 1:02d}", source_text=fact_text) for index, fact_text in enumerate(fact_texts[:5])]
+
+
+def _parse_education(text: str) -> list[EducationEntry]:
+    section = _section(text, ("education", "formacion", "formación"), ("skills", *_EXPERIENCE_HEADINGS))
+    lines = [line.strip() for line in section.splitlines() if line.strip()]
+    return [EducationEntry(id=f"education_{idx + 1:02d}", source_text=line) for idx, line in enumerate(lines)]
