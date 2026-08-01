@@ -22,7 +22,7 @@ import type {
 import { api } from "./api"
 
 type ApplyQueueFreshness = "active" | "all" | "stale"
-type JobsPipelineFilter = Exclude<ApplyQueuePipeline, "all" | "apply">
+type JobsPipelineFilter = Exclude<ApplyQueuePipeline, "apply">
 type ResourceStatus = "idle" | "loading" | "refreshing" | "success" | "empty" | "error"
 
 interface JobDetailEntry {
@@ -157,7 +157,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [applyQueueFreshness, setApplyQueueFreshnessState] = useState<ApplyQueueFreshness>("active")
   const [applyQueueQuery, setApplyQueueQueryState] = useState("")
   const [jobsMeta, setJobsMeta] = useState<JobsMeta | null>(null)
-  const [jobsPipelineFilter, setJobsPipelineFilterState] = useState<JobsPipelineFilter>("new")
+  const [jobsPipelineFilter, setJobsPipelineFilterState] = useState<JobsPipelineFilter>("all")
   const [preparationQueuePage, setPreparationQueuePageState] = useState(1)
   const [preparationJobsMeta, setPreparationJobsMeta] = useState<JobsMeta | null>(null)
   const [rankingVersions, setRankingVersions] = useState<string[]>([])
@@ -167,7 +167,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const applyQueuePageRef = useRef(1)
   const applyQueueFreshnessRef = useRef<ApplyQueueFreshness>("active")
   const applyQueueQueryRef = useRef("")
-  const jobsPipelineFilterRef = useRef<JobsPipelineFilter>("new")
+  const jobsPipelineFilterRef = useRef<JobsPipelineFilter>("all")
   const preparationQueuePageRef = useRef(1)
   const listRequestSeq = useRef(0)
   const preparationRequestSeq = useRef(0)

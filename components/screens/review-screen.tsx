@@ -26,16 +26,18 @@ import type { JobListItem, PipelineStatus } from "@/lib/types"
 import { PIPELINE_LABELS, rankingSummaryText, relativeTime } from "@/lib/job-ui"
 import { cn } from "@/lib/utils"
 
-type JobsFilter = "new" | "saved" | "discarded"
+type JobsFilter = "all" | "new" | "saved" | "discarded"
 type SearchState = "idle" | "searching" | "success" | "empty" | "error"
 
 const FILTERS: Array<{ id: JobsFilter; label: string; description: string }> = [
+  { id: "all", label: "Todos", description: "Todas las oportunidades activas" },
   { id: "new", label: "Sin revisar", description: "Pendientes de decisión" },
   { id: "saved", label: "Guardados", description: "Interesantes o listos para preparar" },
   { id: "discarded", label: "Descartados", description: "Fuera del flujo principal" },
 ]
 
 function statusForFilter(job: JobListItem, filter: JobsFilter) {
+  if (filter === "all") return true
   if (filter === "new") return job.pipeline_status === "new"
   if (filter === "saved") return job.pipeline_status === "shortlisted" || job.pipeline_status === "ready_to_apply"
   return job.pipeline_status === "discarded"
@@ -196,6 +198,7 @@ export function JobsScreen({
   const canPageNext = Boolean(jobsMeta?.has_next)
 
   const counts = {
+    all: jobsMeta?.pipeline_counts?.all ?? jobs.length,
     new: jobsMeta?.pipeline_counts?.new ?? jobs.filter((job) => statusForFilter(job, "new")).length,
     saved: jobsMeta?.pipeline_counts?.saved ?? jobs.filter((job) => statusForFilter(job, "saved")).length,
     discarded: jobsMeta?.pipeline_counts?.discarded ?? jobs.filter((job) => statusForFilter(job, "discarded")).length,
@@ -262,7 +265,7 @@ export function JobsScreen({
       ) : null}
 
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3">
-        <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1" role="tablist" aria-label="Filtros de jobs">
+        <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1 sm:grid-cols-4" role="tablist" aria-label="Filtros de jobs">
           {FILTERS.map((item) => {
             const active = filter === item.id
             return (
