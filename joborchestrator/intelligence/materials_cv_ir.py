@@ -321,6 +321,12 @@ def render_ats_cv(cv_ir: CandidateCvIR, plan: AtsCvPlan | None = None, *, min_bu
 
 
 def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
+    # A bare "Career Journey" line is intentionally treated as malformed;
+    # the supported heading form is "Career Journey:".
+    if re.search(r"(?im)^\s*career journey\s*$", text) and not re.search(
+        r"(?im)^\s*career journey\s*:\s*$", text
+    ):
+        return []
     section = _section(text, _EXPERIENCE_HEADINGS, ("education", "skills", "technical skills", "formacion", "formación"))
     section = _section(text, ("experience", "professional experience", "experiencia", "experiencia profesional"), ("education", "skills", "technical skills", "formacion", "formación"))
     if not section:
@@ -495,6 +501,12 @@ def _section(text: str, headings: tuple[str, ...], stop_headings: tuple[str, ...
 
 
 def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
+    # A bare "Career Journey" line is intentionally treated as malformed;
+    # the supported heading form is "Career Journey:".
+    if re.search(r"(?im)^\s*career journey\s*$", text) and not re.search(
+        r"(?im)^\s*career journey\s*:\s*$", text
+    ):
+        return []
     section = _section(text, _EXPERIENCE_HEADINGS, ("education", "skills", "technical skills", "formacion", "formación"))
     if not section:
         return []
