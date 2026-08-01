@@ -613,7 +613,7 @@ def test_controlled_pipeline_renders_cv_without_freeform_generation():
 
 def test_controlled_pipeline_records_parse_warnings_as_validation_errors():
     result = build_controlled_ats_cv(
-        "Career Journey\nBackend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API workflows.",
+        "Selected Work\nBackend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API workflows.",
         ["Python", "APIs"],
         planner_response={"summary_lines": [], "skill_ids": [], "role_plans": []},
     )
@@ -636,7 +636,7 @@ def test_nvidia_controlled_cv_blocks_parse_warnings(monkeypatch):
             {
                 "base_cv": {
                     "text": (
-                        "Career Journey\\n"
+                        "Selected Work\\n"
                         "Backend Developer 04/2022 - 03/2025\\n"
                         "Acme Systems\\n"
                         "- Built API workflows."
