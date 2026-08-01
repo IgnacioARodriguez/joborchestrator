@@ -48,6 +48,16 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - name: Load local runner secrets
+        shell: powershell
+        run: |
+          $localEnv = "C:\actions-runner\runner.env"
+          if (Test-Path $localEnv) {
+            Get-Content $localEnv | Where-Object { $_ -match '^\s*(TURSO_DATABASE_URL|TURSO_AUTH_TOKEN)\s*=' } | ForEach-Object {
+              Add-Content -Path $env:GITHUB_ENV -Value $_
+            }
+          }
+
       - name: Install backend and Chromium
         shell: powershell
         run: |
