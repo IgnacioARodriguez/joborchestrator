@@ -14,24 +14,18 @@ from joborchestrator.scanning import search_providers
 def test_linkedin_scan_output_is_json_serializable(monkeypatch):
     scraped = pd.DataFrame([{"external_id": "li-1", "title": "Backend Engineer", "company": "Acme"}])
     scraped.attrs["linkedin_scan_run_id"] = 12
-    scraped.attrs["linkedin_scan_summary"] = {"searches_run": 1, "pages_checked": 1, "stop_reason": "completed"}
+    scraped.attrs["linkedin_scan_summary"] = {
+        "searches_run": 1,
+        "pages_checked": 1,
+        "stop_reason": "completed",
+        "import_stats": {"new": 1, "updated": 0, "seen": 0, "total": 1},
+    }
     updated_runs = []
 
     async def fake_linkedin_scrape(**kwargs):
         return scraped
 
     monkeypatch.setattr(orchestrator.linkedin, "run_linkedin_scrape", fake_linkedin_scrape)
-    monkeypatch.setattr(
-        orchestrator,
-        "import_linkedin_dataframe_to_job_postings",
-        lambda frame: {
-            "jobs": [JobPosting(external_id="li-1", source="linkedin_scraper", company="Acme")],
-            "new": 1,
-            "updated": 0,
-            "seen": 0,
-            "total": 1,
-        },
-    )
     monkeypatch.setattr(orchestrator.db, "mark_jobs_inactive_by_last_seen", lambda source, freshness_window_seconds: 0)
     monkeypatch.setattr(
         orchestrator.db,

@@ -31,5 +31,15 @@ def test_profile_search_terms_are_profile_driven() -> None:
     searches = build_busquedas_from_profile(profile)
 
     assert terms == ["Registered Nurse", "RN", "Clinical Nurse"]
-    assert {"keywords": "RN", "ubicacion": "Spain", "categoria": "rn"} in searches
-    assert {"keywords": "Clinical Nurse", "ubicacion": "European Union", "categoria": "clinical_nurse"} in searches
+    assert any(
+        search["keywords"] == "RN"
+        and search["ubicacion"] == "Spain"
+        and search["categoria"] == "rn"
+        for search in searches
+    )
+    assert any(
+        search["keywords"] == "Clinical Nurse"
+        and search["ubicacion"] == "European Union"
+        and search["categoria"] == "clinical_nurse"
+        for search in searches
+    )
