@@ -171,6 +171,7 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
                 ranking=ranking,
                 model=selected_model,
                 cv_strategy=cv_strategy,
+                targets=targets,
             )
         except LLMMaterialsError as exc:
             _record_failed_materials_attempt(operation_id, job_id, provider, selected_model, prompt_versions, exc)
@@ -184,6 +185,23 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
     db.update_operation_progress(operation_id, "Saving generated application materials.")
     ats_cv_text = kit.get("ats_cv_text") or kit.get("ats_cv_notes")
     generation_metadata = kit.get("_generation_metadata") if isinstance(kit.get("_generation_metadata"), dict) else {}
+    partial_success = bool(generation_metadata.get("partial_success"))
+    material_statuses = generation_metadata.get("material_statuses") if isinstance(generation_metadata.get("material_statuses"), dict) else {}
+    failed_materials = [str(value) for value in generation_metadata.get("failed_materials") or []]
+
+    def ready_material_value(material: str, value: Any) -> Any:
+        if material_statuses and material_statuses.get(material) != "ready":
+            return None
+        return value
+
+    selected_review_targets = targets
+    if material_statuses:
+        selected = targets or ["ats_cv", "cover_letter", "recruiter_message", "autofill"]
+        selected_review_targets = [
+            target
+            for target in selected
+            if material_statuses.get(target) == "ready"
+        ]
     profile_metadata = profile_trace(db.get_candidate_profile_payload())
     generated_values = {
         "recruiter_message": kit.get("recruiter_message"),
@@ -193,16 +211,16 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
     }
     review_states = next_material_review_states(
         parse_json_value(job.get("materials_review_states_json"), {}),
-        targets,
+        selected_review_targets,
         generated_values,
     )
     db.update_job_application_materials(
         job_id,
         pipeline_status="shortlisted" if shortlist else None,
-        recruiter_message=kit.get("recruiter_message") if not targets or "recruiter_message" in targets else None,
-        cover_letter=kit.get("cover_letter") if not targets or "cover_letter" in targets else None,
-        ats_cv_text=ats_cv_text if not targets or "ats_cv" in targets else None,
-        autofill_notes=kit.get("autofill_notes") if not targets or "autofill" in targets else None,
+        recruiter_message=ready_material_value("recruiter_message", kit.get("recruiter_message")) if not targets or "recruiter_message" in targets else None,
+        cover_letter=ready_material_value("cover_letter", kit.get("cover_letter")) if not targets or "cover_letter" in targets else None,
+        ats_cv_text=ready_material_value("ats_cv", ats_cv_text) if not targets or "ats_cv" in targets else None,
+        autofill_notes=ready_material_value("autofill", kit.get("autofill_notes")) if not targets or "autofill" in targets else None,
         materials_provider=provider,
         materials_model=selected_model,
         materials_prompt_versions=prompt_versions,
@@ -234,9 +252,16 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
             "job_id": job_id,
             "provider": provider,
             "materials_saved": True,
+            "partial_success": partial_success,
+            "material_statuses": material_statuses,
+            "failed_materials": failed_materials,
             "resume_variant_id": resume_variant.get("id") if resume_variant else None,
         },
-        "Application materials ready.",
+        (
+            "ATS CV ready; some requested materials need regeneration."
+            if partial_success
+            else "Application materials ready."
+        ),
     )
     logger.info("Completed application materials operation=%s job_id=%s provider=%s", operation_id, job_id, provider)
 

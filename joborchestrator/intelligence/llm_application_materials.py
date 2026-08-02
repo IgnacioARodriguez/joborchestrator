@@ -165,6 +165,10 @@ def build_application_kit_with_llm(
     return kit
 
 
+_MATERIAL_TARGETS = ("ats_cv", "cover_letter", "recruiter_message", "autofill")
+_KIT_MATERIAL_TARGETS = ("cover_letter", "recruiter_message", "autofill")
+
+
 def build_application_kit_with_nvidia(
     job: Any,
     ranking: Any | None = None,
@@ -174,67 +178,161 @@ def build_application_kit_with_nvidia(
     timeout: float = DEFAULT_NVIDIA_MATERIALS_TIMEOUT_SECONDS,
     validation_retry_limit: int | None = None,
     cv_strategy: str | None = None,
-) -> dict[str, str]:
+    targets: list[str] | None = None,
+) -> dict[str, Any]:
     key = api_key or os.getenv("NVIDIA_API_KEY") or os.getenv("NIM_API_KEY")
     if not key:
         raise LLMMaterialsError("NVIDIA_API_KEY or NIM_API_KEY is required to generate materials with NVIDIA.")
 
+    requested_targets = _normalize_requested_material_targets(targets)
+    needs_cv = "ats_cv" in requested_targets
+    needs_kit = any(target in requested_targets for target in _KIT_MATERIAL_TARGETS)
+
     payload = _materials_payload(job, ranking)
     routing = materials_routing_snapshot(cv_strategy)
     payload["materials_routing"] = routing
+    payload["requested_material_targets"] = requested_targets
     input_hash = _materials_input_hash(payload)
     selected_model = model or DEFAULT_NVIDIA_MATERIALS_MODEL
-    try:
-        if routing["selected_pipeline"] == "controlled_cv":
-            cv_response = _call_nvidia_controlled_cv(payload, key, selected_model, timeout)
-        else:
-            cv_response = _call_nvidia_cv(
+
+    cv_response: dict[str, Any] = {}
+    if needs_cv:
+        try:
+            if routing["selected_pipeline"] == "controlled_cv":
+                cv_response = _call_nvidia_controlled_cv(payload, key, selected_model, timeout)
+            else:
+                cv_response = _call_nvidia_cv(
+                    payload,
+                    key,
+                    selected_model,
+                    timeout,
+                    validation_retry_limit=validation_retry_limit,
+                )
+        except LLMMaterialsError as exc:
+            _attach_routing_metadata_to_error(exc, routing, input_hash)
+            if not openai_fallback_enabled():
+                raise
+            cv_response = _call_openai_controlled_cv_fallback(
+                payload,
+                DEFAULT_MATERIALS_MODEL,
+                timeout,
+                previous_error=exc,
+            )
+        _attach_routing_metadata(cv_response, routing, input_hash)
+
+    kit_response: dict[str, Any] = {}
+    if needs_kit:
+        try:
+            kit_response = _call_nvidia_kit(
                 payload,
                 key,
                 selected_model,
                 timeout,
                 validation_retry_limit=validation_retry_limit,
             )
-    except LLMMaterialsError as exc:
-        _attach_routing_metadata_to_error(exc, routing, input_hash)
-        if not openai_fallback_enabled():
-            raise
-        cv_response = _call_openai_controlled_cv_fallback(
-            payload,
-            DEFAULT_MATERIALS_MODEL,
-            timeout,
-            previous_error=exc,
-        )
-    _attach_routing_metadata(cv_response, routing, input_hash)
+        except LLMMaterialsError as exc:
+            _attach_routing_metadata_to_error(exc, routing, input_hash)
+            if not needs_cv or not str(cv_response.get("ats_cv_text") or "").strip():
+                raise
 
-    try:
-        kit_response = _call_nvidia_kit(
-            payload,
-            key,
-            selected_model,
-            timeout,
-            validation_retry_limit=validation_retry_limit,
-        )
-    except LLMMaterialsError as exc:
-        _attach_routing_metadata_to_error(exc, routing, input_hash)
-        metadata = _combined_generation_metadata(
-            [cv_response, {"_generation_metadata": exc.generation_metadata}]
-        )
-        metadata.update({**routing, "input_hash": input_hash})
-        cv_metadata = cv_response.get("_generation_metadata") if isinstance(cv_response.get("_generation_metadata"), dict) else {}
-        metadata["pipeline"] = str(cv_metadata.get("pipeline") or routing["selected_pipeline"])
-        raise LLMMaterialsError(str(exc), generation_metadata=metadata) from exc
+            error_metadata = dict(exc.generation_metadata or {})
+            error_metadata.update(
+                {
+                    "stage": "kit_generation",
+                    "accepted": False,
+                }
+            )
+            metadata = _combined_generation_metadata(
+                [cv_response, {"_generation_metadata": error_metadata}]
+            )
+            metadata.update({**routing, "input_hash": input_hash})
+            cv_metadata = (
+                cv_response.get("_generation_metadata")
+                if isinstance(cv_response.get("_generation_metadata"), dict)
+                else {}
+            )
+            metadata["pipeline"] = str(cv_metadata.get("pipeline") or routing["selected_pipeline"])
+            metadata["partial_success"] = True
+            metadata["material_statuses"] = _material_statuses(
+                requested_targets,
+                cv_ready=True,
+                kit_ready=False,
+            )
+            metadata["failed_materials"] = [
+                target
+                for target in requested_targets
+                if target in _KIT_MATERIAL_TARGETS
+            ]
 
-    response = {**kit_response, **cv_response}
-    combined = _combined_generation_metadata([cv_response, kit_response])
+            response = {
+                "recruiter_message": "",
+                "cover_letter": "",
+                "autofill_notes": "",
+                "risk_flags": [],
+                "keywords_used": [],
+                **cv_response,
+                "_generation_metadata": metadata,
+            }
+            kit = _kit_from_response(response)
+            _attach_generation_metadata(kit, response)
+            return kit
+
+    response = {
+        "recruiter_message": "",
+        "cover_letter": "",
+        "autofill_notes": "",
+        "ats_cv_text": "",
+        "risk_flags": [],
+        "keywords_used": [],
+        **kit_response,
+        **cv_response,
+    }
+    combined = _combined_generation_metadata(
+        [result for result in (cv_response, kit_response) if result]
+    )
     combined.update({**routing, "input_hash": input_hash})
-    cv_metadata = cv_response.get("_generation_metadata") if isinstance(cv_response.get("_generation_metadata"), dict) else {}
+    cv_metadata = (
+        cv_response.get("_generation_metadata")
+        if isinstance(cv_response.get("_generation_metadata"), dict)
+        else {}
+    )
     combined["pipeline"] = str(cv_metadata.get("pipeline") or routing["selected_pipeline"])
+    combined["partial_success"] = False
+    combined["material_statuses"] = _material_statuses(
+        requested_targets,
+        cv_ready=not needs_cv or bool(str(response.get("ats_cv_text") or "").strip()),
+        kit_ready=True,
+    )
+    combined["failed_materials"] = []
     response["_generation_metadata"] = combined
     kit = _kit_from_response(response)
     _attach_generation_metadata(kit, response)
     return kit
 
+
+def _normalize_requested_material_targets(targets: list[str] | None) -> list[str]:
+    requested = [str(target or "").strip() for target in targets or []]
+    if not requested:
+        return list(_MATERIAL_TARGETS)
+    unknown = [target for target in requested if target not in _MATERIAL_TARGETS]
+    if unknown:
+        raise LLMMaterialsError(f"Unsupported material targets: {', '.join(unknown)}")
+    return [target for target in _MATERIAL_TARGETS if target in requested]
+
+
+def _material_statuses(
+    requested_targets: list[str],
+    *,
+    cv_ready: bool,
+    kit_ready: bool,
+) -> dict[str, str]:
+    statuses: dict[str, str] = {}
+    for target in requested_targets:
+        if target == "ats_cv":
+            statuses[target] = "ready" if cv_ready else "failed_validation"
+        else:
+            statuses[target] = "ready" if kit_ready else "failed_validation"
+    return statuses
 
 def _materials_input_hash(payload: dict[str, Any]) -> str:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
@@ -494,9 +592,9 @@ def _materials_experience_claim_constraints(base_cv_text: str) -> list[dict[str,
 
 def _kit_from_response(response: dict[str, Any]) -> dict[str, Any]:
     kit: dict[str, Any] = {
-        "recruiter_message": _clean_recruiter_message(_material_text(response["recruiter_message"])),
+        "recruiter_message": _clean_recruiter_message(_material_text(response.get("recruiter_message"))),
         "cover_letter": str(response.get("cover_letter") or ""),
-        "ats_cv_text": _clean_cv_text_for_export(str(response["ats_cv_text"])),
+        "ats_cv_text": _clean_cv_text_for_export(str(response.get("ats_cv_text") or "")),
         "autofill_notes": _autofill_notes_text(response),
     }
     if isinstance(response.get("risk_flags"), list):
@@ -585,7 +683,7 @@ def _combined_generation_metadata(responses: list[dict[str, Any]]) -> dict[str, 
                     "stage": str(metadata.get("stage") or metadata.get("pipeline") or "materials_generation"),
                     "attempt_number": attempt_count or 1,
                     "validation_errors": validation_errors,
-                    "accepted": True,
+                    "accepted": bool(metadata.get("accepted", True)),
                 }
             )
     combined = {"validation_attempts": attempts or 1, "validation_errors": errors}
@@ -1500,7 +1598,9 @@ def _call_nvidia_kit(
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
         try:
-            previous_response_kwargs = {"previous_response": previous_response} if previous_response and _accepts_previous_response_kwarg(_call_nvidia_contract_once) else {}
+            previous_response_kwargs = {
+                "previous_response": previous_response
+            } if previous_response and _accepts_previous_response_kwarg(_call_nvidia_contract_once) else {}
             parsed = _call_nvidia_contract_once(
                 _nvidia_kit_contract(),
                 payload,
@@ -1511,17 +1611,24 @@ def _call_nvidia_kit(
                 **previous_response_kwargs,
             )
         except LLMMaterialsError as exc:
-            raise LLMMaterialsError(
-                str(exc),
-                generation_metadata=_request_failure_metadata(attempt, validation_errors, exc),
-            ) from exc
-        repair_regression = _repair_regression_feedback(previous_response, parsed, repair_constraint_feedback)
+            metadata = _request_failure_metadata(attempt, validation_errors, exc)
+            metadata.update({"stage": "kit_generation", "accepted": False})
+            raise LLMMaterialsError(str(exc), generation_metadata=metadata) from exc
+
+        parsed, deterministic_repairs = _repair_kit_response_basics(parsed)
+        repair_regression = _repair_regression_feedback(
+            previous_response,
+            parsed,
+            repair_constraint_feedback,
+        )
         validation_feedback = repair_regression or _kit_validation_error(parsed, payload)
         if not validation_feedback:
             parsed["_generation_metadata"] = {
                 "validation_attempts": attempt + 1,
                 "validation_errors": validation_errors,
                 "stage": "kit_generation",
+                "accepted": True,
+                "deterministic_repairs": deterministic_repairs,
             }
             return parsed
         if attempt < retry_limit and not _is_unrecoverable_validation_feedback(validation_feedback):
@@ -1535,12 +1642,52 @@ def _call_nvidia_kit(
                 sorted(parsed.keys()),
             )
             continue
+
+        metadata = _validation_failure_metadata(
+            attempt,
+            validation_errors,
+            validation_feedback,
+        )
+        metadata.update(
+            {
+                "stage": "kit_generation",
+                "accepted": False,
+                "output_text": json.dumps(parsed, ensure_ascii=False, default=str),
+                "deterministic_repairs": deterministic_repairs,
+            }
+        )
         raise LLMMaterialsError(
             f"NVIDIA kit response was incomplete: {validation_feedback}",
-            generation_metadata=_validation_failure_metadata(attempt, validation_errors, validation_feedback),
+            generation_metadata=metadata,
         )
     raise LLMMaterialsError("NVIDIA kit response did not produce usable materials.")
 
+
+def _repair_kit_response_basics(response: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    repaired = dict(response)
+    repairs: list[str] = []
+    message = _clean_recruiter_message(_material_text(repaired.get("recruiter_message")))
+    if len(message) > RECRUITER_MESSAGE_MAX_CHARS:
+        message = _truncate_recruiter_message(message, RECRUITER_MESSAGE_MAX_CHARS)
+        repairs.append("recruiter_message_truncated")
+    repaired["recruiter_message"] = message
+    return repaired, repairs
+
+
+def _truncate_recruiter_message(message: str, max_chars: int) -> str:
+    value = re.sub(r"\s+", " ", str(message or "")).strip()
+    if len(value) <= max_chars:
+        return value
+    candidate = value[: max_chars - 1].rstrip()
+    sentence_cut = max(candidate.rfind(". "), candidate.rfind("! "), candidate.rfind("? "))
+    word_cut = candidate.rfind(" ")
+    cut = sentence_cut + 1 if sentence_cut >= int(max_chars * 0.55) else word_cut
+    if cut < int(max_chars * 0.55):
+        cut = len(candidate)
+    result = candidate[:cut].rstrip(" ,;:-")
+    if result and result[-1] not in ".!?":
+        result += "."
+    return result[:max_chars]
 
 def _call_nvidia_contract_once(
     contract: str,
