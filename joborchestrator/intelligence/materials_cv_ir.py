@@ -447,7 +447,7 @@ def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
     if not section:
         return []
 
-    lines = [line.strip() for line in section.splitlines() if line.strip()]
+    lines = _normalize_experience_lines(section)
     header_indices = [
         index
         for index, line in enumerate(lines)
@@ -464,7 +464,12 @@ def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
         block = lines[header_index + 1 : next_index]
         title, company, location, dates = _parse_role_header(header, block)
 
-        metadata_lines = _role_metadata_lines(block, company, location)
+        bullet_lines = [
+            line
+            for line in block
+            if line.startswith(BULLET_PREFIXES)
+            and not _parse_canonical_technology_line(line)
+        ]
         bullets = [
             EvidenceBullet(
                 id=f"role_{role_index + 1:02d}_b{bullet_index + 1:02d}",
@@ -472,8 +477,7 @@ def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
                 technologies=derive_keywords_used(line, supported_terms),
                 mandatory=bullet_index == 0,
             )
-            for bullet_index, line in enumerate(block)
-            if line.startswith(BULLET_PREFIXES)
+            for bullet_index, line in enumerate(bullet_lines)
         ]
         canonical = dedupe_technologies(
             technology
@@ -499,7 +503,6 @@ def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
                 canonical_technologies=canonical,
             )
         )
-        del metadata_lines  # explicit: metadata lines are intentionally excluded from bullets.
     return roles
 
 
@@ -516,15 +519,15 @@ def _parse_role_header(
     parts = [part.strip() for part in prefix.split("|") if part.strip()]
     if len(parts) >= 2:
         title = parts[0]
-        company = parts[1]
-        location = " | ".join(parts[2:]) or None
-        return title, company, location, dates
+        company, embedded_location = _split_company_location(parts[1])
+        explicit_location = " | ".join(parts[2:]) or None
+        return title, company, explicit_location or embedded_location, dates
 
     title = prefix
     company_index = _first_company_line_index(block)
-    company = block[company_index].strip() if company_index is not None else ""
-    location: str | None = None
-    if company_index is not None:
+    raw_company = block[company_index].strip() if company_index is not None else ""
+    company, location = _split_company_location(raw_company)
+    if company_index is not None and location is None:
         for line in block[company_index + 1 : company_index + 3]:
             if line.startswith(BULLET_PREFIXES) or _parse_canonical_technology_line(line):
                 break
@@ -533,6 +536,79 @@ def _parse_role_header(
                 break
     return title, company, location, dates
 
+
+def _normalize_experience_lines(section: str) -> list[str]:
+    raw_lines = [line.strip() for line in str(section or "").splitlines() if line.strip()]
+    normalized: list[str] = []
+    for index, line in enumerate(raw_lines):
+        if (
+            normalized
+            and normalized[-1].startswith(BULLET_PREFIXES)
+            and not line.startswith(BULLET_PREFIXES)
+            and not _looks_like_role_header_line(line)
+            and not _parse_canonical_technology_line(line)
+            and _normalized_heading(line) not in _CV_SECTION_HEADINGS
+            and not _looks_like_multiline_role_prefix(raw_lines, index)
+        ):
+            normalized[-1] = f"{normalized[-1].rstrip()} {line.lstrip()}".strip()
+            continue
+        normalized.append(line)
+    return normalized
+
+
+def _looks_like_multiline_role_prefix(lines: list[str], index: int) -> bool:
+    line = str(lines[index] or "").strip()
+    if not line or line.endswith((".", ";", ":")):
+        return False
+    words = re.findall(r"[A-Za-zÃ€-Ã¿][A-Za-zÃ€-Ã¿'â€™-]*", line)
+    named_words = sum(1 for word in words if word[:1].isupper())
+    looks_named = bool(words) and named_words >= max(1, len(words) - 1)
+    looks_like_role = bool(
+        re.search(
+            r"(?i)\b(developer|engineer|consultant|architect|manager|analyst|specialist|lead|designer)\b",
+            line,
+        )
+    )
+    if not looks_named and not looks_like_role:
+        return False
+    following = lines[index + 1 : index + 3]
+    return len(line) <= 100 and any(_date_range_match(candidate) for candidate in following)
+
+
+def _split_company_location(value: str) -> tuple[str, str | None]:
+    text = str(value or "").strip()
+    if not text:
+        return "", None
+
+    for separator in (" Â· ", " â€¢ "):
+        if separator in text:
+            company, location = text.rsplit(separator, 1)
+            if company.strip() and _looks_like_location_line(location):
+                return company.strip(), location.strip()
+
+    countries = (
+        "Spain|Argentina|Uruguay|Mexico|Portugal|Italy|France|Germany|"
+        "United Kingdom|UK|United States|USA|Canada|Brazil|Chile|Colombia|Peru"
+    )
+    multiword_cities = (
+        "M.laga|Malaga|Buenos Aires|Mexico City|New York|San Francisco|Los Angeles|"
+        "Rio de Janeiro|Sao Paulo"
+    )
+    multiword = re.match(
+        rf"^(?P<company>.+?)\s+(?P<location>(?:{multiword_cities}),\s*(?:{countries}))$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if multiword:
+        return multiword.group("company").strip(), multiword.group("location").strip()
+
+    single_city = re.match(
+        rf"^(?P<company>.+)\s+(?P<location>[A-Z][^,]+,\s*(?:{countries}))$",
+        text,
+    )
+    if single_city:
+        return single_city.group("company").strip(), single_city.group("location").strip()
+    return text, None
 
 def _role_metadata_lines(
     block: list[str],
