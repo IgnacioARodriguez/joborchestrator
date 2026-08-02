@@ -119,10 +119,10 @@ export function getPreparationViewState(
   if (sessionState && READY_SESSION_STATES.has(sessionState)) {
     return buildState({
       status: "application_started",
-      label: "Aplicacion iniciada",
-      description: "La candidatura esta lista para que revises el portal y confirmes el envio.",
-      primaryAction: { type: "confirm_submitted", label: "Confirmar que aplique" },
-      secondaryActions: [{ type: "continue_session", label: "Continuar sesion" }],
+      label: "Listo para enviar",
+      description: "El formulario esta preparado. Revisalo en el portal y realiza el envio final.",
+      primaryAction: { type: "review_materials", label: "Revisar y enviar" },
+      secondaryActions: [{ type: "confirm_submitted", label: "Ya envie la candidatura" }],
       activeStep: "confirmation",
       materials,
       completed: { materials: true, review: true, application: true },
@@ -150,16 +150,22 @@ export function getPreparationViewState(
   if (sessionState && REVIEW_SESSION_STATES.has(sessionState)) {
     return buildState({
       status: sessionState === "needs_user_input" ? "blocked" : "needs_review",
-      label: sessionState === "needs_user_input" ? "Con problema" : "Requiere revision",
+      label: sessionState === "needs_user_input" ? "Necesita tu ayuda" : "Listo para revisar",
       description:
         sessionState === "needs_user_input"
-          ? "El portal necesita datos o una accion manual antes de continuar."
-          : "Revisa los datos antes de seguir en el portal.",
+          ? "La ventana de aplicacion esta esperando que completes un paso manual."
+          : "El formulario esta preparado para que revises los datos antes de enviarlo.",
       primaryAction: {
-        type: sessionState === "needs_user_input" ? "resolve_problem" : "continue_review",
-        label: sessionState === "needs_user_input" ? "Resolver problema" : "Continuar revision",
+        type: "review_materials",
+        label: sessionState === "needs_user_input" ? "Ver paso pendiente" : "Revisar formulario",
       },
-      secondaryActions: [{ type: "confirm_submitted", label: "Confirmar que aplique" }],
+      secondaryActions:
+        sessionState === "needs_user_input"
+          ? [
+              { type: "continue_session", label: "Ya resolvi el paso" },
+              { type: "confirm_submitted", label: "Ya envie la candidatura" },
+            ]
+          : [{ type: "confirm_submitted", label: "Ya envie la candidatura" }],
       activeStep: sessionState === "needs_user_input" ? "application" : "review",
       blockedStep: sessionState === "needs_user_input" ? "application" : undefined,
       blocker: humanBlocker(job, session),
@@ -171,9 +177,9 @@ export function getPreparationViewState(
   if (sessionState && ACTIVE_SESSION_STATES.has(sessionState)) {
     return buildState({
       status: "application_started",
-      label: "Aplicacion iniciada",
-      description: "Hay una sesion de preparacion en curso.",
-      primaryAction: { type: "continue_session", label: "Continuar sesion" },
+      label: "Completando formulario",
+      description: "JobOrchestrator esta abriendo el portal y completando los campos seguros.",
+      primaryAction: { type: "continue_session", label: "Actualizar estado" },
       secondaryActions: hasMaterials ? [{ type: "review_materials", label: "Revisar materiales" }] : [],
       activeStep: "application",
       materials,
@@ -200,7 +206,7 @@ export function getPreparationViewState(
       label: "Requiere revision",
       description: "Los materiales estan generados, pero necesitan una mirada antes de aplicar.",
       primaryAction: { type: "review_materials", label: "Revisar materiales" },
-      secondaryActions: allRequiredMaterialsReady ? [{ type: "open_portal", label: "Abrir portal" }] : [],
+      secondaryActions: allRequiredMaterialsReady ? [{ type: "open_portal", label: "Comenzar aplicacion" }] : [],
       activeStep: "review",
       blocker: materialWarnings.map(materialReasonLabel).join(" "),
       materials,
@@ -213,7 +219,7 @@ export function getPreparationViewState(
       status: "ready_to_apply",
       label: "Listo para aplicar",
       description: "Los materiales principales estan listos para usar en el portal.",
-      primaryAction: { type: "open_portal", label: "Abrir portal de aplicacion" },
+      primaryAction: { type: "open_portal", label: "Comenzar aplicacion" },
       secondaryActions: [{ type: "review_materials", label: "Revisar materiales" }],
       activeStep: "application",
       materials,

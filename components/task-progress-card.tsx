@@ -17,9 +17,9 @@ export function AsyncActionButton({ pending = false, pendingLabel, disabled, chi
   return <Button {...props} disabled={disabled || pending} aria-busy={pending}><AsyncActionContent pending={pending} pendingLabel={pendingLabel}>{children}</AsyncActionContent></Button>
 }
 
-export function TaskProgressCard({ title, description, steps = [], startedAt, progress, status = "active", technicalDetails, compact = false, className }: {
+export function TaskProgressCard({ title, description, steps = [], startedAt, progress, status = "active", technicalDetails, actions, compact = false, className }: {
   title: string; description: string; steps?: TaskProgressStep[]; startedAt?: string | null; progress?: number | null
-  status?: "active" | "success" | "error"; technicalDetails?: string | null; compact?: boolean; className?: string
+  status?: "active" | "success" | "error"; technicalDetails?: string | null; actions?: ReactNode; compact?: boolean; className?: string
 }) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const active = status === "active"
@@ -38,6 +38,7 @@ export function TaskProgressCard({ title, description, steps = [], startedAt, pr
         {active ? <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-primary/10">{normalizedProgress === null ? <div className="h-full w-1/2 animate-pulse rounded-full bg-primary" /> : <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${normalizedProgress}%` }} />}</div> : null}
         {steps.length > 0 ? <ol className="mt-3 grid gap-1.5 sm:grid-cols-2">{steps.map(step => <li key={step.label} className={cn("flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs", step.state === "done" && "border-success/20 bg-success/5 text-success-foreground", step.state === "active" && "border-primary/20 bg-background text-foreground", step.state === "error" && "border-destructive/20 bg-destructive/5 text-destructive", step.state === "pending" && "border-border bg-muted/20 text-muted-foreground")}>{step.state === "done" ? <CheckCircle2 className="size-3.5 shrink-0" /> : step.state === "active" ? <LoaderCircle className="size-3.5 shrink-0 animate-spin" /> : step.state === "error" ? <AlertCircle className="size-3.5 shrink-0" /> : <Circle className="size-3.5 shrink-0" />}<span>{step.label}</span></li>)}</ol> : null}
         {technicalDetails ? <details className="mt-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium">Ver detalles técnicos</summary><pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-2 font-mono text-[11px]">{technicalDetails}</pre></details> : null}
+        {actions ? <div className="mt-3 flex flex-wrap items-center gap-2">{actions}</div> : null}
       </div></div>
   </section>
 }

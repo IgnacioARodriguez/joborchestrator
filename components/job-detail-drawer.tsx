@@ -26,6 +26,7 @@ import {
   Play,
   Pencil,
   Save,
+  LoaderCircle,
 } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -550,6 +551,17 @@ function detectProvider(job: JobPosting) {
   return "generic"
 }
 
+function friendlyApplicationProgress(message?: string | null) {
+  const normalized = (message ?? "").toLowerCase()
+  if (normalized.includes("opening external application")) return "Abriendo el portal de la empresa..."
+  if (normalized.includes("detected provider")) return "Portal identificado. Analizando el formulario..."
+  if (normalized.includes("filling safe")) return "Completando los campos seguros..."
+  if (normalized.includes("resume") || normalized.includes("upload")) return "Adjuntando el CV preparado..."
+  if (normalized.includes("validation") || normalized.includes("review")) return "Revisando que el formulario este completo..."
+  if (normalized.includes("login")) return "Esperando que inicies sesion en la ventana de aplicacion..."
+  return message?.trim() || "Preparando el formulario en la ventana de aplicacion..."
+}
+
 function primaryActionLabel(session: ApplicationSession | null, job: JobPosting) {
   if (!session) return job.materials.ats_cv_notes ? "Preparar postulación" : "Preparar materiales"
   if (session.state === "needs_user_input") return session.unknown_fields_json.length ? `Resolver ${session.unknown_fields_json.length} campos` : "Resolver campos pendientes"
@@ -769,14 +781,12 @@ function SimpleApplicationStatus({
   session,
   busy,
   onContinue,
-  onOpenPortal,
   onMarkSubmitted,
 }: {
   job: JobPosting
   session: ApplicationSession
   busy: boolean
   onContinue: () => void
-  onOpenPortal: () => void
   onMarkSubmitted: () => void
 }) {
   const needsManualStep = session.state === "needs_user_input"
@@ -823,11 +833,10 @@ function SimpleApplicationStatus({
       </div>
 
       {needsManualStep ? (
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={onOpenPortal}>
-            <ExternalLink data-icon="inline-start" />
-            Abrir portal
-          </Button>
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-background/70 p-2">
+          <p className="text-xs text-muted-foreground">
+            Completa el paso en la ventana de aplicacion que JobOrchestrator dejo abierta.
+          </p>
           <Button size="sm" disabled={busy} onClick={onContinue}>
             <Play data-icon="inline-start" />
             Ya resolví el paso
@@ -836,11 +845,10 @@ function SimpleApplicationStatus({
       ) : null}
 
       {readyForReview ? (
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={onOpenPortal}>
-            <ExternalLink data-icon="inline-start" />
-            Revisar y enviar
-          </Button>
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-background/70 p-2">
+          <p className="text-xs text-muted-foreground">
+            Revisa y envia desde la ventana de aplicacion abierta.
+          </p>
           <Button size="sm" variant="outline" disabled={busy} onClick={onMarkSubmitted}>
             <ClipboardCheck data-icon="inline-start" />
             Marcar como enviada
@@ -866,6 +874,7 @@ const DetailBody = memo(function DetailBody({
   const scrollerRef = useRef<HTMLDivElement>(null)
   const [materialsOperationId, setMaterialsOperationId] = useState<number | null>(null)
   const [applicationOperationId, setApplicationOperationId] = useState<number | null>(null)
+  const [applicationProgress, setApplicationProgress] = useState("")
   const [contacts, setContacts] = useState<JobContact[]>([])
   const [sessions, setSessions] = useState<ApplicationSession[]>([])
   const [providerCapabilities, setProviderCapabilities] = useState<ProviderCapabilities | null>(null)
@@ -1015,19 +1024,22 @@ const DetailBody = memo(function DetailBody({
       try {
         const response = await api.getOperation(applicationOperationId)
         if (stopped) return
+        setApplicationProgress(friendlyApplicationProgress(response.operation.progress_message))
         if (response.operation.status === "completed") {
           const sessionsResponse = await api.getApplicationSessions(job.id)
           if (!stopped) {
             setSessions(sessionsResponse.sessions)
             setApplicationOperationId(null)
-            toast.success("Application dry-run ready", { description: job.title })
+            setApplicationProgress("")
+            toast.success("Formulario preparado", { description: "Revisalo en la ventana de aplicacion antes de enviar." })
           }
           return
         }
         if (response.operation.status === "failed") {
           setApplicationOperationId(null)
-          toast.error("Application dry-run failed", {
-            description: response.operation.error ?? "Check local worker logs.",
+          setApplicationProgress("")
+          toast.error("No se pudo preparar el formulario", {
+            description: response.operation.error ?? "Revisa que el worker local este encendido.",
           })
           return
         }
@@ -1035,7 +1047,7 @@ const DetailBody = memo(function DetailBody({
       } catch (e) {
         if (!stopped) {
           setApplicationOperationId(null)
-          toast.error("Could not check application dry-run", {
+          toast.error("No se pudo consultar la preparacion", {
             description: e instanceof Error ? e.message : "Backend request failed.",
           })
         }
@@ -1107,13 +1119,14 @@ const DetailBody = memo(function DetailBody({
         return
       }
       if (["submit_only", "ready_for_review"].includes(latestSession.state)) {
-        openExternal(applyUrlForJob(job))
+        toast("El formulario ya esta preparado", {
+          description: "Revisalo en la ventana de aplicacion que abrio JobOrchestrator.",
+        })
         return
       }
       if (latestSession.state === "needs_user_input") {
-        openExternal(applyUrlForJob(job))
-        toast("Completá el paso manual en el portal", {
-          description: "Después volvé y pulsá “Ya resolví el paso”.",
+        toast("Completa el paso manual", {
+          description: "Usa la ventana de aplicacion abierta y despues pulsa “Ya resolvi el paso”.",
         })
         return
       }
@@ -1125,7 +1138,16 @@ const DetailBody = memo(function DetailBody({
     try {
       if (!job.materials.ats_cv_notes) {
         const result = await generateMaterials(job.id, "heuristic")
-        if (result.operation_id) setMaterialsOperationId(result.operation_id)
+        if (result.operation_id) {
+          setMaterialsOperationId(result.operation_id)
+          toast.success("Preparando candidatura", {
+            description: "Primero generaremos los materiales. Cuando esten listos, volve a comenzar la aplicacion.",
+          })
+        }
+        return
+      }
+      if (job.pipeline_status !== "ready_to_apply") {
+        await setPipelineStatus(job.id, "ready_to_apply")
       }
       const response = await api.createApplicationSession(job.id, {
         provider,
@@ -1135,13 +1157,17 @@ const DetailBody = memo(function DetailBody({
       })
       if (response.operation_id) {
         setApplicationOperationId(response.operation_id)
-        toast.success("Browser dry-run queued", { description: "Keep the local worker running; the API can stay on v0." })
+        setApplicationProgress("Revisando nuevamente el formulario...")
+        setApplicationProgress("Abriendo el portal de la empresa...")
+        toast.success("Aplicacion iniciada", {
+          description: "JobOrchestrator abrio una ventana y esta completando los campos seguros.",
+        })
       }
       setSessions((prev) => [response.session, ...prev.filter((item) => item.id !== response.session.id)])
       if (response.session.state === "needs_user_input") {
-        toast.warning("Application needs input", { description: `${response.session.unknown_fields_json.length} fields need review.` })
-      } else {
-        toast.success("Application session ready", { description: response.session.state.replaceAll("_", " ") })
+        toast.warning("Necesitamos tu ayuda", {
+          description: "Completa el paso pendiente en la ventana de aplicacion y luego continua la misma sesion.",
+        })
       }
       await Promise.all([loadJobDetail(job.id, { force: true }), refreshApplications()])
     } catch (e) {
@@ -1297,16 +1323,16 @@ const DetailBody = memo(function DetailBody({
                         "ready_to_apply",
                       )
                       if (updated) {
-                        toast.success("Agregado a Aplicar", {
+                        toast.success("Guardado para aplicar", {
                           description: job.title,
                         })
                       } else {
-                        toast.error("No se pudo agregar a Aplicar")
+                        toast.error("No se pudo guardar para aplicar")
                       }
                     }}
                   >
                     <CheckCircle2 data-icon="inline-start" />
-                    Agregar a Aplicar
+                    Guardar para aplicar
                   </Button>
                 )}
               </div>
@@ -1340,7 +1366,7 @@ const DetailBody = memo(function DetailBody({
               onClick={() => openExternal(applyUrlForJob(job))}
             >
               <Send data-icon="inline-start" />
-              Abrir portal
+              Abrir manualmente
             </Button>
           </div>
 
@@ -1509,11 +1535,23 @@ const DetailBody = memo(function DetailBody({
           <div className="flex items-start gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2.5">
             <CircleAlert className="mt-0.5 size-4 shrink-0 text-primary" />
             <p className="text-xs leading-relaxed text-muted-foreground">
-              La automatización completará la postulación en el portal
-              correspondiente y te pedirá revisión final antes de enviar.
+              JobOrchestrator abre una ventana de aplicacion, completa los campos
+              seguros y deja siempre el envio final en tus manos.
             </p>
           </div>
         </section>
+
+        {applicationOperationId ? (
+          <section className="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4" aria-live="polite">
+            <LoaderCircle className="mt-0.5 size-5 shrink-0 animate-spin text-primary" />
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Completando formulario</h3>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {applicationProgress || "Preparando el formulario en la ventana de aplicacion..."}
+              </p>
+            </div>
+          </section>
+        ) : null}
 
         {latestSession ? (
           <SimpleApplicationStatus
@@ -1521,7 +1559,6 @@ const DetailBody = memo(function DetailBody({
             session={latestSession}
             busy={sessionBusy}
             onContinue={() => void continueApplicationSession()}
-            onOpenPortal={() => openExternal(applyUrlForJob(job))}
             onMarkSubmitted={() => void markSubmittedManually()}
           />
         ) : null}
