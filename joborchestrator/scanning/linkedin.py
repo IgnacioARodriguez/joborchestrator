@@ -1702,6 +1702,7 @@ async def procesar_pagina_actual(
         salary_currency = None
         recruiter_name = None
         recruiter_profile_url = None
+        hiring_contacts = "[]"
         apply_type = "unknown"
         external_apply_url = None
         descripcion = ""
@@ -1736,6 +1737,7 @@ async def procesar_pagina_actual(
             salary_currency = datos.get("salary_currency")
             recruiter_name = datos.get("recruiter_name")
             recruiter_profile_url = datos.get("recruiter_profile_url")
+            hiring_contacts = datos.get("hiring_contacts") or "[]"
             apply_type = datos.get("apply_type", "unknown")
             external_apply_url = datos.get("external_apply_url")
             descripcion = datos["descripcion"]
@@ -1760,6 +1762,7 @@ async def procesar_pagina_actual(
             "salary_currency": salary_currency,
             "recruiter_name": recruiter_name,
             "recruiter_profile_url": recruiter_profile_url,
+            "hiring_contacts": hiring_contacts,
             "apply_type": apply_type,
             "external_apply_url": external_apply_url,
             "fecha_publicacion": fecha_publicacion,
