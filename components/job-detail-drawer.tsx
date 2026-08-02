@@ -42,6 +42,7 @@ import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { DecisionBadge } from "@/components/badges"
 import { ScoreRing } from "@/components/badges"
+import { TaskProgressCard } from "@/components/task-progress-card"
 import { useStore } from "@/lib/store"
 import { api } from "@/lib/api"
 import {
@@ -869,6 +870,7 @@ const DetailBody = memo(function DetailBody({
   const [sessions, setSessions] = useState<ApplicationSession[]>([])
   const [providerCapabilities, setProviderCapabilities] = useState<ProviderCapabilities | null>(null)
   const [sessionBusy, setSessionBusy] = useState(false)
+  const automationBusy = sessionBusy || Boolean(materialsOperationId) || Boolean(applicationOperationId)
   const [dryRunHtml, setDryRunHtml] = useState("")
   const [showDryRunInput, setShowDryRunInput] = useState(false)
   const [showAiProviders, setShowAiProviders] = useState(false)
@@ -1311,10 +1313,12 @@ const DetailBody = memo(function DetailBody({
             </div>
           </div>
 
+          {automationBusy ? <TaskProgressCard title={applicationOperationId ? "Preparando la postulación" : "Generando materiales"} description={applicationOperationId ? "Revisando el portal y preparando el formulario." : "Preparando los materiales de la candidatura."} steps={[{ label: "Preparando datos y materiales", state: materialsOperationId ? "active" : "done" }, { label: "Revisando el portal y el formulario", state: applicationOperationId ? "active" : "pending" }, { label: "Preparando la revisión final", state: "pending" }]} /> : null}
+
           <div className="grid gap-2 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto]">
             <Button
               className="h-11"
-              disabled={sessionBusy || applicationFinished}
+              disabled={automationBusy || applicationFinished}
               onClick={() => void prepareApplication()}
             >
               <Sparkles data-icon="inline-start" />

@@ -9,7 +9,9 @@ import {
   CircleDot,
   Clock3,
   Inbox,
+  LoaderCircle,
   MessageSquarePlus,
+  RotateCcw,
   Search,
   Send,
   Trophy,
@@ -33,6 +35,7 @@ import { useStore } from "@/lib/store"
 import { api } from "@/lib/api"
 import type { ApplicationEvent, ApplicationRecord, ApplicationStatus, FollowUp } from "@/lib/types"
 import { cn } from "@/lib/utils"
+import { userFacingError } from "@/lib/user-facing-error"
 
 type TrackingFilter = "active" | "action" | "closed" | "all"
 type CanonicalTrackingStatus =
@@ -330,7 +333,7 @@ export function ApplicationsScreen({ onOpenJob }: { onOpenJob: (id: string) => v
       toast.success("Follow-up programado", { description: formatDate(due.toISOString(), true) })
     } catch (error) {
       toast.error("No se pudo programar el follow-up", {
-        description: error instanceof Error ? error.message : "Backend request failed.",
+        description: userFacingError(error),
       })
     } finally {
       setBusyAction(null)
@@ -345,7 +348,7 @@ export function ApplicationsScreen({ onOpenJob }: { onOpenJob: (id: string) => v
       toast.success("Follow-up completado")
     } catch (error) {
       toast.error("No se pudo completar el follow-up", {
-        description: error instanceof Error ? error.message : "Backend request failed.",
+        description: userFacingError(error),
       })
     } finally {
       setBusyAction(null)
@@ -365,7 +368,7 @@ export function ApplicationsScreen({ onOpenJob }: { onOpenJob: (id: string) => v
       toast.success("Nota agregada")
     } catch (error) {
       toast.error("No se pudo guardar la nota", {
-        description: error instanceof Error ? error.message : "Backend request failed.",
+        description: userFacingError(error),
       })
     } finally {
       setBusyAction(null)
@@ -455,9 +458,12 @@ export function ApplicationsScreen({ onOpenJob }: { onOpenJob: (id: string) => v
               ))}
             </div>
           </CardHeader>
-          <CardContent className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+          <CardContent className="min-h-0 flex-1 overflow-y-auto px-4 pb-4" aria-busy={applicationsStatus === "loading" || applicationsStatus === "refreshing"}>
+            {applicationsStatus === "refreshing" ? <div className="mb-3 flex items-center gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2 text-xs text-muted-foreground" role="status"><LoaderCircle className="size-3.5 animate-spin text-primary" />Actualizando candidaturas…</div> : null}
             {applicationsStatus === "loading" ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">Cargando candidaturas…</p>
+              <div className="flex min-h-64 flex-col items-center justify-center gap-3 text-center" role="status"><LoaderCircle className="size-6 animate-spin text-primary" /><p className="text-sm font-medium text-foreground">Cargando candidaturas</p></div>
+            ) : applicationsStatus === "error" ? (
+              <Empty className="min-h-64 border border-dashed bg-muted/20"><EmptyHeader><EmptyMedia variant="icon"><Inbox /></EmptyMedia><EmptyTitle>No se pudieron cargar las candidaturas</EmptyTitle><EmptyDescription>Comprueba la conexión e intenta nuevamente.</EmptyDescription></EmptyHeader><Button variant="outline" onClick={() => void refreshApplications()}><RotateCcw data-icon="inline-start" />Reintentar</Button></Empty>
             ) : visibleApplications.length === 0 ? (
               <Empty className="min-h-64 border border-dashed bg-muted/20">
                 <EmptyHeader>
