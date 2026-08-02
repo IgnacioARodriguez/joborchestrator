@@ -52,6 +52,40 @@ SAFE_STEP_TEXT_RE = re.compile(
 FORM_MARKERS_RE = re.compile(r"<(form|input|textarea|select)\b", re.IGNORECASE)
 
 
+async def _handoff_or_close_browser(
+    *,
+    browser_ref: str,
+    page: Page,
+    browser: Browser | None,
+    context: BrowserContext | None,
+    playwright: Any | None,
+    provider: str,
+    session_id: int,
+    job_id: int,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    """Keep the exact browser session open when the user must intervene."""
+    if local_browser_agent.enabled():
+        session = await local_browser_agent.get_session(browser_ref)
+        if session is None:
+            session = local_browser_agent.register_session(
+                page=page,
+                browser=browser,
+                context=context,
+                playwright=playwright,
+                provider=provider,
+                session_id=session_id,
+                job_id=job_id,
+                timeout_seconds=timeout_seconds,
+            )
+        return {"status": "started", **local_browser_agent.public_metadata(session)}
+
+    await _close_browser_or_context(browser, context)
+    if playwright is not None:
+        await playwright.stop()
+    return {"status": "disabled"}
+
+
 async def run_application_execution(
     *,
     session_id: int,
@@ -65,7 +99,8 @@ async def run_application_execution(
     if not apply_url:
         raise RuntimeError("application_execution requires an apply_url.")
     _progress(progress, "Opening external application URL.")
-    headless = os.getenv("APPLICATION_BROWSER_HEADLESS", "1") != "0"
+    headless_default = "0" if local_browser_agent.enabled() else "1"
+    headless = os.getenv("APPLICATION_BROWSER_HEADLESS", headless_default) != "0"
     timeout_ms = int(os.getenv("APPLICATION_BROWSER_TIMEOUT_MS", "30000"))
     handoff_timeout_seconds = int(os.getenv("APPLICATION_BROWSER_HANDOFF_TIMEOUT_SECONDS", "3600"))
     profile_dir = os.getenv("APPLICATION_BROWSER_PROFILE_DIR")
@@ -140,10 +175,18 @@ async def run_application_execution(
         return {"session": session, "blocked": False, "reason": "posting_unavailable"}
 
     if access_issue == "challenge_detected":
-        await _close_browser_or_context(live_browser, live_context)
-        if playwright_instance is not None:
-            await playwright_instance.stop()
         identity = site_identity_from_url(url, provider_hint)
+        handoff = await _handoff_or_close_browser(
+            browser_ref=browser_ref,
+            page=live_page,
+            browser=live_browser,
+            context=live_context,
+            playwright=playwright_instance,
+            provider=identity.provider,
+            session_id=session_id,
+            job_id=job_id,
+            timeout_seconds=handoff_timeout_seconds,
+        )
         db.upsert_automation_site_account(
             {"provider": identity.provider, "domain": identity.domain, "status": "blocked", "notes": "Challenge or CAPTCHA detected."}
         )
@@ -158,10 +201,13 @@ async def run_application_execution(
             {
                 "note": "Human verification required.",
                 "last_error": "Challenge or CAPTCHA detected.",
-                "artifacts_json": {"url": apply_url, "provider_hint": provider_hint, "navigation": navigation},
+                "browser_session_ref": handoff.get("ref") or browser_ref or url,
+                "artifacts_json": {
+                    "url": apply_url, "provider_hint": provider_hint, "navigation": navigation, "browser_handoff": handoff
+                },
             },
         )
-        return {"session": session, "blocked": True, "reason": "challenge_detected"}
+        return {"session": session, "blocked": True, "reason": "challenge_detected", "browser_handoff": handoff}
 
     if _looks_login_required(html):
         identity = site_identity_from_url(url, provider_hint)
@@ -176,9 +222,17 @@ async def run_application_execution(
             html = await live_page.content()
             url = live_page.url
             if _looks_login_required(html):
-                await _close_browser_or_context(live_browser, live_context)
-                if playwright_instance is not None:
-                    await playwright_instance.stop()
+                handoff = await _handoff_or_close_browser(
+                    browser_ref=browser_ref,
+                    page=live_page,
+                    browser=live_browser,
+                    context=live_context,
+                    playwright=playwright_instance,
+                    provider=identity.provider,
+                    session_id=session_id,
+                    job_id=job_id,
+                    timeout_seconds=handoff_timeout_seconds,
+                )
                 db.upsert_automation_site_account(
                     {
                         "provider": identity.provider,
@@ -199,14 +253,25 @@ async def run_application_execution(
                     {
                         "note": "Login still required after saved credential attempt.",
                         "last_error": "Login required.",
-                        "artifacts_json": {"url": url, "provider_hint": provider_hint, "navigation": navigation},
+                        "browser_session_ref": handoff.get("ref") or browser_ref or url,
+                        "artifacts_json": {
+                            "url": url, "provider_hint": provider_hint, "navigation": navigation, "browser_handoff": handoff
+                        },
                     },
                 )
-                return {"session": session, "blocked": True, "reason": "login_required"}
+                return {"session": session, "blocked": True, "reason": "login_required", "browser_handoff": handoff}
         else:
-            await _close_browser_or_context(live_browser, live_context)
-            if playwright_instance is not None:
-                await playwright_instance.stop()
+            handoff = await _handoff_or_close_browser(
+                browser_ref=browser_ref,
+                page=live_page,
+                browser=live_browser,
+                context=live_context,
+                playwright=playwright_instance,
+                provider=identity.provider,
+                session_id=session_id,
+                job_id=job_id,
+                timeout_seconds=handoff_timeout_seconds,
+            )
             db.upsert_automation_site_account(
                 {
                     "provider": identity.provider,
@@ -227,10 +292,17 @@ async def run_application_execution(
                 {
                     "note": "Login or account creation required before automation can continue.",
                     "last_error": "Login required.",
-                    "artifacts_json": {"url": url, "provider_hint": provider_hint, "navigation": navigation, "login_attempt": login_result},
+                    "browser_session_ref": handoff.get("ref") or browser_ref or url,
+                    "artifacts_json": {
+                        "url": url,
+                        "provider_hint": provider_hint,
+                        "navigation": navigation,
+                        "login_attempt": login_result,
+                        "browser_handoff": handoff,
+                    },
                 },
             )
-            return {"session": session, "blocked": True, "reason": "login_required"}
+            return {"session": session, "blocked": True, "reason": "login_required", "browser_handoff": handoff}
 
     job = db.get_job_posting(job_id) or {}
     registry = AdapterRegistry()

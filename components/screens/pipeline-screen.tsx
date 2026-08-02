@@ -43,7 +43,7 @@ import {
   type PreparationStep,
   type PreparationViewState,
 } from "@/lib/apply-preparation"
-import { applyUrlForJob, relativeTime } from "@/lib/job-ui"
+import { relativeTime } from "@/lib/job-ui"
 import { useStore } from "@/lib/store"
 import type { ApplicationSession, JobListItem } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -66,6 +66,17 @@ const STATUS_TONE: Record<PreparationViewState["status"], string> = {
 
 function latestSessionForJob(sessions: ApplicationSession[], jobId: string) {
   return sessions.find((session) => String(session.job_id) === String(jobId)) ?? null
+}
+
+function friendlyApplicationProgress(message?: string | null) {
+  const normalized = (message ?? "").toLowerCase()
+  if (normalized.includes("opening external application")) return "Abriendo el portal de la empresa..."
+  if (normalized.includes("detected provider")) return "Portal identificado. Analizando el formulario..."
+  if (normalized.includes("filling safe")) return "Completando los campos seguros..."
+  if (normalized.includes("resume") || normalized.includes("upload")) return "Adjuntando el CV preparado..."
+  if (normalized.includes("validation") || normalized.includes("review")) return "Revisando que el formulario este completo..."
+  if (normalized.includes("login")) return "Esperando que inicies sesion en la ventana de aplicacion..."
+  return message?.trim() || "Preparando el formulario en la ventana de aplicacion..."
 }
 
 function StepIcon({ step }: { step: PreparationStep }) {
@@ -161,6 +172,12 @@ function PreparationCard({
   onSecondary: (action: PreparationAction) => void
   onOpenJob: (id: string) => void
 }) {
+  const busyLabel =
+    view.status === "generating"
+      ? "Preparando materiales..."
+      : view.status === "application_started"
+        ? "Completando formulario..."
+        : "Procesando..."
   return (
     <article className="rounded-lg border border-border bg-card p-3 shadow-[0_1px_2px_rgba(16,24,40,0.03)] sm:p-4">
       <div className="flex flex-col gap-3">
@@ -220,7 +237,7 @@ function PreparationCard({
               aria-live={busy ? "polite" : undefined}
             >
               {busy ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : actionIcon(view.primaryAction.type)}
-              {busy ? "Trabajando..." : view.primaryAction.label}
+              {busy ? busyLabel : view.primaryAction.label}
             </Button>
             {view.secondaryActions.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
@@ -422,12 +439,13 @@ export function PipelineScreen({
     recordApplication,
     generateMaterials,
     loadJobDetail,
-    markOpened,
   } = useStore()
   const [filter, setFilter] = useState<PreparationFilter>("all")
   const [sessions, setSessions] = useState<ApplicationSession[]>([])
   const [busyJobId, setBusyJobId] = useState<string | null>(null)
   const [operationByJob, setOperationByJob] = useState<Record<string, number>>({})
+  const [applicationOperationByJob, setApplicationOperationByJob] = useState<Record<string, number>>({})
+  const [applicationProgressByJob, setApplicationProgressByJob] = useState<Record<string, string>>({})
   const [operationIssueByJob, setOperationIssueByJob] = useState<Record<string, string>>({})
   const [confirmation, setConfirmation] = useState<{ job: JobListItem; session: ApplicationSession | null } | null>(null)
 
@@ -448,14 +466,23 @@ export function PipelineScreen({
     void loadSessions()
     void api.getOperations(100).then((response) => {
       if (cancelled) return
-      const recovered = response.operations.reduce<Record<string, number>>((current, operation) => {
-        const jobId = operation.type === "application_materials_generation" ? String(operation.input_json?.job_id ?? "") : ""
-        if (jobId && current[jobId] === undefined && ["queued", "running"].includes(operation.status)) {
-          current[jobId] = operation.id
+      const recoveredMaterials: Record<string, number> = {}
+      const recoveredApplications: Record<string, number> = {}
+      const recoveredProgress: Record<string, string> = {}
+      for (const operation of response.operations) {
+        const jobId = String(operation.input_json?.job_id ?? "")
+        if (!jobId || !["queued", "running"].includes(operation.status)) continue
+        if (operation.type === "application_materials_generation" && recoveredMaterials[jobId] === undefined) {
+          recoveredMaterials[jobId] = operation.id
         }
-        return current
-      }, {})
-      if (Object.keys(recovered).length > 0) setOperationByJob(recovered)
+        if (operation.type === "application_execution" && recoveredApplications[jobId] === undefined) {
+          recoveredApplications[jobId] = operation.id
+          recoveredProgress[jobId] = friendlyApplicationProgress(operation.progress_message)
+        }
+      }
+      if (Object.keys(recoveredMaterials).length > 0) setOperationByJob(recoveredMaterials)
+      if (Object.keys(recoveredApplications).length > 0) setApplicationOperationByJob(recoveredApplications)
+      if (Object.keys(recoveredProgress).length > 0) setApplicationProgressByJob(recoveredProgress)
     }).catch(() => undefined)
     return () => {
       cancelled = true
@@ -524,6 +551,74 @@ export function PipelineScreen({
     }
   }, [loadJobDetail, operationByJob])
 
+  useEffect(() => {
+    if (Object.keys(applicationOperationByJob).length === 0) return
+    let stopped = false
+    let timer: number | undefined
+
+    async function poll() {
+      const completed: string[] = []
+      await Promise.all(
+        Object.entries(applicationOperationByJob).map(async ([jobId, operationId]) => {
+          try {
+            const response = await api.getOperation(operationId)
+            const operation = response.operation
+            setApplicationProgressByJob((current) => ({
+              ...current,
+              [jobId]: friendlyApplicationProgress(operation.progress_message),
+            }))
+            if (operation.status === "completed") {
+              completed.push(jobId)
+              const sessionsResponse = await api.getApplicationSessions(jobId)
+              setSessions((current) => [
+                ...sessionsResponse.sessions,
+                ...current.filter((item) => String(item.job_id) !== String(jobId)),
+              ])
+              await loadJobDetail(jobId, { force: true })
+              setOperationIssueByJob((current) => {
+                const next = { ...current }
+                delete next[jobId]
+                return next
+              })
+              toast.success("Formulario preparado", {
+                description: "Revisa la ventana de aplicacion antes de enviar.",
+              })
+              return
+            }
+            if (["failed", "cancelled"].includes(operation.status)) {
+              completed.push(jobId)
+              const issue = "No se pudo completar el formulario. Podes abrir el job y continuar manualmente."
+              setOperationIssueByJob((current) => ({ ...current, [jobId]: issue }))
+              toast.error("No se pudo preparar la aplicacion", { description: issue })
+            }
+          } catch {
+            // Retry transient API failures without losing the active browser workflow.
+          }
+        }),
+      )
+      if (stopped) return
+      if (completed.length > 0) {
+        setApplicationOperationByJob((current) => {
+          const next = { ...current }
+          for (const jobId of completed) delete next[jobId]
+          return next
+        })
+        setApplicationProgressByJob((current) => {
+          const next = { ...current }
+          for (const jobId of completed) delete next[jobId]
+          return next
+        })
+      }
+      timer = window.setTimeout(poll, 2000)
+    }
+
+    void poll()
+    return () => {
+      stopped = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [applicationOperationByJob, loadJobDetail])
+
 
   const confirmedJobIds = useMemo(
     () => new Set(applications.filter(isConfirmedApplication).map((application) => String(application.job_id))),
@@ -538,7 +633,22 @@ export function PipelineScreen({
         const session = latestSessionForJob(sessions, job.id)
         const baseView = getPreparationViewState(job, session)
         const operationIssue = operationIssueByJob[job.id]
-        const view = operationByJob[job.id]
+        const view = applicationOperationByJob[job.id]
+          ? {
+              ...baseView,
+              status: "application_started" as const,
+              label: "Completando formulario",
+              description: applicationProgressByJob[job.id] || "Preparando el formulario en la ventana de aplicacion...",
+              primaryAction: { type: "continue_session" as const, label: "Completando formulario" },
+              progress: baseView.progress.map((step) =>
+                step.id === "application"
+                  ? { ...step, state: "active" as const }
+                  : ["materials", "review"].includes(step.id)
+                    ? { ...step, state: "done" as const }
+                    : step,
+              ),
+            }
+          : operationByJob[job.id]
           ? {
               ...baseView,
               status: "generating" as const,
@@ -562,7 +672,7 @@ export function PipelineScreen({
         return { job, session, view }
       })
       .filter(({ view }) => matchesPreparationFilter(view, filter))
-  }, [confirmedJobIds, filter, jobs, operationByJob, operationIssueByJob, sessions])
+  }, [applicationOperationByJob, applicationProgressByJob, confirmedJobIds, filter, jobs, operationByJob, operationIssueByJob, sessions])
 
   async function handleAction(job: JobListItem, session: ApplicationSession | null, action: PreparationAction) {
     if (action === "review_materials" || action === "continue_review") {
@@ -594,19 +704,26 @@ export function PipelineScreen({
       }
 
       if (action === "open_portal") {
-        const detail = await loadJobDetail(job.id, { force: true })
-        const url = detail ? applyUrlForJob(detail) : null
+        if (session) {
+          onOpenJob(job.id)
+          return
+        }
         const response = await api.createApplicationSession(job.id, {
           mode: "review_before_submit",
           dry_run: true,
         })
         setSessions((current) => [response.session, ...current.filter((item) => item.id !== response.session.id)])
         if (response.operation_id) {
-          toast.success("Sesion iniciada", { description: "La aplicacion se preparo sin marcar envio." })
-        }
-        if (url) {
-          markOpened(job.id)
-          window.open(url, "_blank", "noopener,noreferrer")
+          setApplicationOperationByJob((current) => ({ ...current, [job.id]: response.operation_id! }))
+          setApplicationProgressByJob((current) => ({
+            ...current,
+            [job.id]: "Abriendo el portal de la empresa...",
+          }))
+          toast.success("Aplicacion iniciada", {
+            description: "JobOrchestrator abrio una ventana y esta completando los campos seguros.",
+          })
+        } else {
+          onOpenJob(job.id)
         }
         return
       }
@@ -615,7 +732,14 @@ export function PipelineScreen({
         if (session) {
           const response = await api.continueApplicationSession(session.id)
           setSessions((current) => [response.session, ...current.filter((item) => item.id !== response.session.id)])
-          toast.success("Sesion reanudada", { description: "Continua la revision en el portal." })
+          if (response.operation_id) {
+            setApplicationOperationByJob((current) => ({ ...current, [job.id]: response.operation_id! }))
+            setApplicationProgressByJob((current) => ({
+              ...current,
+              [job.id]: "Revisando nuevamente el formulario...",
+            }))
+          }
+          toast.success("Continuando aplicacion", { description: "La misma sesion del navegador se revisara de nuevo." })
         } else {
           onOpenJob(job.id)
         }
@@ -728,7 +852,7 @@ export function PipelineScreen({
                 key={job.id}
                 job={job}
                 view={view}
-                busy={busyJobId === job.id || Boolean(operationByJob[job.id])}
+                busy={busyJobId === job.id || Boolean(operationByJob[job.id]) || Boolean(applicationOperationByJob[job.id])}
                 onOpenJob={onOpenJob}
                 onPrimary={(action) => void handleAction(job, session, action)}
                 onSecondary={(action) => void handleAction(job, session, action)}

@@ -30,6 +30,11 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { PageHeader } from "@/components/page-chrome"
+import {
+  AsyncActionButton,
+  TaskProgressCard,
+  type TaskProgressStep,
+} from "@/components/task-progress-card"
 import { api } from "@/lib/api"
 import type {
   ApplicationTarget,
@@ -44,6 +49,7 @@ import type {
   SkillLevel,
   WorkMode,
 } from "@/lib/types"
+import { userFacingError } from "@/lib/user-facing-error"
 
 const EMPTY_PROFILE: CandidateProfile = {
   schema_version: 1,
@@ -116,10 +122,61 @@ function skillKey(name: string) {
   return name.trim().toLowerCase()
 }
 
+function cvOperationDescription(operation: OperationRun) {
+  if (operation.status === "queued") {
+    return "El CV está en cola. El análisis comenzará cuando el asistente local esté disponible."
+  }
+  if (operation.status === "completed") {
+    return "El CV fue analizado y el perfil editable ya está actualizado."
+  }
+  if (operation.status === "failed") {
+    return userFacingError(
+      operation.error,
+      "No se pudo analizar el CV. Comprueba el asistente local e inténtalo nuevamente.",
+    )
+  }
+  const message = operation.progress_message?.toLowerCase() ?? ""
+  if (message.includes("extract") || message.includes("parse")) {
+    return "Extrayendo experiencia, roles y tecnologías del CV."
+  }
+  if (message.includes("skill")) {
+    return "Organizando las skills y el nivel de experiencia detectado."
+  }
+  if (message.includes("profile") || message.includes("save")) {
+    return "Actualizando el perfil que utilizarán los rankings y las aplicaciones."
+  }
+  return "Leyendo el CV y convirtiéndolo en un perfil editable."
+}
+
+function cvOperationSteps(operation: OperationRun): TaskProgressStep[] {
+  const queued = operation.status === "queued"
+  const running = operation.status === "running"
+  const completed = operation.status === "completed"
+  const failed = operation.status === "failed"
+  return [
+    { label: "CV recibido", state: "done" },
+    {
+      label: "Esperando asistente local",
+      state: queued ? "active" : "done",
+    },
+    {
+      label: "Extrayendo experiencia y skills",
+      state: completed ? "done" : failed ? "error" : running ? "active" : "pending",
+    },
+    {
+      label: "Actualizando el perfil editable",
+      state: completed ? "done" : failed ? "error" : "pending",
+    },
+  ]
+}
+
 export function ProfileScreen() {
   const [profile, setProfile] = useState<CandidateProfile>(EMPTY_PROFILE)
   const [cvFile, setCvFile] = useState<File | null>(null)
-  const [busy, setBusy] = useState<"load" | "cv" | "save" | null>("load")
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading")
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadVersion, setLoadVersion] = useState(0)
+  const [pendingActions, setPendingActions] = useState<Record<string, boolean>>({})
   const [operation, setOperation] = useState<OperationRun | null>(null)
   const [skillCatalog, setSkillCatalog] = useState<SkillCatalogItem[]>([])
   const [newTargetRole, setNewTargetRole] = useState("")
@@ -135,6 +192,8 @@ export function ProfileScreen() {
   useEffect(() => {
     let cancelled = false
     async function load() {
+      setLoadState("loading")
+      setLoadError(null)
       try {
         const response = await api.getProfile()
         if (!cancelled && response.profile) setProfile(response.profile)
@@ -149,26 +208,27 @@ export function ProfileScreen() {
           setAnswers(answerData.answers)
           setResumes(resumeData.resumes)
         }
-        if (
-          !cancelled &&
-          latest.operation &&
-          ["queued", "running"].includes(latest.operation.status)
-        ) {
+        if (!cancelled && latest.operation) {
           setOperation(latest.operation)
         }
-      } catch (e) {
-        toast.error("Could not load profile", {
-          description: e instanceof Error ? e.message : "Backend request failed.",
-        })
-      } finally {
-        if (!cancelled) setBusy(null)
+        if (!cancelled) setLoadState("ready")
+      } catch (error) {
+        if (!cancelled) {
+          const message = userFacingError(
+            error,
+            "No se pudo cargar el perfil. Comprueba la conexión e intenta nuevamente.",
+          )
+          setLoadError(message)
+          setLoadState("error")
+          toast.error("No se pudo cargar el perfil", { description: message })
+        }
       }
     }
     void load()
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [loadVersion])
 
   useEffect(() => {
     if (!operation || !["queued", "running"].includes(operation.status)) return
@@ -183,24 +243,28 @@ export function ProfileScreen() {
           const profileResponse = await api.getProfile()
           if (!stopped && profileResponse.profile) {
             setProfile(profileResponse.profile)
-            toast.success("Profile ready", {
-              description: "The local worker finished reading your CV.",
+            toast.success("Perfil actualizado", {
+              description: "El asistente terminó de leer el CV.",
             })
           }
           return
         }
         if (response.operation.status === "failed") {
-          toast.error("CV analysis failed", {
-            description: response.operation.error ?? "Check local worker logs.",
+          toast.error("No se pudo analizar el CV", {
+            description: userFacingError(
+              response.operation.error,
+              "Comprueba el asistente local e intenta nuevamente.",
+            ),
           })
           return
         }
         timer = window.setTimeout(poll, 2500)
-      } catch (e) {
+      } catch (error) {
         if (!stopped) {
-          toast.error("Could not check operation", {
-            description: e instanceof Error ? e.message : "Backend request failed.",
+          toast.error("No se pudo actualizar el progreso", {
+            description: userFacingError(error),
           })
+          timer = window.setTimeout(poll, 3000)
         }
       }
     }
@@ -241,27 +305,48 @@ export function ProfileScreen() {
     return [...groups.entries()]
   }, [answers])
 
+  const profileMutationPending = Object.entries(pendingActions).some(
+    ([key, pending]) => pending && key.startsWith("profile:"),
+  )
+  const cvOperationActive = Boolean(
+    operation && ["queued", "running"].includes(operation.status),
+  )
+
+  function setActionPending(action: string, pending: boolean) {
+    setPendingActions((current) => {
+      if (pending) return { ...current, [action]: true }
+      const next = { ...current }
+      delete next[action]
+      return next
+    })
+  }
+
   function patch(update: Partial<CandidateProfile>) {
     setProfile((current) => ({ ...current, ...update }))
   }
 
-  async function persistProfile(nextProfile: CandidateProfile, successMessage?: string) {
+  async function persistProfile(
+    nextProfile: CandidateProfile,
+    successMessage?: string,
+    actionKey = "profile:save",
+  ) {
+    if (profileMutationPending) return
     setProfile(nextProfile)
-    setBusy("save")
+    setActionPending(actionKey, true)
     try {
       const response = await api.saveProfile(nextProfile)
       setProfile(response.profile)
       if (successMessage) {
         toast.success(successMessage, {
-          description: "Profile changes are saved.",
+          description: "Los cambios ya están guardados.",
         })
       }
-    } catch (e) {
-      toast.error("Could not save profile", {
-        description: e instanceof Error ? e.message : "Backend request failed.",
+    } catch (error) {
+      toast.error("No se pudo guardar el perfil", {
+        description: userFacingError(error),
       })
     } finally {
-      setBusy(null)
+      setActionPending(actionKey, false)
     }
   }
 
@@ -272,7 +357,7 @@ export function ProfileScreen() {
         i === index ? { ...skill, ...update } : skill,
       ),
     }
-    await persistProfile(nextProfile)
+    await persistProfile(nextProfile, undefined, `profile:skill-level-${index}`)
   }
 
   async function addSkill(skill: Pick<ProfileSkill, "name" | "category">, level: SkillLevel = "medium") {
@@ -290,22 +375,49 @@ export function ProfileScreen() {
         },
       ],
     }
-    await persistProfile(nextProfile, `${skill.name} added`)
+    await persistProfile(
+      nextProfile,
+      `${skill.name} agregada`,
+      `profile:skill-add-${skillKey(skill.name)}`,
+    )
   }
 
   async function addCustomCatalogSkill() {
     const name = newCatalogSkill.trim()
     const category = newCatalogCategory.trim() || "General"
     if (!name) return
+    if (profileMutationPending) return
+    if (profile.skills.some((item) => skillKey(item.name) === skillKey(name))) {
+      toast.info("La skill ya está agregada", { description: name })
+      return
+    }
+    const actionKey = "profile:catalog-skill-add"
+    setActionPending(actionKey, true)
     try {
       const response = await api.addSkillCatalogItem({ category, name })
       setSkillCatalog(response.skills)
       setNewCatalogSkill("")
-      await addSkill({ name: response.skill.name, category: response.skill.category })
-    } catch (e) {
-      toast.error("Could not add skill", {
-        description: e instanceof Error ? e.message : "Backend request failed.",
+      const nextProfile = {
+        ...profile,
+        skills: [
+          ...profile.skills,
+          {
+            name: response.skill.name,
+            category: response.skill.category,
+            level: "medium" as SkillLevel,
+            evidence: "Agregada manualmente.",
+          },
+        ],
+      }
+      const saved = await api.saveProfile(nextProfile)
+      setProfile(saved.profile)
+      toast.success("Skill agregada", { description: response.skill.name })
+    } catch (error) {
+      toast.error("No se pudo agregar la skill", {
+        description: userFacingError(error),
       })
+    } finally {
+      setActionPending(actionKey, false)
     }
   }
 
@@ -315,7 +427,11 @@ export function ProfileScreen() {
       ...profile,
       skills: profile.skills.filter((_, i) => i !== index),
     }
-    await persistProfile(nextProfile, `${skillName} removed`)
+    await persistProfile(
+      nextProfile,
+      `${skillName} eliminada`,
+      `profile:skill-remove-${index}`,
+    )
   }
 
   async function addRole(field: "target_roles" | "secondary_roles", value: string) {
@@ -328,7 +444,7 @@ export function ProfileScreen() {
     const nextProfile = { ...profile, [field]: [...profile[field], role] }
     if (field === "target_roles") setNewTargetRole("")
     else setNewSecondaryRole("")
-    await persistProfile(nextProfile, `${role} added`)
+    await persistProfile(nextProfile, `${role} agregado`, `profile:role-add-${field}`)
   }
 
   async function removeRole(field: "target_roles" | "secondary_roles", role: string) {
@@ -339,7 +455,11 @@ export function ProfileScreen() {
       [field]: profile[field].filter((item) => item !== role),
       role_aliases: aliases,
     }
-    await persistProfile(nextProfile, `${role} removed`)
+    await persistProfile(
+      nextProfile,
+      `${role} eliminado`,
+      `profile:role-remove-${field}-${role}`,
+    )
   }
 
   async function addRoleAlias(role: string) {
@@ -355,7 +475,7 @@ export function ProfileScreen() {
       },
     }
     setAliasDrafts((current) => ({ ...current, [role]: "" }))
-    await persistProfile(nextProfile, `${alias} added`)
+    await persistProfile(nextProfile, `${alias} agregado`, `profile:alias-add-${role}`)
   }
 
   async function removeRoleAlias(role: string, alias: string) {
@@ -366,49 +486,46 @@ export function ProfileScreen() {
         [role]: (profile.role_aliases?.[role] ?? []).filter((item) => item !== alias),
       },
     }
-    await persistProfile(nextProfile, `${alias} removed`)
+    await persistProfile(
+      nextProfile,
+      `${alias} eliminado`,
+      `profile:alias-remove-${role}-${alias}`,
+    )
   }
 
   async function importCv() {
     if (!cvFile) return
-    setBusy("cv")
+    const actionKey = "cv:import"
+    setActionPending(actionKey, true)
     try {
       const response = await api.importProfileCv(cvFile)
       const op = await api.getOperation(response.operation_id)
       setOperation(op.operation)
       setCvFile(null)
-      toast.success("CV queued", {
-        description: "Keep the local worker running on your PC.",
+      toast.success("CV recibido", {
+        description: "El progreso seguirá visible mientras el asistente lo analiza.",
       })
-    } catch (e) {
-      toast.error("Could not analyze CV", {
-        description: e instanceof Error ? e.message : "Backend request failed.",
+    } catch (error) {
+      toast.error("No se pudo iniciar el análisis", {
+        description: userFacingError(error),
       })
     } finally {
-      setBusy(null)
+      setActionPending(actionKey, false)
     }
   }
 
-  async function saveProfile() {
-    setBusy("save")
-    try {
-      const response = await api.saveProfile(profile)
-      setProfile(response.profile)
-      toast.success("Profile saved", {
-        description: "Future rankings will use this profile.",
-      })
-    } catch (e) {
-      toast.error("Could not save profile", {
-        description: e instanceof Error ? e.message : "Backend request failed.",
-      })
-    } finally {
-      setBusy(null)
-    }
+  async function saveProfile(
+    actionKey = "profile:save",
+    successMessage = "Perfil guardado",
+  ) {
+    await persistProfile(profile, successMessage, actionKey)
   }
 
   async function saveAnswerDraft() {
     const canonical_key = answerDraft.canonical_key.trim()
     if (!canonical_key) return
+    const actionKey = "answer:save"
+    setActionPending(actionKey, true)
     try {
       const payload = {
         ...answerDraft,
@@ -423,17 +540,21 @@ export function ProfileScreen() {
         return [...others, response.answer].sort((a, b) => a.canonical_key.localeCompare(b.canonical_key))
       })
       setAnswerDraft(EMPTY_ANSWER)
-      toast.success("Answer saved", { description: canonical_key })
-    } catch (e) {
-      toast.error("Could not save answer", {
-        description: e instanceof Error ? e.message : "Backend request failed.",
+      toast.success("Respuesta guardada", { description: canonical_key })
+    } catch (error) {
+      toast.error("No se pudo guardar la respuesta", {
+        description: userFacingError(error),
       })
+    } finally {
+      setActionPending(actionKey, false)
     }
   }
 
   async function createResumeVariant() {
     const label = resumeDraft.label.trim()
     if (!label) return
+    const actionKey = "resume:save"
+    setActionPending(actionKey, true)
     try {
       const response = await api.createResume({
         label,
@@ -443,11 +564,13 @@ export function ProfileScreen() {
       })
       setResumes((current) => [response.resume, ...current])
       setResumeDraft({ label: "", file_ref: "", base_version: "", diff_summary: "" })
-      toast.success("Resume variant saved", { description: label })
-    } catch (e) {
-      toast.error("Could not save resume variant", {
-        description: e instanceof Error ? e.message : "Backend request failed.",
+      toast.success("Versión de CV guardada", { description: label })
+    } catch (error) {
+      toast.error("No se pudo guardar la versión de CV", {
+        description: userFacingError(error),
       })
+    } finally {
+      setActionPending(actionKey, false)
     }
   }
 
@@ -472,63 +595,56 @@ export function ProfileScreen() {
   return (
     <div className="flex flex-col gap-4 pb-6">
       <PageHeader
-        eyebrow="Profile"
-        title="Candidate profile"
-        description="Roles, geography, skills, and ranking context."
+        eyebrow="Perfil"
+        title="Perfil del candidato"
+        description="Roles, zonas, skills y contexto que utilizan los rankings."
       />
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-      {busy && (
-        <Card className="border-primary/20 bg-primary/5 xl:col-span-2">
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <LoaderCircle className="size-5 animate-spin" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-foreground">
-                {busy === "cv"
-                  ? "Queueing CV analysis"
-                  : busy === "save"
-                    ? "Saving profile"
-                    : "Loading profile"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {busy === "cv"
-                  ? "Preparing your CV text for the local worker."
-                  : "Keeping your ranking profile in sync."}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {loadState === "loading" ? (
+        <TaskProgressCard
+          className="xl:col-span-2"
+          title="Cargando tu perfil"
+          description="Recuperando CV, roles, skills y respuestas reutilizables."
+        />
+      ) : null}
 
-      {operation && ["queued", "running", "failed"].includes(operation.status) && (
-        <Card className="border-primary/20 bg-primary/5 xl:col-span-2">
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              {operation.status === "failed" ? (
-                <span className="text-sm font-semibold">!</span>
-              ) : (
-                <LoaderCircle className="size-5 animate-spin" />
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-foreground">
-                {operation.status === "queued"
-                  ? "Waiting for local worker"
-                  : operation.status === "running"
-                    ? "Local worker is analyzing your CV"
-                    : "CV analysis failed"}
-              </p>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                {operation.status === "failed"
-                  ? operation.error || "Check logs/worker.log on your PC."
-                  : operation.progress_message ||
-                    "Start run_worker.bat on your PC to process this task."}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {loadState === "error" ? (
+        <TaskProgressCard
+          className="xl:col-span-2"
+          status="error"
+          title="No se pudo cargar el perfil"
+          description={loadError ?? "Comprueba la conexión e intenta nuevamente."}
+          actions={
+            <Button variant="outline" onClick={() => setLoadVersion((current) => current + 1)}>
+              Reintentar
+            </Button>
+          }
+        />
+      ) : null}
+
+      {operation && ["queued", "running", "failed", "completed"].includes(operation.status) ? (
+        <TaskProgressCard
+          className="xl:col-span-2"
+          status={
+            operation.status === "failed"
+              ? "error"
+              : operation.status === "completed"
+                ? "success"
+                : "active"
+          }
+          startedAt={operation.started_at ?? operation.created_at}
+          title={
+            operation.status === "completed"
+              ? "Perfil actualizado desde el CV"
+              : operation.status === "failed"
+                ? "No se pudo analizar el CV"
+                : "Analizando tu CV"
+          }
+          description={cvOperationDescription(operation)}
+          steps={cvOperationSteps(operation)}
+          technicalDetails={operation.status === "failed" ? operation.error : null}
+        />
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -544,12 +660,18 @@ export function ProfileScreen() {
           <Input
             type="file"
             accept=".pdf,.docx,.txt,.md"
+            disabled={pendingActions["cv:import"] || cvOperationActive}
             onChange={(event) => setCvFile(event.target.files?.[0] ?? null)}
           />
-          <Button disabled={!cvFile || busy !== null} onClick={() => void importCv()}>
-            {busy === "cv" ? <LoadingIcon /> : <Sparkles data-icon="inline-start" />}
-            {busy === "cv" ? "Queueing CV" : "Analyze CV"}
-          </Button>
+          <AsyncActionButton
+            pending={Boolean(pendingActions["cv:import"])}
+            pendingLabel="Preparando análisis…"
+            disabled={!cvFile || cvOperationActive}
+            onClick={() => void importCv()}
+          >
+            <Sparkles data-icon="inline-start" />
+            Analizar CV
+          </AsyncActionButton>
         </CardContent>
       </Card>
 
@@ -574,8 +696,14 @@ export function ProfileScreen() {
                   if (event.key === "Enter") void addRole("target_roles", newTargetRole)
                 }}
               />
-              <Button size="icon" variant="outline" onClick={() => void addRole("target_roles", newTargetRole)}>
-                <Plus className="size-4" />
+              <Button
+                size="icon"
+                variant="outline"
+                aria-label="Agregar rol objetivo"
+                disabled={profileMutationPending || !newTargetRole.trim()}
+                onClick={() => void addRole("target_roles", newTargetRole)}
+              >
+                {pendingActions["profile:role-add-target_roles"] ? <LoadingIcon /> : <Plus className="size-4" />}
               </Button>
             </div>
             <div className="flex gap-2">
@@ -587,8 +715,14 @@ export function ProfileScreen() {
                   if (event.key === "Enter") void addRole("secondary_roles", newSecondaryRole)
                 }}
               />
-              <Button size="icon" variant="outline" onClick={() => void addRole("secondary_roles", newSecondaryRole)}>
-                <Plus className="size-4" />
+              <Button
+                size="icon"
+                variant="outline"
+                aria-label="Agregar rol secundario"
+                disabled={profileMutationPending || !newSecondaryRole.trim()}
+                onClick={() => void addRole("secondary_roles", newSecondaryRole)}
+              >
+                {pendingActions["profile:role-add-secondary_roles"] ? <LoadingIcon /> : <Plus className="size-4" />}
               </Button>
             </div>
           </div>
@@ -611,12 +745,13 @@ export function ProfileScreen() {
                   <div className="flex items-center justify-between gap-2">
                     <Badge variant={field === "target_roles" ? "default" : "secondary"}>{role}</Badge>
                     <Button
-                      aria-label={`Remove ${role}`}
+                      aria-label={`Eliminar ${role}`}
                       size="icon-sm"
                       variant="ghost"
+                      disabled={profileMutationPending}
                       onClick={() => void removeRole(field, role)}
                     >
-                      <X className="size-3.5" />
+                      {pendingActions[`profile:role-remove-${field}-${role}`] ? <LoadingIcon /> : <X className="size-3.5" />}
                     </Button>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
@@ -624,11 +759,17 @@ export function ProfileScreen() {
                       <Badge key={alias} variant="outline">
                         {alias}
                         <button
-                          className="ml-1 text-muted-foreground hover:text-foreground"
+                          className="ml-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                          disabled={profileMutationPending}
+                          aria-label={`Eliminar variante ${alias}`}
                           onClick={() => void removeRoleAlias(role, alias)}
                           type="button"
                         >
-                          <X className="size-3" />
+                          {pendingActions[`profile:alias-remove-${role}-${alias}`] ? (
+                            <LoaderCircle className="size-3 animate-spin" />
+                          ) : (
+                            <X className="size-3" />
+                          )}
                         </button>
                       </Badge>
                     ))}
@@ -644,8 +785,14 @@ export function ProfileScreen() {
                         if (event.key === "Enter") void addRoleAlias(role)
                       }}
                     />
-                    <Button size="icon" variant="outline" onClick={() => void addRoleAlias(role)}>
-                      <Plus className="size-4" />
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      aria-label={`Agregar variante para ${role}`}
+                      disabled={profileMutationPending || !(aliasDrafts[role] ?? "").trim()}
+                      onClick={() => void addRoleAlias(role)}
+                    >
+                      {pendingActions[`profile:alias-add-${role}`] ? <LoadingIcon /> : <Plus className="size-4" />}
                     </Button>
                   </div>
                 </div>
@@ -698,10 +845,15 @@ export function ProfileScreen() {
               className="min-h-24 text-xs"
             />
           </label>
-          <Button disabled={busy !== null} onClick={() => void saveProfile()}>
-            {busy === "save" ? <LoadingIcon /> : <Save data-icon="inline-start" />}
-            {busy === "save" ? "Saving profile" : "Save profile"}
-          </Button>
+          <AsyncActionButton
+            pending={Boolean(pendingActions["profile:save"])}
+            pendingLabel="Guardando perfil…"
+            disabled={profileMutationPending && !pendingActions["profile:save"]}
+            onClick={() => void saveProfile()}
+          >
+            <Save data-icon="inline-start" />
+            Guardar perfil
+          </AsyncActionButton>
         </CardContent>
       </Card>
 
@@ -776,10 +928,15 @@ export function ProfileScreen() {
               <Plus data-icon="inline-start" />
               Add target
             </Button>
-            <Button disabled={busy !== null} onClick={() => void saveProfile()}>
-              {busy === "save" ? <LoadingIcon /> : <Save data-icon="inline-start" />}
-              Save geography
-            </Button>
+            <AsyncActionButton
+              pending={Boolean(pendingActions["profile:geography-save"])}
+              pendingLabel="Guardando zonas…"
+              disabled={profileMutationPending && !pendingActions["profile:geography-save"]}
+              onClick={() => void saveProfile("profile:geography-save", "Zonas guardadas")}
+            >
+              <Save data-icon="inline-start" />
+              Guardar zonas
+            </AsyncActionButton>
           </div>
         </CardContent>
       </Card>
@@ -818,12 +975,20 @@ export function ProfileScreen() {
                         </div>
                         <Select
                           value={skill.level}
+                          disabled={profileMutationPending}
                           onValueChange={(value) =>
                             void updateSkill(index, { level: value as SkillLevel })
                           }
                         >
-                          <SelectTrigger>
-                            <SelectValue />
+                          <SelectTrigger aria-busy={Boolean(pendingActions[`profile:skill-level-${index}`])}>
+                            {pendingActions[`profile:skill-level-${index}`] ? (
+                              <span className="flex items-center gap-2 text-muted-foreground">
+                                <LoaderCircle className="size-3.5 animate-spin" />
+                                Guardando…
+                              </span>
+                            ) : (
+                              <SelectValue />
+                            )}
                           </SelectTrigger>
                           <SelectContent>
                             {(["strong", "medium", "weak"] as SkillLevel[]).map(
@@ -836,12 +1001,13 @@ export function ProfileScreen() {
                           </SelectContent>
                         </Select>
                         <Button
-                          aria-label={`Remove ${skill.name}`}
+                          aria-label={`Eliminar ${skill.name}`}
                           size="icon-sm"
                           variant="ghost"
+                          disabled={profileMutationPending}
                           onClick={() => void removeSkill(index)}
                         >
-                          <X className="size-3.5" />
+                          {pendingActions[`profile:skill-remove-${index}`] ? <LoadingIcon /> : <X className="size-3.5" />}
                         </Button>
                       </div>
                     )
@@ -875,14 +1041,16 @@ export function ProfileScreen() {
                     if (event.key === "Enter") void addCustomCatalogSkill()
                   }}
                 />
-                <Button
+                <AsyncActionButton
                   variant="outline"
-                  disabled={!newCatalogSkill.trim()}
+                  pending={Boolean(pendingActions["profile:catalog-skill-add"])}
+                  pendingLabel="Agregando…"
+                  disabled={!newCatalogSkill.trim() || profileMutationPending}
                   onClick={() => void addCustomCatalogSkill()}
                 >
                   <Plus data-icon="inline-start" />
-                  Add
-                </Button>
+                  Agregar
+                </AsyncActionButton>
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {groupedCatalog.map(([category, skills]) => (
@@ -894,9 +1062,14 @@ export function ProfileScreen() {
                           key={skill.id}
                           size="xs"
                           variant="outline"
+                          disabled={profileMutationPending}
                           onClick={() => void addSkill(skill)}
                         >
-                          <Plus className="size-3" data-icon="inline-start" />
+                          {pendingActions[`profile:skill-add-${skillKey(skill.name)}`] ? (
+                            <LoaderCircle className="size-3 animate-spin" data-icon="inline-start" />
+                          ) : (
+                            <Plus className="size-3" data-icon="inline-start" />
+                          )}
                           {skill.name}
                         </Button>
                       ))}
@@ -982,10 +1155,15 @@ export function ProfileScreen() {
               />
               Requires confirmation
             </label>
-            <Button onClick={() => void saveAnswerDraft()} disabled={!answerDraft.canonical_key.trim()}>
+            <AsyncActionButton
+              pending={Boolean(pendingActions["answer:save"])}
+              pendingLabel="Guardando respuesta…"
+              onClick={() => void saveAnswerDraft()}
+              disabled={!answerDraft.canonical_key.trim()}
+            >
               <Save data-icon="inline-start" />
-              Save answer
-            </Button>
+              Guardar respuesta
+            </AsyncActionButton>
           </div>
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
             {groupedAnswers.map(([sensitivity, items]) => (
@@ -1034,10 +1212,15 @@ export function ProfileScreen() {
             <Input value={resumeDraft.base_version} placeholder="Base version" onChange={(event) => setResumeDraft((current) => ({ ...current, base_version: event.target.value }))} />
             <Input value={resumeDraft.diff_summary} placeholder="Diff summary" onChange={(event) => setResumeDraft((current) => ({ ...current, diff_summary: event.target.value }))} />
           </div>
-          <Button onClick={() => void createResumeVariant()} disabled={!resumeDraft.label.trim()}>
+          <AsyncActionButton
+            pending={Boolean(pendingActions["resume:save"])}
+            pendingLabel="Guardando versión…"
+            onClick={() => void createResumeVariant()}
+            disabled={!resumeDraft.label.trim()}
+          >
             <Plus data-icon="inline-start" />
-            Add variant
-          </Button>
+            Agregar versión
+          </AsyncActionButton>
           <div className="flex flex-col gap-2">
             {resumes.length === 0 ? (
               <p className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
