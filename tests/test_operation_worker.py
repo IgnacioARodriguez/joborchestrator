@@ -106,7 +106,7 @@ def test_worker_processes_application_materials_generation(monkeypatch):
     monkeypatch.setattr(
         worker,
         "build_application_kit_with_nvidia",
-        lambda job, ranking=None, model=None: {
+        lambda job, ranking=None, model=None, cv_strategy=None: {
             "recruiter_message": "Hi recruiter",
             "cover_letter": "Dear team",
             "ats_cv_text": "Professional Summary\nBackend engineer\n\nTechnical Skills\nPython\n\nProfessional Experience\nBuilt APIs\n\nEducation\nCS",
@@ -224,7 +224,7 @@ def test_worker_records_failed_materials_attempt_metadata(monkeypatch):
         lambda job_id: ({"id": job_id, "title": "Backend Engineer", "company": "Acme"}, None),
     )
 
-    def fail_generation(job, ranking=None, model=None):
+    def fail_generation(job, ranking=None, model=None, cv_strategy=None):
         raise LLMMaterialsError(
             "NVIDIA failed",
             generation_metadata={

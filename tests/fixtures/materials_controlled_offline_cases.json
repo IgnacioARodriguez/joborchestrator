@@ -220,7 +220,7 @@
           ]
         }
       },
-      "base_cv_text": "Ignacio Rodriguez\nCareer Journey\nBackend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API workflows.\n",
+      "base_cv_text": "Ignacio Rodriguez\nEmployment Record\nBackend Developer 04/2022 - 03/2025\nAcme Systems\n- Built API workflows.\n",
       "planner_response": {
         "summary_lines": [],
         "skill_ids": [],

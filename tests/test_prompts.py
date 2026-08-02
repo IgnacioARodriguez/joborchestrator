@@ -16,7 +16,7 @@ def test_load_prompt_uses_registry_active_version():
     assert active_prompt_version("judge", "semantic_rubric") == "v1"
     assert "calibrated evaluator" in load_prompt("judge", "semantic_rubric")
     assert active_prompt_version("materials", "nvidia_cv_contract") == "v14"
-    assert active_prompt_version("materials", "nvidia_cv_planner_contract") == "v1"
+    assert active_prompt_version("materials", "nvidia_cv_planner_contract") == "v2"
     assert active_prompt_version("materials", "nvidia_kit_contract") == "v14"
     assert "Return a small JSON plan for a deterministic renderer" in load_prompt(
         "materials", "nvidia_cv_planner_contract"
