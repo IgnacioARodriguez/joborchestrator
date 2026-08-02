@@ -24,6 +24,7 @@ import { InsightsScreen } from "@/components/screens/insights-screen"
 import { PipelineScreen } from "@/components/screens/pipeline-screen"
 import { SettingsScreen } from "@/components/screens/settings-screen"
 import { JobDetailDrawer } from "@/components/job-detail-drawer"
+import { ActivityCenter } from "@/components/activity-center"
 import { toast } from "sonner"
 import type { OperationRun, OpsStatus } from "@/lib/types"
 
@@ -148,6 +149,10 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
     ),
   )
   const jobSearchActive = searchState === "searching" || Boolean(searchOperationId) || linkedinScanActive
+  const activityOperations = [
+    ...(opsStatus?.active_local_operations ?? []),
+    ...(opsStatus?.latest_scan_operation ? [opsStatus.latest_scan_operation] : []),
+  ].filter((operation, index, all) => all.findIndex((item) => item.id === operation.id) === index)
 
   function refreshCurrentSection() {
     if (section === "apply") return refreshPreparationQueue()
@@ -341,6 +346,7 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
               </span>
             </div>
             <div className="flex items-center gap-2">
+              <ActivityCenter operations={activityOperations} onRetry={(operation) => toast("Reintento disponible", { description: `Vuelve a iniciar ${operation.type} desde su pantalla.` })} />
               <Button
                 variant="outline"
                 size="sm"

@@ -42,8 +42,9 @@ import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { DecisionBadge } from "@/components/badges"
 import { ScoreRing } from "@/components/badges"
-import { TaskProgressCard } from "@/components/task-progress-card"
+import { AsyncActionButton, TaskProgressCard } from "@/components/task-progress-card"
 import { useStore } from "@/lib/store"
+import { userFacingError } from "@/lib/user-facing-error"
 import { api } from "@/lib/api"
 import {
   applicantLabel,
@@ -156,6 +157,7 @@ function MaterialBlock({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(text)
   const [saving, setSaving] = useState(false)
+  const [approving, setApproving] = useState(false)
 
   if (!text) return null
   async function copyText() {
@@ -171,7 +173,7 @@ function MaterialBlock({
       toast.success("Saved", { description: label })
     } catch (error) {
       toast.error("Could not save", {
-        description: error instanceof Error ? error.message : "Backend request failed.",
+        description: userFacingError(error),
       })
     } finally {
       setSaving(false)
@@ -184,10 +186,10 @@ function MaterialBlock({
         <div className="flex flex-wrap justify-end gap-1">
           {actions}
           {onApprove && reviewState !== "approved" ? (
-            <Button variant="ghost" size="sm" onClick={() => void onApprove()}>
+            <AsyncActionButton variant="ghost" size="sm" pending={approving} pendingLabel="Aprobando…" onClick={async () => { setApproving(true); try { await onApprove() } finally { setApproving(false) } }}>
               <CheckCircle2 data-icon="inline-start" />
               Aprobar
-            </Button>
+            </AsyncActionButton>
           ) : null}
           {onSave ? (
             editing ? (
