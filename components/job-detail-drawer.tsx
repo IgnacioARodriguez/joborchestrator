@@ -1272,17 +1272,41 @@ const DetailBody = memo(function DetailBody({
               </div>
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Badge
-                  variant="outline"
-                  className="border-success/25 bg-success/10 text-success-foreground"
-                >
-                  <CheckCircle2 className="size-3.5" />
-                  {PIPELINE_LABELS[job.pipeline_status]}
-                </Badge>
                 <DecisionBadge
                   decision={job.ranking.decision}
                   score={job.ranking.final_score}
                 />
+                {job.pipeline_status === "ready_to_apply" ? (
+                  <Badge
+                    variant="outline"
+                    className="border-success/25 bg-success/10 text-success-foreground"
+                  >
+                    <CheckCircle2 className="size-3.5" />
+                    Visible en Aplicar
+                  </Badge>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={sessionBusy}
+                    onClick={async () => {
+                      const updated = await setPipelineStatus(
+                        job.id,
+                        "ready_to_apply",
+                      )
+                      if (updated) {
+                        toast.success("Agregado a Aplicar", {
+                          description: job.title,
+                        })
+                      } else {
+                        toast.error("No se pudo agregar a Aplicar")
+                      }
+                    }}
+                  >
+                    <CheckCircle2 data-icon="inline-start" />
+                    Agregar a Aplicar
+                  </Button>
+                )}
               </div>
             </div>
           </div>

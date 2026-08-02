@@ -22,6 +22,7 @@ import {
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { ScoreBadge } from "@/components/badges"
 import {
   Empty,
   EmptyDescription,
@@ -184,9 +185,18 @@ function PreparationCard({
               <span>Actualizado {relativeTime(job.last_seen_at)}</span>
             </div>
           </button>
-          <Badge variant="outline" className={cn("w-fit shrink-0", STATUS_TONE[view.status])}>
-            {view.label}
-          </Badge>
+          <div className="flex w-fit shrink-0 items-center gap-2">
+            <ScoreBadge
+              score={job.ranking.final_score}
+              className="min-w-11 px-2 py-1 text-sm"
+            />
+            <Badge
+              variant="outline"
+              className={cn("w-fit shrink-0", STATUS_TONE[view.status])}
+            >
+              {view.label}
+            </Badge>
+          </div>
         </div>
 
         <PreparationProgress steps={view.progress} />
