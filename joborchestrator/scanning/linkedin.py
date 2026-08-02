@@ -1276,7 +1276,7 @@ async def extraer_hiring_contacts_desde_panel(panel) -> HiringContactsExtraction
     contacts: list[HiringContact] = []
     for heading in HIRING_TEAM_HEADINGS:
         try:
-            heading_loc = panel.get_by_text(re.compile(rf"^{re.escape(heading)}$", re.IGNORECASE)).first
+            heading_loc = panel.get_by_text(re.compile(re.escape(heading), re.IGNORECASE)).first
             if await heading_loc.count() == 0:
                 continue
             found_heading = True
@@ -1284,7 +1284,7 @@ async def extraer_hiring_contacts_desde_panel(panel) -> HiringContactsExtraction
             if await block.count() == 0:
                 block = heading_loc.locator("xpath=following::*[.//a[contains(@href, '/in/')]][1]")
             if await block.count() == 0:
-                continue
+                block = panel
             links = block.locator('a[href*="/in/"]')
             link_count = await links.count()
             for index in range(link_count):
@@ -1324,6 +1324,23 @@ async def extraer_hiring_contacts_desde_panel(panel) -> HiringContactsExtraction
                 except Exception as exc:
                     print(f"linkedin_hiring_contact_parse_failed error={type(exc).__name__}")
                     continue
+            if not contacts:
+                fallback_links = panel.locator('a[href*="/in/"]')
+                link_count = await fallback_links.count()
+                for index in range(link_count):
+                    link = fallback_links.nth(index)
+                    href = normalize_linkedin_profile_url(await link.get_attribute("href"))
+                    name = extract_contact_name(await link.inner_text(timeout=1000), href)
+                    if href and name:
+                        contacts.append(
+                            HiringContact(
+                                name=name,
+                                profile_url=href,
+                                headline=None,
+                                role=None,
+                                source=LINKEDIN_HIRING_CONTACT_SOURCE,
+                            )
+                        )
             contacts = deduplicate_hiring_contacts(contacts)
             print(f"linkedin_hiring_contacts_extracted status=found count={len(contacts)}")
             return HiringContactsExtractionResult("found", contacts)
