@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from joborchestrator.intelligence.profile_trace import profile_trace
 from joborchestrator.ranking.nvidia_ranker import (
     DEFAULT_NVIDIA_MAX_CONCURRENCY,
     DEFAULT_NVIDIA_MODEL,
@@ -45,7 +46,8 @@ def queue_post_scan_ranking(
             "skipped": "disabled",
         }
 
-    if not db.get_candidate_profile_payload():
+    profile_payload = db.get_candidate_profile_payload()
+    if not profile_payload:
         return {
             "queued": 0,
             "skipped": (
@@ -101,6 +103,7 @@ def queue_post_scan_ranking(
             excluded_sources=(
                 excluded_sources
             ),
+            candidate_profile_hash=profile_trace(profile_payload).get("hash"),
         )
     )
 
@@ -157,11 +160,13 @@ def queue_post_scan_ranking(
         )
     )
 
+    ranking_job = db.get_ranking_job(ranking_job_id) or {}
+    queued_count = int(ranking_job.get("total_items") or 0)
     return {
         "ranking_job_id": (
             ranking_job_id
         ),
-        "queued": len(job_ids),
+        "queued": queued_count,
         "ranking_version": (
             ranking_version
         ),

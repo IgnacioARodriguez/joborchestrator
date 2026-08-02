@@ -29,6 +29,15 @@ def create_ranking_job(
     unique_job_ids = list(dict.fromkeys(int(job_id) for job_id in job_ids))
     conn = connect()
     try:
+        active_rows = conn.execute(
+            """SELECT DISTINCT rji.job_posting_id
+               FROM ranking_job_items rji
+               JOIN ranking_jobs rj ON rj.id = rji.ranking_job_id
+               WHERE rj.status IN ('queued', 'running')
+                 AND rji.status IN ('queued', 'running')"""
+        ).fetchall()
+        active_job_ids = {int(row[0]) for row in active_rows}
+        unique_job_ids = [job_id for job_id in unique_job_ids if job_id not in active_job_ids]
         cursor = conn.execute(
             """INSERT INTO ranking_jobs (
                    provider, model, ranking_version, status, request_batch_size,

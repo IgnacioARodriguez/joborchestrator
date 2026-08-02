@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import os
+import logging
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 import httpx
+
+from joborchestrator.llm.observability import (
+    LLMRequestContext,
+    request_failed,
+    request_finished,
+    request_started,
+    response_request_id,
+)
 
 
 ResponseFormat = Literal["text", "json"]
@@ -120,6 +129,7 @@ class OpenAIProvider:
 
 class NvidiaProvider:
     provider_name = "nvidia"
+    _logger = logging.getLogger("joborchestrator.llm.provider")
 
     def __init__(
         self,
@@ -145,6 +155,7 @@ class NvidiaProvider:
         top_p: float = 0.95,
         frequency_penalty: float = 0,
         presence_penalty: float = 0,
+        request_context: LLMRequestContext | None = None,
     ) -> LLMResponse:
         if not self.api_key:
             raise LLMProviderError("NVIDIA_API_KEY or NIM_API_KEY is required.")
@@ -158,6 +169,9 @@ class NvidiaProvider:
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
         )
+        context = request_context or LLMRequestContext(operation="llm")
+        started = request_started(self._logger, provider=self.provider_name, model=model, context=context)
+        response = None
         try:
             response = self._http.post(
                 f"{self.base_url}/chat/completions",
@@ -167,12 +181,15 @@ class NvidiaProvider:
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            request_failed(self._logger, started=started, provider=self.provider_name, model=model, context=context, status_code=exc.response.status_code if exc.response else None, request_id=response_request_id(exc.response), error=exc, timeout=False)
             detail = exc.response.text[:1000] if exc.response is not None else ""
             raise LLMProviderError(f"NVIDIA request failed: status={exc.response.status_code} body={detail!r}") from exc
         except httpx.HTTPError as exc:
+            request_failed(self._logger, started=started, provider=self.provider_name, model=model, context=context, status_code=getattr(response, "status_code", None), request_id=response_request_id(response), error=exc, timeout=isinstance(exc, httpx.TimeoutException))
             raise LLMProviderError(f"NVIDIA request failed: {type(exc).__name__}: {exc!r}") from exc
 
         raw = response.json()
+        request_finished(self._logger, started=started, provider=self.provider_name, model=model, context=context, status_code=response.status_code, request_id=response_request_id(response, raw))
         return LLMResponse(
             text=_extract_chat_text(raw),
             raw=raw,
@@ -193,6 +210,7 @@ class NvidiaProvider:
         top_p: float = 0.95,
         frequency_penalty: float = 0,
         presence_penalty: float = 0,
+        request_context: LLMRequestContext | None = None,
     ) -> LLMResponse:
         if not self.api_key:
             raise LLMProviderError("NVIDIA_API_KEY or NIM_API_KEY is required.")
@@ -206,6 +224,9 @@ class NvidiaProvider:
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
         )
+        context = request_context or LLMRequestContext(operation="llm")
+        started = request_started(self._logger, provider=self.provider_name, model=model, context=context)
+        response = None
         try:
             response = await client.post(
                 f"{self.base_url}/chat/completions",
@@ -215,12 +236,15 @@ class NvidiaProvider:
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            request_failed(self._logger, started=started, provider=self.provider_name, model=model, context=context, status_code=exc.response.status_code if exc.response else None, request_id=response_request_id(exc.response), error=exc, timeout=False)
             detail = exc.response.text[:1000] if exc.response is not None else ""
             raise LLMProviderError(f"NVIDIA request failed: status={exc.response.status_code} body={detail!r}") from exc
         except httpx.HTTPError as exc:
+            request_failed(self._logger, started=started, provider=self.provider_name, model=model, context=context, status_code=getattr(response, "status_code", None), request_id=response_request_id(response), error=exc, timeout=isinstance(exc, httpx.TimeoutException))
             raise LLMProviderError(f"NVIDIA request failed: {type(exc).__name__}: {exc!r}") from exc
 
         raw = response.json()
+        request_finished(self._logger, started=started, provider=self.provider_name, model=model, context=context, status_code=response.status_code, request_id=response_request_id(response, raw))
         return LLMResponse(
             text=_extract_chat_text(raw),
             raw=raw,

@@ -546,6 +546,7 @@ def list_jobs(
     jobs = db.get_job_posting_summaries(selected_ranking_version, effective_limit, effective_offset)
     rows = jobs.to_dict("records")
     total = db.count_job_postings()
+    current_profile_hash = profile_trace(db.get_candidate_profile_payload()).get("hash")
     return {
         "jobs": [
             job_list_item_dto(row, _ranking_from_apply_queue_row(row))
@@ -584,6 +585,8 @@ def get_job(job_id: int, response: Response, ranking_version: str | None = None)
         else []
     )
     ranking = ranking_rows[0] if ranking_rows else None
+    if ranking is not None:
+        ranking["_current_candidate_profile_hash"] = profile_trace(db.get_candidate_profile_payload()).get("hash")
     return {"job": job_dto(job, ranking)}
 
 
@@ -614,6 +617,7 @@ def apply_queue(
         q,
         pipeline_filter,
     ).to_dict("records")
+    current_profile_hash = profile_trace(db.get_candidate_profile_payload()).get("hash")
     jobs = sorted(
         [
             job_list_item_dto(row, _ranking_from_apply_queue_row(row))
@@ -648,7 +652,9 @@ def apply_queue(
     }
 
 
-def _ranking_from_apply_queue_row(row: dict[str, Any]) -> dict[str, Any] | None:
+def _ranking_from_apply_queue_row(
+    row: dict[str, Any], current_profile_hash: str | None = None
+) -> dict[str, Any] | None:
     ranking_id = row.get("ranking_id")
     if ranking_id is None or (isinstance(ranking_id, float) and pd.isna(ranking_id)):
         return None
@@ -671,6 +677,7 @@ def _ranking_from_apply_queue_row(row: dict[str, Any]) -> dict[str, Any] | None:
         "ranking_validation_errors_json": row.get("ranking_ranking_validation_errors_json"),
         "ranking_candidate_profile_hash": row.get("ranking_ranking_candidate_profile_hash"),
         "ranking_version": row.get("ranking_ranking_version"),
+        "_current_candidate_profile_hash": current_profile_hash,
     }
 
 

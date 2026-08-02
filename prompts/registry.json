@@ -3,6 +3,7 @@
   "environments": {
     "default": {
       "ranking/nvidia_response_contract": "v9",
+      "ranking/nvidia_fact_contract": "v1",
       "materials/nvidia_cv_contract": "v14",
       "materials/nvidia_kit_contract": "v14",
       "judge/semantic_rubric": "v1",

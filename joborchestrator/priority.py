@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -53,10 +54,11 @@ def compute_priority(job: dict[str, Any], ranking: dict[str, Any] | None = None,
         - staleness
     )
     priority = _clamp_int(priority)
-    blocker = _blocker(job, quality, risk)
-    next_action = _next_action(job, priority, blocker)
+    blocker = _blocker(job, ranking, quality, risk)
+    next_action = _next_action(job, ranking, priority, blocker)
+    decision = str(ranking.get("decision") or "unranked")
     explanation = (
-        f"priority={priority}: fit {fit_score}, freshness {freshness_score}, "
+        f"priority={priority}: decision {decision}, fit {fit_score}, freshness {freshness_score}, "
         f"effort {effort}, recruiter {recruiter}, data {quality}, risk -{risk}."
     )
     return PriorityBreakdown(
@@ -79,8 +81,7 @@ def compute_priority(job: dict[str, Any], ranking: dict[str, Any] | None = None,
 
 
 def _freshness_score(job: dict[str, Any], now: datetime) -> int:
-    raw = job.get("posted_at") or job.get("first_seen_at") or job.get("last_seen_at")
-    seen = _parse_dt(raw)
+    seen = _freshness_reference(job)
     if not seen:
         return 35
     age_hours = max(0, (now - seen).total_seconds() / 3600)
@@ -96,8 +97,7 @@ def _freshness_score(job: dict[str, Any], now: datetime) -> int:
 
 
 def _freshness_bucket(job: dict[str, Any], now: datetime) -> tuple[str, int | None]:
-    raw = job.get("posted_at") or job.get("first_seen_at") or job.get("last_seen_at")
-    seen = _parse_dt(raw)
+    seen = _freshness_reference(job)
     if not seen:
         return "archival", None
     age_days = max(0, int((now - seen).total_seconds() // 86400))
@@ -108,6 +108,19 @@ def _freshness_bucket(job: dict[str, Any], now: datetime) -> tuple[str, int | No
     if age_days <= 21:
         return "stale", age_days
     return "archival", age_days
+
+
+def _freshness_reference(job: dict[str, Any]) -> datetime | None:
+    candidates = [
+        parsed
+        for parsed in (
+            _parse_dt(job.get("posted_at")),
+            _parse_dt(job.get("first_seen_at")),
+            _parse_dt(job.get("last_seen_at")),
+        )
+        if parsed is not None
+    ]
+    return max(candidates) if candidates else None
 
 
 def _staleness_penalty(bucket: str) -> int:
@@ -126,24 +139,21 @@ def _recruiter_advantage_score(job: dict[str, Any]) -> int:
         return 90
     if job.get("recruiter_name"):
         return 70
-    if str(job.get("source") or "").lower() == "linkedin_scraper":
+    if str(job.get("source") or "").strip():
         return 35
     return 20
 
 
 def _effort_score(job: dict[str, Any]) -> int:
-    source = str(job.get("source") or "").lower()
-    apply_type = str(job.get("apply_type") or "").lower()
-    url = str(job.get("apply_url") or job.get("external_apply_url") or job.get("url") or "").lower()
+    apply_type = str(job.get("apply_type") or "").strip().lower()
+    has_direct_apply = bool(job.get("apply_url") or job.get("external_apply_url"))
     score = 62
-    if "greenhouse" in source or "greenhouse.io" in url:
+    if apply_type in {"easy_apply", "one_click", "quick_apply"}:
         score += 22
-    if "lever" in source or "lever.co" in url:
-        score += 14
-    if apply_type == "easy_apply":
-        score += 18
-    if apply_type == "external":
+    elif apply_type in {"external", "redirect"}:
         score -= 8
+    if has_direct_apply:
+        score += 6
     if not job.get("ats_cv_text"):
         score -= 8
     if not job.get("cover_letter"):
@@ -183,9 +193,12 @@ def _competition_signal(job: dict[str, Any]) -> int:
 
 
 def _eligibility_score(job: dict[str, Any], ranking: dict[str, Any]) -> int:
-    evidence = ranking.get("evidence") or ranking.get("evidence_json") or {}
-    if isinstance(evidence, str):
-        evidence = {}
+    decision = str(ranking.get("decision") or "")
+    if decision == "AVOID":
+        return 0
+    if decision == "SKIP":
+        return 15
+    evidence = _ranking_evidence(ranking)
     dealbreakers = evidence.get("dealbreakers") or []
     if dealbreakers:
         return 20
@@ -193,15 +206,29 @@ def _eligibility_score(job: dict[str, Any], ranking: dict[str, Any]) -> int:
 
 
 def _risk_penalty(job: dict[str, Any], ranking: dict[str, Any]) -> int:
-    risk = 0
-    evidence = ranking.get("evidence") or {}
-    if isinstance(evidence, dict) and evidence.get("red_flags"):
-        risk += 25
+    evidence = _ranking_evidence(ranking)
+    scores = ranking.get("scores") if isinstance(ranking.get("scores"), dict) else {}
+    risk = _clamp_int(scores.get("risk_penalty") or 0)
+    if evidence.get("red_flags"):
+        risk = max(risk, 25)
+    if evidence.get("dealbreakers"):
+        risk = max(risk, 40)
     if _data_quality_score(job) < 55:
         risk += 20
     if str(job.get("pipeline_status") or "") == "discarded":
         risk += 80
     return _clamp_int(risk)
+
+
+def _ranking_evidence(ranking: dict[str, Any]) -> dict[str, Any]:
+    evidence = ranking.get("evidence") or ranking.get("evidence_json") or {}
+    if isinstance(evidence, dict):
+        return evidence
+    try:
+        parsed = json.loads(str(evidence))
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _estimated_minutes(job: dict[str, Any], effort_score: int) -> int:
@@ -214,7 +241,10 @@ def _estimated_minutes(job: dict[str, Any], effort_score: int) -> int:
     return 18
 
 
-def _blocker(job: dict[str, Any], quality: int, risk: int) -> str | None:
+def _blocker(job: dict[str, Any], ranking: dict[str, Any], quality: int, risk: int) -> str | None:
+    profile_status = str((ranking.get("generation") or {}).get("profile_status") or "")
+    if profile_status == "stale":
+        return "Ranking uses an outdated candidate profile"
     if quality < 60:
         return "Missing job data"
     if risk >= 60:
@@ -222,15 +252,28 @@ def _blocker(job: dict[str, Any], quality: int, risk: int) -> str | None:
     return None
 
 
-def _next_action(job: dict[str, Any], priority: int, blocker: str | None) -> str:
+def _next_action(
+    job: dict[str, Any],
+    ranking: dict[str, Any],
+    priority: int,
+    blocker: str | None,
+) -> str:
+    profile_status = str((ranking.get("generation") or {}).get("profile_status") or "")
+    if profile_status == "stale":
+        return "Re-rank"
+    decision = str(ranking.get("decision") or "")
+    if decision in {"AVOID", "SKIP"}:
+        return "Skip"
     if blocker:
         return "Needs input"
+    if decision == "MAYBE":
+        return "Review"
     status = str(job.get("pipeline_status") or "new")
+    if decision == "APPLY_NOW" and status in {"shortlisted", "ready_to_apply"}:
+        return "Apply now"
     if status == "ready_to_apply":
         return "Review"
-    if status == "shortlisted":
-        return "Apply now"
-    if priority >= 70:
+    if decision in {"APPLY_NOW", "APPLY_WITH_TAILORED_CV"}:
         return "Prepare"
     if priority < 35:
         return "Skip"

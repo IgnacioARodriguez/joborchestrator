@@ -1071,11 +1071,16 @@ def set_app_setting(key: str, value: object) -> None:
 
 
 def get_candidate_profile_payload() -> dict | None:
-    return settings_repository.get_candidate_profile_payload(_conn)
+    from joborchestrator.scanning.search_targets import synchronize_profile_work_modes
+
+    profile = settings_repository.get_candidate_profile_payload(_conn)
+    return synchronize_profile_work_modes(profile) if profile else None
 
 
 def save_candidate_profile_payload(profile: dict) -> None:
-    settings_repository.save_candidate_profile_payload(_conn, profile)
+    from joborchestrator.scanning.search_targets import synchronize_profile_work_modes
+
+    settings_repository.save_candidate_profile_payload(_conn, synchronize_profile_work_modes(profile))
 
 
 def list_skill_catalog() -> list[dict[str, object]]:
@@ -1638,8 +1643,14 @@ def get_rankings_for_job_ids(ranking_version: str, job_ids: list[int]) -> pd.Dat
     return rankings_repository.get_rankings_for_job_ids(_conn, _read_sql_query, ranking_version, job_ids)
 
 
-def get_unranked_jobs(ranking_version: str = NVIDIA_RANKING_VERSION, limit: int = 500) -> pd.DataFrame:
-    return rankings_repository.get_unranked_jobs(_conn, _read_sql_query, ranking_version, limit)
+def get_unranked_jobs(
+    ranking_version: str = NVIDIA_RANKING_VERSION,
+    limit: int = 500,
+    candidate_profile_hash: str | None = None,
+) -> pd.DataFrame:
+    return rankings_repository.get_unranked_jobs(
+        _conn, _read_sql_query, ranking_version, limit, candidate_profile_hash
+    )
 
 
 def get_jobs_for_post_scan_ranking(
@@ -1654,6 +1665,7 @@ def get_jobs_for_post_scan_ranking(
     excluded_sources: (
         list[str] | None
     ) = None,
+    candidate_profile_hash: str | None = None,
 ) -> pd.DataFrame:
     return (
         rankings_repository
@@ -1670,6 +1682,9 @@ def get_jobs_for_post_scan_ranking(
             ),
             excluded_sources=(
                 excluded_sources
+            ),
+            candidate_profile_hash=(
+                candidate_profile_hash
             ),
         )
     )
