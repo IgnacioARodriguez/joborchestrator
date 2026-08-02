@@ -10,12 +10,19 @@ const python = existsSync(join(root, ".venv", "Scripts", "python.exe"))
   ? join(root, ".venv", "Scripts", "python.exe")
   : "python"
 
+const applicationBrowserProfile = join(root, ".joborchestrator", "browser-profile")
+
 const services = [
   {
     name: "worker",
     color: "\x1b[32m",
     command: python,
     args: ["-m", "joborchestrator.worker"],
+    env: {
+      APPLICATION_BROWSER_HANDOFF: process.env.APPLICATION_BROWSER_HANDOFF ?? "1",
+      APPLICATION_BROWSER_HEADLESS: process.env.APPLICATION_BROWSER_HEADLESS ?? "0",
+      APPLICATION_BROWSER_PROFILE_DIR: process.env.APPLICATION_BROWSER_PROFILE_DIR ?? applicationBrowserProfile,
+    },
   },
   {
     name: "linkedin",
@@ -49,7 +56,7 @@ function prefixStream(service, stream, output) {
 function start(service) {
   const child = spawn(service.command, service.args, {
     cwd: root,
-    env: process.env,
+    env: { ...process.env, ...(service.env ?? {}) },
     shell: isWindows,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: false,

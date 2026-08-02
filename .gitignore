@@ -51,6 +51,7 @@ dashboard-dev.*.log
 api-dev.*.log
 logs/
 artifacts/
+.joborchestrator/
 
 # v0 sandbox internal files
 __v0_runtime_loader.js
