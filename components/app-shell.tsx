@@ -25,9 +25,18 @@ import { PipelineScreen } from "@/components/screens/pipeline-screen"
 import { SettingsScreen } from "@/components/screens/settings-screen"
 import { JobDetailDrawer } from "@/components/job-detail-drawer"
 import { toast } from "sonner"
-import type { OpsStatus } from "@/lib/types"
+import type { OperationRun, OpsStatus } from "@/lib/types"
 
 type SearchState = "idle" | "searching" | "success" | "empty" | "error"
+
+function scanProgressCopy(operation: OperationRun) {
+  const message = operation.progress_message?.toLowerCase() ?? ""
+  if (operation.status === "queued" || message.includes("queue") || message.includes("wait")) return "La búsqueda está en cola y comenzará cuando el asistente esté disponible."
+  if (message.includes("linkedin")) return "Buscando oportunidades en LinkedIn y guardándolas a medida que aparecen."
+  if (["greenhouse", "lever", "ashby", "ats"].some(value => message.includes(value))) return "Consultando portales de empresas y sistemas de empleo configurados."
+  if (message.includes("search") || message.includes("api")) return "Consultando fuentes públicas de empleo con tus búsquedas configuradas."
+  return "Consultando las fuentes configuradas y guardando oportunidades nuevas."
+}
 
 function DataLoadingBanner() {
   const { loading } = useStore()
@@ -118,6 +127,8 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
   const [openJobId, setOpenJobId] = useState<string | null>(null)
   const [searchState, setSearchState] = useState<SearchState>("idle")
   const [searchMessage, setSearchMessage] = useState<string | null>(null)
+  const [searchOperationId, setSearchOperationId] = useState<number | null>(null)
+  const [searchOperation, setSearchOperation] = useState<OperationRun | null>(null)
   const [opsStatus, setOpsStatus] = useState<OpsStatus | null>(null)
   const {
     jobs,
@@ -136,6 +147,7 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
       (operation) => operation.type === "linkedin_scan" && ["queued", "running"].includes(operation.status),
     ),
   )
+  const jobSearchActive = searchState === "searching" || Boolean(searchOperationId) || linkedinScanActive
 
   function refreshCurrentSection() {
     if (section === "apply") return refreshPreparationQueue()
@@ -195,7 +207,7 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
   }, [loadOpsStatus])
 
   useEffect(() => {
-    if (!linkedinScanActive || section !== "jobs") return
+    if (!jobSearchActive || section !== "jobs") return
     const pollJobs = () => {
       void refresh()
     }
@@ -205,13 +217,45 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
       window.clearTimeout(initialTimer)
       window.clearInterval(timer)
     }
-  }, [linkedinScanActive, refresh, section])
+  }, [jobSearchActive, refresh, section])
+
+  useEffect(() => {
+    if (searchOperationId) return
+    const latest = opsStatus?.latest_scan_operation
+    if (!latest || !["queued", "running"].includes(latest.status)) return
+    const timer = window.setTimeout(() => {
+      setSearchOperationId(latest.id); setSearchOperation(latest); setSearchState("searching"); setSearchMessage(scanProgressCopy(latest))
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [opsStatus, searchOperationId])
+
+  useEffect(() => {
+    if (!searchOperationId) return
+    const operationId = searchOperationId
+    let stopped = false
+    let timer: number | undefined
+    async function poll() {
+      try {
+        const operation = (await api.getOperation(operationId)).operation
+        if (stopped) return
+        setSearchOperation(operation)
+        if (["queued", "running"].includes(operation.status)) { setSearchState("searching"); setSearchMessage(scanProgressCopy(operation)); timer = window.setTimeout(poll, 2500); return }
+        setSearchOperationId(null); setSearchOperation(null)
+        await Promise.all([refresh(), loadOpsStatus()])
+        setSearchState(operation.status === "completed" ? "success" : "error")
+        setSearchMessage(operation.status === "completed" ? "La búsqueda terminó y la lista de jobs ya está actualizada." : "La búsqueda se detuvo antes de completar todas las fuentes.")
+      } catch { if (!stopped) timer = window.setTimeout(poll, 4000) }
+    }
+    void poll()
+    return () => { stopped = true; if (timer !== undefined) window.clearTimeout(timer) }
+  }, [loadOpsStatus, refresh, searchOperationId])
 
   async function scanFreshJobs() {
     setSearchState("searching")
     setSearchMessage(null)
     try {
       const response = await api.scanFresh()
+      setSearchOperationId(response.operation_id)
       const message = response.already_running
         ? "La búsqueda ya estaba en curso."
         : response.progress_message || "Búsqueda iniciada. Los nuevos jobs aparecerán al sincronizar."
@@ -323,6 +367,8 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
                 onSearchNewJobs={() => void scanFreshJobs()}
                 searchState={searchState}
                 searchMessage={searchMessage}
+                searchActive={jobSearchActive}
+                searchStartedAt={searchOperation?.started_at ?? searchOperation?.created_at}
               />
             )}
             {section === "apply" && <PipelineScreen onOpenJob={setOpenJobId} />}

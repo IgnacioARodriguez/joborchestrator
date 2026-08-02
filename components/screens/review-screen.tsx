@@ -21,6 +21,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Input } from "@/components/ui/input"
 import { DecisionBadge, ScoreRing } from "@/components/badges"
 import { PageHeader } from "@/components/page-chrome"
+import { TaskProgressCard } from "@/components/task-progress-card"
 import { useStore } from "@/lib/store"
 import type { JobListItem, PipelineStatus } from "@/lib/types"
 import { PIPELINE_LABELS, rankingSummaryText, relativeTime } from "@/lib/job-ui"
@@ -171,11 +172,15 @@ export function JobsScreen({
   onSearchNewJobs,
   searchState = "idle",
   searchMessage,
+  searchActive = false,
+  searchStartedAt,
 }: {
   onOpenJob: (id: string) => void
   onSearchNewJobs?: () => void
   searchState?: SearchState
   searchMessage?: string | null
+  searchActive?: boolean
+  searchStartedAt?: string | null
 }) {
   const {
     applyQueuePage,
@@ -265,14 +270,14 @@ export function JobsScreen({
         title="Jobs"
         description={`${allJobsTotal.toLocaleString()} oportunidades para priorizar y mover a la cola de Aplicar.`}
         actions={
-          <Button onClick={onSearchNewJobs} disabled={!onSearchNewJobs || searchState === "searching"}>
-            {searchState === "searching" ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <Sparkles data-icon="inline-start" />}
-            {searchState === "searching" ? "Buscando..." : "Buscar nuevos jobs"}
+          <Button onClick={onSearchNewJobs} disabled={!onSearchNewJobs || searchActive}>
+            {searchActive ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <Sparkles data-icon="inline-start" />}
+            {searchActive ? "Buscando..." : "Buscar nuevos jobs"}
           </Button>
         }
       />
 
-      {searchMessage ? (
+      {searchActive ? <TaskProgressCard title="Buscando nuevas oportunidades" description={searchMessage ?? "Consultando las fuentes configuradas."} startedAt={searchStartedAt} steps={[{ label: "Preparando tus búsquedas", state: "done" }, { label: "Consultando portales y fuentes", state: "active" }, { label: "Eliminando ofertas repetidas", state: "pending" }, { label: "Ordenando los resultados", state: "pending" }]} /> : searchMessage ? (
         <div className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground" role="status" aria-live="polite">
           {searchMessage}
         </div>
