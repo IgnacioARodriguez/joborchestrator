@@ -904,16 +904,12 @@ def test_nvidia_application_kit_failure_combines_partial_generation_metadata(mon
 
     monkeypatch.setattr(llm_application_materials, "_call_nvidia_kit", fail_kit)
 
-    try:
-        build_application_kit_with_nvidia(
-            {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
-            {"decision": "APPLY_WITH_TAILORED_CV"},
-            api_key="test-key",
-        )
-    except LLMMaterialsError as exc:
-        metadata = exc.generation_metadata
-    else:
-        raise AssertionError("Expected LLMMaterialsError")
+    result = build_application_kit_with_nvidia(
+        {"title": "AWS Backend / Cloud Developer", "company": "PSS"},
+        {"decision": "APPLY_WITH_TAILORED_CV"},
+        api_key="test-key",
+    )
+    metadata = result["_generation_metadata"]
 
     assert metadata["validation_attempts"] == 4
     assert metadata["validation_errors"] == [
@@ -921,6 +917,8 @@ def test_nvidia_application_kit_failure_combines_partial_generation_metadata(mon
         "application materials use overconfident tone",
         "application materials use overconfident tone",
     ]
+    assert metadata["partial_success"] is True
+    assert metadata["material_statuses"]["ats_cv"] == "ready"
 
 
 def test_ats_cv_validation_rejects_ranking_avoid_overclaiming_terms_without_source_support():

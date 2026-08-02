@@ -166,13 +166,16 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
     elif provider == "nvidia":
         selected_model = model if model and model != DEFAULT_MATERIALS_MODEL else DEFAULT_NVIDIA_MATERIALS_MODEL
         try:
-            kit = build_application_kit_with_nvidia(
-                job,
-                ranking=ranking,
-                model=selected_model,
-                cv_strategy=cv_strategy,
-                targets=targets,
-            )
+            generation_kwargs = {
+                "ranking": ranking,
+                "model": selected_model,
+                "cv_strategy": cv_strategy,
+            }
+            # Keep operations created before target selection compatible with
+            # older workers/mocks; the generator defaults to all materials.
+            if "targets" in input_payload:
+                generation_kwargs["targets"] = targets
+            kit = build_application_kit_with_nvidia(job, **generation_kwargs)
         except LLMMaterialsError as exc:
             _record_failed_materials_attempt(operation_id, job_id, provider, selected_model, prompt_versions, exc)
             raise
