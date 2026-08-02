@@ -626,13 +626,20 @@ async def crear_contexto_linkedin(p):
     No automatiza el login; reutiliza sesiÃ³n local si ya existe.
     """
 
+    launch_options = {
+        "user_data_dir": str(linkedin_profile_dir()),
+        "headless": False,
+        "viewport": {"width": 1440, "height": 1000},
+        "locale": "es-ES",
+        "args": ["--start-maximized"],
+        "slow_mo": 50,
+    }
+    executable_path = os.getenv("LINKEDIN_BROWSER_EXECUTABLE")
+    if executable_path:
+        launch_options["executable_path"] = executable_path
+
     context = await p.chromium.launch_persistent_context(
-        user_data_dir=str(linkedin_profile_dir()),
-        headless=False,
-        viewport={"width": 1440, "height": 1000},
-        locale="es-ES",
-        args=["--start-maximized"],
-        slow_mo=50,
+        **launch_options,
     )
 
     page = context.pages[0] if context.pages else await context.new_page()

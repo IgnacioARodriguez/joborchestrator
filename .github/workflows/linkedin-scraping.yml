@@ -38,6 +38,7 @@ jobs:
       RANKING_LIMIT: ${{ inputs.ranking_limit || '250' }}
       RESUME_FLAG: ${{ inputs.resume_from_checkpoint && '--resume-from-checkpoint' || '' }}
       LINKEDIN_PROFILE_DIR: C:\Projects\joborchestrator\linkedin_user_profile_test
+      LINKEDIN_BROWSER_EXECUTABLE: C:\Program Files\Google\Chrome\Application\chrome.exe
 
     steps:
       - uses: actions/checkout@v4
