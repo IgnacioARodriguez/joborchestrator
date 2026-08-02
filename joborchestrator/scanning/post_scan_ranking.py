@@ -161,7 +161,7 @@ def queue_post_scan_ranking(
     )
 
     ranking_job = db.get_ranking_job(ranking_job_id) or {}
-    queued_count = int(ranking_job.get("total_items") or 0)
+    queued_count = int(ranking_job.get("total_items") or len(job_ids))
     return {
         "ranking_job_id": (
             ranking_job_id

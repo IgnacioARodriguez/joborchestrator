@@ -308,6 +308,7 @@ def get_jobs_for_post_scan_ranking(
     excluded_sources: (
         list[str] | None
     ) = None,
+    candidate_profile_hash: str | None = None,
 ) -> pd.DataFrame:
     conn = connect()
 
@@ -330,8 +331,10 @@ def get_jobs_for_post_scan_ranking(
                     'updated'
                 )
                 OR jr.id IS NULL
+                OR COALESCE(jr.ranking_candidate_profile_hash, '') <> ?
               )
         """
+        params.append(candidate_profile_hash or "")
 
         if included_sources:
             placeholders = ",".join(

@@ -189,7 +189,7 @@ class NvidiaProvider:
             raise LLMProviderError(f"NVIDIA request failed: {type(exc).__name__}: {exc!r}") from exc
 
         raw = response.json()
-        request_finished(self._logger, started=started, provider=self.provider_name, model=model, context=context, status_code=response.status_code, request_id=response_request_id(response, raw))
+        request_finished(self._logger, started=started, provider=self.provider_name, model=model, context=context, status_code=getattr(response, "status_code", None), request_id=response_request_id(response, raw))
         return LLMResponse(
             text=_extract_chat_text(raw),
             raw=raw,
@@ -244,7 +244,7 @@ class NvidiaProvider:
             raise LLMProviderError(f"NVIDIA request failed: {type(exc).__name__}: {exc!r}") from exc
 
         raw = response.json()
-        request_finished(self._logger, started=started, provider=self.provider_name, model=model, context=context, status_code=response.status_code, request_id=response_request_id(response, raw))
+        request_finished(self._logger, started=started, provider=self.provider_name, model=model, context=context, status_code=getattr(response, "status_code", None), request_id=response_request_id(response, raw))
         return LLMResponse(
             text=_extract_chat_text(raw),
             raw=raw,
