@@ -191,6 +191,7 @@ export function JobsScreen({
     jobsPipelineFilter,
     jobsStatus,
     loading,
+    refresh,
     setApplyQueuePage,
     setApplyQueueQuery,
     setJobsPipelineFilter,
@@ -319,14 +320,19 @@ export function JobsScreen({
         </label>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-        {jobsStatus === "error" ? (
+      {jobsStatus === "refreshing" && !searchActive ? <div className="flex items-center gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2 text-xs text-muted-foreground" role="status"><LoaderCircle className="size-3.5 animate-spin text-primary" />Actualizando resultados…</div> : null}
+
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1" aria-busy={jobsStatus === "loading" || jobsStatus === "refreshing"}>
+        {jobsStatus === "loading" ? (
+          <div className="flex min-h-[360px] flex-col items-center justify-center gap-3 text-center" role="status"><LoaderCircle className="size-7 animate-spin text-primary" /><p className="text-sm font-medium text-foreground">Cargando oportunidades</p></div>
+        ) : jobsStatus === "error" ? (
           <Empty className="min-h-[360px] border border-dashed bg-card">
             <EmptyHeader>
               <EmptyMedia variant="icon"><RotateCcw /></EmptyMedia>
               <EmptyTitle>No se pudieron cargar los jobs</EmptyTitle>
               <EmptyDescription>Revisa la conexión con la API e intenta sincronizar de nuevo.</EmptyDescription>
             </EmptyHeader>
+            <Button variant="outline" onClick={() => void refresh()}><RotateCcw data-icon="inline-start" />Reintentar</Button>
           </Empty>
         ) : visible.length === 0 && !loading ? (
           <Empty className="min-h-[360px] border border-dashed bg-card">

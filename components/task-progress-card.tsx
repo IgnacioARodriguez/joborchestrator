@@ -1,8 +1,9 @@
 "use client"
 
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useState, type ComponentProps, type ReactNode } from "react"
 import { AlertCircle, CheckCircle2, Circle, LoaderCircle, Timer } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 
 export type TaskProgressStepState = "done" | "active" | "pending" | "error"
 export interface TaskProgressStep { label: string; state: TaskProgressStepState }
@@ -10,6 +11,10 @@ export interface TaskProgressStep { label: string; state: TaskProgressStepState 
 export function AsyncActionContent({ pending, pendingLabel, children }: { pending: boolean; pendingLabel: string; children: ReactNode }) {
   if (!pending) return <>{children}</>
   return <><LoaderCircle className="animate-spin" data-icon="inline-start" />{pendingLabel}</>
+}
+
+export function AsyncActionButton({ pending = false, pendingLabel, disabled, children, ...props }: ComponentProps<typeof Button> & { pending?: boolean; pendingLabel: string }) {
+  return <Button {...props} disabled={disabled || pending} aria-busy={pending}><AsyncActionContent pending={pending} pendingLabel={pendingLabel}>{children}</AsyncActionContent></Button>
 }
 
 export function TaskProgressCard({ title, description, steps = [], startedAt, progress, status = "active", technicalDetails, compact = false, className }: {
