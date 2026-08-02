@@ -291,6 +291,7 @@ class MaterialsPayload(BaseModel):
     provider: Literal["heuristic", "openai", "nvidia"] | None = None
     model: str | None = None
     api_key: str | None = None
+    cv_strategy: Literal["auto", "controlled", "legacy"] = "auto"
     shortlist: bool = True
     targets: list[Literal["ats_cv", "cover_letter", "recruiter_message", "autofill"]] | None = None
 
@@ -1239,6 +1240,7 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
                 same_strategy = (
                     str(existing_input.get("provider") or "") == provider
                     and str(existing_input.get("model") or "") == selected_model
+                    and str(existing_input.get("cv_strategy") or "auto") == payload.cv_strategy
                 )
                 if same_strategy and operation_covers_targets(existing_input.get("targets"), targets):
                     return {"operation_id": existing["id"], "status": existing["status"]}
@@ -1252,6 +1254,7 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
                     "job_id": job_id,
                     "provider": provider,
                     "model": selected_model,
+                    "cv_strategy": payload.cv_strategy,
                     "shortlist": payload.shortlist,
                     "targets": targets,
                 },

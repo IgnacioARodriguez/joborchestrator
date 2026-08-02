@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Iterable
 
+from joborchestrator.intelligence.materials_cv_policy import (
+    dedupe_technologies,
+    required_bullets_for_role,
+)
 from joborchestrator.intelligence.materials_keywords import derive_keywords_used
 
 BULLET_PREFIXES = ("-", "*", "\u2022", "\u25aa", "\u25e6", "\u2023", "\u00b7")
@@ -83,47 +88,23 @@ class AtsCvPlan:
     role_plans: list[RolePlan] = field(default_factory=list)
 
 
-def parse_candidate_cv_ir(
-    base_cv_text: str,
-    supported_terms: list[str] | None = None,
-) -> CandidateCvIR:
-    text = str(base_cv_text or "").strip()
-    roles = _parse_roles(text, supported_terms or [])
-    candidate = _parse_candidate_identity(text)
-    skills = [
-        SkillEvidence(
-            id=f"skill_{_slug(term)}",
-            name=term,
-            source_text=term,
-        )
-        for term in derive_keywords_used(text, supported_terms or [])
-    ]
-    education = _parse_education(text)
-    summary_facts = _parse_summary_facts(text, roles)
-
-    warnings: list[str] = []
-    if text and not roles:
-        warnings.append("experience_roles_not_parsed")
-
-    return CandidateCvIR(
-        candidate=candidate,
-        summary_facts=summary_facts,
-        skills=skills,
-        roles=roles,
-        education=education,
-        base_cv_text=text,
-        human_review_required=bool(text and not roles),
-        parse_warnings=warnings,
-    )
-
-
 _EXPERIENCE_HEADINGS = (
-    "experience", "professional experience", "work experience",
-    "employment history", "work history", "career history", "career journey",
-    "experiencia", "experiencia profesional", "historial laboral", "trayectoria profesional",
+    "experience",
+    "professional experience",
+    "work experience",
+    "employment history",
+    "employment experience",
+    "work history",
+    "career history",
+    "career journey",
+    "professional background",
+    "relevant experience",
+    "experiencia",
+    "experiencia profesional",
+    "historial laboral",
+    "trayectoria profesional",
 )
-
-_CV_SECTION_HEADINGS = {
+_SUMMARY_HEADINGS = (
     "summary",
     "professional summary",
     "profile",
@@ -131,286 +112,43 @@ _CV_SECTION_HEADINGS = {
     "perfil",
     "perfil profesional",
     "resumen",
-    *_EXPERIENCE_HEADINGS,
+)
+_SKILL_HEADINGS = (
     "skills",
     "technical skills",
-    "habilidades",
+    "core skills",
+    "competencies",
     "competencias",
+    "habilidades",
+    "tecnologías",
+    "tecnologias",
+)
+_EDUCATION_HEADINGS = (
     "education",
+    "academic background",
     "formacion",
     "formación",
     "educacion",
     "educación",
+)
+_OTHER_SECTION_HEADINGS = (
+    "projects",
+    "project experience",
+    "certifications",
+    "languages",
+    "idiomas",
+    "awards",
+    "publications",
+    "volunteer experience",
+    "additional information",
+)
+_CV_SECTION_HEADINGS = {
+    *_EXPERIENCE_HEADINGS,
+    *_SUMMARY_HEADINGS,
+    *_SKILL_HEADINGS,
+    *_EDUCATION_HEADINGS,
+    *_OTHER_SECTION_HEADINGS,
 }
-
-
-def _parse_candidate_identity(text: str) -> CandidateIdentity:
-    header_lines: list[str] = []
-
-    for raw_line in str(text or "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if _normalized_heading(line) in _CV_SECTION_HEADINGS:
-            break
-        header_lines.append(line)
-
-    if not header_lines:
-        return CandidateIdentity(name="Candidate")
-
-    name = header_lines[0]
-    contact_lines = [
-        line
-        for line in header_lines[1:]
-        if _looks_like_contact_line(line)
-    ]
-
-    return CandidateIdentity(
-        name=name,
-        contact=" | ".join(contact_lines),
-    )
-
-
-def _looks_like_contact_line(line: str) -> bool:
-    value = str(line or "").strip()
-    normalized = value.casefold()
-
-    if not value:
-        return False
-    if "@" in value:
-        return True
-    if any(token in normalized for token in ("linkedin", "github", "http://", "https://", "contact")):
-        return True
-    if "|" in value:
-        return True
-
-    digits = sum(character.isdigit() for character in value)
-    if digits >= 7:
-        return True
-
-    if "," in value and len(value) <= 60 and not value.endswith("."):
-        return True
-
-    return False
-
-
-def _parse_summary_facts(
-    text: str,
-    roles: list[ExperienceRole],
-) -> list[EvidenceFact]:
-    section = _section(
-        text,
-        (
-            "summary",
-            "professional summary",
-            "profile",
-            "professional profile",
-            "perfil",
-            "perfil profesional",
-            "resumen",
-        ),
-        (
-            *_EXPERIENCE_HEADINGS,
-            "skills",
-            "technical skills",
-            "habilidades",
-            "competencias",
-            "education",
-            "formacion",
-            "formación",
-            "educacion",
-            "educación",
-        ),
-    )
-
-    fact_texts = [
-        _strip_bullet_prefix(line)
-        for line in section.splitlines()
-        if _strip_bullet_prefix(line)
-    ]
-
-    if not fact_texts:
-        fact_texts = [
-            bullet.source_text
-            for role in roles
-            for bullet in role.bullets
-        ][:3]
-
-    return [
-        EvidenceFact(
-            id=f"fact_{index + 1:02d}",
-            source_text=fact_text,
-        )
-        for index, fact_text in enumerate(fact_texts[:5])
-    ]
-
-
-def _normalized_heading(line: str) -> str:
-    return str(line or "").strip().strip(":").casefold()
-
-
-def _strip_bullet_prefix(line: str) -> str:
-    value = str(line or "").strip()
-    while value.startswith(BULLET_PREFIXES):
-        value = value[1:].lstrip()
-    return value
-
-
-def validate_ats_cv_plan(cv_ir: CandidateCvIR, plan: AtsCvPlan) -> list[str]:
-    evidence_ids = {fact.id for fact in cv_ir.summary_facts}
-    evidence_ids.update(skill.id for skill in cv_ir.skills)
-    evidence_ids.update(bullet.id for role in cv_ir.roles for bullet in role.bullets)
-    role_ids = {role.id for role in cv_ir.roles}
-    errors: list[str] = []
-    for line in plan.summary_lines:
-        if str(line.text or "").strip() and not line.evidence_ids:
-            errors.append("summary line must include at least one evidence id")
-            continue
-        unknown = [evidence_id for evidence_id in line.evidence_ids if evidence_id not in evidence_ids]
-        if unknown:
-            errors.append(f"summary line references unknown evidence ids: {', '.join(unknown)}")
-    for role_plan in plan.role_plans:
-        if role_plan.role_id not in role_ids:
-            errors.append(f"role plan references unknown role id: {role_plan.role_id}")
-            continue
-        role = next(role for role in cv_ir.roles if role.id == role_plan.role_id)
-        bullet_ids = {bullet.id for bullet in role.bullets}
-        unknown = [bullet_id for bullet_id in role_plan.selected_bullet_ids if bullet_id not in bullet_ids]
-        if unknown:
-            errors.append(f"role {role.id} references unknown bullet ids: {', '.join(unknown)}")
-    return errors
-
-
-def render_ats_cv(cv_ir: CandidateCvIR, plan: AtsCvPlan | None = None, *, min_bullets_per_role: int = 2) -> str:
-    plan = plan or AtsCvPlan()
-    plan_errors = validate_ats_cv_plan(cv_ir, plan)
-    if plan_errors:
-        raise ValueError("; ".join(plan_errors))
-    selected_skill_ids = set(plan.skill_ids)
-    selected_skills = [skill.name for skill in cv_ir.skills if not selected_skill_ids or skill.id in selected_skill_ids]
-    summary_lines = [line.text for line in plan.summary_lines if line.text.strip()]
-    if not summary_lines:
-        summary_lines = [fact.source_text for fact in cv_ir.summary_facts[:3]]
-    output = [cv_ir.candidate.name]
-    if cv_ir.candidate.contact:
-        output.append(cv_ir.candidate.contact)
-    output.extend(["", "Professional Summary"])
-    output.extend(summary_lines or ["Source-backed software engineering profile."])
-    if selected_skills:
-        output.extend(["", "Technical Skills", ", ".join(selected_skills)])
-    output.extend(["", "Professional Experience"])
-    role_plans = {role_plan.role_id: role_plan for role_plan in plan.role_plans}
-    for role in cv_ir.roles:
-        output.append(f"{role.title} | {role.company}{f' | {role.location}' if role.location else ''} | {role.dates}")
-        selected_ids = role_plans.get(role.id).selected_bullet_ids if role.id in role_plans else []
-        bullets = [bullet for bullet in role.bullets if bullet.mandatory or not selected_ids or bullet.id in selected_ids]
-        if len(bullets) < min_bullets_per_role:
-            for bullet in role.bullets:
-                if bullet not in bullets:
-                    bullets.append(bullet)
-                if len(bullets) >= min_bullets_per_role:
-                    break
-        for bullet in bullets:
-            output.append(f"- {bullet.source_text.strip().lstrip('-* ').strip()}")
-        if role.canonical_technologies:
-            output.append(f"Technologies: {', '.join(role.canonical_technologies)}")
-    if cv_ir.education:
-        output.extend(["", "Education"])
-        output.extend(entry.source_text for entry in cv_ir.education)
-    return "\n".join(line for line in output if line is not None).strip()
-
-
-def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
-    # A bare "Career Journey" line is intentionally treated as malformed;
-    # the supported heading form is "Career Journey:".
-    if re.search(r"(?im)^\s*career journey\s*$", text) and not re.search(
-        r"(?im)^\s*career journey\s*:\s*$", text
-    ):
-        return []
-    section = _section(text, _EXPERIENCE_HEADINGS, ("education", "skills", "technical skills", "formacion", "formación"))
-    section = _section(text, ("experience", "professional experience", "experiencia", "experiencia profesional"), ("education", "skills", "technical skills", "formacion", "formación"))
-    if not section:
-        return []
-    lines = [line.strip() for line in section.splitlines() if line.strip()]
-    header_indices = [
-        idx
-        for idx, line in enumerate(lines)
-        if _looks_like_role_header_line(line)
-    ]
-    roles: list[ExperienceRole] = []
-    for role_index, header_idx in enumerate(header_indices):
-        header = lines[header_idx]
-        next_idx = header_indices[role_index + 1] if role_index + 1 < len(header_indices) else len(lines)
-        block = lines[header_idx + 1:next_idx]
-        title, dates = _split_title_dates(header)
-        company = _first_non_bullet(block) or "Unknown company"
-        bullets = [
-            EvidenceBullet(
-                id=f"role_{role_index + 1:02d}_b{bullet_index + 1:02d}",
-                source_text=line.lstrip("-*\u2022\u25aa\u25e6\u2023\u00b7 ").strip(),
-                technologies=derive_keywords_used(line, supported_terms),
-                mandatory=bullet_index == 0,
-            )
-            for bullet_index, line in enumerate(block)
-            if line.startswith(BULLET_PREFIXES)
-        ]
-        canonical: list[str] = []
-        for line in block:
-            parsed_technologies = _parse_canonical_technology_line(line)
-            if parsed_technologies:
-                canonical = parsed_technologies
-        roles.append(
-            ExperienceRole(
-                id=f"role_{role_index + 1:02d}_{_slug(company)}",
-                title=title or "Experience",
-                company=company,
-                location=None,
-                dates=dates,
-                bullets=bullets,
-                canonical_technologies=canonical,
-            )
-        )
-    return roles
-
-
-def _parse_canonical_technology_line(line: str) -> list[str]:
-    value = _strip_bullet_prefix(line)
-
-    match = re.search(
-        r"(?i)\b(?:technologies|technology|tecnologias|tecnologías)\s*:\s*(.+)$",
-        value,
-    )
-    if not match:
-        return []
-
-    technologies: list[str] = []
-    seen: set[str] = set()
-
-    for item in re.split(r"[,;]", match.group(1)):
-        technology = item.strip(" .\t")
-        key = technology.casefold()
-
-        if not technology or key in seen:
-            continue
-
-        seen.add(key)
-        technologies.append(technology)
-
-    return technologies
-
-
-def _parse_education(text: str) -> list[EducationEntry]:
-    section = _section(text, ("education", "formacion", "formación"), ("skills", "experience", "professional experience"))
-    lines = [line.strip() for line in section.splitlines() if line.strip()]
-    return [EducationEntry(id=f"education_{idx + 1:02d}", source_text=line) for idx, line in enumerate(lines)]
-
-
-def _section(text: str, headings: tuple[str, ...], stop_headings: tuple[str, ...]) -> str:
-    heading_pattern = "|".join(re.escape(heading) for heading in headings)
-    stop_pattern = "|".join(re.escape(heading) for heading in stop_headings)
-    match = re.search(rf"(?ims)^\s*({heading_pattern})\s*$([\s\S]*?)(?=^\s*({stop_pattern})\s*$|\Z)", text)
-    return match.group(2) if match else ""
-
 
 _MONTH_NAME_PATTERN = (
     r"(?:"
@@ -460,6 +198,397 @@ _DATE_RANGE_PATTERN = re.compile(
 )
 
 
+def parse_candidate_cv_ir(
+    base_cv_text: str,
+    supported_terms: list[str] | None = None,
+    *,
+    canonical_skills: list[str] | None = None,
+) -> CandidateCvIR:
+    text = str(base_cv_text or "").strip()
+    supported = _dedupe_strings(supported_terms or [])
+    canonical = _dedupe_strings(canonical_skills or [])
+    roles = _parse_roles(text, _dedupe_strings([*supported, *canonical]))
+    candidate = _parse_candidate_identity(text)
+    skills = _parse_skills(
+        text,
+        roles,
+        supported_terms=supported,
+        canonical_skills=canonical,
+    )
+    education = _parse_education(text)
+    summary_facts = _parse_summary_facts(text, roles)
+
+    warnings: list[str] = []
+    if text and not roles:
+        warnings.append("experience_roles_not_parsed")
+    return CandidateCvIR(
+        candidate=candidate,
+        summary_facts=summary_facts,
+        skills=skills,
+        roles=roles,
+        education=education,
+        base_cv_text=text,
+        human_review_required=bool(text and not roles),
+        parse_warnings=warnings,
+    )
+
+
+def validate_ats_cv_plan(cv_ir: CandidateCvIR, plan: AtsCvPlan) -> list[str]:
+    evidence_ids = {fact.id for fact in cv_ir.summary_facts}
+    evidence_ids.update(skill.id for skill in cv_ir.skills)
+    evidence_ids.update(bullet.id for role in cv_ir.roles for bullet in role.bullets)
+    role_ids = {role.id for role in cv_ir.roles}
+    skill_ids = {skill.id for skill in cv_ir.skills}
+    errors: list[str] = []
+
+    unknown_skills = [skill_id for skill_id in plan.skill_ids if skill_id not in skill_ids]
+    if unknown_skills:
+        errors.append(f"plan references unknown skill ids: {', '.join(unknown_skills)}")
+
+    for line in plan.summary_lines:
+        if str(line.text or "").strip() and not line.evidence_ids:
+            errors.append("summary line must include at least one evidence id")
+            continue
+        unknown = [evidence_id for evidence_id in line.evidence_ids if evidence_id not in evidence_ids]
+        if unknown:
+            errors.append(f"summary line references unknown evidence ids: {', '.join(unknown)}")
+
+    seen_roles: set[str] = set()
+    for role_plan in plan.role_plans:
+        if role_plan.role_id in seen_roles:
+            errors.append(f"duplicate role plan: {role_plan.role_id}")
+            continue
+        seen_roles.add(role_plan.role_id)
+        if role_plan.role_id not in role_ids:
+            errors.append(f"role plan references unknown role id: {role_plan.role_id}")
+            continue
+        role = next(role for role in cv_ir.roles if role.id == role_plan.role_id)
+        bullet_ids = {bullet.id for bullet in role.bullets}
+        unknown = [bullet_id for bullet_id in role_plan.selected_bullet_ids if bullet_id not in bullet_ids]
+        if unknown:
+            errors.append(f"role {role.id} references unknown bullet ids: {', '.join(unknown)}")
+    return errors
+
+
+def render_ats_cv(
+    cv_ir: CandidateCvIR,
+    plan: AtsCvPlan | None = None,
+    *,
+    min_bullets_per_role: int | None = None,
+) -> str:
+    plan = plan or AtsCvPlan()
+    plan_errors = validate_ats_cv_plan(cv_ir, plan)
+    if plan_errors:
+        raise ValueError("; ".join(plan_errors))
+
+    selected_skill_ids = set(plan.skill_ids)
+    selected_skills = [
+        skill.name
+        for skill in cv_ir.skills
+        if not selected_skill_ids or skill.id in selected_skill_ids
+    ]
+    if not selected_skills:
+        selected_skills = [skill.name for skill in cv_ir.skills]
+
+    summary_lines = [line.text.strip() for line in plan.summary_lines if line.text.strip()]
+    if not summary_lines:
+        summary_lines = [fact.source_text for fact in cv_ir.summary_facts[:3]]
+
+    output = [cv_ir.candidate.name or "Candidate"]
+    if cv_ir.candidate.contact:
+        output.append(cv_ir.candidate.contact)
+    output.extend(["", "Professional Summary"])
+    output.extend(summary_lines or ["Source-backed professional experience detailed below."])
+
+    output.extend(["", "Technical Skills"])
+    if selected_skills:
+        output.append(", ".join(selected_skills))
+    else:
+        output.append("Source-backed technologies are listed under Professional Experience.")
+
+    output.extend(["", "Professional Experience"])
+    role_plans = {role_plan.role_id: role_plan for role_plan in plan.role_plans}
+    explicit_minimum = max(0, int(min_bullets_per_role or 0))
+    for role_index, role in enumerate(cv_ir.roles):
+        header_parts = [role.title, role.company]
+        if role.location:
+            header_parts.append(role.location)
+        if role.dates:
+            header_parts.append(role.dates)
+        output.append(" | ".join(part for part in header_parts if part))
+
+        selected_ids = (
+            role_plans[role.id].selected_bullet_ids
+            if role.id in role_plans
+            else []
+        )
+        selected_id_set = set(selected_ids)
+        bullets = [
+            bullet
+            for bullet in role.bullets
+            if bullet.mandatory or not selected_id_set or bullet.id in selected_id_set
+        ]
+        required = required_bullets_for_role(
+            role_index,
+            len(role.bullets),
+            explicit_minimum=explicit_minimum,
+        )
+        for bullet in role.bullets:
+            if len(bullets) >= required:
+                break
+            if bullet not in bullets:
+                bullets.append(bullet)
+        bullets.sort(key=lambda bullet: _bullet_order(role, bullet))
+
+        for bullet in bullets:
+            output.append(f"- {_strip_bullet_prefix(bullet.source_text)}")
+        if role.canonical_technologies:
+            output.append(f"Technologies: {', '.join(role.canonical_technologies)}")
+
+    output.extend(["", "Education"])
+    if cv_ir.education:
+        output.extend(entry.source_text for entry in cv_ir.education)
+    else:
+        output.append("Not provided in source CV.")
+
+    return "\n".join(line for line in output if line is not None).strip()
+
+
+def _parse_candidate_identity(text: str) -> CandidateIdentity:
+    header_lines: list[str] = []
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if _normalized_heading(line) in _CV_SECTION_HEADINGS:
+            break
+        header_lines.append(line)
+
+    if not header_lines:
+        return CandidateIdentity(name="Candidate")
+
+    name = next((line for line in header_lines if not _looks_like_contact_line(line)), "Candidate")
+    contact_lines = [
+        line
+        for line in header_lines
+        if line != name and _looks_like_contact_line(line)
+    ]
+    return CandidateIdentity(name=name, contact=" | ".join(_dedupe_strings(contact_lines)))
+
+
+def _parse_summary_facts(text: str, roles: list[ExperienceRole]) -> list[EvidenceFact]:
+    section = _section(
+        text,
+        _SUMMARY_HEADINGS,
+        (*_EXPERIENCE_HEADINGS, *_SKILL_HEADINGS, *_EDUCATION_HEADINGS, *_OTHER_SECTION_HEADINGS),
+    )
+    fact_texts = [
+        _strip_bullet_prefix(line)
+        for line in section.splitlines()
+        if _strip_bullet_prefix(line)
+    ]
+    if not fact_texts:
+        fact_texts = [bullet.source_text for role in roles for bullet in role.bullets][:3]
+    return [
+        EvidenceFact(id=f"fact_{index + 1:02d}", source_text=fact_text)
+        for index, fact_text in enumerate(fact_texts[:5])
+    ]
+
+
+def _parse_skills(
+    text: str,
+    roles: list[ExperienceRole],
+    *,
+    supported_terms: list[str],
+    canonical_skills: list[str],
+) -> list[SkillEvidence]:
+    section = _section(
+        text,
+        _SKILL_HEADINGS,
+        (*_EXPERIENCE_HEADINGS, *_EDUCATION_HEADINGS, *_SUMMARY_HEADINGS, *_OTHER_SECTION_HEADINGS),
+    )
+    values: list[str] = []
+    for raw_line in section.splitlines():
+        line = _strip_bullet_prefix(raw_line)
+        if not line:
+            continue
+        if ":" in line:
+            _, line = line.split(":", 1)
+        values.extend(
+            item.strip()
+            for item in re.split(r"[,;|]", line)
+            if item.strip()
+        )
+
+    values.extend(canonical_skills)
+    values.extend(
+        technology
+        for role in roles
+        for technology in role.canonical_technologies
+    )
+    values.extend(derive_keywords_used(text, supported_terms))
+    deduped = _dedupe_strings(values)
+    return [
+        SkillEvidence(
+            id=f"skill_{_slug(value)}",
+            name=value,
+            source_text=value,
+        )
+        for value in deduped
+    ]
+
+
+def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
+    section = _section(
+        text,
+        _EXPERIENCE_HEADINGS,
+        (*_EDUCATION_HEADINGS, *_SKILL_HEADINGS, *_SUMMARY_HEADINGS, *_OTHER_SECTION_HEADINGS),
+    )
+    if not section:
+        return []
+
+    lines = [line.strip() for line in section.splitlines() if line.strip()]
+    header_indices = [
+        index
+        for index, line in enumerate(lines)
+        if _looks_like_role_header_line(line)
+    ]
+    roles: list[ExperienceRole] = []
+    for role_index, header_index in enumerate(header_indices):
+        next_index = (
+            header_indices[role_index + 1]
+            if role_index + 1 < len(header_indices)
+            else len(lines)
+        )
+        header = lines[header_index]
+        block = lines[header_index + 1 : next_index]
+        title, company, location, dates = _parse_role_header(header, block)
+
+        metadata_lines = _role_metadata_lines(block, company, location)
+        bullets = [
+            EvidenceBullet(
+                id=f"role_{role_index + 1:02d}_b{bullet_index + 1:02d}",
+                source_text=_strip_bullet_prefix(line),
+                technologies=derive_keywords_used(line, supported_terms),
+                mandatory=bullet_index == 0,
+            )
+            for bullet_index, line in enumerate(block)
+            if line.startswith(BULLET_PREFIXES)
+        ]
+        canonical = dedupe_technologies(
+            technology
+            for line in block
+            for technology in _parse_canonical_technology_line(line)
+        )
+        if not canonical:
+            canonical = dedupe_technologies(
+                technology
+                for bullet in bullets
+                for technology in bullet.technologies
+            )
+
+        stable_company = company or "Unknown company"
+        roles.append(
+            ExperienceRole(
+                id=f"role_{role_index + 1:02d}_{_slug(stable_company)}",
+                title=title or "Experience",
+                company=stable_company,
+                location=location,
+                dates=dates,
+                bullets=bullets,
+                canonical_technologies=canonical,
+            )
+        )
+        del metadata_lines  # explicit: metadata lines are intentionally excluded from bullets.
+    return roles
+
+
+def _parse_role_header(
+    header: str,
+    block: list[str],
+) -> tuple[str, str, str | None, str]:
+    match = _date_range_match(header)
+    if not match:
+        return header.strip(), "", None, ""
+
+    dates = match.group(0).strip()
+    prefix = header[: match.start()].strip(" -|")
+    parts = [part.strip() for part in prefix.split("|") if part.strip()]
+    if len(parts) >= 2:
+        title = parts[0]
+        company = parts[1]
+        location = " | ".join(parts[2:]) or None
+        return title, company, location, dates
+
+    title = prefix
+    company_index = _first_company_line_index(block)
+    company = block[company_index].strip() if company_index is not None else ""
+    location: str | None = None
+    if company_index is not None:
+        for line in block[company_index + 1 : company_index + 3]:
+            if line.startswith(BULLET_PREFIXES) or _parse_canonical_technology_line(line):
+                break
+            if _looks_like_location_line(line):
+                location = line.strip()
+                break
+    return title, company, location, dates
+
+
+def _role_metadata_lines(
+    block: list[str],
+    company: str,
+    location: str | None,
+) -> set[str]:
+    values = {company.strip()} if company else set()
+    if location:
+        values.add(location.strip())
+    return values
+
+
+def _parse_canonical_technology_line(line: str) -> list[str]:
+    value = _strip_bullet_prefix(line)
+    match = re.search(
+        r"(?i)\b(?:technologies|technology|tech stack|tecnologias|tecnologías)\s*:\s*(.+)$",
+        value,
+    )
+    if not match:
+        return []
+    return dedupe_technologies(
+        item.strip(" .\t")
+        for item in re.split(r"[,;|]", match.group(1))
+        if item.strip(" .\t")
+    )
+
+
+def _parse_education(text: str) -> list[EducationEntry]:
+    section = _section(
+        text,
+        _EDUCATION_HEADINGS,
+        (*_SKILL_HEADINGS, *_EXPERIENCE_HEADINGS, *_SUMMARY_HEADINGS, *_OTHER_SECTION_HEADINGS),
+    )
+    lines = [line.strip() for line in section.splitlines() if line.strip()]
+    return [
+        EducationEntry(id=f"education_{index + 1:02d}", source_text=line)
+        for index, line in enumerate(lines)
+    ]
+
+
+def _section(
+    text: str,
+    headings: tuple[str, ...],
+    stop_headings: tuple[str, ...],
+) -> str:
+    heading_pattern = "|".join(re.escape(heading) for heading in headings)
+    stop_pattern = "|".join(re.escape(heading) for heading in stop_headings)
+    match = re.search(
+        rf"(?ims)^\s*(?:{heading_pattern})\s*:?\s*$"
+        rf"([\s\S]*?)"
+        rf"(?=^\s*(?:{stop_pattern})\s*:?\s*$|\Z)",
+        str(text or ""),
+    )
+    return match.group(1) if match else ""
+
+
 def _date_range_match(line: str) -> re.Match[str] | None:
     return _DATE_RANGE_PATTERN.search(str(line or ""))
 
@@ -473,75 +602,77 @@ def _looks_like_role_header_line(line: str) -> bool:
     )
 
 
-def _split_title_dates(header: str) -> tuple[str, str]:
-    match = _date_range_match(header)
-    if not match:
-        return header.strip(), ""
-    return header[: match.start()].strip(" -|"), match.group(0)
+def _first_company_line_index(lines: list[str]) -> int | None:
+    for index, line in enumerate(lines[:4]):
+        if line.startswith(BULLET_PREFIXES):
+            continue
+        if _date_range_match(line):
+            continue
+        if _parse_canonical_technology_line(line):
+            continue
+        return index
+    return None
 
 
-def _first_non_bullet(lines: list[str]) -> str:
-    for line in lines[:3]:
-        if not line.startswith(BULLET_PREFIXES) and not _date_range_match(line) and "technolog" not in line.lower():
-            return line.strip()
-    return ""
+def _looks_like_location_line(line: str) -> bool:
+    value = str(line or "").strip()
+    normalized = value.casefold()
+    if not value or value.startswith(BULLET_PREFIXES):
+        return False
+    if any(token in normalized for token in ("remote", "remoto", "hybrid", "onsite")):
+        return True
+    return "," in value and len(value) <= 80 and not value.endswith(".")
+
+
+def _looks_like_contact_line(line: str) -> bool:
+    value = str(line or "").strip()
+    normalized = value.casefold()
+    if not value:
+        return False
+    if "@" in value:
+        return True
+    if any(token in normalized for token in ("linkedin", "github", "http://", "https://", "contact")):
+        return True
+    if "|" in value:
+        return True
+    if sum(character.isdigit() for character in value) >= 7:
+        return True
+    if "," in value and len(value) <= 60 and not value.endswith("."):
+        return True
+    return False
+
+
+def _normalized_heading(line: str) -> str:
+    return str(line or "").strip().strip(":").casefold()
+
+
+def _strip_bullet_prefix(line: str) -> str:
+    value = str(line or "").strip()
+    while value.startswith(BULLET_PREFIXES):
+        value = value[1:].lstrip()
+    return value
+
+
+def _bullet_order(role: ExperienceRole, bullet: EvidenceBullet) -> int:
+    try:
+        return role.bullets.index(bullet)
+    except ValueError:
+        return len(role.bullets)
+
+
+def _dedupe_strings(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        key = text.casefold()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return result
 
 
 def _slug(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    slug = re.sub(r"[^a-z0-9]+", "_", str(value or "").casefold()).strip("_")
     return slug or "item"
-
-
-# Extended section aliases and optional-colon headings.
-def _section(text: str, headings: tuple[str, ...], stop_headings: tuple[str, ...]) -> str:
-    heading_pattern = "|".join(re.escape(heading) for heading in headings)
-    stop_pattern = "|".join(re.escape(heading) for heading in stop_headings)
-    match = re.search(rf"(?ims)^\s*({heading_pattern})\s*:?\s*$([\s\S]*?)(?=^\s*({stop_pattern})\s*:?\s*$|\Z)", text)
-    return match.group(2) if match else ""
-
-
-def _parse_roles(text: str, supported_terms: list[str]) -> list[ExperienceRole]:
-    # A bare "Career Journey" line is intentionally treated as malformed;
-    # the supported heading form is "Career Journey:".
-    if re.search(r"(?im)^\s*career journey\s*$", text) and not re.search(
-        r"(?im)^\s*career journey\s*:\s*$", text
-    ):
-        return []
-    section = _section(text, _EXPERIENCE_HEADINGS, ("education", "skills", "technical skills", "formacion", "formación"))
-    if not section:
-        return []
-    lines = [line.strip() for line in section.splitlines() if line.strip()]
-    header_indices = [
-        idx
-        for idx, line in enumerate(lines)
-        if _looks_like_role_header_line(line)
-    ]
-    roles: list[ExperienceRole] = []
-    for role_index, header_idx in enumerate(header_indices):
-        header = lines[header_idx]
-        next_idx = header_indices[role_index + 1] if role_index + 1 < len(header_indices) else len(lines)
-        block = lines[header_idx + 1:next_idx]
-        title, dates = _split_title_dates(header)
-        company = _first_non_bullet(block) or "Unknown company"
-        bullets = [EvidenceBullet(id=f"role_{role_index + 1:02d}_b{bullet_index + 1:02d}", source_text=_strip_bullet_prefix(line), technologies=derive_keywords_used(line, supported_terms), mandatory=bullet_index == 0) for bullet_index, line in enumerate(block) if line.startswith(BULLET_PREFIXES)]
-        canonical = []
-        for line in block:
-            parsed = _parse_canonical_technology_line(line)
-            if parsed:
-                canonical = parsed
-        roles.append(ExperienceRole(id=f"role_{role_index + 1:02d}_{_slug(company)}", title=title or "Experience", company=company, location=None, dates=dates, bullets=bullets, canonical_technologies=canonical))
-    return roles
-
-
-def _parse_summary_facts(text: str, roles: list[ExperienceRole]) -> list[EvidenceFact]:
-    section = _section(text, ("summary", "professional summary", "profile", "professional profile", "perfil", "perfil profesional", "resumen"), (*_EXPERIENCE_HEADINGS, "skills", "technical skills", "habilidades", "competencias", "education", "formacion", "formación", "educacion", "educación"))
-    fact_texts = [_strip_bullet_prefix(line) for line in section.splitlines() if _strip_bullet_prefix(line)]
-    if not fact_texts:
-        fact_texts = [bullet.source_text for role in roles for bullet in role.bullets][:3]
-    return [EvidenceFact(id=f"fact_{index + 1:02d}", source_text=fact_text) for index, fact_text in enumerate(fact_texts[:5])]
-
-
-def _parse_education(text: str) -> list[EducationEntry]:
-    section = _section(text, ("education", "formacion", "formación"), ("skills", *_EXPERIENCE_HEADINGS))
-    lines = [line.strip() for line in section.splitlines() if line.strip()]
-    return [EducationEntry(id=f"education_{idx + 1:02d}", source_text=line) for idx, line in enumerate(lines)]

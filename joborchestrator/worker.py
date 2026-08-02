@@ -144,6 +144,7 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
     job_id = int(input_payload.get("job_id") or 0)
     provider = str(input_payload.get("provider") or ProviderRegistry().provider_name_for_role("materials"))
     model = str(input_payload.get("model") or "")
+    cv_strategy = str(input_payload.get("cv_strategy") or "auto")
     shortlist = bool(input_payload.get("shortlist", True))
     targets = normalize_material_targets(input_payload.get("targets"))
     if not job_id:
@@ -169,6 +170,7 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
                 job,
                 ranking=ranking,
                 model=selected_model,
+                cv_strategy=cv_strategy,
             )
         except LLMMaterialsError as exc:
             _record_failed_materials_attempt(operation_id, job_id, provider, selected_model, prompt_versions, exc)
@@ -261,7 +263,8 @@ def _record_failed_materials_attempt(
         attempt_number=int(metadata.get("validation_attempts") or 1),
         provider=provider,
         model=model,
-        prompt_version=_materials_prompt_versions_text(prompt_versions),
+        prompt_version=_materials_prompt_versions_text(prompt_versions, metadata),
+        input_hash=str(metadata.get("input_hash") or "") or None,
         output_text=str(metadata.get("output_text") or ""),
         validation_issues=issues_to_dicts(issues),
         accepted=False,
@@ -281,6 +284,19 @@ def _record_successful_materials_attempt(
     if isinstance(stage_attempts, list) and stage_attempts:
         for stage_attempt in stage_attempts:
             if isinstance(stage_attempt, dict):
+                enriched_attempt = {
+                    **{
+                        key: metadata.get(key)
+                        for key in (
+                            "requested_cv_strategy",
+                            "selected_pipeline",
+                            "effective_flags",
+                            "input_hash",
+                        )
+                        if metadata.get(key) is not None
+                    },
+                    **stage_attempt,
+                }
                 _record_successful_materials_stage_attempt(
                     operation_id,
                     job_id,
@@ -288,7 +304,7 @@ def _record_successful_materials_attempt(
                     model,
                     prompt_versions,
                     kit,
-                    stage_attempt,
+                    enriched_attempt,
                 )
         return
     _record_successful_materials_stage_attempt(
@@ -303,6 +319,10 @@ def _record_successful_materials_attempt(
             "attempt_number": int(metadata.get("validation_attempts") or 1),
             "validation_errors": [str(error) for error in metadata.get("validation_errors") or []],
             "accepted": True,
+            "requested_cv_strategy": metadata.get("requested_cv_strategy"),
+            "selected_pipeline": metadata.get("selected_pipeline"),
+            "effective_flags": metadata.get("effective_flags"),
+            "input_hash": metadata.get("input_hash"),
         },
     )
 
@@ -330,7 +350,8 @@ def _record_successful_materials_stage_attempt(
         attempt_number=int(stage_attempt.get("attempt_number") or 1),
         provider=provider,
         model=model,
-        prompt_version=_materials_prompt_versions_text(prompt_versions),
+        prompt_version=_materials_prompt_versions_text(prompt_versions, stage_attempt),
+        input_hash=str(stage_attempt.get("input_hash") or "") or None,
         output_text=_materials_stage_output_text(kit, stage),
         validation_issues=issues_to_dicts(issues),
         accepted=bool(stage_attempt.get("accepted", True)),
@@ -351,8 +372,21 @@ def _materials_stage_output_text(kit: dict[str, Any], stage: str) -> str:
     )
 
 
-def _materials_prompt_versions_text(prompt_versions: dict[str, str]) -> str | None:
-    return ",".join(f"{key}={value}" for key, value in sorted(prompt_versions.items())) or None
+def _materials_prompt_versions_text(
+    prompt_versions: dict[str, str],
+    metadata: dict[str, Any] | None = None,
+) -> str | None:
+    values = [f"{key}={value}" for key, value in sorted(prompt_versions.items())]
+    metadata = metadata or {}
+    for key in ("requested_cv_strategy", "selected_pipeline"):
+        value = metadata.get(key)
+        if value:
+            values.append(f"{key}={value}")
+    flags = metadata.get("effective_flags")
+    if isinstance(flags, dict):
+        for key, value in sorted(flags.items()):
+            values.append(f"flag.{key}={int(bool(value))}")
+    return ",".join(values) or None
 
 
 def _process_job_scan(

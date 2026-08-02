@@ -30,6 +30,7 @@ ISSUE_CODES = {
     "CV_TOO_SHORT",
     "ROLE_OMITTED",
     "ROLE_OVERCOMPRESSED",
+    "ROLE_STRUCTURE_CHANGED",
     "MISSING_CANONICAL_ROLE_TECH",
     "UNSUPPORTED_ROLE_TECH",
     "KEYWORD_METADATA_MISMATCH",
@@ -50,6 +51,7 @@ _RISK_FLAG_BY_ISSUE_CODE = {
     "MISSING_CANONICAL_ROLE_TECH": "role_technology_evidence_required_repair",
     "ROLE_OMITTED": "cv_completeness_required_repair",
     "ROLE_OVERCOMPRESSED": "cv_completeness_required_repair",
+    "ROLE_STRUCTURE_CHANGED": "cv_structure_required_human_review",
     "CV_TOO_SHORT": "cv_completeness_required_repair",
     "INTERNAL_LANGUAGE_LEAK": "internal_review_language_required_repair",
     "OVERCONFIDENT_TONE": "tone_required_cautious_review",
@@ -95,6 +97,8 @@ def validation_feedback_to_issues(feedback: str | None) -> list[ValidationIssue]
             issues.append(_issue("ROLE_OMITTED", "ats_cv_text", "hard", "inject_source", part))
         elif "overcompressed for base cv experience roles" in normalized:
             issues.append(_issue("ROLE_OVERCOMPRESSED", "ats_cv_text", "hard", "inject_source", part))
+        elif "semantic round-trip" in normalized or "changed source role" in normalized:
+            issues.append(_issue("ROLE_STRUCTURE_CHANGED", "ats_cv_text", "hard", "human_review", part))
         elif "overcompressed compared with base cv" in normalized or "too short" in normalized:
             issues.append(_issue("CV_TOO_SHORT", "ats_cv_text", "hard", "inject_source", part))
         elif "missing canonical role technologies" in normalized:

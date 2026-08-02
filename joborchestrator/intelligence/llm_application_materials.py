@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import logging
@@ -20,7 +21,13 @@ from joborchestrator.intelligence.llm_costs import estimate_application_kit_toke
 from joborchestrator.intelligence.cv_export_validation import clean_ats_cv_text_for_export
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
 from joborchestrator.intelligence.materials_controlled_pipeline import build_controlled_ats_cv
-from joborchestrator.intelligence.materials_cv_ir import parse_candidate_cv_ir
+from joborchestrator.intelligence.materials_cv_ir import CandidateCvIR, parse_candidate_cv_ir
+from joborchestrator.intelligence.materials_cv_policy import (
+    EXPERIENCE_DENSITY_BULLET_RULES,
+    EXPERIENCE_DENSITY_CHAR_RATIO,
+    required_bullets_for_role,
+)
+from joborchestrator.intelligence.materials_cv_semantics import validate_rendered_cv_against_ir
 from joborchestrator.intelligence.materials_keywords import derive_keywords_used
 from joborchestrator.intelligence.materials_kit import parse_autofill, render_autofill
 from joborchestrator.intelligence.materials_language import detect_job_language, language_mismatch
@@ -28,6 +35,7 @@ from joborchestrator.intelligence.materials_planner import build_cv_planner_cont
 from joborchestrator.intelligence.materials_routing import (
     controlled_cv_enabled,
     max_semantic_repairs,
+    materials_routing_snapshot,
     max_transport_retries,
     nvidia_planner_enabled,
     openai_fallback_enabled,
@@ -92,12 +100,6 @@ ROLE_ATTRIBUTION_TECH_TERMS = [
     "Git",
 ]
 BULLET_PREFIXES = ("-", "*", "•", "▪", "◦", "‣", "·")
-EXPERIENCE_DENSITY_CHAR_RATIO = 0.45
-EXPERIENCE_DENSITY_BULLET_RULES = [
-    {"ratio": 0.50, "floor": 4, "cap": 6},
-    {"ratio": 0.35, "floor": 3, "cap": 5},
-    {"ratio": 0.25, "floor": 1, "cap": 3},
-]
 EXPERIENCE_DENSITY_PARSE_FAILURE = (
     "ats_cv_text density validation was not applied because base CV experience roles could not be parsed. "
     "Review the base CV experience headings/date format before trusting compression checks."
@@ -171,21 +173,20 @@ def build_application_kit_with_nvidia(
     api_key: str | None = None,
     timeout: float = DEFAULT_NVIDIA_MATERIALS_TIMEOUT_SECONDS,
     validation_retry_limit: int | None = None,
+    cv_strategy: str | None = None,
 ) -> dict[str, str]:
     key = api_key or os.getenv("NVIDIA_API_KEY") or os.getenv("NIM_API_KEY")
     if not key:
         raise LLMMaterialsError("NVIDIA_API_KEY or NIM_API_KEY is required to generate materials with NVIDIA.")
 
     payload = _materials_payload(job, ranking)
+    routing = materials_routing_snapshot(cv_strategy)
+    payload["materials_routing"] = routing
+    input_hash = _materials_input_hash(payload)
     selected_model = model or DEFAULT_NVIDIA_MATERIALS_MODEL
     try:
-        if controlled_cv_enabled() and nvidia_planner_enabled():
-            cv_response = _call_nvidia_controlled_cv(
-                payload,
-                key,
-                selected_model,
-                timeout,
-            )
+        if routing["selected_pipeline"] == "controlled_cv":
+            cv_response = _call_nvidia_controlled_cv(payload, key, selected_model, timeout)
         else:
             cv_response = _call_nvidia_cv(
                 payload,
@@ -195,6 +196,7 @@ def build_application_kit_with_nvidia(
                 validation_retry_limit=validation_retry_limit,
             )
     except LLMMaterialsError as exc:
+        _attach_routing_metadata_to_error(exc, routing, input_hash)
         if not openai_fallback_enabled():
             raise
         cv_response = _call_openai_controlled_cv_fallback(
@@ -203,6 +205,8 @@ def build_application_kit_with_nvidia(
             timeout,
             previous_error=exc,
         )
+    _attach_routing_metadata(cv_response, routing, input_hash)
+
     try:
         kit_response = _call_nvidia_kit(
             payload,
@@ -212,18 +216,51 @@ def build_application_kit_with_nvidia(
             validation_retry_limit=validation_retry_limit,
         )
     except LLMMaterialsError as exc:
+        _attach_routing_metadata_to_error(exc, routing, input_hash)
         metadata = _combined_generation_metadata(
-            [
-                cv_response,
-                {"_generation_metadata": exc.generation_metadata},
-            ]
+            [cv_response, {"_generation_metadata": exc.generation_metadata}]
         )
+        metadata.update({**routing, "input_hash": input_hash})
+        cv_metadata = cv_response.get("_generation_metadata") if isinstance(cv_response.get("_generation_metadata"), dict) else {}
+        metadata["pipeline"] = str(cv_metadata.get("pipeline") or routing["selected_pipeline"])
         raise LLMMaterialsError(str(exc), generation_metadata=metadata) from exc
+
     response = {**kit_response, **cv_response}
-    response["_generation_metadata"] = _combined_generation_metadata([cv_response, kit_response])
+    combined = _combined_generation_metadata([cv_response, kit_response])
+    combined.update({**routing, "input_hash": input_hash})
+    cv_metadata = cv_response.get("_generation_metadata") if isinstance(cv_response.get("_generation_metadata"), dict) else {}
+    combined["pipeline"] = str(cv_metadata.get("pipeline") or routing["selected_pipeline"])
+    response["_generation_metadata"] = combined
     kit = _kit_from_response(response)
     _attach_generation_metadata(kit, response)
     return kit
+
+
+def _materials_input_hash(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _attach_routing_metadata(
+    response: dict[str, Any],
+    routing: dict[str, Any],
+    input_hash: str,
+) -> None:
+    metadata = response.get("_generation_metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata.update({**routing, "input_hash": input_hash})
+    response["_generation_metadata"] = metadata
+
+
+def _attach_routing_metadata_to_error(
+    exc: LLMMaterialsError,
+    routing: dict[str, Any],
+    input_hash: str,
+) -> None:
+    metadata = dict(exc.generation_metadata or {})
+    metadata.update({**routing, "input_hash": input_hash})
+    exc.generation_metadata = metadata
 
 
 def _materials_payload(job: Any, ranking: Any | None = None) -> dict[str, Any]:
@@ -1135,10 +1172,12 @@ def _controlled_cv_validation_error(
         for error in metadata.get("validation_errors") or metadata.get("planner_errors") or []
         if str(error or "").strip()
     ]
+    source_ir = rendered.get("_source_cv_ir")
     full_validation = _ats_cv_response_validation_error(
         rendered,
         _base_cv_text(payload),
         payload,
+        source_cv_ir=source_ir if isinstance(source_ir, CandidateCvIR) else None,
     )
     if full_validation:
         problems.extend(_split_validation_feedback(full_validation))
@@ -1159,10 +1198,12 @@ def _validate_controlled_cv_result(
         else {}
     )
     feedback = _controlled_cv_validation_error(rendered, payload)
+    rendered.pop("_source_cv_ir", None)
     metadata.update(
         {
             "validation_attempts": max(1, int(metadata.get("validation_attempts") or 0)),
             "pipeline": "controlled_cv",
+            "selected_pipeline": "controlled_cv",
             "stage": stage,
         }
     )
@@ -1174,6 +1215,7 @@ def _validate_controlled_cv_result(
             ]
         )
         metadata["human_review_required"] = True
+        metadata["output_text"] = str(rendered.get("ats_cv_text") or "")
         rendered["_generation_metadata"] = metadata
         raise LLMMaterialsError(
             f"{provider} controlled ATS CV failed validation: {feedback}",
@@ -1203,12 +1245,18 @@ def _call_openai_controlled_cv_fallback(
         ) from previous_error
 
     supported_keywords = _supported_keywords_from_payload(payload)
-    cv_ir = parse_candidate_cv_ir(_base_cv_text(payload), supported_keywords)
+    canonical_skills = _canonical_skills_from_payload(payload)
+    cv_ir = parse_candidate_cv_ir(
+        _base_cv_text(payload),
+        supported_keywords,
+        canonical_skills=canonical_skills,
+    )
     planner_context = build_cv_planner_context(payload, cv_ir)
     planner_response = _call_openai_cv_planner(planner_context, api_key, model, timeout)
     rendered = build_controlled_ats_cv(
         _base_cv_text(payload),
         supported_keywords,
+        canonical_skills=canonical_skills,
         planner_response=planner_response,
     )
 
@@ -1316,12 +1364,18 @@ def _call_nvidia_controlled_cv(
     timeout: float,
 ) -> dict[str, Any]:
     supported_keywords = _supported_keywords_from_payload(payload)
-    cv_ir = parse_candidate_cv_ir(_base_cv_text(payload), supported_keywords)
+    canonical_skills = _canonical_skills_from_payload(payload)
+    cv_ir = parse_candidate_cv_ir(
+        _base_cv_text(payload),
+        supported_keywords,
+        canonical_skills=canonical_skills,
+    )
     planner_context = build_cv_planner_context(payload, cv_ir)
     planner_response = _call_nvidia_cv_planner(planner_context, api_key, model, timeout)
     rendered = build_controlled_ats_cv(
         _base_cv_text(payload),
         supported_keywords,
+        canonical_skills=canonical_skills,
         planner_response=planner_response,
     )
     return _validate_controlled_cv_result(
@@ -1416,9 +1470,17 @@ def _call_nvidia_cv(
                 sorted(parsed.keys()),
             )
             continue
+        failure_metadata = _validation_failure_metadata(
+            attempt,
+            validation_errors + deterministic_feedbacks + degraded_feedbacks,
+            blocking_feedback,
+        )
+        failure_metadata["output_text"] = str(parsed.get("ats_cv_text") or "")
+        failure_metadata["pipeline"] = "legacy_freeform"
+        failure_metadata["selected_pipeline"] = "legacy_freeform"
         raise LLMMaterialsError(
             f"NVIDIA ATS CV response was incomplete: {blocking_feedback}",
-            generation_metadata=_validation_failure_metadata(attempt, validation_errors + deterministic_feedbacks + degraded_feedbacks, blocking_feedback),
+            generation_metadata=failure_metadata,
         )
     raise LLMMaterialsError("NVIDIA ATS CV response did not produce a usable CV.")
 
@@ -1731,6 +1793,22 @@ def _supported_keywords_from_payload(payload: dict[str, Any]) -> list[str]:
     return _dedupe_strings([str(keyword).strip() for keyword in supported if str(keyword or "").strip()])
 
 
+def _canonical_skills_from_payload(payload: dict[str, Any]) -> list[str]:
+    profile = payload.get("candidate_profile") if isinstance(payload.get("candidate_profile"), dict) else {}
+    values: list[str] = []
+    for key in ("strong_skills", "medium_skills", "weak_skills"):
+        raw = profile.get(key)
+        if isinstance(raw, list):
+            values.extend(str(value).strip() for value in raw if str(value or "").strip())
+    raw_skills = profile.get("skills")
+    if isinstance(raw_skills, list):
+        for skill in raw_skills:
+            name = str(skill.get("name") or "").strip() if isinstance(skill, dict) else str(skill or "").strip()
+            if name:
+                values.append(name)
+    return _dedupe_strings(values)
+
+
 def _openai_cv_planner_messages(planner_context: dict[str, Any]) -> list[dict[str, Any]]:
     user_content = _nvidia_cv_planner_contract() + "\n\nContext:\n" + json.dumps(planner_context, ensure_ascii=False)
     return [
@@ -2000,6 +2078,8 @@ def _ats_cv_response_validation_error(
     payload: dict[str, Any],
     base_cv_text: str | None = None,
     source_payload: dict[str, Any] | None = None,
+    *,
+    source_cv_ir: CandidateCvIR | None = None,
 ) -> str | None:
     problems = []
     ats_cv_text = str(payload.get("ats_cv_text") or "")
@@ -2010,12 +2090,15 @@ def _ats_cv_response_validation_error(
             problems.append(f"{field} must be an array")
     problems.extend(_ats_cv_quality_problems(ats_cv_text, base_cv_text=str(base_cv_text or "")))
     problems.extend(_ats_cv_keywords_used_presence_problems(payload, ats_cv_text))
-    problems.extend(_experience_coverage_problems(str(base_cv_text or ""), ats_cv_text))
-    problems.extend(_experience_density_problems(str(base_cv_text or ""), ats_cv_text))
-    problems.extend(_experience_technology_attribution_problems(str(base_cv_text or ""), ats_cv_text))
+    if source_cv_ir is not None:
+        problems.extend(validate_rendered_cv_against_ir(source_cv_ir, ats_cv_text))
+    else:
+        problems.extend(_experience_coverage_problems(str(base_cv_text or ""), ats_cv_text))
+        problems.extend(_experience_density_problems(str(base_cv_text or ""), ats_cv_text))
+        problems.extend(_experience_technology_attribution_problems(str(base_cv_text or ""), ats_cv_text))
     problems.extend(_avoid_overclaiming_problems(ats_cv_text, source_payload, field_name="ats_cv_text"))
     problems.extend(_unsupported_experience_years_problems(ats_cv_text, source_payload, field_name="ats_cv_text"))
-    return "; ".join(problems) if problems else None
+    return "; ".join(_dedupe_strings(problems)) if problems else None
 
 
 def _kit_validation_error(
@@ -2184,12 +2267,7 @@ def _experience_density_problems(base_cv_text: str, ats_cv_text: str) -> list[st
 
 
 def _minimum_bullets_for_role(index: int, source_bullets: int) -> int:
-    import math
-
-    rule = EXPERIENCE_DENSITY_BULLET_RULES[min(index, len(EXPERIENCE_DENSITY_BULLET_RULES) - 1)]
-    proportional = math.ceil(source_bullets * float(rule["ratio"]))
-    floor = min(int(rule["floor"]), source_bullets)
-    return min(source_bullets, int(rule["cap"]), max(floor, proportional))
+    return required_bullets_for_role(index, source_bullets)
 
 
 def _cv_bullet_count(block: str) -> int:
