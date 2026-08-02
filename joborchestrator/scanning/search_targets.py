@@ -76,6 +76,19 @@ def targets_from_profile(profile: dict[str, Any] | None) -> list[dict[str, Any]]
     return [{"label": location, "location": location, "work_modes": modes} for location in locations]
 
 
+def synchronize_profile_work_modes(profile: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep legacy preferred_work_modes aligned with explicit application targets."""
+    normalized = dict(profile or {})
+    targets = targets_from_profile(normalized)
+    target_modes = _clean_work_modes(
+        [mode for target in targets for mode in (target.get("work_modes") or [])]
+    )
+    explicit_modes = _clean_work_modes(normalized.get("preferred_work_modes"))
+    normalized["preferred_work_modes"] = target_modes or explicit_modes
+    normalized["application_targets"] = targets
+    return normalized
+
+
 def _target_dict(target: ApplicationTarget) -> dict[str, Any]:
     return {"label": target.label, "location": target.location, "work_modes": target.work_modes}
 

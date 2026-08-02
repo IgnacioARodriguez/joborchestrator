@@ -22,7 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from playwright.sync_api import Page, expect, sync_playwright
 
 from joborchestrator.ranking.schemas import RankingEvidence, RankingResult, RankingScores
-from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
+from joborchestrator.ranking.versions import LEGACY_NVIDIA_RANKING_VERSION, NVIDIA_RANKING_VERSION
 from joborchestrator.scanning.models import JobPosting
 from joborchestrator.scanning.normalization import compute_content_hash
 from joborchestrator.storage import persistence as db
@@ -258,7 +258,7 @@ def _ui_ranking(score: int, decision: str) -> RankingResult:
         recommended_application_angle="Emphasize Python, FastAPI, PostgreSQL, AWS and API delivery.",
         cv_keywords_to_emphasize=["Python", "FastAPI", "PostgreSQL", "AWS", "API design"],
         cv_keywords_to_avoid_overclaiming=[],
-        ranking_version=NVIDIA_RANKING_VERSION,
+        ranking_version=LEGACY_NVIDIA_RANKING_VERSION,
     )
 
 

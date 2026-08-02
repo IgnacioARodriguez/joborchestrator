@@ -1,0 +1,128 @@
+{
+  "case_tokens": [
+    "role_primary",
+    "capability_primary",
+    "capability_secondary",
+    "capability_absent",
+    "region_primary",
+    "region_other",
+    "mode_remote",
+    "credential_unknown"
+  ],
+  "profile": {
+    "skills": [
+      {"name": "capability_primary", "level": "strong"},
+      {"name": "capability_secondary", "level": "medium"}
+    ],
+    "target_roles": ["role_primary"],
+    "secondary_roles": [],
+    "preferred_locations": ["region_primary"],
+    "preferred_work_modes": ["mode_remote"],
+    "real_experience_years": 4,
+    "dealbreakers": []
+  },
+  "decision_cases": [
+    {
+      "id": "direct_match",
+      "job": {"id": 1, "title": "role_primary"},
+      "facts": {
+        "job_id": 1,
+        "posting": {"validity": "valid", "evidence": "complete posting", "confidence": 0.95},
+        "requirements": [
+          {"id": "r1", "text": "role_primary", "kind": "role", "importance": "required", "blocking": false, "evidence": "role_primary", "confidence": 0.95},
+          {"id": "r2", "text": "capability_primary", "kind": "skill", "importance": "required", "blocking": false, "evidence": "capability_primary", "confidence": 0.95},
+          {"id": "r3", "text": "region_primary", "kind": "location", "importance": "required", "blocking": true, "allowed_values": ["region_primary"], "evidence": "region_primary", "confidence": 0.95},
+          {"id": "r4", "text": "mode_remote", "kind": "work_mode", "importance": "required", "blocking": true, "allowed_values": ["mode_remote"], "evidence": "mode_remote", "confidence": 0.95}
+        ],
+        "application_effort": {"level": "low", "evidence": ["short form"]},
+        "data_quality": {"score": 95, "source_reliability": 90},
+        "extraction_confidence": 0.95
+      },
+      "expected_decision": "APPLY_NOW",
+      "legacy": {"decision": "APPLY_NOW", "final_score": 82}
+    },
+    {
+      "id": "partial_match",
+      "job": {"id": 2, "title": "role_primary"},
+      "facts": {
+        "job_id": 2,
+        "posting": {"validity": "valid", "evidence": "complete posting", "confidence": 0.90},
+        "requirements": [
+          {"id": "r1", "text": "role_primary", "kind": "role", "importance": "required", "blocking": false, "evidence": "role_primary", "confidence": 0.90},
+          {"id": "r2", "text": "capability_secondary", "kind": "skill", "importance": "required", "blocking": false, "evidence": "capability_secondary", "confidence": 0.90},
+          {"id": "r3", "text": "region_primary", "kind": "location", "importance": "required", "blocking": true, "allowed_values": ["region_primary"], "evidence": "region_primary", "confidence": 0.90}
+        ],
+        "application_effort": {"level": "medium", "evidence": []},
+        "data_quality": {"score": 88, "source_reliability": 82},
+        "extraction_confidence": 0.90
+      },
+      "expected_decision": "APPLY_WITH_TAILORED_CV",
+      "legacy": {"decision": "APPLY_NOW", "final_score": 78}
+    },
+    {
+      "id": "missing_required",
+      "job": {"id": 3, "title": "role_primary"},
+      "facts": {
+        "job_id": 3,
+        "posting": {"validity": "valid", "evidence": "complete posting", "confidence": 0.90},
+        "requirements": [
+          {"id": "r1", "text": "role_primary", "kind": "role", "importance": "required", "blocking": false, "evidence": "role_primary", "confidence": 0.90},
+          {"id": "r2", "text": "capability_absent", "kind": "skill", "importance": "required", "blocking": false, "evidence": "capability_absent", "confidence": 0.90}
+        ],
+        "application_effort": {"level": "medium", "evidence": []},
+        "data_quality": {"score": 85, "source_reliability": 80},
+        "extraction_confidence": 0.90
+      },
+      "expected_decision": "SKIP",
+      "legacy": {"decision": "APPLY_WITH_TAILORED_CV", "final_score": 75}
+    },
+    {
+      "id": "blocking_constraint",
+      "job": {"id": 4, "title": "role_primary"},
+      "facts": {
+        "job_id": 4,
+        "posting": {"validity": "valid", "evidence": "complete posting", "confidence": 0.92},
+        "requirements": [
+          {"id": "r1", "text": "role_primary", "kind": "role", "importance": "required", "blocking": false, "evidence": "role_primary", "confidence": 0.92},
+          {"id": "r2", "text": "region_other", "kind": "location", "importance": "required", "blocking": true, "allowed_values": ["region_other"], "evidence": "region_other", "confidence": 0.92}
+        ],
+        "application_effort": {"level": "medium", "evidence": []},
+        "data_quality": {"score": 90, "source_reliability": 85},
+        "extraction_confidence": 0.92
+      },
+      "expected_decision": "AVOID",
+      "legacy": {"decision": "APPLY_WITH_TAILORED_CV", "final_score": 68}
+    },
+    {
+      "id": "unknown_required",
+      "job": {"id": 5, "title": "role_primary"},
+      "facts": {
+        "job_id": 5,
+        "posting": {"validity": "valid", "evidence": "complete posting", "confidence": 0.80},
+        "requirements": [
+          {"id": "r1", "text": "role_primary", "kind": "role", "importance": "required", "blocking": false, "evidence": "role_primary", "confidence": 0.80},
+          {"id": "r2", "text": "credential_unknown", "kind": "education", "importance": "required", "blocking": false, "evidence": "credential_unknown", "confidence": 0.80}
+        ],
+        "application_effort": {"level": "medium", "evidence": []},
+        "data_quality": {"score": 72, "source_reliability": 70},
+        "extraction_confidence": 0.80
+      },
+      "expected_decision": "MAYBE",
+      "legacy": {"decision": "APPLY_WITH_TAILORED_CV", "final_score": 75}
+    },
+    {
+      "id": "invalid_posting",
+      "job": {"id": 6, "title": "role_primary"},
+      "facts": {
+        "job_id": 6,
+        "posting": {"validity": "invalid", "evidence": "posting is not an actionable vacancy", "confidence": 0.95},
+        "requirements": [],
+        "application_effort": {"level": "blocking", "evidence": []},
+        "data_quality": {"score": 20, "source_reliability": 20},
+        "extraction_confidence": 0.95
+      },
+      "expected_decision": "AVOID",
+      "legacy": {"decision": "SKIP", "final_score": 20}
+    }
+  ]
+}
