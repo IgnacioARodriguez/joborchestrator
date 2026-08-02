@@ -37,6 +37,7 @@ jobs:
       LINKEDIN_LIMIT: ${{ inputs.limit || '75' }}
       RANKING_LIMIT: ${{ inputs.ranking_limit || '250' }}
       RESUME_FLAG: ${{ inputs.resume_from_checkpoint && '--resume-from-checkpoint' || '' }}
+      LINKEDIN_PROFILE_DIR: C:\Projects\joborchestrator\linkedin_user_profile_test
 
     steps:
       - uses: actions/checkout@v4

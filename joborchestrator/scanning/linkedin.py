@@ -213,6 +213,9 @@ PERFIL_LINKEDIN = Path(LINKEDIN_PROFILE_PREFIX).resolve()
 
 
 def linkedin_profile_dir(profile_name: str | None = None) -> Path:
+    configured_dir = os.getenv("LINKEDIN_PROFILE_DIR")
+    if configured_dir and not profile_name:
+        return Path(configured_dir).expanduser().resolve()
     name = sanitize_linkedin_profile_name(
         profile_name
         or str(db.get_app_setting(LINKEDIN_PROFILE_SETTING_KEY, DEFAULT_LINKEDIN_PROFILE_NAME) or DEFAULT_LINKEDIN_PROFILE_NAME)
