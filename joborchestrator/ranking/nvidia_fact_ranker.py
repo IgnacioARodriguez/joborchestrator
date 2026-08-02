@@ -224,6 +224,13 @@ async def _call_fact_extraction_async(
                         assessment = comparison_items[index]
                     if assessment is not None:
                         requirement["comparison_confidence"] = assessment.get("confidence")
+                        requirement["comparison_status"] = assessment.get("status")
+                        requirement["kind"] = assessment.get("kind") or requirement.get("kind")
+                        requirement["importance"] = {
+                            "core": "required",
+                            "preference": "preferred",
+                            "context": "context",
+                        }.get(assessment.get("impact"), requirement.get("importance", "context"))
             parsed["_generation_metadata"] = {
                 "validation_attempts": attempt + 1,
                 "validation_errors": validation_errors,

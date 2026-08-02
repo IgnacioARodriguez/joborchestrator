@@ -109,6 +109,7 @@ class RequirementFact:
     evidence: str = ""
     confidence: float = 1.0
     comparison_confidence: float | None = None
+    comparison_status: MatchStatus | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -365,6 +366,12 @@ def _parse_requirement(payload: dict[str, Any], *, index: int) -> RequirementFac
     evidence = str(payload.get("evidence") or text).strip()
     confidence = _ratio(payload.get("confidence"), default=0.75)
     comparison_confidence = _ratio(payload.get("comparison_confidence"), default=None)
+    comparison_status_raw = payload.get("comparison_status")
+    comparison_status = (
+        cast(MatchStatus, comparison_status_raw)
+        if comparison_status_raw in _MATCH_VALUE
+        else None
+    )
     blocking = raw_blocking and blocking_basis in {"explicit_eligibility", "explicit_exclusion"} and confidence >= 0.85 and bool(evidence)
     return RequirementFact(
         requirement_id=str(payload.get("id") or f"requirement_{index + 1}"),
@@ -380,10 +387,13 @@ def _parse_requirement(payload: dict[str, Any], *, index: int) -> RequirementFac
         evidence=evidence,
         confidence=confidence,
         comparison_confidence=comparison_confidence,
+        comparison_status=comparison_status,
     )
 
 
 def _assess_requirement(fact: RequirementFact, candidate: CandidateIndex) -> RequirementAssessment:
+    if fact.comparison_status is not None:
+        return RequirementAssessment(fact=fact, status=fact.comparison_status, reason="llm_comparison")
     terms = _requirement_terms(fact)
     dealbreaker_matches = _matching_values(terms, candidate.dealbreakers)
     if dealbreaker_matches:

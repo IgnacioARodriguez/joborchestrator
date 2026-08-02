@@ -77,10 +77,14 @@ def _comparison_messages(interpretation: dict[str, Any], profile: dict[str, Any]
             "role": "user",
             "content": (
                 "For every job evidence signal, return status strong, partial, unknown, or missing. "
+                "After interpreting the signal, report its impact as core, preference, or context "
+                "and its kind as skill, experience, seniority, role, location, work_mode, language, or other. "
                 "Include candidate_evidence, reason, and confidence. Keep the job's interpretation "
                 "and evidence separate from your assessment. Use this exact output shape:\n"
-                '{"job_id": 0, "assessments": [{"signal": "...", "status": "strong|partial|unknown|missing", '
-                '"candidate_evidence": [], "reason": "...", "confidence": 0.0}]}\n\n'
+                '{"job_id": 0, "assessments": [{"signal": "...", "impact": "core|preference|context", '
+                '"kind": "skill|experience|seniority|role|location|work_mode|language|other", '
+                '"status": "strong|partial|unknown|missing", "candidate_evidence": [], '
+                '"reason": "...", "confidence": 0.0}]}\n\n'
                 "JOB INTERPRETATION:\n"
                 + json.dumps(interpretation, ensure_ascii=False)
                 + "\n\nCANDIDATE PROFILE:\n"
@@ -112,8 +116,14 @@ def _validate_result(result: dict[str, Any], *, expected_job_id: Any) -> None:
     if not isinstance(assessments, list):
         raise CandidateComparisonError("Candidate comparison requires assessments array.")
     valid_statuses = {"strong", "partial", "unknown", "missing"}
+    valid_impacts = {"core", "preference", "context"}
+    valid_kinds = {"skill", "experience", "seniority", "role", "location", "work_mode", "language", "other"}
     for index, assessment in enumerate(assessments):
         if not isinstance(assessment, dict) or not str(assessment.get("signal") or "").strip():
             raise CandidateComparisonError(f"Assessment {index} requires signal.")
         if assessment.get("status") not in valid_statuses:
             raise CandidateComparisonError(f"Assessment {index} has invalid status.")
+        if assessment.get("impact") not in valid_impacts:
+            raise CandidateComparisonError(f"Assessment {index} has invalid impact.")
+        if assessment.get("kind") not in valid_kinds:
+            raise CandidateComparisonError(f"Assessment {index} has invalid kind.")
