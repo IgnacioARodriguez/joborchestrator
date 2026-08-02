@@ -674,6 +674,7 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
         "linkedin_job_enrichments",
         "llm_eval_runs",
         "llm_output_feedback",
+        "materials_generation_attempts",
     }
 
     placeholders = ",".join("?" for _ in required_tables)
