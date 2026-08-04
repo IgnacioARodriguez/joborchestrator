@@ -137,12 +137,20 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
     backendOnline,
     loading,
     preparationLoading,
+    applicationsStatus,
     refresh,
     refreshPreparationQueue,
+    refreshApplications,
   } = useStore()
   const backendReady = backendOnline || jobsMeta !== null || jobs.length > 0
   const totalJobs = jobsMeta?.pipeline_counts?.all ?? jobsMeta?.unfiltered_total ?? jobsMeta?.total ?? jobs.length
-  const currentLoading = section === "apply" ? preparationLoading : loading
+  const currentLoading =
+    section === "apply"
+      ? preparationLoading
+      : section === "applications"
+        ? applicationsStatus === "loading" || applicationsStatus === "refreshing"
+        : loading
+  const canRefreshCurrentSection = ["jobs", "apply", "applications"].includes(section)
   const linkedinScanActive = Boolean(
     opsStatus?.active_local_operations.some(
       (operation) => operation.type === "linkedin_scan" && ["queued", "running"].includes(operation.status),
@@ -156,6 +164,7 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
 
   function refreshCurrentSection() {
     if (section === "apply") return refreshPreparationQueue()
+    if (section === "applications") return refreshApplications()
     return refresh()
   }
 
@@ -198,48 +207,58 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
   }, [])
 
   useEffect(() => {
-    const poll = () => {
-      void loadOpsStatus()
+    let stopped = false
+    let running = false
+    let timer: number | undefined
+
+    async function poll() {
+      if (stopped || running) return
+      running = true
+      try {
+        if (document.visibilityState === "visible") {
+          await loadOpsStatus()
+        }
+      } finally {
+        running = false
+        if (!stopped) timer = window.setTimeout(poll, 10000)
+      }
     }
-    const initialTimer = window.setTimeout(poll, 0)
-    const timer = window.setInterval(() => {
-      poll()
-    }, 10000)
+
+    function onVisibilityChange() {
+      if (document.visibilityState !== "visible") return
+      if (timer !== undefined) window.clearTimeout(timer)
+      void poll()
+    }
+
+    void poll()
+    document.addEventListener("visibilitychange", onVisibilityChange)
     return () => {
-      window.clearTimeout(initialTimer)
-      window.clearInterval(timer)
+      stopped = true
+      if (timer !== undefined) window.clearTimeout(timer)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
     }
   }, [loadOpsStatus])
 
   useEffect(() => {
-    if (!jobSearchActive || section !== "jobs") return
-    const pollJobs = () => {
-      void refresh()
-    }
-    const initialTimer = window.setTimeout(pollJobs, 0)
-    const timer = window.setInterval(pollJobs, 4000)
-    return () => {
-      window.clearTimeout(initialTimer)
-      window.clearInterval(timer)
-    }
-  }, [jobSearchActive, refresh, section])
-
-  useEffect(() => {
-    if (searchOperationId) return
+    if (section !== "jobs" || searchOperationId) return
     const latest = opsStatus?.latest_scan_operation
     if (!latest || !["queued", "running"].includes(latest.status)) return
     const timer = window.setTimeout(() => {
       setSearchOperationId(latest.id); setSearchOperation(latest); setSearchState("searching"); setSearchMessage(scanProgressCopy(latest))
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [opsStatus, searchOperationId])
+  }, [opsStatus, searchOperationId, section])
 
   useEffect(() => {
-    if (!searchOperationId) return
+    if (!searchOperationId || section !== "jobs") return
     const operationId = searchOperationId
     let stopped = false
     let timer: number | undefined
     async function poll() {
+      if (document.visibilityState === "hidden") {
+        timer = window.setTimeout(poll, 2500)
+        return
+      }
       try {
         const operation = (await api.getOperation(operationId)).operation
         if (stopped) return
@@ -253,7 +272,7 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
     }
     void poll()
     return () => { stopped = true; if (timer !== undefined) window.clearTimeout(timer) }
-  }, [loadOpsStatus, refresh, searchOperationId])
+  }, [loadOpsStatus, refresh, searchOperationId, section])
 
   async function scanFreshJobs() {
     setSearchState("searching")
@@ -347,15 +366,17 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
             </div>
             <div className="flex items-center gap-2">
               <ActivityCenter operations={activityOperations} onRetry={(operation) => toast("Reintento disponible", { description: `Vuelve a iniciar ${operation.type} desde su pantalla.` })} />
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={currentLoading}
-                onClick={() => void refreshCurrentSection()}
-              >
-                {currentLoading ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-                Actualizar
-              </Button>
+              {canRefreshCurrentSection ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={currentLoading}
+                  onClick={() => void refreshCurrentSection()}
+                >
+                  {currentLoading ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+                  Actualizar
+                </Button>
+              ) : null}
               <Button variant="outline" size="icon-sm" aria-label="Configuración" onClick={() => navigate("settings")}>
                 <Settings className="size-4" />
               </Button>
