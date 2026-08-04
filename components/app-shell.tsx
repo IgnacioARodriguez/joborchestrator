@@ -16,6 +16,7 @@ import { LEGACY_SECTION_ALIASES, NAV_ITEMS, SECTION_PATHS, isPrimarySection, pri
 import { useStore } from "@/lib/store"
 import { api } from "@/lib/api"
 import { useVisiblePolling } from "@/lib/use-visible-polling"
+import { useSyncRevisions, type SyncRevisionCheck } from "@/lib/use-sync-revisions"
 import { Button } from "@/components/ui/button"
 import { JobsScreen } from "@/components/screens/review-screen"
 import { ApplicationsScreen } from "@/components/screens/applications-screen"
@@ -37,6 +38,14 @@ const SECTION_RESOURCE: Partial<Record<Section, StoreResource>> = {
   apply: "preparation",
   applications: "applications",
   insights: "jobs",
+}
+
+function isLoadedResource(status: string) {
+  return status === "success" || status === "empty"
+}
+
+function canRefreshResource(status: string) {
+  return !["idle", "loading", "refreshing"].includes(status)
 }
 
 function scanProgressCopy(operation: OperationRun) {
@@ -140,7 +149,9 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
   const [searchOperationId, setSearchOperationId] = useState<number | null>(null)
   const [searchOperation, setSearchOperation] = useState<OperationRun | null>(null)
   const [opsStatus, setOpsStatus] = useState<OpsStatus | null>(null)
-  const rankingActiveRef = useRef(false)
+  const [sessionsRevision, setSessionsRevision] = useState(0)
+  const jobsSyncPendingRef = useRef(false)
+  const applicationsSyncPendingRef = useRef(false)
   const {
     jobs,
     jobsMeta,
@@ -244,20 +255,71 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
     return () => window.removeEventListener("hashchange", syncHash)
   }, [])
 
-  useVisiblePolling({
-    intervalMs: 10000,
-    poll: loadOpsStatus,
-  })
+  const handleSyncStatus = useCallback(async ({
+    current,
+    previous,
+    changedResources,
+  }: SyncRevisionCheck) => {
+    const initialCheck = previous === null
+    const operationsChanged = initialCheck || changedResources.includes("operations")
+    const applicationsChanged = changedResources.includes("applications")
+    const sessionsChanged = changedResources.includes("sessions")
+    const backgroundJobsActive =
+      current.activity.operations > 0 || current.activity.ranking_jobs > 0
 
-  useEffect(() => {
-    if (!opsStatus) return
-    const rankingActive = opsStatus.active_ranking_jobs.length > 0
-    const rankingCompleted = opsStatus.latest_ranking_job?.status === "completed"
-    if (rankingActiveRef.current && !rankingActive && rankingCompleted) {
-      void stageJobUpdates()
+    if (
+      changedResources.includes("jobs") ||
+      (initialCheck && backgroundJobsActive && jobsStatus !== "idle")
+    ) {
+      jobsSyncPendingRef.current = jobsStatus !== "idle"
     }
-    rankingActiveRef.current = rankingActive
-  }, [opsStatus, stageJobUpdates])
+
+    if (applicationsChanged && applicationsStatus !== "idle") {
+      applicationsSyncPendingRef.current = true
+    }
+
+    if (sessionsChanged) {
+      setSessionsRevision(current.resources.sessions.revision)
+    }
+
+    const resourceUpdates: Promise<void>[] = []
+    if (operationsChanged) resourceUpdates.push(loadOpsStatus())
+    if (
+      applicationsSyncPendingRef.current &&
+      canRefreshResource(applicationsStatus)
+    ) {
+      resourceUpdates.push(
+        refreshApplications().then(() => {
+          applicationsSyncPendingRef.current = false
+        }),
+      )
+    }
+    await Promise.all(resourceUpdates)
+
+    if (
+      backgroundJobsActive ||
+      !jobsSyncPendingRef.current ||
+      !isLoadedResource(jobsStatus)
+    ) {
+      return
+    }
+
+    const changes = await stageJobUpdates()
+    if (changes) {
+      jobsSyncPendingRef.current = false
+    }
+  }, [
+    applicationsStatus,
+    jobsStatus,
+    loadOpsStatus,
+    refreshApplications,
+    stageJobUpdates,
+  ])
+
+  const checkSyncStatus = useSyncRevisions({
+    intervalMs: 5000,
+    onStatus: handleSyncStatus,
+  })
 
   useEffect(() => {
     if (section !== "jobs" || searchOperationId) return
@@ -287,26 +349,19 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
       setSearchOperationId(null)
       setSearchOperation(null)
       if (operation.status !== "completed") {
-        await loadOpsStatus()
+        await checkSyncStatus().catch(loadOpsStatus)
         setSearchState("error")
         setSearchMessage("La búsqueda se detuvo antes de completar todas las fuentes.")
         return "stop"
       }
 
-      const [changes] = await Promise.all([stageJobUpdates(), loadOpsStatus()])
-      if (!changes) {
-        setSearchState("error")
-        setSearchMessage("La búsqueda terminó, pero no se pudieron comprobar los cambios.")
-        return "stop"
-      }
-
-      const changeCount = changes.added + changes.updated + changes.removed
+      jobsSyncPendingRef.current = true
+      await checkSyncStatus().catch(async () => {
+        const [changes] = await Promise.all([stageJobUpdates(), loadOpsStatus()])
+        if (changes) jobsSyncPendingRef.current = false
+      })
       setSearchState("success")
-      setSearchMessage(
-        changeCount > 0
-          ? "La búsqueda terminó. La lista queda estable hasta que muestres los cambios."
-          : "La búsqueda terminó sin cambios nuevos.",
-      )
+      setSearchMessage("La búsqueda terminó. La lista se sincroniza sin interrumpir tu revisión.")
       return "stop"
     },
   })
@@ -435,7 +490,12 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
                 searchStartedAt={searchOperation?.started_at ?? searchOperation?.created_at}
               />
             )}
-            {section === "apply" && <PipelineScreen onOpenJob={setOpenJobId} />}
+            {section === "apply" && (
+              <PipelineScreen
+                onOpenJob={setOpenJobId}
+                sessionsRevision={sessionsRevision}
+              />
+            )}
             {section === "applications" && <ApplicationsScreen onOpenJob={setOpenJobId} />}
             {section === "settings" && <SettingsScreen onNavigate={navigate} />}
             {section === "profile" && <ProfileScreen />}

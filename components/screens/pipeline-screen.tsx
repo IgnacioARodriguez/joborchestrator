@@ -435,8 +435,10 @@ function actionIcon(action: PreparationAction) {
 
 export function PipelineScreen({
   onOpenJob,
+  sessionsRevision,
 }: {
   onOpenJob: (id: string) => void
+  sessionsRevision?: number
 }) {
   const {
     preparationJobs: jobs,
@@ -471,6 +473,13 @@ export function PipelineScreen({
       }
     }
     void loadSessions()
+    return () => {
+      cancelled = true
+    }
+  }, [sessionsRevision])
+
+  useEffect(() => {
+    let cancelled = false
     void api.getOperations(100).then((response) => {
       if (cancelled) return
       const recoveredMaterials: Record<string, number> = {}
