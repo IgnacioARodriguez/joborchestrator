@@ -4,7 +4,6 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -411,14 +410,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setPreparationQueuePageState(next)
     void refreshPreparationQueue()
   }, [refreshPreparationQueue])
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void refresh(null)
-      void refreshApplications()
-    }, 0)
-    return () => window.clearTimeout(timer)
-  }, [refresh, refreshApplications])
 
   const getJob = useCallback((id: string) => jobDetails[id]?.job, [jobDetails])
 

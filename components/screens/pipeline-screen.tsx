@@ -461,10 +461,6 @@ export function PipelineScreen({
   const [confirmation, setConfirmation] = useState<{ job: JobListItem; session: ApplicationSession | null } | null>(null)
 
   useEffect(() => {
-    void refresh()
-  }, [refresh])
-
-  useEffect(() => {
     let cancelled = false
     async function loadSessions() {
       try {

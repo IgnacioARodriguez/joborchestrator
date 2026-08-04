@@ -29,6 +29,14 @@ import { toast } from "sonner"
 import type { OperationRun, OpsStatus } from "@/lib/types"
 
 type SearchState = "idle" | "searching" | "success" | "empty" | "error"
+type StoreResource = "jobs" | "preparation" | "applications"
+
+const SECTION_RESOURCE: Partial<Record<Section, StoreResource>> = {
+  jobs: "jobs",
+  apply: "preparation",
+  applications: "applications",
+  insights: "jobs",
+}
 
 function scanProgressCopy(operation: OperationRun) {
   const message = operation.progress_message?.toLowerCase() ?? ""
@@ -136,7 +144,9 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
     jobs,
     jobsMeta,
     backendOnline,
+    jobsStatus,
     loading,
+    preparationJobsStatus,
     preparationLoading,
     applicationsStatus,
     refresh,
@@ -144,14 +154,39 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
     refreshPreparationQueue,
     refreshApplications,
   } = useStore()
-  const backendReady = backendOnline || jobsMeta !== null || jobs.length > 0
+  const requiredResource = SECTION_RESOURCE[section]
+  const jobsLoaded = jobsStatus !== "idle"
+  const backendReady = backendOnline || opsStatus !== null || jobsMeta !== null || jobs.length > 0
   const totalJobs = jobsMeta?.pipeline_counts?.all ?? jobsMeta?.unfiltered_total ?? jobsMeta?.total ?? jobs.length
+  const jobCountLabel = jobsLoaded ? `${totalJobs.toLocaleString()} oportunidades` : "Jobs bajo demanda"
   const currentLoading =
     section === "apply"
       ? preparationLoading
       : section === "applications"
         ? applicationsStatus === "loading" || applicationsStatus === "refreshing"
         : loading
+
+  useEffect(() => {
+    if (requiredResource === "jobs" && jobsStatus === "idle") {
+      void refresh(null)
+      return
+    }
+    if (requiredResource === "preparation" && preparationJobsStatus === "idle") {
+      void refreshPreparationQueue()
+      return
+    }
+    if (requiredResource === "applications" && applicationsStatus === "idle") {
+      void refreshApplications()
+    }
+  }, [
+    applicationsStatus,
+    jobsStatus,
+    preparationJobsStatus,
+    refresh,
+    refreshApplications,
+    refreshPreparationQueue,
+    requiredResource,
+  ])
   const canRefreshCurrentSection = ["jobs", "apply", "applications"].includes(section)
   const linkedinScanActive = Boolean(
     opsStatus?.active_local_operations.some(
@@ -388,7 +423,7 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
                   {backendReady ? "Listo" : "Sin conexión"}
                 </p>
                 <p className="text-[11px] text-muted-foreground">
-                  {totalJobs.toLocaleString()} oportunidades
+        {jobCountLabel}
                 </p>
               </div>
             </div>
