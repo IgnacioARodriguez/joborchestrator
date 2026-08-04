@@ -234,6 +234,20 @@ def test_application_metrics_split_native_custom_and_shadow_controls() -> None:
     }
 
 
+def test_application_metrics_do_not_mark_skipped_actions_submit_only_ready() -> None:
+    metrics = _build_application_automation_metrics(
+        action_plan={"actions": [{"action_type": "fill_text", "field_name": "name"}]},
+        validation_report={"status": "validation_clean", "summary": {"issues": 0}},
+        fill_result={"filled_fields": [], "skipped_fields": ["name"]},
+        resume_upload={"status": "not_applicable"},
+        repair_report={"dynamic_required_count": 0},
+        mapping={"unknown_fields": []},
+    )
+
+    assert metrics["skipped_action_count"] == 1
+    assert metrics["submit_only_ready"] is False
+
+
 def test_application_metrics_track_resume_file_widget_uploads() -> None:
     metrics = _build_application_automation_metrics(
         action_plan={"actions": []},
