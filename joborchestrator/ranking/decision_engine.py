@@ -103,6 +103,7 @@ class RequirementFact:
     blocking: bool = False
     blocking_basis: BlockingBasis = "unclear"
     alternatives: tuple[str, ...] = ()
+    alternative_logic: str = "any_of"
     allowed_values: tuple[str, ...] = ()
     minimum_value: float | None = None
     unit: str | None = None
@@ -110,6 +111,8 @@ class RequirementFact:
     confidence: float = 1.0
     comparison_confidence: float | None = None
     comparison_status: MatchStatus | None = None
+    comparison_candidate_evidence: tuple[str, ...] = ()
+    comparison_members: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,6 +375,8 @@ def _parse_requirement(payload: dict[str, Any], *, index: int) -> RequirementFac
         if comparison_status_raw in _MATCH_VALUE
         else None
     )
+    comparison_candidate_evidence = tuple(_string_list(payload.get("comparison_candidate_evidence")))
+    comparison_members = tuple(member for member in payload.get("comparison_members") or [] if isinstance(member, dict))
     blocking = raw_blocking and blocking_basis in {"explicit_eligibility", "explicit_exclusion"} and confidence >= 0.85 and bool(evidence)
     return RequirementFact(
         requirement_id=str(payload.get("id") or f"requirement_{index + 1}"),
@@ -381,6 +386,7 @@ def _parse_requirement(payload: dict[str, Any], *, index: int) -> RequirementFac
         blocking=blocking,
         blocking_basis=cast(BlockingBasis, blocking_basis),
         alternatives=tuple(_string_list(payload.get("alternatives"))),
+        alternative_logic=str(payload.get("logic") or "any_of").strip().lower(),
         allowed_values=tuple(_string_list(payload.get("allowed_values"))),
         minimum_value=_float_value(payload.get("minimum_value")),
         unit=str(payload.get("unit") or "").strip() or None,
@@ -388,12 +394,19 @@ def _parse_requirement(payload: dict[str, Any], *, index: int) -> RequirementFac
         confidence=confidence,
         comparison_confidence=comparison_confidence,
         comparison_status=comparison_status,
+        comparison_candidate_evidence=comparison_candidate_evidence,
+        comparison_members=comparison_members,
     )
 
 
 def _assess_requirement(fact: RequirementFact, candidate: CandidateIndex) -> RequirementAssessment:
     if fact.comparison_status is not None:
-        return RequirementAssessment(fact=fact, status=fact.comparison_status, reason="llm_comparison")
+        return RequirementAssessment(
+            fact=fact,
+            status=fact.comparison_status,
+            candidate_evidence=fact.comparison_candidate_evidence,
+            reason="llm_comparison",
+        )
     terms = _requirement_terms(fact)
     dealbreaker_matches = _matching_values(terms, candidate.dealbreakers)
     if dealbreaker_matches:
@@ -683,8 +696,11 @@ def _build_evidence(
             "importance": item.fact.importance,
             "blocking": item.fact.blocking,
             "blocking_basis": item.fact.blocking_basis,
+            "alternatives": list(item.fact.alternatives),
+            "logic": item.fact.alternative_logic,
             "match": item.status,
             "candidate_evidence": list(item.candidate_evidence),
+            "comparison_members": [dict(member) for member in item.fact.comparison_members],
             "job_evidence": item.fact.evidence,
             "reason": item.reason,
         }

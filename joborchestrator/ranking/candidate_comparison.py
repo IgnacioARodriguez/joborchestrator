@@ -70,20 +70,39 @@ def _comparison_messages(interpretation: dict[str, Any], profile: dict[str, Any]
             "content": (
                 "Compare a job interpretation with a candidate profile. Do not invent evidence. "
                 "Absence of evidence is unknown, not missing. Cultural preferences are not blockers. "
+                "Ignore employer benefits and perks such as vacation days, workation, equity, "
+                "discounts, events, equipment, and similar offer details; do not compare them "
+                "against the candidate profile. "
                 "Return JSON only."
             ),
         },
         {
             "role": "user",
             "content": (
-                "For every job evidence signal, return status strong, partial, unknown, or missing. "
-                "After interpreting the signal, report its impact as core, preference, or context "
+                "For every job requirement, return exactly one assessment using the input requirement's "
+                "requirement_id unchanged. Never match assessments by position and never invent a new "
+                "requirement_id. Return status strong, partial, unknown, or missing. "
+                "After interpreting the signal, report its canonical signal: the single capability "
+                "or expectation being evaluated. If another signal is only a task or evidence that "
+                "supports the same capability, use the same canonical signal instead of creating a "
+                "second independent requirement. Keep transferable skills separate from the domain "
+                "where they are used: assess Python/backend engineering independently from production "
+                "ML systems, ML frameworks, or ML theory. Do not downgrade a clear Python or backend "
+                "match merely because the job applies it in a specialized domain. Report its impact "
+                "as core, preference, or context "
                 "and its kind as skill, experience, seniority, role, location, work_mode, language, or other. "
-                "Include candidate_evidence, reason, and confidence. Keep the job's interpretation "
+                "Always inspect the candidate profile for evidence relevant to the signal. Include "
+                "candidate_evidence as an array of short verbatim excerpts whenever such evidence "
+                "exists, for every status (strong, partial, missing, or unknown). Use an empty array "
+                "only when the profile contains no relevant evidence. Include reason and confidence. "
+                "For composite requirements, evaluate only the listed members and do not invent new ones. "
+                "Keep the job's interpretation "
                 "and evidence separate from your assessment. Use this exact output shape:\n"
-                '{"job_id": 0, "assessments": [{"signal": "...", "impact": "core|preference|context", '
+                '{"job_id": 0, "assessments": [{"requirement_id": "evidence_1", "signal": "...", "canonical_signal": "...", '
+                '"supporting_evidence": [], "impact": "core|preference|context", '
                 '"kind": "skill|experience|seniority|role|location|work_mode|language|other", '
                 '"status": "strong|partial|unknown|missing", "candidate_evidence": [], '
+                '"members": [{"member_id": "m1", "signal": "...", "status": "strong|partial|unknown|missing", "candidate_evidence": []}], '
                 '"reason": "...", "confidence": 0.0}]}\n\n'
                 "JOB INTERPRETATION:\n"
                 + json.dumps(interpretation, ensure_ascii=False)
@@ -92,6 +111,24 @@ def _comparison_messages(interpretation: dict[str, Any], profile: dict[str, Any]
             ),
         },
     ]
+
+
+def normalize_composite_assessments(result: dict[str, Any], *, logic_by_index: list[str] | None = None) -> dict[str, Any]:
+    for index, assessment in enumerate(result.get("assessments") or []):
+        if not isinstance(assessment, dict):
+            continue
+        members = [member for member in assessment.get("members") or [] if isinstance(member, dict)]
+        if not members:
+            continue
+        logic = str(logic_by_index[index] if logic_by_index and index < len(logic_by_index) else "all_of").lower()
+        statuses = [str(member.get("status") or "unknown") for member in members]
+        if logic == "any_of":
+            status = "strong" if "strong" in statuses else "partial" if "partial" in statuses else "unknown" if "unknown" in statuses else "missing"
+        else:
+            status = "strong" if all(value == "strong" for value in statuses) else "missing" if all(value == "missing" for value in statuses) else "unknown" if all(value == "unknown" for value in statuses) else "partial"
+        assessment["status"] = status
+        assessment["candidate_evidence"] = list(dict.fromkeys(item for member in members for item in member.get("candidate_evidence") or []))
+    return result
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -121,9 +158,21 @@ def _validate_result(result: dict[str, Any], *, expected_job_id: Any) -> None:
     for index, assessment in enumerate(assessments):
         if not isinstance(assessment, dict) or not str(assessment.get("signal") or "").strip():
             raise CandidateComparisonError(f"Assessment {index} requires signal.")
+        if not str(assessment.get("requirement_id") or "").strip():
+            raise CandidateComparisonError(f"Assessment {index} requires requirement_id.")
         if assessment.get("status") not in valid_statuses:
             raise CandidateComparisonError(f"Assessment {index} has invalid status.")
         if assessment.get("impact") not in valid_impacts:
             raise CandidateComparisonError(f"Assessment {index} has invalid impact.")
-        if assessment.get("kind") not in valid_kinds:
-            raise CandidateComparisonError(f"Assessment {index} has invalid kind.")
+        kind = assessment.get("kind")
+        if kind not in valid_kinds:
+            # Keep the model's vocabulary for auditability, but do not discard
+            # an otherwise usable comparison because our internal taxonomy is
+            # narrower than the model's interpretation.
+            assessment["kind_original"] = kind
+            assessment["kind"] = "other"
+        if not str(assessment.get("canonical_signal") or assessment.get("signal") or "").strip():
+            raise CandidateComparisonError(f"Assessment {index} requires canonical_signal.")
+        evidence = assessment.get("candidate_evidence")
+        if not isinstance(evidence, list) or any(not isinstance(item, str) or not item.strip() for item in evidence):
+            raise CandidateComparisonError(f"Assessment {index} requires candidate_evidence string array.")
