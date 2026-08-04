@@ -70,6 +70,9 @@ def _comparison_messages(interpretation: dict[str, Any], profile: dict[str, Any]
             "content": (
                 "Compare a job interpretation with a candidate profile. Do not invent evidence. "
                 "Absence of evidence is unknown, not missing. Cultural preferences are not blockers. "
+                "Ignore employer benefits and perks such as vacation days, workation, equity, "
+                "discounts, events, equipment, and similar offer details; do not compare them "
+                "against the candidate profile. "
                 "Return JSON only."
             ),
         },
@@ -77,11 +80,23 @@ def _comparison_messages(interpretation: dict[str, Any], profile: dict[str, Any]
             "role": "user",
             "content": (
                 "For every job evidence signal, return status strong, partial, unknown, or missing. "
-                "After interpreting the signal, report its impact as core, preference, or context "
+                "After interpreting the signal, report its canonical signal: the single capability "
+                "or expectation being evaluated. If another signal is only a task or evidence that "
+                "supports the same capability, use the same canonical signal instead of creating a "
+                "second independent requirement. Keep transferable skills separate from the domain "
+                "where they are used: assess Python/backend engineering independently from production "
+                "ML systems, ML frameworks, or ML theory. Do not downgrade a clear Python or backend "
+                "match merely because the job applies it in a specialized domain. Report its impact "
+                "as core, preference, or context "
                 "and its kind as skill, experience, seniority, role, location, work_mode, language, or other. "
-                "Include candidate_evidence, reason, and confidence. Keep the job's interpretation "
+                "Always inspect the candidate profile for evidence relevant to the signal. Include "
+                "candidate_evidence as an array of short verbatim excerpts whenever such evidence "
+                "exists, for every status (strong, partial, missing, or unknown). Use an empty array "
+                "only when the profile contains no relevant evidence. Include reason and confidence. "
+                "Keep the job's interpretation "
                 "and evidence separate from your assessment. Use this exact output shape:\n"
-                '{"job_id": 0, "assessments": [{"signal": "...", "impact": "core|preference|context", '
+                '{"job_id": 0, "assessments": [{"signal": "...", "canonical_signal": "...", '
+                '"supporting_evidence": [], "impact": "core|preference|context", '
                 '"kind": "skill|experience|seniority|role|location|work_mode|language|other", '
                 '"status": "strong|partial|unknown|missing", "candidate_evidence": [], '
                 '"reason": "...", "confidence": 0.0}]}\n\n'
@@ -125,5 +140,15 @@ def _validate_result(result: dict[str, Any], *, expected_job_id: Any) -> None:
             raise CandidateComparisonError(f"Assessment {index} has invalid status.")
         if assessment.get("impact") not in valid_impacts:
             raise CandidateComparisonError(f"Assessment {index} has invalid impact.")
-        if assessment.get("kind") not in valid_kinds:
-            raise CandidateComparisonError(f"Assessment {index} has invalid kind.")
+        kind = assessment.get("kind")
+        if kind not in valid_kinds:
+            # Keep the model's vocabulary for auditability, but do not discard
+            # an otherwise usable comparison because our internal taxonomy is
+            # narrower than the model's interpretation.
+            assessment["kind_original"] = kind
+            assessment["kind"] = "other"
+        if not str(assessment.get("canonical_signal") or assessment.get("signal") or "").strip():
+            raise CandidateComparisonError(f"Assessment {index} requires canonical_signal.")
+        evidence = assessment.get("candidate_evidence")
+        if not isinstance(evidence, list) or any(not isinstance(item, str) or not item.strip() for item in evidence):
+            raise CandidateComparisonError(f"Assessment {index} requires candidate_evidence string array.")
