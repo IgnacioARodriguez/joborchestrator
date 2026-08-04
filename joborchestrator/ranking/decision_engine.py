@@ -112,6 +112,7 @@ class RequirementFact:
     comparison_confidence: float | None = None
     comparison_status: MatchStatus | None = None
     comparison_candidate_evidence: tuple[str, ...] = ()
+    comparison_members: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,6 +376,7 @@ def _parse_requirement(payload: dict[str, Any], *, index: int) -> RequirementFac
         else None
     )
     comparison_candidate_evidence = tuple(_string_list(payload.get("comparison_candidate_evidence")))
+    comparison_members = tuple(member for member in payload.get("comparison_members") or [] if isinstance(member, dict))
     blocking = raw_blocking and blocking_basis in {"explicit_eligibility", "explicit_exclusion"} and confidence >= 0.85 and bool(evidence)
     return RequirementFact(
         requirement_id=str(payload.get("id") or f"requirement_{index + 1}"),
@@ -393,6 +395,7 @@ def _parse_requirement(payload: dict[str, Any], *, index: int) -> RequirementFac
         comparison_confidence=comparison_confidence,
         comparison_status=comparison_status,
         comparison_candidate_evidence=comparison_candidate_evidence,
+        comparison_members=comparison_members,
     )
 
 
@@ -697,6 +700,7 @@ def _build_evidence(
             "logic": item.fact.alternative_logic,
             "match": item.status,
             "candidate_evidence": list(item.candidate_evidence),
+            "comparison_members": [dict(member) for member in item.fact.comparison_members],
             "job_evidence": item.fact.evidence,
             "reason": item.reason,
         }

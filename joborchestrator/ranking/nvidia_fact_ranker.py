@@ -13,7 +13,7 @@ from joborchestrator.intelligence.profile_trace import profile_trace
 from joborchestrator.llm.provider import LLMProviderError, NvidiaProvider, ProviderRegistry
 from joborchestrator.prompts import active_prompt_version, load_prompt
 from joborchestrator.ranking.decision_engine import parse_job_facts, rank_job_facts
-from joborchestrator.ranking.candidate_comparison import compare_job_with_candidate
+from joborchestrator.ranking.candidate_comparison import compare_job_with_candidate, normalize_composite_assessments
 from joborchestrator.llm.observability import LLMRequestContext
 from joborchestrator.storage import persistence as db
 
@@ -209,7 +209,7 @@ async def _call_fact_extraction_async(
                     batch_id=f"comparison-{int(item.get('job_id') or 0)}",
                 )
                 assessments = {
-                    str(assessment.get("signal")): assessment
+                    str(assessment.get("requirement_id")): assessment
                     for assessment in comparison.get("assessments") or []
                     if isinstance(assessment, dict)
                 }
@@ -218,16 +218,26 @@ async def _call_fact_extraction_async(
                     for assessment in comparison.get("assessments") or []
                     if isinstance(assessment, dict)
                 ]
+                comparison = normalize_composite_assessments(
+                    comparison,
+                    logic_by_index=[str(req.get("logic") or "all_of") for req in item.get("requirements") or []],
+                )
+                comparison_items = [assessment for assessment in comparison.get("assessments") or [] if isinstance(assessment, dict)]
                 for index, requirement in enumerate(item.get("requirements") or []):
                     assessment = assessments.get(str(requirement.get("id") or ""))
-                    if assessment is None and index < len(comparison_items):
-                        assessment = comparison_items[index]
+                    if assessment is None:
+                        raise NvidiaFactRankingError(
+                            f"Comparison response missing requirement_id={requirement.get('id')}"
+                        )
                     if assessment is not None:
                         requirement["comparison_confidence"] = assessment.get("confidence")
                         requirement["comparison_status"] = assessment.get("status")
                         requirement["comparison_candidate_evidence"] = list(
                             assessment.get("candidate_evidence") or []
                         )
+                        requirement["comparison_members"] = [
+                            member for member in assessment.get("members") or [] if isinstance(member, dict)
+                        ]
                         requirement["comparison_canonical_signal"] = assessment.get("canonical_signal") or assessment.get("signal")
                         if assessment.get("kind_original") is not None:
                             requirement["comparison_kind_original"] = assessment.get("kind_original")
@@ -433,7 +443,16 @@ def _normalize_interpretation(result: dict[str, Any], jobs: list[dict[str, Any]]
                     "evidence": evidence + (f" Interpretation: {analysis}" if analysis else ""),
                     "confidence": confidence,
                     "alternatives": list(value.get("alternatives") or []) if isinstance(value, dict) else [],
-                    "logic": str(value.get("logic") or "any_of").strip() if isinstance(value, dict) else "any_of",
+                    "logic": (
+                        str(value.get("logic") or ("any_of" if value.get("alternatives") else "all_of")).strip()
+                        if isinstance(value, dict) else "all_of"
+                    ),
+                    "members": [
+                        {"member_id": f"m{member_index + 1}", "text": str(member.get("text") or member.get("signal") or "").strip()}
+                        if isinstance(member, dict) else {"member_id": f"m{member_index + 1}", "text": str(member).strip()}
+                        for member_index, member in enumerate(value.get("members") or [])
+                        if (str(member.get("text") or member.get("signal") or "").strip() if isinstance(member, dict) else str(member).strip())
+                    ] if isinstance(value, dict) else [],
                 })
         source = source_by_id.get(int(item.get("job_id") or 0), {})
         description = str(source.get("description_text") or source.get("description_html") or "").strip()

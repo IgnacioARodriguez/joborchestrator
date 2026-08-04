@@ -79,7 +79,9 @@ def _comparison_messages(interpretation: dict[str, Any], profile: dict[str, Any]
         {
             "role": "user",
             "content": (
-                "For every job evidence signal, return status strong, partial, unknown, or missing. "
+                "For every job requirement, return exactly one assessment using the input requirement's "
+                "requirement_id unchanged. Never match assessments by position and never invent a new "
+                "requirement_id. Return status strong, partial, unknown, or missing. "
                 "After interpreting the signal, report its canonical signal: the single capability "
                 "or expectation being evaluated. If another signal is only a task or evidence that "
                 "supports the same capability, use the same canonical signal instead of creating a "
@@ -93,12 +95,14 @@ def _comparison_messages(interpretation: dict[str, Any], profile: dict[str, Any]
                 "candidate_evidence as an array of short verbatim excerpts whenever such evidence "
                 "exists, for every status (strong, partial, missing, or unknown). Use an empty array "
                 "only when the profile contains no relevant evidence. Include reason and confidence. "
+                "For composite requirements, evaluate only the listed members and do not invent new ones. "
                 "Keep the job's interpretation "
                 "and evidence separate from your assessment. Use this exact output shape:\n"
-                '{"job_id": 0, "assessments": [{"signal": "...", "canonical_signal": "...", '
+                '{"job_id": 0, "assessments": [{"requirement_id": "evidence_1", "signal": "...", "canonical_signal": "...", '
                 '"supporting_evidence": [], "impact": "core|preference|context", '
                 '"kind": "skill|experience|seniority|role|location|work_mode|language|other", '
                 '"status": "strong|partial|unknown|missing", "candidate_evidence": [], '
+                '"members": [{"member_id": "m1", "signal": "...", "status": "strong|partial|unknown|missing", "candidate_evidence": []}], '
                 '"reason": "...", "confidence": 0.0}]}\n\n'
                 "JOB INTERPRETATION:\n"
                 + json.dumps(interpretation, ensure_ascii=False)
@@ -107,6 +111,24 @@ def _comparison_messages(interpretation: dict[str, Any], profile: dict[str, Any]
             ),
         },
     ]
+
+
+def normalize_composite_assessments(result: dict[str, Any], *, logic_by_index: list[str] | None = None) -> dict[str, Any]:
+    for index, assessment in enumerate(result.get("assessments") or []):
+        if not isinstance(assessment, dict):
+            continue
+        members = [member for member in assessment.get("members") or [] if isinstance(member, dict)]
+        if not members:
+            continue
+        logic = str(logic_by_index[index] if logic_by_index and index < len(logic_by_index) else "all_of").lower()
+        statuses = [str(member.get("status") or "unknown") for member in members]
+        if logic == "any_of":
+            status = "strong" if "strong" in statuses else "partial" if "partial" in statuses else "unknown" if "unknown" in statuses else "missing"
+        else:
+            status = "strong" if all(value == "strong" for value in statuses) else "missing" if all(value == "missing" for value in statuses) else "unknown" if all(value == "unknown" for value in statuses) else "partial"
+        assessment["status"] = status
+        assessment["candidate_evidence"] = list(dict.fromkeys(item for member in members for item in member.get("candidate_evidence") or []))
+    return result
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -136,6 +158,8 @@ def _validate_result(result: dict[str, Any], *, expected_job_id: Any) -> None:
     for index, assessment in enumerate(assessments):
         if not isinstance(assessment, dict) or not str(assessment.get("signal") or "").strip():
             raise CandidateComparisonError(f"Assessment {index} requires signal.")
+        if not str(assessment.get("requirement_id") or "").strip():
+            raise CandidateComparisonError(f"Assessment {index} requires requirement_id.")
         if assessment.get("status") not in valid_statuses:
             raise CandidateComparisonError(f"Assessment {index} has invalid status.")
         if assessment.get("impact") not in valid_impacts:
