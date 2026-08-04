@@ -1658,6 +1658,11 @@ def _build_application_automation_metrics(
         for field_name in (fill_result or {}).get("filled_fields") or []
         if str(field_name).strip()
     }
+    skipped_fields = {
+        str(field_name)
+        for field_name in (fill_result or {}).get("skipped_fields") or []
+        if str(field_name).strip()
+    }
     executed = len(executed_fields)
     upload_planned = any(str(action.get("action_type") or "") == "upload_file" for action in actions)
     file_fields = [
@@ -1689,6 +1694,7 @@ def _build_application_automation_metrics(
     return {
         "planned_action_count": planned,
         "executed_action_count": executed,
+        "skipped_action_count": len(skipped_fields),
         "verified_action_count": verified,
         "control_strategy_counts": strategy_counts,
         "action_success_rate": _ratio(executed, planned),
@@ -1713,6 +1719,7 @@ def _build_application_automation_metrics(
             validation_report.get("status") == "validation_clean"
             and unresolved_count == 0
             and int(repair_report.get("dynamic_required_count") or 0) == 0
+            and not skipped_fields
         ),
     }
 
