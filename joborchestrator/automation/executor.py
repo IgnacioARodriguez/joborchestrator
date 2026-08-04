@@ -13,6 +13,7 @@ from playwright.async_api import Browser, BrowserContext, Page, TimeoutError as 
 from joborchestrator.automation.adapters import AdapterRegistry
 from joborchestrator.automation.accounts import load_password, site_identity_from_url
 from joborchestrator.automation import local_browser_agent
+from joborchestrator.automation.intervention import policy_intervention_items
 from joborchestrator.automation.ledger import build_obligation_ledger
 from joborchestrator.automation.metrics import compute_outcome_metrics
 from joborchestrator.automation.policy import evaluate_answer_action, evaluate_browser_action
@@ -1766,6 +1767,12 @@ def _build_human_intervention_report(
                 "sensitive": bool(field.get("sensitive")),
             }
         )
+    existing_fields = {str(item.get("field") or "") for item in items}
+    for item in policy_intervention_items(mapping):
+        field = str(item.get("field") or "")
+        if field and field not in existing_fields:
+            items.append(item)
+            existing_fields.add(field)
     if validation_report.get("status") == "validation_failed" and not any(item["type"] == "validation" for item in items):
         items.append({"type": "validation", "field": "validation", "label": "Validation failed", "reason": "validation_failed"})
     if int(repair_report.get("dynamic_required_count") or 0) > 0 and not any(item["type"] == "dynamic_field" for item in items):
