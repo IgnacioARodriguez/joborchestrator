@@ -234,6 +234,20 @@ def test_application_metrics_split_native_custom_and_shadow_controls() -> None:
     }
 
 
+def test_application_metrics_do_not_mark_skipped_actions_submit_only_ready() -> None:
+    metrics = _build_application_automation_metrics(
+        action_plan={"actions": [{"action_type": "fill_text", "field_name": "name"}]},
+        validation_report={"status": "validation_clean", "summary": {"issues": 0}},
+        fill_result={"filled_fields": [], "skipped_fields": ["name"]},
+        resume_upload={"status": "not_applicable"},
+        repair_report={"dynamic_required_count": 0},
+        mapping={"unknown_fields": []},
+    )
+
+    assert metrics["skipped_action_count"] == 1
+    assert metrics["submit_only_ready"] is False
+
+
 def test_application_metrics_track_resume_file_widget_uploads() -> None:
     metrics = _build_application_automation_metrics(
         action_plan={"actions": []},
@@ -302,6 +316,31 @@ def test_human_intervention_report_classifies_answer_widget_and_submit_only() ->
     assert submit_only["status"] == "submit_only"
     assert submit_only["types"] == ["submit_only"]
     assert submit_only["blocking_count"] == 0
+
+
+def test_human_intervention_report_ignores_executed_policy_answers() -> None:
+    report = _build_human_intervention_report(
+        next_state="submit_only",
+        review={"unknown_fields": []},
+        mapping={
+            "answers": [
+                {
+                    "field_name": "office",
+                    "canonical_key": "preferred_location",
+                    "value": None,
+                    "requires_confirmation": True,
+                }
+            ]
+        },
+        validation_report={"status": "validation_clean"},
+        repair_report={"dynamic_required_count": 0},
+        resume_upload={"status": "not_applicable"},
+        fill_result={"filled_fields": ["office"]},
+        automation_metrics={"submit_only_ready": True},
+    )
+
+    assert report["status"] == "submit_only"
+    assert report["types"] == ["submit_only"]
 
 
 def test_application_execution_starts_local_browser_handoff(tmp_path, monkeypatch) -> None:

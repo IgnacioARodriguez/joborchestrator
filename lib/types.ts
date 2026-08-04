@@ -349,6 +349,37 @@ export interface ApplicationSessionEvent {
   payload_json?: Record<string, unknown>
 }
 
+export interface ApplicationHumanInterventionItem {
+  type: string
+  field?: string
+  label?: string
+  reason?: string
+  semantic_category?: string
+  required?: boolean
+  sensitive?: boolean
+}
+
+export interface ApplicationSessionArtifacts {
+  review?: Record<string, unknown>
+  dry_run?: boolean
+  url?: string
+  opened_url?: string
+  final_url?: string
+  browser_handoff?: {
+    status?: string
+    ref?: string
+    expires_at?: string
+  }
+  human_intervention?: {
+    status?: string
+    required_count?: number
+    blocking_count?: number
+    types?: string[]
+    items?: ApplicationHumanInterventionItem[]
+  }
+  [key: string]: unknown
+}
+
 export interface ApplicationSession {
   id: number
   job_id: number
@@ -361,7 +392,7 @@ export interface ApplicationSession {
   mapped_answers_json: { answers?: Array<Record<string, unknown>>; unknown_fields?: Array<Record<string, unknown>> } | Record<string, unknown>
   unknown_fields_json: Array<Record<string, unknown>>
   validation_errors_json: Array<Record<string, unknown>>
-  artifacts_json: { review?: Record<string, unknown>; dry_run?: boolean } | Record<string, unknown>
+  artifacts_json: ApplicationSessionArtifacts
   started_at: string
   updated_at: string
   completed_at?: string | null
