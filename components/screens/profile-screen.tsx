@@ -188,6 +188,8 @@ export function ProfileScreen() {
   const [answerDraft, setAnswerDraft] = useState<AnswerDefinition>(EMPTY_ANSWER)
   const [resumes, setResumes] = useState<ResumeVariant[]>([])
   const [resumeDraft, setResumeDraft] = useState({ label: "", file_ref: "", base_version: "", diff_summary: "" })
+  const cvOperationId = operation?.id ?? null
+  const cvOperationActive = Boolean(operation && ["queued", "running"].includes(operation.status))
 
   useEffect(() => {
     let cancelled = false
@@ -195,23 +197,20 @@ export function ProfileScreen() {
       setLoadState("loading")
       setLoadError(null)
       try {
-        const response = await api.getProfile()
-        if (!cancelled && response.profile) setProfile(response.profile)
-        const catalog = await api.getSkillCatalog()
-        if (!cancelled) setSkillCatalog(catalog.skills)
-        const latest = await api.getLatestOperation("cv_profile_import")
-        const [answerData, resumeData] = await Promise.all([
+        const [profileData, catalogData, latestData, answerData, resumeData] = await Promise.all([
+          api.getProfile(),
+          api.getSkillCatalog(),
+          api.getLatestOperation("cv_profile_import"),
           api.getAnswers(),
           api.getResumes(),
         ])
-        if (!cancelled) {
-          setAnswers(answerData.answers)
-          setResumes(resumeData.resumes)
-        }
-        if (!cancelled && latest.operation) {
-          setOperation(latest.operation)
-        }
-        if (!cancelled) setLoadState("ready")
+        if (cancelled) return
+        if (profileData.profile) setProfile(profileData.profile)
+        setSkillCatalog(catalogData.skills)
+        setOperation(latestData.operation)
+        setAnswers(answerData.answers)
+        setResumes(resumeData.resumes)
+        setLoadState("ready")
       } catch (error) {
         if (!cancelled) {
           const message = userFacingError(
@@ -231,15 +230,33 @@ export function ProfileScreen() {
   }, [loadVersion])
 
   useEffect(() => {
-    if (!operation || !["queued", "running"].includes(operation.status)) return
+    if (!cvOperationId || !cvOperationActive) return
+    const operationId = cvOperationId
     let stopped = false
+    let running = false
+    let errorReported = false
     let timer: number | undefined
-    const poll = async () => {
+
+    function schedule(delay: number) {
+      if (stopped) return
+      if (timer !== undefined) window.clearTimeout(timer)
+      timer = window.setTimeout(() => void poll(), delay)
+    }
+
+    async function poll() {
+      if (stopped || running) return
+      if (document.visibilityState === "hidden") {
+        schedule(2500)
+        return
+      }
+      running = true
       try {
-        const response = await api.getOperation(operation.id)
+        const response = await api.getOperation(operationId)
         if (stopped) return
-        setOperation(response.operation)
-        if (response.operation.status === "completed") {
+        const nextOperation = response.operation
+        errorReported = false
+        setOperation(nextOperation)
+        if (nextOperation.status === "completed") {
           const profileResponse = await api.getProfile()
           if (!stopped && profileResponse.profile) {
             setProfile(profileResponse.profile)
@@ -249,31 +266,44 @@ export function ProfileScreen() {
           }
           return
         }
-        if (response.operation.status === "failed") {
+        if (["failed", "cancelled"].includes(nextOperation.status)) {
           toast.error("No se pudo analizar el CV", {
             description: userFacingError(
-              response.operation.error,
+              nextOperation.error,
               "Comprueba el asistente local e intenta nuevamente.",
             ),
           })
           return
         }
-        timer = window.setTimeout(poll, 2500)
+        schedule(2500)
       } catch (error) {
-        if (!stopped) {
+        if (stopped) return
+        if (!errorReported) {
           toast.error("No se pudo actualizar el progreso", {
             description: userFacingError(error),
           })
-          timer = window.setTimeout(poll, 3000)
+          errorReported = true
         }
+        schedule(4000)
+      } finally {
+        running = false
       }
     }
-    timer = window.setTimeout(poll, 1000)
+
+    function onVisibilityChange() {
+      if (document.visibilityState !== "visible") return
+      if (timer !== undefined) window.clearTimeout(timer)
+      void poll()
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    schedule(1000)
     return () => {
       stopped = true
+      document.removeEventListener("visibilitychange", onVisibilityChange)
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [operation])
+  }, [cvOperationActive, cvOperationId])
 
   const groupedSkills = useMemo(() => {
     const groups = new Map<string, ProfileSkill[]>()
@@ -308,10 +338,6 @@ export function ProfileScreen() {
   const profileMutationPending = Object.entries(pendingActions).some(
     ([key, pending]) => pending && key.startsWith("profile:"),
   )
-  const cvOperationActive = Boolean(
-    operation && ["queued", "running"].includes(operation.status),
-  )
-
   function setActionPending(action: string, pending: boolean) {
     setPendingActions((current) => {
       if (pending) return { ...current, [action]: true }
