@@ -15,6 +15,7 @@ import type {
   LinkedInSearchPlan,
   OperationRun,
   OpsStatus,
+  SyncStatus,
   WorkerStatus,
   AutomationAccount,
   PipelineStatus,
@@ -169,6 +170,10 @@ export const api = {
 
   async getOpsStatus() {
     return request<OpsStatus>("/api/ops/status", { fresh: true })
+  },
+
+  async getSyncStatus() {
+    return request<SyncStatus>("/api/sync/status", { fresh: true })
   },
 
   async getAutomationAccounts() {

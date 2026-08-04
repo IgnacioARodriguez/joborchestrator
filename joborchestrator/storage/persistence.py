@@ -24,6 +24,7 @@ from joborchestrator.storage import (
     rankings_repository,
     settings_repository,
     skill_catalog_repository,
+    sync_repository,
 )
 
 BACKUP_DIR_NAME = "backups"
@@ -649,6 +650,7 @@ def _conn():
         _ensure_ranking_trace_schema(conn)
         _ensure_llm_eval_schema(conn)
         _ensure_llm_output_feedback_schema(conn)
+        sync_repository.ensure_sync_schema(conn)
         skill_catalog_repository.seed_skill_catalog(conn)
         _backfill_speed_ranking_columns(conn)
         _backfill_legacy_hiring_contacts(conn)
@@ -675,6 +677,7 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
         "llm_eval_runs",
         "llm_output_feedback",
         "materials_generation_attempts",
+        "sync_revisions",
     }
 
     placeholders = ",".join("?" for _ in required_tables)
@@ -1118,6 +1121,10 @@ def list_operations(limit: int = 20) -> list[dict]:
 
 def list_operations_by_ids(operation_ids: list[int]) -> list[dict]:
     return operations_repository.list_operations_by_ids(_conn, operation_ids)
+
+
+def get_sync_status() -> dict:
+    return sync_repository.get_sync_status(_conn)
 
 
 def claim_next_operation(worker_id: str, operation_types: list[str] | None = None) -> dict | None:

@@ -337,6 +337,12 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/sync/status")
+def sync_status(response: Response) -> dict[str, Any]:
+    _private_no_store(response)
+    return db.get_sync_status()
+
+
 @app.get("/api/profile")
 def get_profile() -> dict[str, Any]:
     return {"profile": db.get_candidate_profile_payload()}
