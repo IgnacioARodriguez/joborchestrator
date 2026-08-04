@@ -94,6 +94,23 @@ const StoreContext = createContext<StoreValue | null>(null)
 const APPLY_QUEUE_PAGE_SIZE = 50
 const DETAIL_CACHE_LIMIT = 25
 const DETAIL_CACHE_TTL_MS = 5 * 60 * 1000
+const SUBMITTED_APPLICATION_STATUSES = new Set<ApplicationStatus>([
+  "submitted",
+  "submitted_manually",
+  "submission_verified",
+])
+
+function isSubmittedApplication(status: ApplicationStatus) {
+  return SUBMITTED_APPLICATION_STATUSES.has(status)
+}
+
+function withoutJobId(jobs: JobListItem[], jobId: string) {
+  return jobs.filter((job) => String(job.id) !== jobId)
+}
+
+function decrementJobsMetaTotal(current: JobsMeta | null) {
+  return current ? { ...current, total: Math.max(0, current.total - 1) } : current
+}
 
 function getPendingJobChanges(
   currentJobs: JobListItem[],
@@ -327,7 +344,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setApplications(data.applications)
       submittedJobIdsRef.current = new Set(
         data.applications
-          .filter((application) => ["submitted", "submitted_manually", "submission_verified"].includes(application.status))
+          .filter((application) => isSubmittedApplication(application.status))
           .map((application) => String(application.job_id)),
       )
       setApplicationsStatus(data.applications.length ? "success" : "empty")
@@ -342,22 +359,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const recordApplication = useCallback((application: ApplicationRecord) => {
     setApplications((current) => [application, ...current.filter((item) => item.id !== application.id)])
-    const submitted = ["submitted", "submitted_manually", "submission_verified"].includes(application.status)
-    if (!submitted) return
+    if (!isSubmittedApplication(application.status)) return
 
     setPendingJobsSnapshot(null)
     const jobId = String(application.job_id)
     const alreadySubmitted = submittedJobIdsRef.current.has(jobId)
     submittedJobIdsRef.current.add(jobId)
-    setJobs((current) => current.filter((job) => String(job.id) !== jobId))
-    setPreparationJobs((current) => current.filter((job) => String(job.id) !== jobId))
+    setJobs((current) => withoutJobId(current, jobId))
+    setPreparationJobs((current) => withoutJobId(current, jobId))
     if (!alreadySubmitted) {
-      setJobsMeta((current) => current ? { ...current, total: Math.max(0, current.total - 1) } : current)
-      setPreparationJobsMeta((current) => current ? { ...current, total: Math.max(0, current.total - 1) } : current)
+      setJobsMeta(decrementJobsMetaTotal)
+      setPreparationJobsMeta(decrementJobsMetaTotal)
     }
-    void refresh()
-    void refreshPreparationQueue()
-  }, [refresh, refreshPreparationQueue])
+  }, [])
 
 
   const setSelectedRankingVersion = useCallback((version: string) => {
