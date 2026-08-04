@@ -396,25 +396,23 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
         {/* Desktop sidebar */}
         <aside className="sticky top-0 hidden h-dvh w-[256px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-5 lg:flex">
           <div className="px-2 pb-7">
-            <div className="flex flex-col items-start gap-1.5" aria-label="Laburito x Rocket Development">
+            <div className="flex w-full flex-col items-center gap-1" aria-label="Laburito x Rocket Development">
               <Image
                 src="/laburito-logo.png"
                 alt="Laburito"
-                width={220}
-                height={90}
+                width={240}
+                height={100}
                 priority
-                className="h-[76px] w-[220px] object-contain object-left"
+                className="h-[100px] w-[240px] object-contain object-center"
               />
-              <div className="flex items-center gap-2 pl-1">
-                <span className="text-xs font-semibold text-muted-foreground" aria-hidden="true">x</span>
-                <Image
-                  src="/rocket-development-logo.png"
-                  alt="Rocket Development"
-                  width={142}
-                  height={40}
-                  className="h-8 w-[142px] object-contain object-left"
-                />
-              </div>
+              <span className="text-xs font-semibold leading-none text-muted-foreground" aria-hidden="true">x</span>
+              <Image
+                src="/rocket-development-logo.png"
+                alt="Rocket Development"
+                width={142}
+                height={40}
+                className="h-8 w-[142px] object-contain object-center"
+              />
             </div>
           </div>
           <nav className="flex flex-col gap-1.5">
