@@ -30,5 +30,5 @@ def test_phase_2_deterministic_verifier() -> None:
 
 def test_phase_3_activation_verifier() -> None:
     metrics = verify.verify_phase_3_activation()
-    assert metrics["default_version"] == verify.NVIDIA_DETERMINISTIC_RANKING_VERSION
+    assert metrics["default_version"] == "ranking_v2.10.0-nvidia-facts"
     assert metrics["rollback_version"] == "ranking_v1.1.0-nvidia"
