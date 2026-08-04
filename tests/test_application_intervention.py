@@ -69,3 +69,21 @@ def test_policy_interventions_ignore_authorized_answers() -> None:
     )
 
     assert items == []
+
+
+def test_policy_interventions_ignore_empty_optional_answers() -> None:
+    items = policy_intervention_items(
+        {
+            "answers": [
+                {
+                    "field_name": "office",
+                    "canonical_key": "preferred_location",
+                    "field_type": "select",
+                    "requires_confirmation": True,
+                    "source": "unresolved",
+                }
+            ]
+        }
+    )
+
+    assert items == []

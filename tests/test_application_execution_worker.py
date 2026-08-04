@@ -318,6 +318,31 @@ def test_human_intervention_report_classifies_answer_widget_and_submit_only() ->
     assert submit_only["blocking_count"] == 0
 
 
+def test_human_intervention_report_ignores_executed_policy_answers() -> None:
+    report = _build_human_intervention_report(
+        next_state="submit_only",
+        review={"unknown_fields": []},
+        mapping={
+            "answers": [
+                {
+                    "field_name": "office",
+                    "canonical_key": "preferred_location",
+                    "value": None,
+                    "requires_confirmation": True,
+                }
+            ]
+        },
+        validation_report={"status": "validation_clean"},
+        repair_report={"dynamic_required_count": 0},
+        resume_upload={"status": "not_applicable"},
+        fill_result={"filled_fields": ["office"]},
+        automation_metrics={"submit_only_ready": True},
+    )
+
+    assert report["status"] == "submit_only"
+    assert report["types"] == ["submit_only"]
+
+
 def test_application_execution_starts_local_browser_handoff(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "worker.db")
     monkeypatch.setenv("APPLICATION_BROWSER_HANDOFF", "1")

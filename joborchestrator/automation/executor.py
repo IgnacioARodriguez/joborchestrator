@@ -1775,8 +1775,16 @@ def _build_human_intervention_report(
             }
         )
     existing_fields = {str(item.get("field") or "") for item in items}
+    executed_fields = {
+        str(field) for field in (fill_result or {}).get("filled_fields") or [] if str(field).strip()
+    }
+    uploaded_field = str(resume_upload.get("field_name") or "resume")
     for item in policy_intervention_items(mapping):
         field = str(item.get("field") or "")
+        if field in executed_fields or (
+            field == uploaded_field and resume_upload.get("status") == "uploaded"
+        ):
+            continue
         if field and field not in existing_fields:
             items.append(item)
             existing_fields.add(field)

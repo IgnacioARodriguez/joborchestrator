@@ -14,6 +14,12 @@ def policy_intervention_items(mapping: dict[str, Any]) -> list[dict[str, Any]]:
         decision = evaluate_answer_action(answer, action=_action_type(answer))
         if decision.outcome == "ALLOW":
             continue
+        if (
+            decision.reason_code == "answer_requires_confirmation"
+            and not answer.get("required")
+            and not str(answer.get("value") or "").strip()
+        ):
+            continue
         field = str(answer.get("field_name") or answer.get("canonical_key") or "").strip()
         if not field:
             continue
