@@ -556,6 +556,7 @@ CREATE TABLE IF NOT EXISTS follow_ups (
 );
 
 CREATE INDEX IF NOT EXISTS idx_follow_ups_due ON follow_ups(done_at, due_at);
+CREATE INDEX IF NOT EXISTS idx_follow_ups_application ON follow_ups(application_id, done_at, due_at);
 
 CREATE TABLE IF NOT EXISTS llm_eval_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
