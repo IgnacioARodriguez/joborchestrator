@@ -23,6 +23,7 @@ import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScoreBadge } from "@/components/badges"
+import { ApplicationAssistantDialog } from "@/components/application-assistant-dialog"
 import {
   Empty,
   EmptyDescription,
@@ -33,6 +34,8 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PageHeader } from "@/components/page-chrome"
 import { api } from "@/lib/api"
+import { friendlyApplicationProgress } from "@/lib/application-assistant"
+import { userFacingError } from "@/lib/user-facing-error"
 import {
   getPreparationViewState,
   isConfirmedApplication,
@@ -77,17 +80,6 @@ function withoutKeys<T>(record: Record<string, T>, keys: string[]) {
 
 function trackedOperationIds(...records: Array<Record<string, number>>) {
   return [...new Set(records.flatMap((record) => Object.values(record)))]
-}
-
-function friendlyApplicationProgress(message?: string | null) {
-  const normalized = (message ?? "").toLowerCase()
-  if (normalized.includes("opening external application")) return "Abriendo el portal de la empresa..."
-  if (normalized.includes("detected provider")) return "Portal identificado. Analizando el formulario..."
-  if (normalized.includes("filling safe")) return "Completando los campos seguros..."
-  if (normalized.includes("resume") || normalized.includes("upload")) return "Adjuntando el CV preparado..."
-  if (normalized.includes("validation") || normalized.includes("review")) return "Revisando que el formulario este completo..."
-  if (normalized.includes("login")) return "Esperando que inicies sesion en la ventana de aplicacion..."
-  return message?.trim() || "Preparando el formulario en la ventana de aplicacion..."
 }
 
 function StepIcon({ step }: { step: PreparationStep }) {
@@ -461,6 +453,7 @@ export function PipelineScreen({
   const [applicationProgressByJob, setApplicationProgressByJob] = useState<Record<string, string>>({})
   const [operationIssueByJob, setOperationIssueByJob] = useState<Record<string, string>>({})
   const [confirmation, setConfirmation] = useState<{ job: JobListItem; session: ApplicationSession | null } | null>(null)
+  const [assistantJob, setAssistantJob] = useState<JobListItem | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -574,6 +567,8 @@ export function PipelineScreen({
                 ...sessionsResponse.sessions,
                 ...current.filter((item) => String(item.job_id) !== String(jobId)),
               ])
+              const completedJob = jobs.find((job) => String(job.id) === String(jobId))
+              if (completedJob && sessionsResponse.sessions[0]) setAssistantJob(completedJob)
               await loadJobDetail(jobId, { force: true })
               completedApplications.push(jobId)
               resolvedIssues.push(jobId)
@@ -721,13 +716,14 @@ export function PipelineScreen({
         })
         setSessions((current) => [response.session, ...current.filter((item) => item.id !== response.session.id)])
         if (response.operation_id) {
+          setAssistantJob(job)
           setApplicationOperationByJob((current) => ({ ...current, [job.id]: response.operation_id! }))
           setApplicationProgressByJob((current) => ({
             ...current,
             [job.id]: "Abriendo el portal de la empresa...",
           }))
-          toast.success("Aplicacion iniciada", {
-            description: "JobOrchestrator abrio una ventana y esta completando los campos seguros.",
+          toast.success("Automatización iniciada", {
+            description: "El asistente local intentará abrir el portal y completar los campos seguros.",
           })
         } else {
           onOpenJob(job.id)
@@ -739,6 +735,7 @@ export function PipelineScreen({
         if (session) {
           const response = await api.continueApplicationSession(session.id)
           setSessions((current) => [response.session, ...current.filter((item) => item.id !== response.session.id)])
+          setAssistantJob(job)
           if (response.operation_id) {
             setApplicationOperationByJob((current) => ({ ...current, [job.id]: response.operation_id! }))
             setApplicationProgressByJob((current) => ({
@@ -755,7 +752,7 @@ export function PipelineScreen({
 
     } catch (error) {
       toast.error("No se pudo completar la accion", {
-        description: "Revisa los datos de la candidatura y vuelve a intentarlo.",
+        description: userFacingError(error),
       })
     } finally {
       setBusyJobId(null)
@@ -805,6 +802,9 @@ export function PipelineScreen({
     }
   }
 
+  const assistantSession = assistantJob
+    ? latestSessionForJob(sessions, assistantJob.id)
+    : null
   const total = jobsMeta?.total ?? preparations.length
   const empty = jobsStatus === "empty" || preparations.length === 0
   const offset = jobsMeta?.offset ?? (applyQueuePage - 1) * applyQueuePageSize
@@ -900,6 +900,30 @@ export function PipelineScreen({
           busy={busyJobId === confirmation.job.id}
           onCancel={() => setConfirmation(null)}
           onConfirm={(input) => void confirmSubmission(input)}
+        />
+      ) : null}
+      {assistantJob ? (
+        <ApplicationAssistantDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setAssistantJob(null)
+          }}
+          session={assistantSession}
+          progressMessage={applicationProgressByJob[assistantJob.id] ?? null}
+          busy={busyJobId === assistantJob.id}
+          onOpenPortal={(url) => {
+            if (url) {
+              window.open(url, "_blank", "noopener,noreferrer")
+              return
+            }
+            setAssistantJob(null)
+            onOpenJob(assistantJob.id)
+          }}
+          onResume={() => void handleAction(assistantJob, assistantSession, "continue_session")}
+          onMarkSubmitted={() => {
+            setAssistantJob(null)
+            setConfirmation({ job: assistantJob, session: assistantSession })
+          }}
         />
       ) : null}
     </div>

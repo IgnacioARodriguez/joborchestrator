@@ -261,9 +261,23 @@ def get_unranked_jobs(
     read_sql_query: ReadSqlQuery,
     ranking_version: str = NVIDIA_RANKING_VERSION,
     limit: int = 500,
+    candidate_profile_hash: str | None = None,
 ) -> pd.DataFrame:
     conn = connect()
     try:
+        if candidate_profile_hash:
+            return read_sql_query(
+                """SELECT jp.*
+                   FROM job_postings jp
+                   LEFT JOIN job_rankings jr
+                     ON jr.job_id = jp.id AND jr.ranking_version = ?
+                   WHERE jr.id IS NULL
+                      OR COALESCE(jr.ranking_candidate_profile_hash, '') <> ?
+                   ORDER BY jp.last_seen_at DESC
+                   LIMIT ?""",
+                conn,
+                params=(ranking_version, candidate_profile_hash, limit),
+            )
         return read_sql_query(
             """SELECT jp.*
                FROM job_postings jp
@@ -294,6 +308,7 @@ def get_jobs_for_post_scan_ranking(
     excluded_sources: (
         list[str] | None
     ) = None,
+    candidate_profile_hash: str | None = None,
 ) -> pd.DataFrame:
     conn = connect()
 
@@ -316,8 +331,10 @@ def get_jobs_for_post_scan_ranking(
                     'updated'
                 )
                 OR jr.id IS NULL
+                OR COALESCE(jr.ranking_candidate_profile_hash, '') <> ?
               )
         """
+        params.append(candidate_profile_hash or "")
 
         if included_sources:
             placeholders = ",".join(

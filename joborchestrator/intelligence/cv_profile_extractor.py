@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 from io import BytesIO
 from typing import Any
 
@@ -37,7 +38,7 @@ def extract_text_from_cv(filename: str, content: bytes) -> str:
     if suffix == "docx":
         return _extract_docx_text(content)
     if suffix in {"txt", "md"}:
-        return content.decode("utf-8", errors="ignore")
+        return _normalize_extracted_text(content.decode("utf-8", errors="strict"))
     raise CVProfileError("Upload a CV as PDF, DOCX, TXT, or MD.")
 
 
@@ -47,7 +48,7 @@ def build_profile_from_cv_text(
     model: str = DEFAULT_PROFILE_EXTRACTION_MODEL,
     timeout: float = DEFAULT_PROFILE_EXTRACTION_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
-    text = cv_text.strip()
+    text = _normalize_extracted_text(cv_text)
     if len(text) < 200:
         raise CVProfileError("The CV text is too short to extract a useful profile.")
     payload = {
@@ -168,7 +169,7 @@ def normalize_profile_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "suggested_roles_reasoning": str(payload.get("suggested_roles_reasoning") or "").strip(),
         "extraction_notes": _clean_list(payload.get("extraction_notes")),
         "confidence": _confidence(payload.get("confidence")),
-        "base_cv_text": str(payload.get("base_cv_text") or "").strip(),
+        "base_cv_text": _normalize_extracted_text(str(payload.get("base_cv_text") or "")),
         "base_cv_filename": str(payload.get("base_cv_filename") or "").strip(),
     }
 
@@ -199,7 +200,7 @@ def _extract_pdf_text(content: bytes) -> str:
     except ModuleNotFoundError as exc:
         raise CVProfileError("PDF upload requires pypdf.") from exc
     reader = PdfReader(BytesIO(content))
-    return "\n".join(page.extract_text() or "" for page in reader.pages)
+    return _normalize_extracted_text("\n".join(page.extract_text() or "" for page in reader.pages))
 
 
 def _extract_docx_text(content: bytes) -> str:
@@ -220,7 +221,18 @@ def _extract_docx_text(content: bytes) -> str:
     blocks.extend(_iter_unique_docx_section_blocks(document, kind="header"))
     blocks.extend(_iter_docx_block_text(document))
     blocks.extend(_iter_unique_docx_section_blocks(document, kind="footer"))
-    return "\n".join(blocks)
+    return _normalize_extracted_text("\n".join(blocks))
+
+
+def _normalize_extracted_text(text: str) -> str:
+    """Keep CV text in NFC UTF-8 and reject lossy replacement characters."""
+    normalized = unicodedata.normalize("NFC", str(text or "").replace("\x00", "")).strip()
+    if "\ufffd" in normalized:
+        raise CVProfileError(
+            "The CV text contains corrupted Unicode replacement characters. "
+            "Re-upload the original PDF/DOCX so it can be extracted without data loss."
+        )
+    return normalized
 
 
 def _iter_unique_docx_section_blocks(document: Any, *, kind: str) -> list[str]:

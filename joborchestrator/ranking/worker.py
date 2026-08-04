@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import time
 
-from joborchestrator.ranking.nvidia_ranker import (
+from joborchestrator.ranking.service import (
     DEFAULT_NVIDIA_MAX_CONCURRENCY,
     DEFAULT_NVIDIA_REQUEST_BATCH_SIZE,
     NvidiaRankingError,

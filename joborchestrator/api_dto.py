@@ -5,6 +5,8 @@ from typing import Any
 
 import pandas as pd
 
+from joborchestrator.intelligence.profile_trace import profile_trace
+from joborchestrator.ranking.integrity import candidate_profile_status, is_remote_job
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION, filter_llm_ranking_versions
 from joborchestrator.priority import compute_priority
 from joborchestrator.storage import persistence as db
@@ -30,8 +32,8 @@ def job_dto(
 ) -> dict[str, Any]:
     ranking = ranking_dto(ranking_row)
     priority = compute_priority(job, ranking).to_dict()
-    location_mode = _string(job.get("location") or job.get("workplace_type")).lower()
     hiring_contacts = _hiring_contacts_for_job(job) if include_hiring_contacts else []
+    location_mode = str(job.get("location") or "").lower()
     return {
         "id": str(job["id"]),
         "title": _string(job.get("title"), "Untitled role"),
@@ -82,7 +84,6 @@ def job_list_item_dto(job: dict[str, Any], ranking_row: dict[str, Any] | None) -
     if job.get("has_cover_letter"):
         priority_job.setdefault("cover_letter", "1")
     priority = compute_priority(priority_job, priority_ranking).to_dict()
-    location_mode = _string(job.get("location") or job.get("workplace_type")).lower()
     recruiter_name = _nullable_string(job.get("recruiter_name"))
     recruiter_profile_url = _nullable_string(job.get("recruiter_profile_url"))
     presence = {
@@ -106,6 +107,7 @@ def job_list_item_dto(job: dict[str, Any], ranking_row: dict[str, Any] | None) -
         parse_json_value(job.get("materials_review_states_json"), {}),
         reasons,
     )
+    location_mode = str(job.get("location") or "").lower()
     return {
         "id": str(job["id"]),
         "title": _string(job.get("title"), "Untitled role"),
@@ -393,6 +395,10 @@ def ranking_summary_dto(row: dict[str, Any] | None) -> dict[str, Any]:
             "requires_llm_review": bool(evidence.get("requires_llm_review")),
             "llm_escalation_reasons": list(evidence.get("llm_escalation_reasons") or [])[:3],
             "red_flags": list(evidence.get("red_flags") or [])[:3],
+            "central_requirements": [
+                label for item in evidence.get("central_requirements") or []
+                if (label := _central_requirement_label(item))
+            ],
         }
         ranking = {
             "final_score": int(row.get("final_score") or 0),
@@ -401,12 +407,10 @@ def ranking_summary_dto(row: dict[str, Any] | None) -> dict[str, Any]:
             "evidence": evidence_summary,
             "reasoning_summary": _string(row.get("reasoning_summary"))[:280],
             "ranking_version": row.get("ranking_version") or NVIDIA_RANKING_VERSION,
-            "generation": {
-                "validation_attempts": _int_or_none(row.get("ranking_validation_attempts")),
-            },
+            "generation": ranking_generation_dto(row),
         }
         ranking["review"] = ranking_review_dto(ranking)
-    return {
+    summary = {
         "final_score": ranking["final_score"],
         "decision": ranking["decision"],
         "confidence": ranking["confidence"],
@@ -416,11 +420,17 @@ def ranking_summary_dto(row: dict[str, Any] | None) -> dict[str, Any]:
             "requires_llm_review": bool(ranking["evidence"].get("requires_llm_review")),
             "llm_escalation_reasons": list(ranking["evidence"].get("llm_escalation_reasons") or [])[:3],
             "red_flags": list(ranking["evidence"].get("red_flags") or [])[:3],
+            "central_requirements": list(
+                ranking["evidence"].get("central_requirements") or []
+            ),
         },
         "reasoning_summary": _string(ranking.get("reasoning_summary"))[:280],
         "ranking_version": ranking["ranking_version"],
         "review": ranking["review"],
     }
+    if (row or {}).get("_current_candidate_profile_hash") is not None:
+        summary["generation"] = ranking["generation"]
+    return summary
 
 
 def ranking_review_dto(ranking: dict[str, Any]) -> dict[str, Any]:
@@ -440,15 +450,16 @@ def ranking_review_dto(ranking: dict[str, Any]) -> dict[str, Any]:
         reasons.append("ranking_thin_positive_evidence")
     if decision in {"APPLY_NOW", "APPLY_WITH_TAILORED_CV"} and not evidence.get("central_requirements"):
         reasons.append("ranking_missing_central_requirements")
-    return {
+    summary = {
         "status": "needs_review" if reasons else "ready",
         "requires_review": bool(reasons),
         "reasons": reasons,
     }
+    return summary
 
 
 def ranking_generation_dto(row: dict[str, Any]) -> dict[str, Any]:
-    return {
+    generation = {
         "provider": _nullable_string(row.get("ranking_provider")),
         "model": _nullable_string(row.get("ranking_model")),
         "prompt_versions": parse_json_value(row.get("ranking_prompt_versions_json"), {}),
@@ -456,17 +467,26 @@ def ranking_generation_dto(row: dict[str, Any]) -> dict[str, Any]:
         "validation_errors": parse_json_value(row.get("ranking_validation_errors_json"), []),
         "candidate_profile_hash": _nullable_string(row.get("ranking_candidate_profile_hash")),
     }
+    profile_status = candidate_profile_status(
+        row.get("ranking_candidate_profile_hash"),
+        row.get("_current_candidate_profile_hash"),
+    )
+    if profile_status != "unknown":
+        generation["profile_status"] = profile_status
+    return generation
 
 
 def latest_rankings_by_job_id(ranking_version: str | None = None) -> dict[int, dict[str, Any]]:
     versions = [ranking_version] if ranking_version else filter_llm_ranking_versions(db.get_ranking_versions())[:1]
     rankings: dict[int, dict[str, Any]] = {}
+    current_profile_hash = profile_trace(db.get_candidate_profile_payload()).get("hash")
     for version in versions:
         if not version:
             continue
         ranked = db.get_ranked_jobs(ranking_version=version)
         for row in ranked.to_dict("records"):
             job_id = int(row["job_id"])
+            row["_current_candidate_profile_hash"] = current_profile_hash
             rankings.setdefault(job_id, row)
     return rankings
 
@@ -530,6 +550,7 @@ def _default_ranking() -> dict[str, Any]:
             "validation_attempts": None,
             "validation_errors": [],
             "candidate_profile_hash": None,
+            "profile_status": "unknown",
         },
     }
 
@@ -583,3 +604,9 @@ def _float_or_none(value: Any) -> float | None:
 
 def _normalize_for_review(value: str) -> str:
     return " ".join(str(value or "").lower().split())
+
+
+def _central_requirement_label(item: Any) -> str:
+    if isinstance(item, dict):
+        return _string(item.get("requirement") or item.get("text") or item.get("id")).strip()
+    return _string(item).strip()
