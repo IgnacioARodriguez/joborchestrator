@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from io import BytesIO
 from pathlib import Path
@@ -626,15 +627,32 @@ def apply_queue(
     effective_offset = max(0, int(offset))
     ranking_versions = filter_llm_ranking_versions(db.get_ranking_versions())
     selected_ranking_version = ranking_version or (ranking_versions[0] if ranking_versions else None)
-    rows = db.get_apply_queue_job_postings(
-        selected_ranking_version,
-        freshness_filter,
-        effective_limit,
-        effective_offset,
-        q,
-        pipeline_filter,
-    ).to_dict("records")
-    current_profile_hash = profile_trace(db.get_candidate_profile_payload()).get("hash")
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="apply-queue") as executor:
+        jobs_future = executor.submit(
+            db.get_apply_queue_job_postings,
+            selected_ranking_version,
+            freshness_filter,
+            effective_limit,
+            effective_offset,
+            q,
+            pipeline_filter,
+        )
+        freshness_future = executor.submit(db.count_job_freshness_buckets)
+        pipeline_future = executor.submit(
+            db.count_apply_queue_pipeline_buckets,
+            freshness_filter,
+            q,
+        )
+        total_future = executor.submit(
+            db.count_apply_queue_job_postings,
+            freshness_filter,
+            q,
+            pipeline_filter,
+        )
+        rows = jobs_future.result().to_dict("records")
+        freshness_counts = freshness_future.result()
+        pipeline_counts = pipeline_future.result()
+        total = total_future.result()
     jobs = sorted(
         [
             job_list_item_dto(row, _ranking_from_apply_queue_row(row))
@@ -643,9 +661,6 @@ def apply_queue(
         key=_apply_queue_sort_key,
         reverse=True,
     )
-    freshness_counts = db.count_job_freshness_buckets()
-    pipeline_counts = db.count_apply_queue_pipeline_buckets(freshness_filter, q)
-    total = db.count_apply_queue_job_postings(freshness_filter, q, pipeline_filter)
     return {
         "jobs": jobs,
         "ranking_versions": ranking_versions,
