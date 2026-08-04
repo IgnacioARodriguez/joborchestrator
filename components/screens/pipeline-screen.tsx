@@ -22,7 +22,7 @@ import {
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ScoreBadge } from "@/components/badges"
+import { DecisionBadge, ScoreBadge } from "@/components/badges"
 import { ApplicationAssistantDialog } from "@/components/application-assistant-dialog"
 import {
   Empty,
@@ -198,6 +198,10 @@ function PreparationCard({
             <ScoreBadge
               score={job.ranking.final_score}
               className="min-w-11 px-2 py-1 text-sm"
+            />
+            <DecisionBadge
+              decision={job.ranking.decision}
+              score={job.ranking.final_score}
             />
             <Badge
               variant="outline"

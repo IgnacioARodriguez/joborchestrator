@@ -72,9 +72,13 @@ function matchesFilter(job: JobListItem, key: FilterKey): boolean {
 
 function sortJobs(list: JobListItem[], sort: SortKey): JobListItem[] {
   return [...list].sort((a, b) => {
-    if (sort === "score") return b.ranking.final_score - a.ranking.final_score
+    const scoreDifference = b.ranking.final_score - a.ranking.final_score
+    if (scoreDifference !== 0) return scoreDifference
     if (sort === "newest") {
       return new Date(b.first_seen_at).getTime() - new Date(a.first_seen_at).getTime()
+    }
+    if (sort === "lastseen") {
+      return new Date(b.last_seen_at).getTime() - new Date(a.last_seen_at).getTime()
     }
     return new Date(b.last_seen_at).getTime() - new Date(a.last_seen_at).getTime()
   })

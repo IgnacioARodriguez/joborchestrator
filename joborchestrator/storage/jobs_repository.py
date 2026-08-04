@@ -674,6 +674,7 @@ def get_apply_queue_job_postings(
             {join_sql}
             {where_sql}
             ORDER BY
+              CASE WHEN jr.id IS NULL THEN 0 ELSE 1 END DESC,
               CASE jr.decision
                 WHEN 'APPLY_NOW' THEN 7
                 WHEN 'APPLY_WITH_TAILORED_CV' THEN 6
@@ -687,7 +688,13 @@ def get_apply_queue_job_postings(
                 WHEN COALESCE(jp.recruiter_profile_url, jp.recruiter_name, '') != '' THEN 1
                 ELSE 0
               END DESC,
-              COALESCE(jp.posted_at, jp.first_seen_at, jp.last_seen_at) DESC,
+              CASE
+                WHEN jp.posted_at IS NULL THEN COALESCE(jp.first_seen_at, jp.last_seen_at)
+                WHEN jp.posted_at NOT LIKE '____-__-__%'
+                     AND jp.posted_at GLOB '[0-9]*'
+                  THEN datetime(CAST(jp.posted_at AS INTEGER), 'unixepoch')
+                ELSE jp.posted_at
+              END DESC,
               jp.id DESC
             LIMIT ? OFFSET ?
         """
@@ -1009,7 +1016,20 @@ def get_recent_linkedin_job_enrichments(
 
 def _freshness_where_clause(freshness: str, now: datetime) -> tuple[str, list[object]]:
     fresh_cutoff, recent_cutoff, stale_cutoff = _freshness_cutoffs(now)
-    date_expr = "COALESCE(jp.posted_at, jp.first_seen_at, jp.last_seen_at)"
+    # Some importers persist posted_at as Unix seconds while others persist an
+    # ISO timestamp. Normalize Unix values before comparing them with the ISO
+    # freshness cutoffs; otherwise recent jobs are incorrectly classified as
+    # stale by SQLite's text comparison.
+    posted_at_expr = """
+        CASE
+          WHEN jp.posted_at IS NULL THEN COALESCE(jp.first_seen_at, jp.last_seen_at)
+          WHEN jp.posted_at NOT LIKE '____-__-__%'
+               AND jp.posted_at GLOB '[0-9]*'
+            THEN datetime(CAST(jp.posted_at AS INTEGER), 'unixepoch')
+          ELSE jp.posted_at
+        END
+    """
+    date_expr = posted_at_expr
     if freshness == "all":
         return "", []
     if freshness == "active":
