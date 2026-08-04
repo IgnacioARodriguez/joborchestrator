@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils"
 import { LEGACY_SECTION_ALIASES, NAV_ITEMS, SECTION_PATHS, isPrimarySection, primarySectionFor, type Section } from "@/lib/nav"
 import { useStore } from "@/lib/store"
 import { api } from "@/lib/api"
+import { useVisiblePolling } from "@/lib/use-visible-polling"
 import { Button } from "@/components/ui/button"
 import { JobsScreen } from "@/components/screens/review-screen"
 import { ApplicationsScreen } from "@/components/screens/applications-screen"
@@ -243,38 +244,10 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
     return () => window.removeEventListener("hashchange", syncHash)
   }, [])
 
-  useEffect(() => {
-    let stopped = false
-    let running = false
-    let timer: number | undefined
-
-    async function poll() {
-      if (stopped || running) return
-      running = true
-      try {
-        if (document.visibilityState === "visible") {
-          await loadOpsStatus()
-        }
-      } finally {
-        running = false
-        if (!stopped) timer = window.setTimeout(poll, 10000)
-      }
-    }
-
-    function onVisibilityChange() {
-      if (document.visibilityState !== "visible") return
-      if (timer !== undefined) window.clearTimeout(timer)
-      void poll()
-    }
-
-    void poll()
-    document.addEventListener("visibilitychange", onVisibilityChange)
-    return () => {
-      stopped = true
-      if (timer !== undefined) window.clearTimeout(timer)
-      document.removeEventListener("visibilitychange", onVisibilityChange)
-    }
-  }, [loadOpsStatus])
+  useVisiblePolling({
+    intervalMs: 10000,
+    poll: loadOpsStatus,
+  })
 
   useEffect(() => {
     if (!opsStatus) return
@@ -296,60 +269,47 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
     return () => window.clearTimeout(timer)
   }, [opsStatus, searchOperationId, section])
 
-  useEffect(() => {
-    if (!searchOperationId) return
-    const operationId = searchOperationId
-    let stopped = false
-    let timer: number | undefined
-    async function poll() {
-      if (document.visibilityState === "hidden") {
-        timer = window.setTimeout(poll, 2500)
-        return
+  useVisiblePolling({
+    enabled: searchOperationId !== null,
+    intervalMs: 2500,
+    errorIntervalMs: 4000,
+    poll: async () => {
+      if (!searchOperationId) return "stop"
+
+      const operation = (await api.getOperation(searchOperationId)).operation
+      setSearchOperation(operation)
+      if (["queued", "running"].includes(operation.status)) {
+        setSearchState("searching")
+        setSearchMessage(scanProgressCopy(operation))
+        return "continue"
       }
-      try {
-        const operation = (await api.getOperation(operationId)).operation
-        if (stopped) return
-        setSearchOperation(operation)
-        if (["queued", "running"].includes(operation.status)) {
-          setSearchState("searching")
-          setSearchMessage(scanProgressCopy(operation))
-          timer = window.setTimeout(poll, 2500)
-          return
-        }
 
-        setSearchOperationId(null)
-        setSearchOperation(null)
-        if (operation.status !== "completed") {
-          await loadOpsStatus()
-          setSearchState("error")
-          setSearchMessage("La búsqueda se detuvo antes de completar todas las fuentes.")
-          return
-        }
-
-        const [changes] = await Promise.all([stageJobUpdates(), loadOpsStatus()])
-        if (!changes) {
-          setSearchState("error")
-          setSearchMessage("La búsqueda terminó, pero no se pudieron comprobar los cambios.")
-          return
-        }
-
-        const changeCount = changes.added + changes.updated + changes.removed
-        setSearchState("success")
-        setSearchMessage(
-          changeCount > 0
-            ? "La búsqueda terminó. La lista queda estable hasta que muestres los cambios."
-            : "La búsqueda terminó sin cambios nuevos.",
-        )
-      } catch {
-        if (!stopped) timer = window.setTimeout(poll, 4000)
+      setSearchOperationId(null)
+      setSearchOperation(null)
+      if (operation.status !== "completed") {
+        await loadOpsStatus()
+        setSearchState("error")
+        setSearchMessage("La búsqueda se detuvo antes de completar todas las fuentes.")
+        return "stop"
       }
-    }
-    void poll()
-    return () => {
-      stopped = true
-      if (timer !== undefined) window.clearTimeout(timer)
-    }
-  }, [loadOpsStatus, searchOperationId, stageJobUpdates])
+
+      const [changes] = await Promise.all([stageJobUpdates(), loadOpsStatus()])
+      if (!changes) {
+        setSearchState("error")
+        setSearchMessage("La búsqueda terminó, pero no se pudieron comprobar los cambios.")
+        return "stop"
+      }
+
+      const changeCount = changes.added + changes.updated + changes.removed
+      setSearchState("success")
+      setSearchMessage(
+        changeCount > 0
+          ? "La búsqueda terminó. La lista queda estable hasta que muestres los cambios."
+          : "La búsqueda terminó sin cambios nuevos.",
+      )
+      return "stop"
+    },
+  })
 
   async function scanFreshJobs() {
     setSearchState("searching")
