@@ -13,7 +13,7 @@ from joborchestrator.intelligence.profile_trace import profile_trace
 from joborchestrator.llm.provider import LLMProviderError, NvidiaProvider, ProviderRegistry
 from joborchestrator.prompts import active_prompt_version, load_prompt
 from joborchestrator.ranking.decision_engine import parse_job_facts, rank_job_facts
-from joborchestrator.ranking.candidate_comparison import compare_job_with_candidate
+from joborchestrator.ranking.candidate_comparison import compare_job_with_candidate, normalize_composite_assessments
 from joborchestrator.llm.observability import LLMRequestContext
 from joborchestrator.storage import persistence as db
 
@@ -190,7 +190,7 @@ async def _call_fact_extraction_async(
         except LLMProviderError as exc:
             raise NvidiaFactRankingError(str(exc)) from exc
         parsed = _extract_json_object(response.text)
-        parsed = _normalize_interpretation(parsed)
+        parsed = _normalize_interpretation(parsed, jobs)
         feedback = _fact_batch_validation_error(parsed, jobs)
         if feedback is None:
             profile_payload = db.get_candidate_profile_payload()
@@ -209,7 +209,7 @@ async def _call_fact_extraction_async(
                     batch_id=f"comparison-{int(item.get('job_id') or 0)}",
                 )
                 assessments = {
-                    str(assessment.get("signal")): assessment
+                    str(assessment.get("requirement_id")): assessment
                     for assessment in comparison.get("assessments") or []
                     if isinstance(assessment, dict)
                 }
@@ -218,19 +218,37 @@ async def _call_fact_extraction_async(
                     for assessment in comparison.get("assessments") or []
                     if isinstance(assessment, dict)
                 ]
+                comparison = normalize_composite_assessments(
+                    comparison,
+                    logic_by_index=[str(req.get("logic") or "all_of") for req in item.get("requirements") or []],
+                )
+                comparison_items = [assessment for assessment in comparison.get("assessments") or [] if isinstance(assessment, dict)]
                 for index, requirement in enumerate(item.get("requirements") or []):
                     assessment = assessments.get(str(requirement.get("id") or ""))
-                    if assessment is None and index < len(comparison_items):
-                        assessment = comparison_items[index]
+                    if assessment is None:
+                        raise NvidiaFactRankingError(
+                            f"Comparison response missing requirement_id={requirement.get('id')}"
+                        )
                     if assessment is not None:
                         requirement["comparison_confidence"] = assessment.get("confidence")
                         requirement["comparison_status"] = assessment.get("status")
+                        requirement["comparison_candidate_evidence"] = list(
+                            assessment.get("candidate_evidence") or []
+                        )
+                        requirement["comparison_members"] = [
+                            member for member in assessment.get("members") or [] if isinstance(member, dict)
+                        ]
+                        requirement["comparison_canonical_signal"] = assessment.get("canonical_signal") or assessment.get("signal")
+                        if assessment.get("kind_original") is not None:
+                            requirement["comparison_kind_original"] = assessment.get("kind_original")
+                        requirement["comparison_supporting_evidence"] = list(assessment.get("supporting_evidence") or [])
                         requirement["kind"] = assessment.get("kind") or requirement.get("kind")
                         requirement["importance"] = {
                             "core": "required",
                             "preference": "preferred",
                             "context": "context",
                         }.get(assessment.get("impact"), requirement.get("importance", "context"))
+                item["requirements"] = _collapse_comparison_signals(item.get("requirements") or [])
             parsed["_generation_metadata"] = {
                 "validation_attempts": attempt + 1,
                 "validation_errors": validation_errors,
@@ -241,6 +259,28 @@ async def _call_fact_extraction_async(
             logger.warning("Retrying NVIDIA fact extraction after invalid response: %s", feedback)
 
     raise NvidiaFactRankingError("NVIDIA fact extraction failed validation: " + "; ".join(validation_errors))
+
+
+def _collapse_comparison_signals(requirements: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep one scored signal when the comparison says other items support it."""
+    grouped: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for requirement in requirements:
+        key = str(requirement.get("comparison_canonical_signal") or requirement.get("id") or "").strip().casefold()
+        if not key or key not in grouped:
+            grouped[key] = requirement
+            order.append(key)
+            continue
+        primary = grouped[key]
+        supporting = primary.setdefault("comparison_supporting_evidence", [])
+        supporting.extend(
+            item for item in [requirement.get("text"), *list(requirement.get("comparison_supporting_evidence") or [])]
+            if item and item not in supporting
+        )
+        primary["evidence"] = " ".join(
+            item for item in [primary.get("evidence"), f"Supporting evidence: {requirement.get('text')}"] if item
+        )
+    return [grouped[key] for key in order]
 
 
 def _apply_fact_batch_result(
@@ -326,11 +366,19 @@ def _fact_messages(
         "this technical envelope: {\"jobs\":[{\"job_id\":894,\"interpretation\":\"...\","
         "\"evidence\":[{\"text\":\"...\",\"source\":\"...\",\"analysis\":\"...\",\"confidence\":0.0}]}]}. "
         "Use an empty evidence array only when the posting has no actionable facts. "
-        "For coverage, enumerate every explicit material fact from the posting: technologies "
+        "For coverage, enumerate every explicit material fact from the posting. Keep transferable "
+        "skills separate from domain-specific requirements: for example, keep Python, backend/software "
+        "engineering, production ML systems, cloud, containers, and ML theory as separate signals "
+        "even when the posting discusses them in the same sentence. Preserve logical relationships "
+        "such as AND/OR: when the posting says 'A, B, or C', represent one signal with "
+        "alternatives and logic 'any_of'; when it requires all items, use logic 'all_of'. "
+        "Include: technologies "
         "and tools, programming languages, responsibilities, experience, seniority, domain "
         "knowledge, language, location or work mode, compensation, contract, and stated "
         "nice-to-haves. Do not collapse several distinct technologies or requirements into "
-        "a generic phrase such as 'strong engineering skills'."
+        "a generic phrase such as 'strong engineering skills'. Exclude employer benefits and "
+        "perks such as vacation days, workation, equity, discounts, events, equipment, and "
+        "similar offer details; they are not candidate requirements."
         + "\n\nRaw job posting:\n"
         + json.dumps(payload, ensure_ascii=False)
     )
@@ -352,13 +400,18 @@ def _fact_messages(
     ]
 
 
-def _normalize_interpretation(result: dict[str, Any]) -> dict[str, Any]:
+def _normalize_interpretation(result: dict[str, Any], jobs: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Convert the model's free interpretation into the ranker's stable shape."""
-    jobs = result.get("jobs")
-    if not isinstance(jobs, list):
+    result_jobs = result.get("jobs")
+    if not isinstance(result_jobs, list):
         return result
     normalized: list[dict[str, Any]] = []
-    for item in jobs:
+    source_by_id = {
+        int(row.get("id") or row.get("job_id")): row
+        for row in (jobs or [])
+        if row.get("id") is not None or row.get("job_id") is not None
+    }
+    for item in result_jobs:
         if not isinstance(item, dict):
             normalized.append(item)
             continue
@@ -389,11 +442,29 @@ def _normalize_interpretation(result: dict[str, Any]) -> dict[str, Any]:
                     "blocking_basis": "unclear",
                     "evidence": evidence + (f" Interpretation: {analysis}" if analysis else ""),
                     "confidence": confidence,
+                    "alternatives": list(value.get("alternatives") or []) if isinstance(value, dict) else [],
+                    "logic": (
+                        str(value.get("logic") or ("any_of" if value.get("alternatives") else "all_of")).strip()
+                        if isinstance(value, dict) else "all_of"
+                    ),
+                    "members": [
+                        {"member_id": f"m{member_index + 1}", "text": str(member.get("text") or member.get("signal") or "").strip()}
+                        if isinstance(member, dict) else {"member_id": f"m{member_index + 1}", "text": str(member).strip()}
+                        for member_index, member in enumerate(value.get("members") or [])
+                        if (str(member.get("text") or member.get("signal") or "").strip() if isinstance(member, dict) else str(member).strip())
+                    ] if isinstance(value, dict) else [],
                 })
+        source = source_by_id.get(int(item.get("job_id") or 0), {})
+        description = str(source.get("description_text") or source.get("description_html") or "").strip()
+        title = str(source.get("title") or "").strip()
+        default_validity = "valid" if title and len(description) >= 300 else "incomplete"
+        posting = dict(item.get("posting") or {})
+        posting.setdefault("validity", default_validity)
+        posting.setdefault("confidence", 0.9 if default_validity == "valid" else 0.5)
         normalized.append({
             "job_id": item.get("job_id"),
             "interpretation": item.get("interpretation"),
-            "posting": item.get("posting") or {},
+            "posting": posting,
             "requirements": requirements,
             "application_effort": item.get("application_effort") or {"level": "medium", "evidence": []},
             "data_quality": item.get("data_quality") or {"score": 0.65, "source_reliability": 0.65},
