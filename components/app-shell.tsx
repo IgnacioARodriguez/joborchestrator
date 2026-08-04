@@ -2,7 +2,7 @@
 
 import Image from "next/image"
 import { usePathname } from "next/navigation"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   Activity,
   Compass,
@@ -131,6 +131,7 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
   const [searchOperationId, setSearchOperationId] = useState<number | null>(null)
   const [searchOperation, setSearchOperation] = useState<OperationRun | null>(null)
   const [opsStatus, setOpsStatus] = useState<OpsStatus | null>(null)
+  const rankingActiveRef = useRef(false)
   const {
     jobs,
     jobsMeta,
@@ -139,6 +140,7 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
     preparationLoading,
     applicationsStatus,
     refresh,
+    stageJobUpdates,
     refreshPreparationQueue,
     refreshApplications,
   } = useStore()
@@ -240,6 +242,16 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
   }, [loadOpsStatus])
 
   useEffect(() => {
+    if (!opsStatus) return
+    const rankingActive = opsStatus.active_ranking_jobs.length > 0
+    const rankingCompleted = opsStatus.latest_ranking_job?.status === "completed"
+    if (rankingActiveRef.current && !rankingActive && rankingCompleted) {
+      void stageJobUpdates()
+    }
+    rankingActiveRef.current = rankingActive
+  }, [opsStatus, stageJobUpdates])
+
+  useEffect(() => {
     if (section !== "jobs" || searchOperationId) return
     const latest = opsStatus?.latest_scan_operation
     if (!latest || !["queued", "running"].includes(latest.status)) return
@@ -250,7 +262,7 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
   }, [opsStatus, searchOperationId, section])
 
   useEffect(() => {
-    if (!searchOperationId || section !== "jobs") return
+    if (!searchOperationId) return
     const operationId = searchOperationId
     let stopped = false
     let timer: number | undefined
@@ -263,16 +275,46 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
         const operation = (await api.getOperation(operationId)).operation
         if (stopped) return
         setSearchOperation(operation)
-        if (["queued", "running"].includes(operation.status)) { setSearchState("searching"); setSearchMessage(scanProgressCopy(operation)); timer = window.setTimeout(poll, 2500); return }
-        setSearchOperationId(null); setSearchOperation(null)
-        await Promise.all([refresh(), loadOpsStatus()])
-        setSearchState(operation.status === "completed" ? "success" : "error")
-        setSearchMessage(operation.status === "completed" ? "La búsqueda terminó y la lista de jobs ya está actualizada." : "La búsqueda se detuvo antes de completar todas las fuentes.")
-      } catch { if (!stopped) timer = window.setTimeout(poll, 4000) }
+        if (["queued", "running"].includes(operation.status)) {
+          setSearchState("searching")
+          setSearchMessage(scanProgressCopy(operation))
+          timer = window.setTimeout(poll, 2500)
+          return
+        }
+
+        setSearchOperationId(null)
+        setSearchOperation(null)
+        if (operation.status !== "completed") {
+          await loadOpsStatus()
+          setSearchState("error")
+          setSearchMessage("La búsqueda se detuvo antes de completar todas las fuentes.")
+          return
+        }
+
+        const [changes] = await Promise.all([stageJobUpdates(), loadOpsStatus()])
+        if (!changes) {
+          setSearchState("error")
+          setSearchMessage("La búsqueda terminó, pero no se pudieron comprobar los cambios.")
+          return
+        }
+
+        const changeCount = changes.added + changes.updated + changes.removed
+        setSearchState("success")
+        setSearchMessage(
+          changeCount > 0
+            ? "La búsqueda terminó. La lista queda estable hasta que muestres los cambios."
+            : "La búsqueda terminó sin cambios nuevos.",
+        )
+      } catch {
+        if (!stopped) timer = window.setTimeout(poll, 4000)
+      }
     }
     void poll()
-    return () => { stopped = true; if (timer !== undefined) window.clearTimeout(timer) }
-  }, [loadOpsStatus, refresh, searchOperationId, section])
+    return () => {
+      stopped = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [loadOpsStatus, searchOperationId, stageJobUpdates])
 
   async function scanFreshJobs() {
     setSearchState("searching")
@@ -282,8 +324,8 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
       setSearchOperationId(response.operation_id)
       const message = response.already_running
         ? "La búsqueda ya estaba en curso."
-        : response.progress_message || "Búsqueda iniciada. Los nuevos jobs aparecerán al sincronizar."
-      setSearchState(response.already_running ? "success" : "success")
+        : response.progress_message || "Búsqueda iniciada. La lista se mantendrá estable mientras trabaja."
+      setSearchState("searching")
       setSearchMessage(message)
       toast.success(response.already_running ? "Búsqueda en curso" : "Búsqueda iniciada", {
         description: message,

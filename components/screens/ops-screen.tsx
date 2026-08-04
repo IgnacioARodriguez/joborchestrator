@@ -155,7 +155,7 @@ type ScanOperationOutput = {
   }
 }
 
-type RefreshScope = "none" | "ops" | "jobs" | "all"
+type PostActionSync = "none" | "ops" | "changes"
 
 function scanOutput(operation: OperationRun | null): ScanOperationOutput {
   return (operation?.output_json || {}) as ScanOperationOutput
@@ -402,7 +402,7 @@ function ResultList({ results }: { results: ScanResult[] }) {
 }
 
 export function OpsScreen() {
-  const { refresh, backendOnline, jobs } = useStore()
+  const { refresh, stageJobUpdates, backendOnline, jobs } = useStore()
   const backendReady = backendOnline || jobs.length > 0
   const [sources, setSources] = useState<CompanySource[]>([])
   const [hasProfile, setHasProfile] = useState(false)
@@ -540,7 +540,7 @@ export function OpsScreen() {
           setBusyDetail("")
           setBusyStartedAt(null)
           setElapsedSeconds(0)
-          await Promise.all([refresh(), loadOps()])
+          await Promise.all([stageJobUpdates(), loadOps()])
           toast.success("Unified scrape finished", {
             description: `${output.summary?.new ?? 0} new, ${output.summary?.updated ?? 0} updated, ${output.ranking_job?.queued ?? 0} queued for ranking.`,
           })
@@ -578,12 +578,12 @@ export function OpsScreen() {
       stopped = true
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [refresh, scanOperationId])
+  }, [scanOperationId, stageJobUpdates])
 
   async function runAction<T>(
     name: string,
     fn: () => Promise<T>,
-    refreshScope: RefreshScope = "ops",
+    sync: PostActionSync = "ops",
   ) {
     setBusy(name)
     setBusyDetail(operationCopy(name)?.detail ?? "The backend is processing the request.")
@@ -592,10 +592,10 @@ export function OpsScreen() {
     try {
       const value = await fn()
       const refreshes: Promise<unknown>[] = []
-      if (refreshScope === "jobs" || refreshScope === "all") refreshes.push(refresh())
-      if (refreshScope === "ops" || refreshScope === "all") refreshes.push(loadOps())
+      if (sync === "changes") refreshes.push(stageJobUpdates())
+      if (sync === "ops" || sync === "changes") refreshes.push(loadOps())
       if (refreshes.length > 0) {
-        setBusyDetail("Finishing up and refreshing the dashboard data.")
+        setBusyDetail("Finishing up and checking the relevant dashboard data.")
         await Promise.all(refreshes)
       }
       return value
@@ -925,7 +925,7 @@ export function OpsScreen() {
                     res.import_stats.updated ?? 0
                   } updated.`,
                 })
-              }, "all")
+              }, "changes")
             }
           >
             {busy === "linkedin" ? (
@@ -1006,7 +1006,7 @@ export function OpsScreen() {
                   const res = await api.scanAts()
                   setResults(res.results)
                   toast.success("ATS scan finished")
-                }, "all")
+                }, "changes")
               }
             >
               {busy === "ats" ? (
@@ -1160,7 +1160,7 @@ export function OpsScreen() {
                 })
                 setResults(res.results)
                 toast.success("Search scan finished")
-              }, "all")
+              }, "changes")
             }
           >
             {busy === "search" ? (
