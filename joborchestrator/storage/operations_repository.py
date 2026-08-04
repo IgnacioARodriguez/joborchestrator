@@ -93,6 +93,28 @@ def list_operations(connect: ConnectionFactory, limit: int = 20) -> list[dict]:
         conn.close()
 
 
+def list_operations_by_ids(connect: ConnectionFactory, operation_ids: list[int]) -> list[dict]:
+    unique_ids = list(
+        dict.fromkeys(operation_id for operation_id in operation_ids if operation_id > 0)
+    )
+    if not unique_ids:
+        return []
+
+    placeholders = ",".join("?" for _ in unique_ids)
+    conn = connect()
+    try:
+        rows = conn.execute(
+            f"""SELECT *
+                FROM operation_runs
+                WHERE id IN ({placeholders})
+                ORDER BY created_at DESC, id DESC""",
+            unique_ids,
+        ).fetchall()
+        return [operation_row_to_dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def claim_next_operation(
     connect: ConnectionFactory,
     worker_id: str,

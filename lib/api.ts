@@ -154,6 +154,15 @@ export const api = {
     return request<{ operations: OperationRun[] }>(`/api/operations?limit=${limit}`, { fresh: true })
   },
 
+  async getOperationsByIds(ids: number[]): Promise<{ operations: OperationRun[] }> {
+    const operationIds = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0)
+    if (operationIds.length === 0) return { operations: [] }
+
+    const params = new URLSearchParams()
+    operationIds.forEach((id) => params.append("ids", String(id)))
+    return request<{ operations: OperationRun[] }>(`/api/operations?${params.toString()}`, { fresh: true })
+  },
+
   async getWorkerStatus() {
     return request<WorkerStatus>("/api/workers/status", { fresh: true })
   },

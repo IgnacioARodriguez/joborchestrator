@@ -1116,6 +1116,10 @@ def list_operations(limit: int = 20) -> list[dict]:
     return operations_repository.list_operations(_conn, limit)
 
 
+def list_operations_by_ids(operation_ids: list[int]) -> list[dict]:
+    return operations_repository.list_operations_by_ids(_conn, operation_ids)
+
+
 def claim_next_operation(worker_id: str, operation_types: list[str] | None = None) -> dict | None:
     return operations_repository.claim_next_operation(_conn, worker_id, operation_types)
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -387,8 +387,19 @@ def latest_operation(type: str | None = None) -> dict[str, Any]:
 
 
 @app.get("/api/operations")
-def list_operations(limit: int = 20) -> dict[str, Any]:
-    return {"operations": db.list_operations(limit=max(1, min(int(limit), 100)))}
+def list_operations(
+    limit: int = 20,
+    ids: list[int] | None = Query(default=None),
+) -> dict[str, Any]:
+    if not ids:
+        return {"operations": db.list_operations(limit=max(1, min(int(limit), 100)))}
+
+    operation_ids = list(dict.fromkeys(ids))
+    if len(operation_ids) > 100:
+        raise HTTPException(status_code=400, detail="At most 100 operation ids can be requested.")
+    if any(operation_id <= 0 for operation_id in operation_ids):
+        raise HTTPException(status_code=400, detail="Operation ids must be positive integers.")
+    return {"operations": db.list_operations_by_ids(operation_ids)}
 
 
 @app.get("/api/workers/status")
