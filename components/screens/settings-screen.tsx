@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Bot,
   BriefcaseBusiness,
@@ -228,6 +228,19 @@ function scanSummary(operation: OperationRun | null) {
   return output.summary || {}
 }
 
+const ACTIVE_OPERATION_STATUSES = new Set(["queued", "running"])
+
+function isActiveOperation(operation: OperationRun | null | undefined) {
+  return Boolean(operation && ACTIVE_OPERATION_STATUSES.has(operation.status))
+}
+
+function trackedOperationIds(...operationIds: Array<number | null>) {
+  const validIds = operationIds.filter(
+    (id): id is number => typeof id === "number" && id > 0,
+  )
+  return [...new Set(validIds)]
+}
+
 export function SettingsScreen({ onNavigate }: { onNavigate: (section: Section) => void }) {
   const [view, setView] = useState<SettingsView>(() => {
     if (typeof window === "undefined") return "overview"
@@ -251,27 +264,54 @@ export function SettingsScreen({ onNavigate }: { onNavigate: (section: Section) 
   const [newSkill, setNewSkill] = useState("")
   const [sourceUrl, setSourceUrl] = useState("")
   const [sourceCompany, setSourceCompany] = useState("")
+  const pollErrorShownRef = useRef(false)
 
-  async function loadSettings(showLoader = false) {
+  const loadProfile = useCallback(async () => {
+    const data = await api.getProfile()
+    setProfile(normalizeProfile(data.profile))
+  }, [])
+
+  const loadSources = useCallback(async () => {
+    const data = await api.getSources()
+    setSources(data.sources)
+    setSearchProviders(data.search_providers)
+  }, [])
+
+  const loadOpsStatus = useCallback(async () => {
+    const data = await api.getOpsStatus()
+    setOpsStatus(data)
+    return data
+  }, [])
+
+  const loadSettings = useCallback(async (showLoader = false) => {
     if (showLoader) setBusy("load")
     try {
-      const [profileData, sourceData, accountData, answerData, opsData, scanData, linkedinData] = await Promise.all([
-        api.getProfile(),
-        api.getSources(),
+      const [, , accountData, answerData, opsData, scanData, linkedinData] = await Promise.all([
+        loadProfile(),
+        loadSources(),
         api.getAutomationAccounts(),
         api.getAnswers(),
-        api.getOpsStatus(),
+        loadOpsStatus(),
         api.getLatestOperation("job_scan"),
         api.getLinkedInProfile(),
       ])
-      setProfile(normalizeProfile(profileData.profile))
-      setSources(sourceData.sources)
-      setSearchProviders(sourceData.search_providers)
       setAccounts(accountData.accounts)
       setAnswers(answerData.answers)
-      setOpsStatus(opsData)
       setLatestScan(scanData.operation)
       setLinkedinProfile(linkedinData.linkedin_profile)
+
+      const activeOperations = opsData.active_local_operations ?? []
+      const activeCv = activeOperations.find(
+        (operation) => operation.type === "cv_profile_import" && isActiveOperation(operation),
+      )
+      const activeScan = activeOperations.find(
+        (operation) => operation.type === "job_scan" && isActiveOperation(operation),
+      )
+      const latestScanId = isActiveOperation(scanData.operation)
+        ? scanData.operation?.id ?? null
+        : null
+      setCvOperationId(activeCv?.id ?? null)
+      setScanOperationId(activeScan?.id ?? latestScanId)
     } catch (error) {
       toast.error("No se pudo cargar la configuración", {
         description: error instanceof Error ? error.message : "El backend no respondió.",
@@ -279,79 +319,133 @@ export function SettingsScreen({ onNavigate }: { onNavigate: (section: Section) 
     } finally {
       if (showLoader) setBusy(null)
     }
-  }
+  }, [loadOpsStatus, loadProfile, loadSources])
 
   useEffect(() => {
     // Initial API synchronization intentionally hydrates the screen state.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadSettings(true)
-  }, [])
+  }, [loadSettings])
 
   useEffect(() => {
-    const operationId = cvOperationId ?? scanOperationId
-    if (!operationId) return
+    const operationIds = trackedOperationIds(cvOperationId, scanOperationId)
+    if (operationIds.length === 0) return
 
+    const trackedCvId = cvOperationId
+    const trackedScanId = scanOperationId
     let stopped = false
-    const poll = async () => {
-      try {
-        const response = await api.getOperation(operationId)
-        if (stopped) return
-        const operation = response.operation
+    let timer: number | undefined
 
-        if (cvOperationId) {
-          if (operation.status === "completed") {
-            setCvOperationId(null)
-            await loadSettings()
+    function clearTimer() {
+      if (timer === undefined) return
+      window.clearTimeout(timer)
+      timer = undefined
+    }
+
+    function schedule(delay: number) {
+      clearTimer()
+      if (stopped || document.visibilityState === "hidden") return
+      timer = window.setTimeout(() => void poll(), delay)
+    }
+
+    async function poll() {
+      if (stopped || document.visibilityState === "hidden") return
+
+      try {
+        const response = await api.getOperationsByIds(operationIds)
+        if (stopped) return
+        pollErrorShownRef.current = false
+
+        const operationsById = new Map(
+          response.operations.map((operation) => [operation.id, operation]),
+        )
+        const resourcesToRefresh = new Set<"profile" | "ops">()
+        let hasActiveOperation = false
+
+        if (trackedCvId) {
+          const cvOperation = operationsById.get(trackedCvId)
+          if (!cvOperation) {
+            hasActiveOperation = true
+          } else if (isActiveOperation(cvOperation)) {
+            hasActiveOperation = true
+          } else if (cvOperation.status === "completed") {
+            setCvOperationId((current) => (current === trackedCvId ? null : current))
+            resourcesToRefresh.add("profile")
+            resourcesToRefresh.add("ops")
             toast.success("CV analizado", {
               description: "El perfil se actualizó y podés revisarlo antes de guardarlo.",
             })
-            return
-          }
-          if (operation.status === "failed") {
-            setCvOperationId(null)
+          } else if (["failed", "cancelled"].includes(cvOperation.status)) {
+            setCvOperationId((current) => (current === trackedCvId ? null : current))
+            resourcesToRefresh.add("ops")
             toast.error("No se pudo analizar el CV", {
-              description: operation.error || "Revisá el procesamiento local.",
+              description: cvOperation.error || "Revisá el procesamiento local.",
             })
-            return
           }
         }
 
-        if (scanOperationId) {
-          setLatestScan(operation)
-          if (operation.status === "completed") {
-            setScanOperationId(null)
-            await loadSettings()
-            toast.success("Búsqueda completada", {
-              description: "Las nuevas oportunidades ya están disponibles en Jobs.",
-            })
-            return
-          }
-          if (operation.status === "failed") {
-            setScanOperationId(null)
-            toast.error("La búsqueda necesita atención", {
-              description: operation.error || "Revisá el diagnóstico avanzado.",
-            })
-            return
+        if (trackedScanId) {
+          const scanOperation = operationsById.get(trackedScanId)
+          if (!scanOperation) {
+            hasActiveOperation = true
+          } else {
+            setLatestScan(scanOperation)
+            if (isActiveOperation(scanOperation)) {
+              hasActiveOperation = true
+            } else if (scanOperation.status === "completed") {
+              setScanOperationId((current) => (current === trackedScanId ? null : current))
+              resourcesToRefresh.add("ops")
+              toast.success("Búsqueda completada", {
+                description: "Las nuevas oportunidades ya están disponibles en Jobs.",
+              })
+            } else if (["failed", "cancelled"].includes(scanOperation.status)) {
+              setScanOperationId((current) => (current === trackedScanId ? null : current))
+              resourcesToRefresh.add("ops")
+              toast.error("La búsqueda necesita atención", {
+                description: scanOperation.error || "Revisá el diagnóstico avanzado.",
+              })
+            }
           }
         }
 
-        window.setTimeout(poll, 2000)
+        if (resourcesToRefresh.size > 0) {
+          const refreshes = [...resourcesToRefresh].map((resource) =>
+            resource === "profile" ? loadProfile() : loadOpsStatus(),
+          )
+          const results = await Promise.allSettled(refreshes)
+          if (!stopped && results.some((result) => result.status === "rejected")) {
+            toast.error("La operación terminó, pero no se pudieron actualizar todos los datos.")
+          }
+        }
+        if (!stopped && hasActiveOperation) schedule(2000)
       } catch (error) {
         if (stopped) return
-        setCvOperationId(null)
-        setScanOperationId(null)
-        toast.error("No se pudo actualizar el progreso", {
-          description: error instanceof Error ? error.message : "El backend no respondió.",
-        })
+        if (!pollErrorShownRef.current) {
+          pollErrorShownRef.current = true
+          toast.error("No se pudo actualizar el progreso", {
+            description: error instanceof Error ? error.message : "El backend no respondió.",
+          })
+        }
+        schedule(4000)
       }
     }
 
-    const timer = window.setTimeout(poll, 1000)
+    function onVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        clearTimer()
+        return
+      }
+      schedule(0)
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    schedule(1000)
     return () => {
       stopped = true
-      window.clearTimeout(timer)
+      clearTimer()
+      document.removeEventListener("visibilitychange", onVisibilityChange)
     }
-  }, [cvOperationId, scanOperationId])
+  }, [cvOperationId, loadOpsStatus, loadProfile, scanOperationId])
 
   const enabledSources = useMemo(
     () => sources.filter((source) => Boolean(source.enabled)),
@@ -510,7 +604,7 @@ export function SettingsScreen({ onNavigate }: { onNavigate: (section: Section) 
       })
       setSourceUrl("")
       setSourceCompany("")
-      await loadSettings()
+      await loadSources()
       toast.success("Portal agregado", {
         description: `${companyName} se incluirá en las próximas búsquedas.`,
       })
