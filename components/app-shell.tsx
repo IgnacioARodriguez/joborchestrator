@@ -405,13 +405,19 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
                 priority
                 className="h-[100px] w-[240px] object-contain object-center"
               />
-              <span className="text-xs font-semibold leading-none text-muted-foreground" aria-hidden="true">x</span>
+              <span
+                className="text-sm font-semibold italic leading-none text-[#f4bd32]"
+                style={{ fontFamily: "cursive" }}
+                aria-hidden="true"
+              >
+                by
+              </span>
               <Image
                 src="/rocket-development-logo.png"
                 alt="Rocket Development"
-                width={142}
-                height={40}
-                className="h-8 w-[142px] object-contain object-center"
+                width={106}
+                height={30}
+                className="h-6 w-[106px] object-contain object-center"
               />
             </div>
           </div>
