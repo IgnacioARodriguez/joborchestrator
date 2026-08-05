@@ -308,7 +308,7 @@ class LinkedInEnrichmentPayload(BaseModel):
 
 class MaterialsPayload(BaseModel):
     use_llm: bool = False
-    provider: Literal["heuristic", "openai", "nvidia"] | None = None
+    provider: Literal["heuristic", "openai", "openrouter", "nvidia"] | None = None
     model: str | None = None
     api_key: str | None = None
     cv_strategy: Literal["auto", "controlled", "legacy"] = "auto"

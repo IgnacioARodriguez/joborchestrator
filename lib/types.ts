@@ -609,6 +609,7 @@ export interface OpsStatus {
   local_worker_needed: boolean
   ranking_worker_needed: boolean
   active_local_operations: OperationRun[]
+  recent_local_operations: OperationRun[]
   active_ranking_jobs: RankingJobRecord[]
   latest_scan_operation?: OperationRun | null
   latest_ranking_job?: RankingJobRecord | null

@@ -12,6 +12,9 @@ function operationLabel(operation: OperationRun) {
     linkedin_scan: "Busqueda de oportunidades en LinkedIn",
     job_scan: "Busqueda en portales ATS y fuentes publicas",
     materials_generation: "Generacion de materiales",
+    application_materials_generation: "Generacion de materiales",
+    ranking: "Ranking de ofertas",
+    application_execution: "Subida de CV y candidatura",
     application_session: "Preparacion de candidatura",
   }
   return labels[operation.type] ?? operation.type.replaceAll("_", " ")
@@ -21,6 +24,8 @@ function operationDescription(operation: OperationRun) {
   if (operation.progress_message) return operation.progress_message
   if (operation.type === "linkedin_scan") return "Buscando oportunidades en LinkedIn y guardandolas a medida que aparecen."
   if (operation.type === "job_scan") return "Consultando portales ATS, APIs y fuentes publicas configuradas."
+  if (operation.type === "ranking") return "Calculando la puntuacion y prioridad de las ofertas."
+  if (operation.type === "application_execution") return "Preparando la candidatura y subiendo el CV al portal."
   return "Procesando la operacion y sincronizando resultados."
 }
 

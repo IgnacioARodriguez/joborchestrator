@@ -28,10 +28,26 @@ import { SettingsScreen } from "@/components/screens/settings-screen"
 import { JobDetailDrawer } from "@/components/job-detail-drawer"
 import { ActivityCenter } from "@/components/activity-center"
 import { toast } from "sonner"
-import type { OperationRun, OpsStatus } from "@/lib/types"
+import type { OperationRun, OpsStatus, RankingJobRecord } from "@/lib/types"
 
 type SearchState = "idle" | "searching" | "success" | "empty" | "error"
 type StoreResource = "jobs" | "preparation" | "applications"
+
+function rankingJobToOperation(job: RankingJobRecord): OperationRun {
+  const status = job.status === "queued" || job.status === "running" || job.status === "completed" || job.status === "failed" || job.status === "cancelled"
+    ? job.status
+    : "running"
+  return {
+    id: -job.id,
+    type: "ranking",
+    status,
+    progress_message: `${job.processed_items ?? 0}/${job.total_items ?? 0} ofertas procesadas`,
+    attempts: 1,
+    created_at: job.created_at,
+    updated_at: job.updated_at,
+    error: job.error ?? job.latest_item_error,
+  }
+}
 
 const SECTION_RESOURCE: Partial<Record<Section, StoreResource>> = {
   jobs: "jobs",
@@ -212,7 +228,10 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
   const jobSearchActive = searchState === "searching" || Boolean(searchOperationId) || linkedinScanActive
   const activityOperations = [
     ...(opsStatus?.active_local_operations ?? []),
+    ...(opsStatus?.recent_local_operations ?? []),
     ...(opsStatus?.latest_scan_operation ? [opsStatus.latest_scan_operation] : []),
+    ...(opsStatus?.active_ranking_jobs ?? []).map(rankingJobToOperation),
+    ...(opsStatus?.latest_ranking_job ? [rankingJobToOperation(opsStatus.latest_ranking_job)] : []),
   ].filter((operation, index, all) => all.findIndex((item) => item.id === operation.id) === index)
 
   function refreshCurrentSection() {
