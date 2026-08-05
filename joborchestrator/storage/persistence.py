@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS job_postings (
 CREATE INDEX IF NOT EXISTS idx_job_postings_status ON job_postings(status);
 CREATE INDEX IF NOT EXISTS idx_job_postings_last_seen ON job_postings(last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_job_postings_identity ON job_postings(identity_key);
-CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness
+CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness_v2
     ON job_postings(
         COALESCE(pipeline_status, 'new'),
         COALESCE(posted_at, first_seen_at, last_seen_at)
@@ -701,7 +701,7 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
         return False
 
     required_indexes = {
-        "idx_job_postings_apply_freshness",
+        "idx_job_postings_apply_freshness_v2",
         "idx_job_postings_pipeline_dates",
         "idx_job_rankings_job_version",
         "idx_applications_job_status",
@@ -776,7 +776,7 @@ def _ensure_scanner_columns(conn: sqlite3.Connection) -> None:
         "ON job_postings(pipeline_status, last_seen_at, first_seen_at)"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness "
+        "CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness_v2 "
         "ON job_postings(COALESCE(pipeline_status, 'new'), "
         "COALESCE(posted_at, first_seen_at, last_seen_at))"
     )
