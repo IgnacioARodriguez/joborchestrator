@@ -526,8 +526,8 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
       </div>
 
       {/* Mobile bottom navigation */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
-        <div className="mx-auto flex max-w-md items-stretch justify-around">
+      <nav className="fixed inset-x-4 bottom-3 z-40 mx-auto max-w-sm rounded-2xl border border-border/80 bg-card/90 p-1.5 shadow-[0_12px_32px_rgba(15,23,42,0.14)] backdrop-blur-xl pb-[calc(0.375rem+env(safe-area-inset-bottom))] lg:hidden">
+        <div className="grid grid-cols-4 gap-1">
           {NAV_ITEMS.map((item) => {
             const active = primarySectionFor(section) === item.id
             const Icon = item.icon
@@ -537,13 +537,16 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
                 type="button"
                 onClick={() => navigate(item.id)}
                 className={cn(
-                  "relative flex flex-1 flex-col items-center gap-0.5 px-1 py-2 text-[10px] font-medium transition-colors",
-                  active ? "text-primary" : "text-muted-foreground",
+                  "relative flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1.5 text-[10px] font-medium transition-all active:scale-95",
+                  active
+                    ? "bg-primary/10 text-primary shadow-sm"
+                    : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
                 )}
                 aria-current={active ? "page" : undefined}
+                aria-label={item.label}
               >
-                <Icon className="size-5" />
-                <span className="text-center leading-tight">{item.label}</span>
+                <Icon className={cn("size-[18px] transition-transform", active && "stroke-[2.5]")} />
+                <span className="max-w-full truncate text-center leading-tight">{item.label}</span>
               </button>
             )
           })}
