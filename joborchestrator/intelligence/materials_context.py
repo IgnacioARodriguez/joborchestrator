@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from joborchestrator.intelligence.materials_language import detect_job_language
+from joborchestrator.intelligence.cv_job_analysis import build_cv_job_analysis
 
 
 def build_generation_context(full_payload: dict[str, Any]) -> dict[str, Any]:
@@ -26,6 +27,7 @@ def build_generation_context(full_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
     return {
+        "cv_job_analysis": build_cv_job_analysis(full_payload),
         "job": {
             "company": job.get("company"),
             "title": job.get("title"),

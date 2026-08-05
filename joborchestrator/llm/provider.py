@@ -281,6 +281,93 @@ class NvidiaProvider:
         return body
 
 
+class OpenRouterProvider(NvidiaProvider):
+    """OpenAI-compatible chat completions through OpenRouter."""
+
+    provider_name = "openrouter"
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        timeout: float = 120.0,
+        http_module: Any = httpx,
+    ) -> None:
+        self.api_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
+        self.base_url = (base_url or os.getenv("OPENROUTER_BASE_URL") or "https://openrouter.ai/api/v1").rstrip("/")
+        self.timeout = timeout
+        self._http = http_module
+
+    def complete(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        model: str,
+        temperature: float = 0.0,
+        response_format: ResponseFormat = "text",
+        max_tokens: int | None = None,
+        response_schema: dict[str, Any] | None = None,
+        schema_name: str = "response",
+        reasoning_effort: str | None = None,
+    ) -> LLMResponse:
+        if not self.api_key:
+            raise LLMProviderError("OPENROUTER_API_KEY is required.")
+        body = self._chat_body(
+            messages,
+            model=model,
+            temperature=temperature,
+            response_format="text",
+            max_tokens=max_tokens,
+            top_p=0.95,
+            frequency_penalty=0,
+            presence_penalty=0,
+        )
+        if response_format == "json":
+            body["response_format"] = (
+                {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema_name,
+                        "strict": True,
+                        "schema": response_schema,
+                    },
+                }
+                if response_schema is not None
+                else {"type": "json_object"}
+            )
+        if reasoning_effort:
+            body["reasoning"] = {"effort": reasoning_effort}
+        try:
+            response = self._http.post(
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "http://localhost/joborchestrator",
+                    "X-Title": "Job Orchestrator CV generation",
+                },
+                json=body,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text[:1000] if exc.response is not None else ""
+            raise LLMProviderError(
+                f"OpenRouter request failed: status={exc.response.status_code} body={detail!r}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise LLMProviderError(f"OpenRouter request failed: {type(exc).__name__}: {exc!r}") from exc
+        raw = response.json()
+        return LLMResponse(
+            text=_extract_chat_text(raw),
+            raw=raw,
+            provider=self.provider_name,
+            model=str(raw.get("model") or model),
+            usage=_usage_from_raw(raw),
+        )
+
+
 class AnthropicProvider:
     provider_name = "anthropic"
 
@@ -351,6 +438,8 @@ def provider_for_name(
         return OpenAIProvider(api_key=api_key, base_url=base_url, timeout=timeout or 60.0, http_module=http_module)
     if normalized == "nvidia":
         return NvidiaProvider(api_key=api_key, base_url=base_url, timeout=timeout or 120.0, http_module=http_module)
+    if normalized == "openrouter":
+        return OpenRouterProvider(api_key=api_key, base_url=base_url, timeout=timeout or 120.0, http_module=http_module)
     if normalized == "anthropic":
         return AnthropicProvider()
     raise LLMProviderError(f"Unsupported LLM provider: {provider_name}")
