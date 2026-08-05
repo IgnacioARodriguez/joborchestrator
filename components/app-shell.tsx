@@ -169,8 +169,12 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
   const requiredResource = SECTION_RESOURCE[section]
   const jobsLoaded = jobsStatus !== "idle"
   const backendReady = backendOnline || opsStatus !== null || jobsMeta !== null || jobs.length > 0
-  const totalJobs = jobsMeta?.pipeline_counts?.all ?? jobsMeta?.unfiltered_total ?? jobsMeta?.total ?? jobs.length
-  const jobCountLabel = jobsLoaded ? `${totalJobs.toLocaleString()} oportunidades` : "Jobs bajo demanda"
+  const totalJobs = jobsMeta?.pipeline_counts?.all
+  const jobCountLabel = !jobsLoaded
+    ? "Jobs bajo demanda"
+    : totalJobs === undefined
+      ? "Calculando conteos…"
+      : `${totalJobs.toLocaleString()} oportunidades`
   const currentLoading =
     section === "apply"
       ? preparationLoading
@@ -469,7 +473,7 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
                 <Compass className="size-4" />
               </div>
               <span className="text-xs text-muted-foreground">
-                {totalJobs.toLocaleString()} jobs
+                {totalJobs === undefined ? "" : `${totalJobs.toLocaleString()} jobs`}
               </span>
             </div>
             <div className="flex items-center gap-2">

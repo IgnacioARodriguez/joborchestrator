@@ -50,6 +50,7 @@ interface StoreValue {
   loading: boolean
   preparationLoading: boolean
   jobsStatus: ResourceStatus
+  jobsCountsLoading: boolean
   preparationJobsStatus: ResourceStatus
   applicationsStatus: ResourceStatus
   backendOnline: boolean
@@ -206,6 +207,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [preparationJobs, setPreparationJobs] = useState<JobListItem[]>([])
   const [applications, setApplications] = useState<ApplicationRecord[]>([])
   const [jobsStatus, setJobsStatus] = useState<ResourceStatus>("idle")
+  const [jobsCountsLoading, setJobsCountsLoading] = useState(false)
   const [preparationJobsStatus, setPreparationJobsStatus] = useState<ResourceStatus>("idle")
   const [applicationsStatus, setApplicationsStatus] = useState<ResourceStatus>("idle")
   const [backendOnline, setBackendOnline] = useState(false)
@@ -232,7 +234,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const submittedJobIdsRef = useRef(new Set<string>())
   const detailRequests = useRef(new Map<string, Promise<JobDetail | undefined>>())
 
-  const loadJobsSnapshot = useCallback((rankingVersion?: string | null) => {
+  const loadJobsSnapshot = useCallback((rankingVersion?: string | null, includeCounts = true) => {
     const version = rankingVersion === undefined ? selectedRankingVersionRef.current : rankingVersion
     const offset = (applyQueuePageRef.current - 1) * APPLY_QUEUE_PAGE_SIZE
     return api.getApplyQueue(
@@ -242,6 +244,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       applyQueueFreshnessRef.current,
       applyQueueQueryRef.current,
       jobsPipelineFilterRef.current,
+      includeCounts,
     )
   }, [])
 
@@ -265,13 +268,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         current === "success" || current === "empty" ? "refreshing" : "loading",
       )
       try {
-        const data = await loadJobsSnapshot(rankingVersion)
+        const data = await loadJobsSnapshot(rankingVersion, false)
         if (requestId !== listRequestSeq.current) return
         applyJobsSnapshot(data)
+        setJobsCountsLoading(true)
+        void loadJobsSnapshot(rankingVersion, true)
+          .then((countsData) => {
+            if (requestId === listRequestSeq.current) applyJobsSnapshot(countsData)
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            if (requestId === listRequestSeq.current) setJobsCountsLoading(false)
+          })
       } catch {
         if (requestId === listRequestSeq.current) {
           setBackendOnline(false)
           setJobsStatus("error")
+          setJobsCountsLoading(false)
         }
       }
     },
@@ -566,6 +579,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       loading: jobsStatus === "loading",
       preparationLoading: preparationJobsStatus === "loading",
       jobsStatus,
+      jobsCountsLoading,
       preparationJobsStatus,
       applicationsStatus,
       backendOnline,
@@ -606,6 +620,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       preparationJobs,
       applications,
       jobsStatus,
+      jobsCountsLoading,
       preparationJobsStatus,
       applicationsStatus,
       backendOnline,

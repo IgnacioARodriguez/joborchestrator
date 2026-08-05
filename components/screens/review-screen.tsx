@@ -217,6 +217,7 @@ export function JobsScreen({
     jobsMeta,
     jobsPipelineFilter,
     jobsStatus,
+    jobsCountsLoading,
     loading,
     refresh,
     pendingJobChanges,
@@ -241,12 +242,12 @@ export function JobsScreen({
     ? pendingJobChanges.added + pendingJobChanges.updated + pendingJobChanges.removed
     : 0
 
-  const counts: Record<JobsFilter, number> = {
-    all: jobsMeta?.pipeline_counts?.all ?? jobs.length,
-    new: jobsMeta?.pipeline_counts?.new ?? jobs.filter((job) => statusForFilter(job, "new")).length,
-    saved: jobsMeta?.pipeline_counts?.saved ?? jobs.filter((job) => statusForFilter(job, "saved")).length,
-    ready: jobsMeta?.pipeline_counts?.ready ?? jobs.filter((job) => statusForFilter(job, "ready")).length,
-    discarded: jobsMeta?.pipeline_counts?.discarded ?? jobs.filter((job) => statusForFilter(job, "discarded")).length,
+  const counts: Record<JobsFilter, number | string> = {
+    all: jobsMeta?.pipeline_counts?.all ?? "",
+    new: jobsMeta?.pipeline_counts?.new ?? "",
+    saved: jobsMeta?.pipeline_counts?.saved ?? "",
+    ready: jobsMeta?.pipeline_counts?.ready ?? "",
+    discarded: jobsMeta?.pipeline_counts?.discarded ?? "",
   }
   const allJobsTotal = counts.all
 
@@ -308,7 +309,7 @@ export function JobsScreen({
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
       <PageHeader
         title="Jobs"
-        description={`${allJobsTotal.toLocaleString()} oportunidades para priorizar y mover a la cola de Aplicar.`}
+        description={`${allJobsTotal ? `${allJobsTotal} oportunidades` : ""} para priorizar y mover a la cola de Aplicar${jobsCountsLoading ? " · calculando conteos…" : "."}`}
         actions={
           <Button onClick={onSearchNewJobs} disabled={!onSearchNewJobs || searchActive}>
             {searchActive ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <Sparkles data-icon="inline-start" />}
