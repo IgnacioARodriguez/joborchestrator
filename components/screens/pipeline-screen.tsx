@@ -22,7 +22,7 @@ import {
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { DecisionBadge, ScoreBadge } from "@/components/badges"
+import { DecisionBadge, ScoreRing } from "@/components/badges"
 import { ApplicationAssistantDialog } from "@/components/application-assistant-dialog"
 import {
   Empty,
@@ -185,31 +185,30 @@ function PreparationCard({
     <article className="rounded-lg border border-border bg-card p-3 shadow-[0_1px_2px_rgba(16,24,40,0.03)] sm:p-4">
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <button
-            type="button"
-            onClick={() => onOpenJob(job.id)}
-            className="min-w-0 text-left"
-          >
-            <h2 className="line-clamp-2 text-base font-semibold leading-snug text-foreground">
-              {job.title}
-            </h2>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span className="inline-flex min-w-0 items-center gap-1">
-                <Building2 className="size-3.5 shrink-0" />
-                <span className="truncate">{job.company}</span>
-              </span>
-              <span className="inline-flex min-w-0 items-center gap-1">
-                <MapPin className="size-3.5 shrink-0" />
-                <span className="truncate">{job.location || (job.remote ? "Remote" : "Sin ubicacion")}</span>
-              </span>
-              <span>Actualizado {relativeTime(job.last_seen_at)}</span>
-            </div>
-          </button>
+          <div className="flex min-w-0 items-start gap-3">
+            <ScoreRing score={job.ranking.final_score} size={52} />
+            <button
+              type="button"
+              onClick={() => onOpenJob(job.id)}
+              className="min-w-0 text-left"
+            >
+              <h2 className="line-clamp-2 text-base font-semibold leading-snug text-foreground">
+                {job.title}
+              </h2>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span className="inline-flex min-w-0 items-center gap-1">
+                  <Building2 className="size-3.5 shrink-0" />
+                  <span className="truncate">{job.company}</span>
+                </span>
+                <span className="inline-flex min-w-0 items-center gap-1">
+                  <MapPin className="size-3.5 shrink-0" />
+                  <span className="truncate">{job.location || (job.remote ? "Remote" : "Sin ubicacion")}</span>
+                </span>
+                <span>Actualizado {relativeTime(job.last_seen_at)}</span>
+              </div>
+            </button>
+          </div>
           <div className="flex w-fit shrink-0 items-center gap-2">
-            <ScoreBadge
-              score={job.ranking.final_score}
-              className="min-w-11 px-2 py-1 text-sm"
-            />
             <DecisionBadge
               decision={job.ranking.decision}
               score={job.ranking.final_score}
