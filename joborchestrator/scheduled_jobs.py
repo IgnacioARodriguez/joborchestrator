@@ -14,7 +14,12 @@ from joborchestrator.ranking.nvidia_ranker import (
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.ranking.worker import run_worker_once as run_ranking_worker_once
 from joborchestrator.storage import persistence as db
+from joborchestrator.api_dto import latest_rankings_by_job_id
+from joborchestrator.intelligence.materials_routing import should_auto_generate_materials
 from joborchestrator.worker import _process_job_scan
+from joborchestrator.worker import (
+    _process_application_materials_generation,
+)
 
 
 def _profile_queries(profile: dict[str, Any]) -> list[str]:
@@ -198,6 +203,43 @@ def run_rankings(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_materials(args: argparse.Namespace) -> int:
+    """Drain queued material-generation operations on a hosted runner."""
+    db.init_db()
+    processed = 0
+    while processed < args.max_operations:
+        worker_id = f"github-actions:materials:{os.getpid()}"
+        operation = db.claim_next_operation(
+            worker_id,
+            ["application_materials_generation"],
+        )
+        if not operation:
+            break
+        operation_id = int(operation["id"])
+        job_id = int((operation.get("input_json") or {}).get("job_id") or 0)
+        ranking = latest_rankings_by_job_id().get(job_id)
+        if not should_auto_generate_materials(ranking):
+            db.complete_operation(
+                operation_id,
+                {"skipped": True, "reason": "ranking_decision_not_apply_now", "job_id": job_id},
+                "Materials skipped: ranking decision is not APPLY_NOW.",
+            )
+            processed += 1
+            continue
+        try:
+            _process_application_materials_generation(operation)
+        except Exception as exc:
+            db.fail_operation(
+                operation_id,
+                str(exc),
+                "GitHub Actions materials execution failed. Check workflow logs.",
+            )
+            raise
+        processed += 1
+    print(f"Materials drain finished operations={processed}.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Queue and execute Job Orchestrator scheduled workloads."
@@ -231,6 +273,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
     )
     rankings.set_defaults(handler=run_rankings)
+
+    materials = subparsers.add_parser(
+        "materials",
+        help="Drain queued application-material generation operations.",
+    )
+    materials.add_argument("--max-operations", type=int, default=25)
+    materials.set_defaults(handler=run_materials)
     return parser
 
 

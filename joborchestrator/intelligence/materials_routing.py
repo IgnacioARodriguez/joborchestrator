@@ -56,9 +56,9 @@ def max_transport_retries() -> int:
 
 def should_auto_generate_materials(ranking: dict | None, *, override: bool = False) -> bool:
     decision = str((ranking or {}).get("decision") or "").upper()
-    if decision in {"AVOID", "SKIP"} and not override:
-        return False
-    return True
+    if override:
+        return bool(decision)
+    return decision == "APPLY_NOW"
 
 
 def _flag_enabled(name: str) -> bool:

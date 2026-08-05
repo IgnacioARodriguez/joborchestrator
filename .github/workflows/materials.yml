@@ -1,0 +1,62 @@
+name: Application materials
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_operations:
+        description: Maximum queued material operations to process
+        required: true
+        default: "25"
+        type: string
+  schedule:
+    - cron: "27 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: joborchestrator-materials
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      PYTHONUNBUFFERED: "1"
+      TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+      TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      MATERIALS_PROVIDER: nvidia
+      MATERIALS_CONTROLLED_CV_ENABLED: "1"
+      MATERIALS_NVIDIA_PLANNER_ENABLED: "1"
+      MAX_OPERATIONS: ${{ inputs.max_operations || '25' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install backend
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+      - name: Validate materials configuration
+        run: |
+          test -n "$TURSO_DATABASE_URL" || { echo "Missing TURSO_DATABASE_URL"; exit 1; }
+          test -n "$TURSO_AUTH_TOKEN" || { echo "Missing TURSO_AUTH_TOKEN"; exit 1; }
+          test -n "$NVIDIA_API_KEY" || { echo "Missing NVIDIA_API_KEY"; exit 1; }
+
+      - name: Drain queued material operations
+        run: python -m joborchestrator.scheduled_jobs materials --max-operations "$MAX_OPERATIONS"
+
+      - name: Upload materials logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: materials-logs-${{ github.run_id }}
+          path: logs/
+          if-no-files-found: ignore
+          retention-days: 7
