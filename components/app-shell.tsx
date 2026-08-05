@@ -54,7 +54,7 @@ function scanProgressCopy(operation: OperationRun) {
   if (message.includes("linkedin")) return "Buscando oportunidades en LinkedIn y guardándolas a medida que aparecen."
   if (["greenhouse", "lever", "ashby", "ats"].some(value => message.includes(value))) return "Consultando portales de empresas y sistemas de empleo configurados."
   if (message.includes("search") || message.includes("api")) return "Consultando fuentes públicas de empleo con tus búsquedas configuradas."
-  return "Consultando las fuentes configuradas y guardando oportunidades nuevas."
+  return "Consultando portales ATS, APIs y fuentes publicas configuradas."
 }
 
 function DataLoadingBanner() {

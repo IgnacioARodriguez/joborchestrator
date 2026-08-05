@@ -158,8 +158,6 @@ CREATE TABLE IF NOT EXISTS job_postings (
 CREATE INDEX IF NOT EXISTS idx_job_postings_status ON job_postings(status);
 CREATE INDEX IF NOT EXISTS idx_job_postings_last_seen ON job_postings(last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_job_postings_identity ON job_postings(identity_key);
-CREATE INDEX IF NOT EXISTS idx_job_postings_pipeline_dates
-    ON job_postings(pipeline_status, last_seen_at, first_seen_at);
 
 CREATE TABLE IF NOT EXISTS job_hiring_contacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -696,17 +694,6 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
     if not required_tables.issubset(existing):
         return False
 
-    required_indexes = {
-        "idx_job_postings_pipeline_dates",
-        "idx_job_rankings_job_version",
-    }
-    index_rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'index' AND name IN (?, ?)",
-        tuple(sorted(required_indexes)),
-    ).fetchall()
-    if not required_indexes.issubset({row["name"] for row in index_rows}):
-        return False
-
     job_posting_columns = _table_columns(conn, "job_postings")
     ranking_columns = _table_columns(conn, "job_rankings")
     eval_columns = _table_columns(conn, "llm_eval_runs")
@@ -765,6 +752,14 @@ def _ensure_scanner_columns(conn: sqlite3.Connection) -> None:
             columns.add(column)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_postings_repost_key ON job_postings(repost_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_postings_soft_identity ON job_postings(soft_identity_key)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_job_postings_pipeline_dates "
+        "ON job_postings(pipeline_status, last_seen_at, first_seen_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_job_rankings_job_version "
+        "ON job_rankings(job_id, ranking_version, decision, final_score)"
+    )
 
 
 def _ensure_application_material_snapshots_schema(conn: sqlite3.Connection) -> None:
