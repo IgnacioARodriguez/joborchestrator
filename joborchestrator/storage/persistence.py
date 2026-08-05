@@ -160,7 +160,7 @@ CREATE INDEX IF NOT EXISTS idx_job_postings_last_seen ON job_postings(last_seen_
 CREATE INDEX IF NOT EXISTS idx_job_postings_identity ON job_postings(identity_key);
 CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness
     ON job_postings(
-        pipeline_status,
+        COALESCE(pipeline_status, 'new'),
         COALESCE(posted_at, first_seen_at, last_seen_at)
     );
 
@@ -777,7 +777,8 @@ def _ensure_scanner_columns(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness "
-        "ON job_postings(pipeline_status, COALESCE(posted_at, first_seen_at, last_seen_at))"
+        "ON job_postings(COALESCE(pipeline_status, 'new'), "
+        "COALESCE(posted_at, first_seen_at, last_seen_at))"
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_job_rankings_job_version "
