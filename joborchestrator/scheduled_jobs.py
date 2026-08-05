@@ -11,6 +11,7 @@ from joborchestrator.ranking.nvidia_ranker import (
     DEFAULT_NVIDIA_MODEL,
     DEFAULT_NVIDIA_REQUEST_BATCH_SIZE,
 )
+from joborchestrator.ranking.service import DEFAULT_RANKING_MODEL
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.ranking.worker import run_worker_once as run_ranking_worker_once
 from joborchestrator.storage import persistence as db
@@ -106,7 +107,7 @@ def run_public_scan(args: argparse.Namespace) -> int:
         "auto_rank_new": True,
         "ranking_limit": args.ranking_limit,
         "ranking_version": NVIDIA_RANKING_VERSION,
-        "ranking_model": DEFAULT_NVIDIA_MODEL,
+        "ranking_model": DEFAULT_RANKING_MODEL,
     }
     _queue_operation(
         "job_scan",
@@ -132,7 +133,7 @@ def run_linkedin_scan(args: argparse.Namespace) -> int:
         "auto_rank_new": True,
         "ranking_limit": args.ranking_limit,
         "ranking_version": NVIDIA_RANKING_VERSION,
-        "ranking_model": DEFAULT_NVIDIA_MODEL,
+        "ranking_model": DEFAULT_RANKING_MODEL,
     }
     _queue_operation(
         "linkedin_scan",
@@ -221,7 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     rankings.add_argument("--limit", type=int, default=250)
     rankings.add_argument("--chunk-size", type=int, default=25)
     rankings.add_argument("--max-chunks", type=int, default=100)
-    rankings.add_argument("--model", default=DEFAULT_NVIDIA_MODEL)
+    rankings.add_argument("--model", default=DEFAULT_RANKING_MODEL)
     rankings.add_argument("--ranking-version", default=NVIDIA_RANKING_VERSION)
     rankings.add_argument("--request-batch-size", type=int, default=DEFAULT_NVIDIA_REQUEST_BATCH_SIZE)
     rankings.add_argument("--max-concurrency", type=int, default=DEFAULT_NVIDIA_MAX_CONCURRENCY)

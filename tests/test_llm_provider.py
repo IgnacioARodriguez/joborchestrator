@@ -8,8 +8,8 @@ def test_provider_registry_reads_role_env(monkeypatch):
 
     registry = ProviderRegistry()
 
-    assert registry.provider_name_for_role("ranking") == "nvidia"
-    assert registry.provider_name_for_role("materials") == "openai"
+    assert registry.provider_name_for_role("ranking") == "openrouter"
+    assert registry.provider_name_for_role("materials") == "openrouter"
     assert registry.provider_name_for_role("judge_secondary") == ""
 
     monkeypatch.setenv("MATERIALS_PROVIDER", "nvidia")

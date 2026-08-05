@@ -52,6 +52,7 @@ from joborchestrator.ranking.nvidia_ranker import (
     DEFAULT_NVIDIA_MODEL,
     DEFAULT_NVIDIA_REQUEST_BATCH_SIZE,
 )
+from joborchestrator.ranking.service import DEFAULT_RANKING_MODEL
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION, filter_llm_ranking_versions, is_heuristic_ranking_version
 from joborchestrator.ranking.worker import run_worker_once
 from joborchestrator.scanning import scanner as source_scanner
@@ -284,13 +285,14 @@ class UnifiedScanPayload(BaseModel):
     auto_rank_new: bool = True
     ranking_limit: int = Field(default=250, ge=1, le=2000)
     ranking_version: str = NVIDIA_RANKING_VERSION
-    ranking_model: str = DEFAULT_NVIDIA_MODEL
+    ranking_model: str = DEFAULT_RANKING_MODEL
 
 
 class RankingJobPayload(BaseModel):
+    provider: Literal["openai", "openrouter", "nvidia"] = "nvidia"
     job_ids: list[int] | None = None
     limit: int = Field(default=250, ge=1, le=2000)
-    model: str = DEFAULT_NVIDIA_MODEL
+    model: str = DEFAULT_RANKING_MODEL
     request_batch_size: int = Field(default=DEFAULT_NVIDIA_REQUEST_BATCH_SIZE, ge=1, le=25)
     max_concurrency: int = Field(default=DEFAULT_NVIDIA_MAX_CONCURRENCY, ge=1, le=10)
     ranking_version: str = NVIDIA_RANKING_VERSION
@@ -479,6 +481,7 @@ def ops_status() -> dict[str, Any]:
         "local_worker_needed": bool(active_local_ops),
         "ranking_worker_needed": bool(active_ranking_jobs),
         "active_local_operations": active_local_ops[:5],
+        "recent_local_operations": local_ops[:10],
         "active_ranking_jobs": active_ranking_jobs[:5],
         "latest_scan_operation": latest_scan,
         "latest_ranking_job": latest_ranking,
@@ -1300,9 +1303,11 @@ def generate_materials(job_id: int, payload: MaterialsPayload) -> dict[str, Any]
     keywords = parse_json_value(ranking.get("cv_keywords_to_emphasize_json"), []) if ranking else []
     try:
         targets = normalize_material_targets(payload.targets)
-        provider = payload.provider or ("openai" if payload.use_llm else "heuristic")
+        provider = payload.provider or (
+            ProviderRegistry().provider_name_for_role("materials") if payload.use_llm else "heuristic"
+        )
         selected_model = _materials_model_for_provider(provider, payload.model)
-        if provider in {"openai", "nvidia"}:
+        if provider in {"openai", "openrouter", "nvidia"}:
             existing = next(
                 (
                     operation
@@ -1435,6 +1440,8 @@ def _materials_model_for_provider(provider: str, model: str | None) -> str:
         return DEFAULT_NVIDIA_MATERIALS_MODEL
     if provider == "openai":
         return DEFAULT_MATERIALS_MODEL
+    if provider == "openrouter":
+        return os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
     return "heuristic"
 
 
@@ -1896,7 +1903,7 @@ def create_ranking_job(payload: RankingJobPayload) -> dict[str, Any]:
         return {"ranking_job_id": None, "queued": 0}
 
     ranking_job_id = db.create_ranking_job(
-        provider="nvidia",
+        provider=payload.provider,
         model=payload.model,
         ranking_version=payload.ranking_version,
         job_ids=job_ids,
