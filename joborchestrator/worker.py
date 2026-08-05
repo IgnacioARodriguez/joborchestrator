@@ -19,6 +19,7 @@ from joborchestrator.intelligence.llm_application_materials import (
     LLMMaterialsError,
     build_application_kit_with_llm,
     build_application_kit_with_nvidia,
+    build_application_kit_with_provider,
     materials_prompt_versions,
 )
 from joborchestrator.intelligence.materials_validation import issues_to_dicts, validation_feedback_to_issues
@@ -66,6 +67,29 @@ def configure_logging() -> logging.Logger:
 
 
 logger = configure_logging()
+
+
+def _generate_materials(provider: str, job: Any, **kwargs: Any) -> dict[str, Any]:
+    """Worker seam: provider selection is isolated from operation handling."""
+    if provider == "nvidia":
+        return build_application_kit_with_nvidia(
+            job,
+            ranking=kwargs.get("ranking"),
+            model=kwargs.get("model"),
+            cv_strategy=kwargs.get("cv_strategy"),
+            **({"targets": kwargs["targets"]} if "targets" in kwargs else {}),
+        )
+    if provider == "openai":
+        return build_application_kit_with_llm(job, ranking=kwargs.get("ranking"), model=kwargs.get("model"))
+    if provider == "openrouter":
+        return build_application_kit_with_nvidia(
+            job, ranking=kwargs.get("ranking"), model=kwargs.get("model"),
+            cv_strategy=kwargs.get("cv_strategy"), provider_name="openrouter",
+            **({"targets": kwargs["targets"]} if "targets" in kwargs else {}),
+        )
+    if provider == "heuristic":
+        return build_application_kit_with_provider(provider, job, **kwargs)
+    return build_application_kit_with_provider(provider, job, **kwargs)
 
 
 def process_once(worker_id: str = WORKER_ID) -> bool:
@@ -156,34 +180,24 @@ def _process_application_materials_generation(operation: dict[str, Any]) -> None
 
     keywords = parse_json_value(ranking.get("cv_keywords_to_emphasize_json"), []) if ranking else []
     selected_model = model or DEFAULT_MATERIALS_MODEL
-    prompt_versions = materials_prompt_versions() if provider in {"openai", "nvidia"} else {}
-    if provider == "openai":
-        try:
-            kit = build_application_kit_with_llm(job, ranking=ranking, model=selected_model)
-        except LLMMaterialsError as exc:
-            _record_failed_materials_attempt(operation_id, job_id, provider, selected_model, prompt_versions, exc)
-            raise
-    elif provider == "nvidia":
+    prompt_versions = materials_prompt_versions() if provider in {"openai", "openrouter", "nvidia"} else {}
+    if provider == "nvidia":
         selected_model = model if model and model != DEFAULT_MATERIALS_MODEL else DEFAULT_NVIDIA_MATERIALS_MODEL
-        try:
-            generation_kwargs = {
-                "ranking": ranking,
-                "model": selected_model,
-                "cv_strategy": cv_strategy,
-            }
-            # Keep operations created before target selection compatible with
-            # older workers/mocks; the generator defaults to all materials.
-            if "targets" in input_payload:
-                generation_kwargs["targets"] = targets
-            kit = build_application_kit_with_nvidia(job, **generation_kwargs)
-        except LLMMaterialsError as exc:
-            _record_failed_materials_attempt(operation_id, job_id, provider, selected_model, prompt_versions, exc)
-            raise
     elif provider == "heuristic":
         selected_model = "heuristic"
-        kit = build_application_kit(job, keywords=keywords)
-    else:
-        raise RuntimeError(f"Unsupported materials provider: {provider}")
+    try:
+        generation_kwargs = {
+            "ranking": ranking,
+            "model": selected_model,
+            "cv_strategy": cv_strategy,
+            "keywords": keywords,
+        }
+        if "targets" in input_payload:
+            generation_kwargs["targets"] = targets
+        kit = _generate_materials(provider, job, **generation_kwargs)
+    except LLMMaterialsError as exc:
+        _record_failed_materials_attempt(operation_id, job_id, provider, selected_model, prompt_versions, exc)
+        raise
 
     db.update_operation_progress(operation_id, "Saving generated application materials.")
     ats_cv_text = kit.get("ats_cv_text") or kit.get("ats_cv_notes")

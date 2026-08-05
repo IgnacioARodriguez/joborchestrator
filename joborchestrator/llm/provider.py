@@ -310,6 +310,10 @@ class OpenRouterProvider(NvidiaProvider):
         response_schema: dict[str, Any] | None = None,
         schema_name: str = "response",
         reasoning_effort: str | None = None,
+        top_p: float = 0.95,
+        frequency_penalty: float = 0.0,
+        presence_penalty: float = 0.0,
+        request_context: LLMRequestContext | None = None,
     ) -> LLMResponse:
         if not self.api_key:
             raise LLMProviderError("OPENROUTER_API_KEY is required.")
@@ -319,9 +323,9 @@ class OpenRouterProvider(NvidiaProvider):
             temperature=temperature,
             response_format="text",
             max_tokens=max_tokens,
-            top_p=0.95,
-            frequency_penalty=0,
-            presence_penalty=0,
+            top_p=top_p,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
         )
         if response_format == "json":
             body["response_format"] = (
@@ -367,6 +371,15 @@ class OpenRouterProvider(NvidiaProvider):
             usage=_usage_from_raw(raw),
         )
 
+    async def acomplete(self, *args: Any, **kwargs: Any) -> LLMResponse:
+        """OpenRouter uses the same chat transport; execute it through the shared sync adapter."""
+        # The ranking/materials engines own concurrency. Keeping this adapter
+        # transport-compatible avoids provider-specific logic in those engines.
+        import asyncio
+        kwargs.pop("client", None)
+        kwargs.pop("request_context", None)
+        return await asyncio.to_thread(self.complete, *args, **kwargs)
+
 
 class AnthropicProvider:
     provider_name = "anthropic"
@@ -392,8 +405,8 @@ class ProviderRegistry:
         "judge_secondary": "JUDGE_PROVIDER_SECONDARY",
     }
     _DEFAULTS = {
-        "ranking": "nvidia",
-        "materials": "openai",
+        "ranking": "openrouter",
+        "materials": "openrouter",
         "ats_cv": "openai",
         "judge": "openai",
         "judge_secondary": "",

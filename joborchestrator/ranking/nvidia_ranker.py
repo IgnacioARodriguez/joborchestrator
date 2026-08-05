@@ -21,6 +21,7 @@ from joborchestrator.ranking.requirements_extractor import HARD_MARKERS, NICE_MA
 from joborchestrator.ranking.schemas import CandidateProfile, Decision, VALID_DECISIONS
 from joborchestrator.ranking.versions import NVIDIA_RANKING_VERSION
 from joborchestrator.storage import persistence as db
+from joborchestrator.generation.structured import provider_acomplete, provider_complete
 from joborchestrator.intelligence.cv_profile_extractor import profile_payload_to_candidate_profile
 
 NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1"
@@ -265,6 +266,7 @@ def rank_jobs_with_nvidia(
     base_url: str = NVIDIA_BASE_URL,
     timeout: float = DEFAULT_NVIDIA_TIMEOUT_SECONDS,
     progress_callback: Callable[[int, int, dict[str, int]], None] | None = None,
+    provider_name: str = "nvidia",
 ) -> dict[str, int]:
     return asyncio.run(
         rank_jobs_with_nvidia_async(
@@ -276,7 +278,8 @@ def rank_jobs_with_nvidia(
             api_key=api_key,
             base_url=base_url,
             timeout=timeout,
-            progress_callback=progress_callback,
+        progress_callback=progress_callback,
+        provider_name=provider_name,
         )
     )
 
@@ -292,10 +295,11 @@ async def rank_jobs_with_nvidia_async(
     base_url: str = NVIDIA_BASE_URL,
     timeout: float = DEFAULT_NVIDIA_TIMEOUT_SECONDS,
     progress_callback: Callable[[int, int, dict[str, int]], None] | None = None,
+    provider_name: str = "nvidia",
 ) -> dict[str, int]:
-    key = api_key or nvidia_api_key()
+    key = api_key or (os.getenv("OPENROUTER_API_KEY") if provider_name == "openrouter" else nvidia_api_key())
     if not key:
-        raise NvidiaRankingError("NVIDIA_API_KEY or NIM_API_KEY is required.")
+        raise NvidiaRankingError(f"{provider_name.upper()} API key is required.")
 
     summary = {
         "processed": 0,
@@ -322,6 +326,7 @@ async def rank_jobs_with_nvidia_async(
                 timeout=timeout,
                 semaphore=semaphore,
                 client=client,
+                provider_name=provider_name,
             )
             for batch in batches
         ]
@@ -329,7 +334,7 @@ async def rank_jobs_with_nvidia_async(
         for task in asyncio.as_completed(tasks):
             batch, result = await task
             completed_batches += 1
-            _apply_nvidia_batch_result(batch, result, ranking_version, summary, model=model)
+            _apply_nvidia_batch_result(batch, result, ranking_version, summary, model=model, provider_name=provider_name)
             if progress_callback:
                 progress_callback(completed_batches, len(batches), dict(summary))
     return summary
@@ -372,7 +377,7 @@ def _call_nvidia_batch(
         ),
     )
     for attempt in range(DEFAULT_NVIDIA_VALIDATION_RETRIES + 1):
-        response = provider.complete(
+        response = provider_complete(provider,
             _nvidia_messages(payload, validation_feedback=validation_feedback),
             model=model,
             temperature=0,
@@ -413,6 +418,7 @@ async def _rank_nvidia_batch_async(
     timeout: float,
     semaphore: asyncio.Semaphore,
     client: httpx.AsyncClient,
+    provider_name: str = "nvidia",
 ) -> dict[str, Any]:
     async with semaphore:
         return await _call_nvidia_batch_async(
@@ -422,6 +428,7 @@ async def _rank_nvidia_batch_async(
             base_url=base_url,
             timeout=timeout,
             client=client,
+            provider_name=provider_name,
         )
 
 
@@ -434,6 +441,7 @@ async def _rank_nvidia_batch_with_context_async(
     timeout: float,
     semaphore: asyncio.Semaphore,
     client: httpx.AsyncClient,
+    provider_name: str = "nvidia",
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | Exception]:
     try:
         result = await _rank_nvidia_batch_async(
@@ -444,6 +452,7 @@ async def _rank_nvidia_batch_with_context_async(
             timeout=timeout,
             semaphore=semaphore,
             client=client,
+            provider_name=provider_name,
         )
         return jobs, result
     except Exception as exc:  # noqa: BLE001 - batch-level failures are summarized, not raised.
@@ -458,6 +467,7 @@ async def _call_nvidia_batch_async(
     base_url: str,
     timeout: float,
     client: httpx.AsyncClient,
+    provider_name: str = "nvidia",
 ) -> dict[str, Any]:
     payload = build_nvidia_ranking_payload(jobs)
     validation_feedback: str | None = None
@@ -466,14 +476,14 @@ async def _call_nvidia_batch_async(
         NvidiaProvider,
         ProviderRegistry().get(
             "ranking",
-            provider_name="nvidia",
+            provider_name=provider_name,
             api_key=api_key,
             base_url=base_url,
             timeout=timeout,
         ),
     )
     for attempt in range(DEFAULT_NVIDIA_VALIDATION_RETRIES + 1):
-        response = await provider.acomplete(
+        response = await provider_acomplete(provider,
             _nvidia_messages(payload, validation_feedback=validation_feedback),
             model=model,
             client=client,
@@ -513,6 +523,7 @@ def _apply_nvidia_batch_result(
     summary: dict[str, int],
     *,
     model: str,
+    provider_name: str = "nvidia",
 ) -> None:
     summary["processed"] += len(batch)
     if isinstance(result, Exception):
@@ -566,7 +577,7 @@ def _apply_nvidia_batch_result(
                 db.save_job_ranking(
                     job_id,
                     ranking,
-                    ranking_provider="nvidia",
+                    ranking_provider=provider_name,
                     ranking_model=model,
                     ranking_prompt_versions=prompt_versions,
                     ranking_validation_attempts=int(generation_metadata.get("validation_attempts") or 1),

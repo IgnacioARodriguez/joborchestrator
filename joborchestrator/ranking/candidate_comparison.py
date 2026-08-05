@@ -7,6 +7,7 @@ import httpx
 
 from joborchestrator.llm.observability import LLMRequestContext
 from joborchestrator.llm.provider import LLMProviderError, NvidiaProvider, ProviderRegistry
+from joborchestrator.generation.structured import provider_acomplete
 
 
 class CandidateComparisonError(RuntimeError):
@@ -24,6 +25,7 @@ async def compare_job_with_candidate(
     max_tokens: int,
     client: httpx.AsyncClient,
     batch_id: str,
+    provider_name: str = "nvidia",
 ) -> dict[str, Any]:
     """Compare an already-interpreted job against the candidate profile.
 
@@ -32,7 +34,7 @@ async def compare_job_with_candidate(
     """
     provider = ProviderRegistry().get(
         "ranking-comparison",
-        provider_name="nvidia",
+        provider_name=provider_name,
         api_key=api_key,
         base_url=base_url,
         timeout=timeout,
@@ -40,7 +42,7 @@ async def compare_job_with_candidate(
     )
     messages = _comparison_messages(interpretation, candidate_profile)
     try:
-        response = await provider.acomplete(
+        response = await provider_acomplete(provider,
             messages,
             model=model,
             client=client,

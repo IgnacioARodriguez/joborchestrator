@@ -16,6 +16,7 @@ from joborchestrator.ranking.decision_engine import parse_job_facts, rank_job_fa
 from joborchestrator.ranking.candidate_comparison import compare_job_with_candidate, normalize_composite_assessments
 from joborchestrator.llm.observability import LLMRequestContext
 from joborchestrator.storage import persistence as db
+from joborchestrator.generation.structured import provider_acomplete
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ def rank_jobs_with_nvidia_facts(
     max_tokens: int,
     validation_retries: int,
     progress_callback: Callable[[int, int, dict[str, int]], None] | None = None,
+    provider_name: str = "nvidia",
 ) -> dict[str, int]:
     return asyncio.run(
         rank_jobs_with_nvidia_facts_async(
@@ -51,6 +53,7 @@ def rank_jobs_with_nvidia_facts(
             max_tokens=max_tokens,
             validation_retries=validation_retries,
             progress_callback=progress_callback,
+            provider_name=provider_name,
         )
     )
 
@@ -68,6 +71,7 @@ async def rank_jobs_with_nvidia_facts_async(
     max_tokens: int,
     validation_retries: int,
     progress_callback: Callable[[int, int, dict[str, int]], None] | None = None,
+    provider_name: str = "nvidia",
 ) -> dict[str, int]:
     if not api_key:
         raise NvidiaFactRankingError("NVIDIA_API_KEY or NIM_API_KEY is required.")
@@ -91,6 +95,7 @@ async def rank_jobs_with_nvidia_facts_async(
                 validation_retries=validation_retries,
                 semaphore=semaphore,
                 client=client,
+                provider_name=provider_name,
             )
             for batch in batches
         ]
@@ -104,6 +109,7 @@ async def rank_jobs_with_nvidia_facts_async(
                 ranking_version=ranking_version,
                 model=model,
                 summary=summary,
+                provider_name=provider_name,
             )
             if progress_callback:
                 progress_callback(completed, len(batches), dict(summary))
@@ -125,6 +131,7 @@ async def _extract_batch_with_context(
     validation_retries: int,
     semaphore: asyncio.Semaphore,
     client: httpx.AsyncClient,
+    provider_name: str = "nvidia",
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | Exception]:
     try:
         async with semaphore:
@@ -137,6 +144,7 @@ async def _extract_batch_with_context(
                 max_tokens=max_tokens,
                 validation_retries=validation_retries,
                 client=client,
+                provider_name=provider_name,
             )
         return batch, response
     except Exception as exc:  # noqa: BLE001 - batch failures are persisted in the summary.
@@ -153,12 +161,13 @@ async def _call_fact_extraction_async(
     max_tokens: int,
     validation_retries: int,
     client: httpx.AsyncClient,
+    provider_name: str = "nvidia",
 ) -> dict[str, Any]:
     provider = cast(
         NvidiaProvider,
         ProviderRegistry().get(
             "ranking",
-            provider_name="nvidia",
+            provider_name=provider_name,
             api_key=api_key,
             base_url=base_url,
             timeout=timeout,
@@ -171,7 +180,7 @@ async def _call_fact_extraction_async(
 
     for attempt in range(max(0, int(validation_retries)) + 1):
         try:
-            response = await provider.acomplete(
+            response = await provider_acomplete(provider,
                 _fact_messages(payload, validation_feedback=feedback),
                 model=model,
                 client=client,
@@ -207,6 +216,7 @@ async def _call_fact_extraction_async(
                     max_tokens=max_tokens,
                     client=client,
                     batch_id=f"comparison-{int(item.get('job_id') or 0)}",
+                    provider_name=provider_name,
                 )
                 assessments = {
                     str(assessment.get("requirement_id")): assessment
@@ -290,6 +300,7 @@ def _apply_fact_batch_result(
     ranking_version: str,
     model: str,
     summary: dict[str, int],
+    provider_name: str = "nvidia",
 ) -> None:
     summary["processed"] += len(batch)
     if isinstance(result, Exception):
@@ -332,7 +343,7 @@ def _apply_fact_batch_result(
             db.save_job_ranking(
                 job_id,
                 ranking,
-                ranking_provider="nvidia",
+                ranking_provider=provider_name,
                 ranking_model=model,
                 ranking_prompt_versions=prompt_versions,
                 ranking_validation_attempts=int(generation.get("validation_attempts") or 1),

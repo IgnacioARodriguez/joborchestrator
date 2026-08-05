@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import inspect
 import os
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from joborchestrator.llm.provider import LLMProviderError, ProviderRegistry
+from joborchestrator.generation.structured import StructuredGenerationError, generate_json
 from joborchestrator.prompts import load_prompt
 from joborchestrator.ranking.profile import load_candidate_profile
 from joborchestrator.ranking.ranking_rules import OPENAI_INSTRUCTIONS
@@ -31,11 +32,14 @@ def rank_job_with_llm(
     model: str | None = None,
     api_key: str | None = None,
     timeout: float = 45.0,
+    provider_name: str = "openai",
+    ranking_version: str | None = None,
 ) -> RankingResult:
     profile = profile or load_candidate_profile()
-    key = api_key or os.getenv("OPENAI_API_KEY")
+    key = api_key or (os.getenv("OPENROUTER_API_KEY") if provider_name == "openrouter" else os.getenv("OPENAI_API_KEY"))
     if not key:
-        raise LLMRankingError("OPENAI_API_KEY is required to rank jobs with OpenAI.")
+        env_name = "OPENROUTER_API_KEY" if provider_name == "openrouter" else "OPENAI_API_KEY"
+        raise LLMRankingError(f"{env_name} is required to rank jobs with {provider_name}.")
 
     model_name = model or DEFAULT_LLM_MODEL
     requirements = extract_requirements(job)
@@ -45,27 +49,22 @@ def rank_job_with_llm(
         "extracted_requirements": asdict(requirements),
         "instructions": OPENAI_INSTRUCTIONS,
     }
-    response = _call_openai_responses(payload, key, model_name, timeout)
-    return _ranking_from_payload(response, llm_ranking_version(model_name))
+    call_kwargs = {"provider_name": provider_name}
+    if "provider_name" not in inspect.signature(_call_openai_responses).parameters:
+        call_kwargs = {}
+    response = _call_openai_responses(payload, key, model_name, timeout, **call_kwargs)
+    return _ranking_from_payload(response, ranking_version or llm_ranking_version(model_name))
 
 
-def _call_openai_responses(payload: dict[str, Any], api_key: str, model: str, timeout: float) -> dict[str, Any]:
+def _call_openai_responses(payload: dict[str, Any], api_key: str, model: str, timeout: float, *, provider_name: str = "openai") -> dict[str, Any]:
     try:
-        provider = ProviderRegistry().get("ranking", provider_name="openai", api_key=api_key, timeout=timeout)
-        response = provider.complete(
+        return generate_json(
             _ranking_messages(payload),
-            model=model,
-            response_format="json",
-            response_schema=_ranking_json_schema(),
-            schema_name="ranking_result",
+            role="ranking", provider_name=provider_name, api_key=api_key, timeout=timeout, model=model,
+            schema=_ranking_json_schema(), schema_name="ranking_result",
         )
-    except LLMProviderError as exc:
-        raise LLMRankingError(f"OpenAI ranking request failed: {exc}") from exc
-
-    try:
-        return json.loads(response.text)
-    except json.JSONDecodeError as exc:
-        raise LLMRankingError("OpenAI ranking response was not valid JSON") from exc
+    except StructuredGenerationError as exc:
+        raise LLMRankingError(f"{provider_name} ranking request failed: {exc}") from exc
 
 
 def build_ranking_response_body(payload: dict[str, Any], model: str) -> dict[str, Any]:

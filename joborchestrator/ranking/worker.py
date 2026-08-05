@@ -10,6 +10,7 @@ from joborchestrator.ranking.service import (
     DEFAULT_NVIDIA_MAX_CONCURRENCY,
     DEFAULT_NVIDIA_REQUEST_BATCH_SIZE,
     NvidiaRankingError,
+    rank_jobs,
     rank_jobs_with_nvidia,
 )
 from joborchestrator.storage import persistence as db
@@ -65,9 +66,10 @@ def run_worker_once(*, ranking_job_id: int | None = None, chunk_size: int = DEFA
         logger.debug("No queued/running NVIDIA ranking job found job_id=%s", ranking_job_id or "any")
         return False
 
-    if job["provider"] != "nvidia":
-        logger.error("Unsupported ranking provider job_id=%s provider=%s", job["id"], job["provider"])
-        db.fail_ranking_job(int(job["id"]), f"Unsupported ranking provider: {job['provider']}")
+    provider = str(job.get("provider") or "").strip().lower()
+    if provider not in {"nvidia", "openai", "openrouter"}:
+        logger.error("Unsupported ranking implementation job_id=%s provider=%s", job["id"], provider)
+        db.fail_ranking_job(int(job["id"]), f"Unsupported ranking implementation: {provider}")
         return True
 
     job_id = int(job["id"])
@@ -114,6 +116,7 @@ def run_worker_once(*, ranking_job_id: int | None = None, chunk_size: int = DEFA
                 total,
                 progress,
             ),
+            provider_name=provider,
         )
         logger.info("NVIDIA ranking job #%s chunk summary=%s", job_id, summary)
         missing_error = (

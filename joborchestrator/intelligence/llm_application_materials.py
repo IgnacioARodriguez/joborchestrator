@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from joborchestrator.llm.provider import LLMProviderError, ProviderRegistry
+from joborchestrator.generation.structured import StructuredGenerationError, generate_json, provider_complete
 from joborchestrator.prompts import active_prompt_version, load_prompt
 from joborchestrator.intelligence.llm_costs import estimate_application_kit_tokens, estimate_cost
 from joborchestrator.intelligence.cv_export_validation import clean_ats_cv_text_for_export
@@ -55,7 +56,13 @@ from joborchestrator.ranking.schemas import CandidateProfile
 from joborchestrator.ranking.serialization import result_to_dict
 from joborchestrator.storage import persistence as db
 
-DEFAULT_MATERIALS_MODEL = os.getenv("OPENAI_MATERIALS_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4-mini"
+DEFAULT_MATERIALS_MODEL = (
+    os.getenv("MATERIALS_MODEL")
+    or os.getenv("OPENROUTER_MATERIALS_MODEL")
+    or os.getenv("OPENAI_MATERIALS_MODEL")
+    or os.getenv("OPENAI_MODEL")
+    or "openai/gpt-4o-mini"
+)
 DEFAULT_NVIDIA_MATERIALS_MODEL = (
     os.getenv("NVIDIA_MATERIALS_MODEL")
     or os.getenv("NVIDIA_RANKING_MODEL")
@@ -208,8 +215,9 @@ def build_application_kit_with_llm(
     api_key: str | None = None,
     timeout: float = 60.0,
     validation_retry_limit: int | None = None,
+    provider_name: str = "openai",
 ) -> dict[str, str]:
-    key = api_key or os.getenv("OPENAI_API_KEY")
+    key = api_key or (os.getenv("OPENROUTER_API_KEY") if provider_name == "openrouter" else os.getenv("OPENAI_API_KEY"))
     if not key:
         raise LLMMaterialsError("OPENAI_API_KEY is required to generate materials with API.")
 
@@ -227,6 +235,7 @@ def build_application_kit_with_llm(
         model or DEFAULT_MATERIALS_MODEL,
         timeout,
         validation_retry_limit=validation_retry_limit,
+        provider_name=provider_name,
     )
     kit = _kit_from_response(kit_response)
     _attach_generation_metadata(kit, kit_response)
@@ -247,10 +256,11 @@ def build_application_kit_with_nvidia(
     validation_retry_limit: int | None = None,
     cv_strategy: str | None = None,
     targets: list[str] | None = None,
+    provider_name: str = "nvidia",
 ) -> dict[str, Any]:
-    key = api_key or os.getenv("NVIDIA_API_KEY") or os.getenv("NIM_API_KEY")
+    key = api_key or (os.getenv("OPENROUTER_API_KEY") if provider_name == "openrouter" else os.getenv("NVIDIA_API_KEY") or os.getenv("NIM_API_KEY"))
     if not key:
-        raise LLMMaterialsError("NVIDIA_API_KEY or NIM_API_KEY is required to generate materials with NVIDIA.")
+        raise LLMMaterialsError(f"{provider_name.upper()} API key is required to generate materials.")
 
     requested_targets = _normalize_requested_material_targets(targets)
     needs_cv = "ats_cv" in requested_targets
@@ -267,7 +277,7 @@ def build_application_kit_with_nvidia(
     if needs_cv:
         try:
             if routing["selected_pipeline"] == "controlled_cv":
-                cv_response = _call_nvidia_controlled_cv(payload, key, selected_model, timeout)
+                cv_response = _call_nvidia_controlled_cv(payload, key, selected_model, timeout, provider_name=provider_name)
             else:
                 cv_response = _call_nvidia_cv(
                     payload,
@@ -275,6 +285,7 @@ def build_application_kit_with_nvidia(
                     selected_model,
                     timeout,
                     validation_retry_limit=validation_retry_limit,
+                    provider_name=provider_name,
                 )
         except LLMMaterialsError as exc:
             _attach_routing_metadata_to_error(exc, routing, input_hash)
@@ -297,6 +308,7 @@ def build_application_kit_with_nvidia(
                 selected_model,
                 timeout,
                 validation_retry_limit=validation_retry_limit,
+                provider_name=provider_name,
             )
         except LLMMaterialsError as exc:
             _attach_routing_metadata_to_error(exc, routing, input_hash)
@@ -376,6 +388,37 @@ def build_application_kit_with_nvidia(
     kit = _kit_from_response(response)
     _attach_generation_metadata(kit, response)
     return kit
+
+
+def build_application_kit_with_provider(
+    provider: str,
+    job: Any,
+    *,
+    ranking: Any | None = None,
+    model: str | None = None,
+    targets: list[str] | None = None,
+    cv_strategy: str | None = None,
+    keywords: list[str] | None = None,
+) -> dict[str, Any]:
+    """Provider-neutral entry point for application-material generation.
+
+    Provider-specific adapters remain below this boundary; workers only select
+    an implementation by its configured name.
+    """
+    generators = {
+        "openai": lambda: build_application_kit_with_llm(job, ranking=ranking, model=model),
+        "nvidia": lambda: build_application_kit_with_nvidia(
+            job, ranking=ranking, model=model, cv_strategy=cv_strategy, targets=targets
+        ),
+        "openrouter": lambda: build_application_kit_with_nvidia(
+            job, ranking=ranking, model=model, cv_strategy=cv_strategy, targets=targets, provider_name="openrouter"
+        ),
+        "heuristic": lambda: build_application_kit(job, keywords=keywords or []),
+    }
+    try:
+        return generators[str(provider).strip().lower()]()
+    except KeyError as exc:
+        raise LLMMaterialsError(f"Unsupported materials generation implementation: {provider}") from exc
 
 
 def _normalize_requested_material_targets(targets: list[str] | None) -> list[str]:
@@ -1237,13 +1280,14 @@ def _call_openai(
     timeout: float,
     *,
     validation_retry_limit: int | None = None,
+    provider_name: str = "openai",
 ) -> dict[str, Any]:
     validation_feedback: str | None = None
     validation_errors: list[str] = []
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
         try:
-            parsed = _call_openai_once(payload, api_key, model, timeout, validation_feedback)
+            parsed = _call_openai_once(payload, api_key, model, timeout, validation_feedback, provider_name=provider_name)
         except LLMMaterialsError as exc:
             raise LLMMaterialsError(
                 str(exc),
@@ -1289,7 +1333,9 @@ def _call_nvidia(
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
         try:
-            parsed = _call_nvidia_once(payload, api_key, model, timeout, validation_feedback)
+            parsed = _call_nvidia_once(
+                payload, api_key, model, timeout, validation_feedback, provider_name=provider_name
+            )
         except LLMMaterialsError as exc:
             raise LLMMaterialsError(
                 str(exc),
@@ -1526,7 +1572,7 @@ def _call_openai_cv_planner(
             http_module=httpx,
         )
         response = _call_with_transport_retries(
-            lambda: provider.complete(
+            lambda: provider_complete(provider,
                 planner_messages,
                 model=model,
                 response_format="json",
@@ -1570,6 +1616,8 @@ def _call_nvidia_controlled_cv(
     api_key: str,
     model: str,
     timeout: float,
+    *,
+    provider_name: str = "nvidia",
 ) -> dict[str, Any]:
     supported_keywords = _supported_keywords_from_payload(payload)
     canonical_skills = _canonical_skills_from_payload(payload)
@@ -1579,12 +1627,12 @@ def _call_nvidia_controlled_cv(
         canonical_skills=canonical_skills,
     )
     planner_context = build_cv_planner_context(payload, cv_ir)
-    planner_response = _call_nvidia_cv_planner(planner_context, api_key, model, timeout)
+    planner_response = _call_nvidia_cv_planner(planner_context, api_key, model, timeout, provider_name=provider_name)
     planner_errors = validate_planner_response(cv_ir, planner_response)
     if planner_errors:
         retry_context = dict(planner_context)
         retry_context["planner_validation_feedback"] = planner_errors
-        planner_response = _call_nvidia_cv_planner(retry_context, api_key, model, timeout)
+        planner_response = _call_nvidia_cv_planner(retry_context, api_key, model, timeout, provider_name=provider_name)
     rendered = build_controlled_ats_cv(
         _base_cv_text(payload),
         supported_keywords,
@@ -1601,6 +1649,7 @@ def _call_nvidia_controlled_cv(
     )
     metrics = _cv_planner_coverage_metrics(cv_ir, planner_response)
     metadata = result.setdefault("_generation_metadata", {})
+    metadata.update({"provider": provider_name, "model": model, "stage": "cv_render"})
     metadata["planner_coverage"] = metrics
     _write_cv_audit(
         "planner_coverage_measured",
@@ -1648,19 +1697,25 @@ def _call_nvidia_cv_planner(
     api_key: str,
     model: str,
     timeout: float,
+    *,
+    provider_name: str = "nvidia",
 ) -> dict[str, Any]:
+    contract_kwargs = {"provider_name": provider_name} if "provider_name" in inspect.signature(_call_nvidia_contract_once).parameters else {}
     parsed = _call_nvidia_contract_once(
         _nvidia_cv_planner_contract(),
         planner_context,
         api_key,
         model,
         timeout,
+        **contract_kwargs,
     )
     parsed["_generation_metadata"] = {
         "validation_attempts": 1,
         "validation_errors": [],
         "pipeline": "controlled_cv",
         "stage": "cv_plan",
+        "provider": provider_name,
+        "model": model,
     }
     return parsed
 
@@ -1671,6 +1726,7 @@ def _call_nvidia_cv(
     timeout: float,
     *,
     validation_retry_limit: int | None = None,
+    provider_name: str = "nvidia",
 ) -> dict[str, Any]:
     validation_feedback: str | None = None
     repair_constraint_feedback: str | None = None
@@ -1680,6 +1736,7 @@ def _call_nvidia_cv(
     for attempt in range(retry_limit + 1):
         try:
             previous_response_kwargs = {"previous_response": previous_response} if previous_response and _accepts_previous_response_kwarg(_call_nvidia_contract_once) else {}
+            contract_kwargs = {"provider_name": provider_name} if "provider_name" in inspect.signature(_call_nvidia_contract_once).parameters else {}
             parsed = _call_nvidia_contract_once(
                 _nvidia_cv_contract(),
                 payload,
@@ -1688,6 +1745,7 @@ def _call_nvidia_cv(
                 timeout,
                 validation_feedback,
                 **previous_response_kwargs,
+                **contract_kwargs,
             )
         except LLMMaterialsError as exc:
             raise LLMMaterialsError(
@@ -1748,6 +1806,7 @@ def _call_nvidia_kit(
     timeout: float,
     *,
     validation_retry_limit: int | None = None,
+    provider_name: str = "nvidia",
 ) -> dict[str, Any]:
     validation_feedback: str | None = None
     repair_constraint_feedback: str | None = None
@@ -1759,6 +1818,7 @@ def _call_nvidia_kit(
             previous_response_kwargs = {
                 "previous_response": previous_response
             } if previous_response and _accepts_previous_response_kwarg(_call_nvidia_contract_once) else {}
+            contract_kwargs = {"provider_name": provider_name} if "provider_name" in inspect.signature(_call_nvidia_contract_once).parameters else {}
             parsed = _call_nvidia_contract_once(
                 _nvidia_kit_contract(),
                 payload,
@@ -1767,6 +1827,7 @@ def _call_nvidia_kit(
                 timeout,
                 validation_feedback,
                 **previous_response_kwargs,
+                **contract_kwargs,
             )
         except LLMMaterialsError as exc:
             metadata = _request_failure_metadata(attempt, validation_errors, exc)
@@ -1855,18 +1916,19 @@ def _call_nvidia_contract_once(
     timeout: float,
     validation_feedback: str | None = None,
     previous_response: dict[str, Any] | None = None,
+    provider_name: str = "nvidia",
 ) -> dict[str, Any]:
     try:
         provider = ProviderRegistry().get(
             "materials",
-            provider_name="nvidia",
+            provider_name=provider_name,
             api_key=api_key,
-            base_url=NVIDIA_BASE_URL,
+            base_url=None if provider_name == "openrouter" else NVIDIA_BASE_URL,
             timeout=timeout,
             http_module=httpx,
         )
         response = _call_with_transport_retries(
-            lambda: provider.complete(
+            lambda: provider_complete(provider,
                 _nvidia_contract_messages(
                     contract,
                     payload,
@@ -1881,7 +1943,7 @@ def _call_nvidia_contract_once(
                 frequency_penalty=0,
                 presence_penalty=0,
             ),
-            provider_name="NVIDIA",
+            provider_name=provider_name,
         )
     except LLMProviderError as exc:
         raise LLMMaterialsError(f"NVIDIA materials request failed: {exc}") from exc
@@ -1909,38 +1971,22 @@ def _call_nvidia_once(
     model: str,
     timeout: float,
     validation_feedback: str | None = None,
+    *,
+    provider_name: str = "nvidia",
 ) -> dict[str, Any]:
     user_payload = dict(payload)
     if validation_feedback:
         user_payload["previous_response_error"] = validation_feedback
         user_payload["instruction"] = "Return a corrected complete JSON object only."
     try:
-        provider = ProviderRegistry().get(
-            "materials",
-            provider_name="nvidia",
-            api_key=api_key,
-            base_url=NVIDIA_BASE_URL,
-            timeout=timeout,
-            http_module=httpx,
+        return generate_json(
+            _nvidia_materials_messages(user_payload), role="materials", provider_name=provider_name,
+            model=model, api_key=api_key, base_url=NVIDIA_BASE_URL, timeout=timeout,
+            max_tokens=int(os.getenv("NVIDIA_MATERIALS_MAX_TOKENS", "12000")), top_p=0.95,
+            transport_retries=max_transport_retries(),
         )
-        response = _call_with_transport_retries(
-            lambda: provider.complete(
-                _nvidia_materials_messages(user_payload),
-                model=model,
-                temperature=0.1,
-                response_format="json",
-                max_tokens=int(os.getenv("NVIDIA_MATERIALS_MAX_TOKENS", "12000")),
-                top_p=0.95,
-            ),
-            provider_name="NVIDIA",
-        )
-    except LLMProviderError as exc:
-        raise LLMMaterialsError(f"NVIDIA materials request failed: {exc}") from exc
-
-    try:
-        return json.loads(_extract_json_object_text(response.text))
-    except json.JSONDecodeError as exc:
-        raise LLMMaterialsError(f"NVIDIA materials response was not valid JSON: {exc}") from exc
+    except StructuredGenerationError as exc:
+        raise LLMMaterialsError(f"{provider_name} materials request failed: {exc}") from exc
 
 
 def _call_openai_once(
@@ -1949,36 +1995,20 @@ def _call_openai_once(
     model: str,
     timeout: float,
     validation_feedback: str | None = None,
+    provider_name: str = "openai",
 ) -> dict[str, Any]:
     user_payload = dict(payload)
     if validation_feedback:
         user_payload["previous_response_error"] = validation_feedback
         user_payload["instruction"] = "Return a corrected complete JSON object only."
     try:
-        provider = ProviderRegistry().get(
-            "materials",
-            provider_name="openai",
-            api_key=api_key,
-            timeout=timeout,
-            http_module=httpx,
+        return generate_json(
+            _openai_materials_messages(user_payload), role="materials", provider_name=provider_name,
+            model=model, api_key=api_key, timeout=timeout, schema=_materials_schema(),
+            schema_name="application_kit", transport_retries=max_transport_retries(),
         )
-        response = _call_with_transport_retries(
-            lambda: provider.complete(
-                _openai_materials_messages(user_payload),
-                model=model,
-                response_format="json",
-                response_schema=_materials_schema(),
-                schema_name="application_kit",
-            ),
-            provider_name="OpenAI",
-        )
-    except LLMProviderError as exc:
+    except StructuredGenerationError as exc:
         raise LLMMaterialsError(f"OpenAI materials request failed: {exc}") from exc
-
-    try:
-        return json.loads(response.text)
-    except json.JSONDecodeError as exc:
-        raise LLMMaterialsError("OpenAI materials response was not valid JSON.") from exc
 
 
 def _nvidia_contract_messages(

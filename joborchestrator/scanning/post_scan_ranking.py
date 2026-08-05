@@ -9,6 +9,7 @@ from joborchestrator.ranking.nvidia_ranker import (
     DEFAULT_NVIDIA_MODEL,
     DEFAULT_NVIDIA_REQUEST_BATCH_SIZE,
 )
+from joborchestrator.ranking.service import DEFAULT_RANKING_MODEL
 from joborchestrator.ranking.versions import (
     NVIDIA_RANKING_VERSION,
 )
@@ -135,7 +136,7 @@ def queue_post_scan_ranking(
                 input_payload.get(
                     "ranking_model"
                 )
-                or DEFAULT_NVIDIA_MODEL
+                or DEFAULT_RANKING_MODEL
             ),
             ranking_version=(
                 ranking_version
