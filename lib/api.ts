@@ -96,12 +96,14 @@ export const api = {
     freshness = "active",
     query?: string,
     pipeline: ApplyQueuePipeline = "all",
+    includeCounts = true,
   ) {
     const params = new URLSearchParams()
     params.set("limit", String(limit))
     params.set("offset", String(offset))
     params.set("freshness", freshness)
     params.set("pipeline", pipeline)
+    params.set("include_counts", String(includeCounts))
     if (query?.trim()) {
       params.set("q", query.trim())
     }

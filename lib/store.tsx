@@ -317,6 +317,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         "active",
         undefined,
         "apply",
+        false,
       )
       if (requestId !== preparationRequestSeq.current) return
       setPreparationJobs(data.jobs)
