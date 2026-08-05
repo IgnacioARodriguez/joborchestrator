@@ -21,7 +21,6 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Input } from "@/components/ui/input"
 import { DecisionBadge, ScoreRing } from "@/components/badges"
 import { PageHeader } from "@/components/page-chrome"
-import { TaskProgressCard } from "@/components/task-progress-card"
 import { useStore } from "@/lib/store"
 import type { JobListItem, PipelineStatus } from "@/lib/types"
 import { PIPELINE_LABELS, rankingSummaryText, relativeTime } from "@/lib/job-ui"
@@ -317,12 +316,6 @@ export function JobsScreen({
           </Button>
         }
       />
-
-      {searchActive ? <TaskProgressCard title="Buscando nuevas oportunidades" description={searchMessage ?? "Consultando las fuentes configuradas."} startedAt={searchStartedAt} steps={[{ label: "Preparando tus búsquedas", state: "done" }, { label: "Consultando portales y fuentes", state: "active" }, { label: "Eliminando ofertas repetidas", state: "pending" }, { label: "Ordenando los resultados", state: "pending" }]} /> : searchMessage ? (
-        <div className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground" role="status" aria-live="polite">
-          {searchMessage}
-        </div>
-      ) : null}
 
       {pendingJobChanges ? (
         <div
