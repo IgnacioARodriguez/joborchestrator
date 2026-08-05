@@ -30,13 +30,8 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import {
-  Drawer,
-  DrawerContent,
-  DrawerClose,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerDescription,
-} from "@/components/ui/drawer"
+  Dialog,
+} from "@base-ui/react/dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
@@ -1234,12 +1229,12 @@ const DetailBody = memo(function DetailBody({
       data-base-ui-swipe-ignore
       className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
     >
-      <div className="flex flex-col gap-5 p-4">
-        <section className="flex flex-col gap-5 rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
-          <div className="grid gap-4 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center">
+      <div className="flex flex-col gap-5 bg-white p-5 text-[#17233d] sm:p-8">
+        <section className="flex flex-col gap-6 rounded-2xl border-0 bg-white p-0 shadow-none">
+          <div className="grid gap-5 sm:grid-cols-[150px_minmax(0,1fr)] sm:items-center">
             <div className="flex flex-col items-center gap-1">
-              <ScoreRing score={job.ranking.final_score} />
-              <span className="text-xs font-semibold text-success">
+              <ScoreRing score={job.ranking.final_score} size={140} />
+              <span className="-mt-10 text-sm font-semibold text-[#269667]">
                 Match{" "}
                 {job.ranking.final_score >= 85
                   ? "excelente"
@@ -1250,32 +1245,32 @@ const DetailBody = memo(function DetailBody({
             </div>
 
             <div className="min-w-0">
-              <h2 className="pr-8 text-pretty text-xl font-semibold leading-tight text-foreground sm:text-2xl">
+              <h2 className="pr-8 text-pretty text-2xl font-bold leading-tight tracking-[-0.02em] text-[#17233d] sm:text-[30px]">
                 {job.title}
               </h2>
 
-              <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <div className="mt-4 flex flex-wrap gap-2 text-sm text-[#526078]">
                 <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5">
-                  <Building2 className="size-3.5" />
+                  <Building2 className="size-4 text-[#526078]" />
                   {job.company}
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5">
-                  <MapPin className="size-3.5" />
+                  <MapPin className="size-4 text-[#526078]" />
                   {job.location}
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5">
-                  <Radio className="size-3.5" />
+                  <Radio className="size-4 text-[#526078]" />
                   {job.source}
                 </span>
                 {applicants ? (
                   <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5">
-                    <Users className="size-3.5" />
+                  <Users className="size-4 text-[#526078]" />
                     {applicants}
                   </span>
                 ) : null}
                 {salary ? (
                   <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5">
-                    <WalletCards className="size-3.5" />
+                  <WalletCards className="size-4 text-[#526078]" />
                     {salary}
                   </span>
                 ) : null}
@@ -1323,9 +1318,9 @@ const DetailBody = memo(function DetailBody({
 
           {automationBusy ? <TaskProgressCard title={applicationOperationId ? "Preparando la postulación" : "Generando materiales"} description={applicationOperationId ? "Revisando el portal y preparando el formulario." : "Preparando los materiales de la candidatura."} steps={[{ label: "Preparando datos y materiales", state: materialsOperationId ? "active" : "done" }, { label: "Revisando el portal y el formulario", state: applicationOperationId ? "active" : "pending" }, { label: "Preparando la revisión final", state: "pending" }]} /> : null}
 
-          <div className="grid gap-2 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto]">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
             <Button
-              className="h-11"
+              className="h-14 rounded-lg bg-[#315bea] text-base font-semibold shadow-[0_5px_12px_rgba(49,91,234,.18)] hover:bg-[#264dcc]"
               disabled={automationBusy || applicationFinished}
               onClick={() => void prepareApplication()}
             >
@@ -1335,7 +1330,7 @@ const DetailBody = memo(function DetailBody({
                 : "Aplicar automáticamente"}
             </Button>
             <Button
-              className="h-11"
+              className="h-14 rounded-lg border-[#d8dee9] bg-white text-base font-semibold text-[#17233d] hover:bg-[#f7f9fc]"
               variant="outline"
               onClick={() => openExternal(job.url)}
             >
@@ -1343,7 +1338,7 @@ const DetailBody = memo(function DetailBody({
               Ver oferta
             </Button>
             <Button
-              className="h-11"
+              className="h-14 rounded-lg px-4 text-base font-semibold text-[#315bea] hover:bg-[#eef3ff]"
               variant="ghost"
               onClick={() => openExternal(applyUrlForJob(job))}
             >
@@ -1353,10 +1348,10 @@ const DetailBody = memo(function DetailBody({
           </div>
 
           <div className="grid gap-3 lg:grid-cols-2">
-            <section className="rounded-xl border border-border bg-background p-4">
+            <section className="rounded-2xl border border-[#dfe5ee] bg-white p-5">
               <div className="flex items-center gap-2">
-                <Target className="size-5 text-success" />
-                <h3 className="text-sm font-semibold text-foreground">
+                <Target className="size-6 text-[#2aa574]" />
+                <h3 className="text-base font-bold text-[#17233d]">
                   Por qué encaja
                 </h3>
               </div>
@@ -1364,19 +1359,19 @@ const DetailBody = memo(function DetailBody({
                 {fitReasons.map((reason) => (
                   <li
                     key={reason}
-                    className="flex items-start gap-2 text-xs leading-relaxed text-muted-foreground"
+                    className="flex items-start gap-2 text-sm leading-relaxed text-[#526078]"
                   >
-                    <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
+                    <CheckCircle2 className="mt-0.5 size-5 shrink-0 rounded-full bg-[#dff4eb] p-0.5 text-[#2aa574]" />
                     <span>{reason}</span>
                   </li>
                 ))}
               </ul>
             </section>
 
-            <section className="rounded-xl border border-border bg-background p-4">
+            <section className="rounded-2xl border border-[#dfe5ee] bg-white p-5">
               <div className="flex items-center gap-2">
-                <Lightbulb className="size-5 text-primary" />
-                <h3 className="text-sm font-semibold text-foreground">
+                <Lightbulb className="size-6 text-[#315bea]" />
+                <h3 className="text-base font-bold text-[#17233d]">
                   Recomendaciones
                 </h3>
               </div>
@@ -1384,9 +1379,9 @@ const DetailBody = memo(function DetailBody({
                 {recommendations.map((recommendation) => (
                   <li
                     key={recommendation}
-                    className="flex items-start gap-2 text-xs leading-relaxed text-muted-foreground"
+                    className="flex items-start gap-2 text-sm leading-relaxed text-[#526078]"
                   >
-                    <CircleDot className="mt-0.5 size-4 shrink-0 text-primary" />
+                    <CircleDot className="mt-1 size-2 shrink-0 fill-[#315bea] text-[#315bea]" />
                     <span>{recommendation}</span>
                   </li>
                 ))}
@@ -1394,10 +1389,10 @@ const DetailBody = memo(function DetailBody({
             </section>
           </div>
 
-          <section className="rounded-xl border border-border bg-background p-4">
+          <section className="rounded-2xl border border-[#dfe5ee] bg-white p-5">
             <div className="flex items-center gap-2">
-              <FileSearch className="size-5 text-primary" />
-              <h3 className="text-sm font-semibold text-foreground">
+              <FileSearch className="size-6 text-[#315bea]" />
+              <h3 className="text-base font-bold text-[#17233d]">
                 Materiales generados
               </h3>
             </div>
@@ -2052,28 +2047,30 @@ export function JobDetailDrawer({
   }, [applications, job])
 
   return (
-    <Drawer
+    <Dialog.Root
       open={jobId !== null}
       onOpenChange={(open) => {
         if (!open) onClose()
       }}
-      showSwipeHandle
     >
-      <DrawerContent className="relative data-[swipe-axis=y]:[--drawer-content-max-height:calc(100dvh-3rem)] data-[swipe-axis=y]:[--drawer-height:92dvh]">
-        <DrawerHeader className="absolute right-4 top-4 z-20 p-0 text-left">
-          <DrawerTitle className="sr-only">
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-[2px] transition-opacity data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        <Dialog.Viewport className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
+          <Dialog.Popup className="relative flex h-[min(92dvh,820px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl outline-none transition duration-200 data-ending-style:scale-[.98] data-ending-style:opacity-0 data-starting-style:scale-[.98] data-starting-style:opacity-0">
+          <div className="absolute right-4 top-4 z-20">
+            <Dialog.Title className="sr-only">
             {job?.title ?? summary?.title ?? "Job detail"}
-          </DrawerTitle>
-          <DrawerDescription className="sr-only">
+            </Dialog.Title>
+            <Dialog.Description className="sr-only">
             Ranking, description, and application materials for this job.
-          </DrawerDescription>
-          <DrawerClose
+            </Dialog.Description>
+            <Dialog.Close
             aria-label="Close job detail"
             className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/20 focus-visible:outline-none"
           >
             <X className="size-4" />
-          </DrawerClose>
-        </DrawerHeader>
+            </Dialog.Close>
+          </div>
         {job ? (
           <DetailBody
             job={job}
@@ -2110,7 +2107,9 @@ export function JobDetailDrawer({
             )}
           </div>
         )}
-      </DrawerContent>
-    </Drawer>
+          </Dialog.Popup>
+        </Dialog.Viewport>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }

@@ -131,7 +131,8 @@ export function ScoreRing({
       </svg>
       <span
         className={cn(
-          "absolute inset-0 flex items-center justify-center text-sm font-semibold tabular-nums",
+          "absolute inset-0 flex items-center justify-center font-semibold tabular-nums",
+          size >= 100 ? "text-4xl" : "text-sm",
           tone.ring,
         )}
       >
