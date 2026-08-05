@@ -163,6 +163,16 @@ CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness_v2
         COALESCE(pipeline_status, 'new'),
         COALESCE(posted_at, first_seen_at, last_seen_at)
     );
+CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness_v3
+    ON job_postings(
+        CASE
+          WHEN posted_at IS NULL THEN COALESCE(first_seen_at, last_seen_at)
+          WHEN posted_at NOT LIKE '____-__-__%'
+               AND posted_at GLOB '[0-9]*'
+            THEN datetime(CAST(posted_at AS INTEGER), 'unixepoch')
+          ELSE posted_at
+        END
+    );
 
 CREATE TABLE IF NOT EXISTS job_hiring_contacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -702,6 +712,7 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
 
     required_indexes = {
         "idx_job_postings_apply_freshness_v2",
+        "idx_job_postings_apply_freshness_v3",
         "idx_job_postings_pipeline_dates",
         "idx_job_rankings_job_version",
         "idx_applications_job_status",
@@ -779,6 +790,12 @@ def _ensure_scanner_columns(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness_v2 "
         "ON job_postings(COALESCE(pipeline_status, 'new'), "
         "COALESCE(posted_at, first_seen_at, last_seen_at))"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness_v3 "
+        "ON job_postings(CASE WHEN posted_at IS NULL THEN COALESCE(first_seen_at, last_seen_at) "
+        "WHEN posted_at NOT LIKE '____-__-__%' AND posted_at GLOB '[0-9]*' "
+        "THEN datetime(CAST(posted_at AS INTEGER), 'unixepoch') ELSE posted_at END)"
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_job_rankings_job_version "
