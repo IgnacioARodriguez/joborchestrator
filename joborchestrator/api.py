@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
-from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import asdict
 from io import BytesIO
 from pathlib import Path
@@ -65,6 +67,23 @@ from joborchestrator.storage import persistence as db
 
 
 app = FastAPI(title="Job Orchestrator API")
+
+_APPLY_QUEUE_QUERY_TIMEOUT_SECONDS = 15
+_APPLY_QUEUE_COUNT_CACHE_TTL_SECONDS = 30
+_apply_queue_count_cache: dict[tuple[str, str, str], tuple[float, Any]] = {}
+_apply_queue_count_cache_lock = threading.Lock()
+
+
+def _cached_apply_queue_count(key: tuple[str, str, str], loader: Any) -> Any:
+    now = time.monotonic()
+    with _apply_queue_count_cache_lock:
+        cached = _apply_queue_count_cache.get(key)
+        if cached and now - cached[0] < _APPLY_QUEUE_COUNT_CACHE_TTL_SECONDS:
+            return cached[1]
+    value = loader()
+    with _apply_queue_count_cache_lock:
+        _apply_queue_count_cache[key] = (time.monotonic(), value)
+    return value
 
 app.add_middleware(
     CORSMiddleware,
@@ -628,7 +647,8 @@ def apply_queue(
     effective_offset = max(0, int(offset))
     ranking_versions = filter_llm_ranking_versions(db.get_ranking_versions())
     selected_ranking_version = ranking_version or (ranking_versions[0] if ranking_versions else None)
-    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="apply-queue") as executor:
+    executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="apply-queue")
+    try:
         jobs_future = executor.submit(
             db.get_apply_queue_job_postings,
             selected_ranking_version,
@@ -638,26 +658,40 @@ def apply_queue(
             q,
             pipeline_filter,
         )
-        freshness_future = executor.submit(db.count_job_freshness_buckets) if include_counts else None
+        freshness_future = (
+            executor.submit(
+                _cached_apply_queue_count,
+                ("freshness", "", ""),
+                db.count_job_freshness_buckets,
+            )
+            if include_counts
+            else None
+        )
         pipeline_future = (
             executor.submit(
-                db.count_apply_queue_pipeline_buckets,
-                freshness_filter,
-                q,
+                _cached_apply_queue_count,
+                ("pipeline", freshness_filter, q.strip() if q else ""),
+                lambda: db.count_apply_queue_pipeline_buckets(freshness_filter, q),
             )
             if include_counts
             else None
         )
         total_future = executor.submit(
-            db.count_apply_queue_job_postings,
-            freshness_filter,
-            q,
-            pipeline_filter,
+            _cached_apply_queue_count,
+            ("total", freshness_filter, f"{q.strip() if q else ''}:{pipeline_filter}"),
+            lambda: db.count_apply_queue_job_postings(freshness_filter, q, pipeline_filter),
         )
-        rows = jobs_future.result().to_dict("records")
-        freshness_counts = freshness_future.result() if freshness_future else {}
-        pipeline_counts = pipeline_future.result() if pipeline_future else {}
-        total = total_future.result()
+        rows = jobs_future.result(timeout=_APPLY_QUEUE_QUERY_TIMEOUT_SECONDS).to_dict("records")
+        freshness_counts = freshness_future.result(timeout=_APPLY_QUEUE_QUERY_TIMEOUT_SECONDS) if freshness_future else {}
+        pipeline_counts = pipeline_future.result(timeout=_APPLY_QUEUE_QUERY_TIMEOUT_SECONDS) if pipeline_future else {}
+        total = total_future.result(timeout=_APPLY_QUEUE_QUERY_TIMEOUT_SECONDS)
+    except FutureTimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="La base de datos tardó demasiado en responder. Reintenta en unos segundos.",
+        ) from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
     jobs = sorted(
         [
             job_list_item_dto(row, _ranking_from_apply_queue_row(row))
