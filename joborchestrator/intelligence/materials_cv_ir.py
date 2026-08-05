@@ -274,14 +274,44 @@ def render_ats_cv(
     cv_ir: CandidateCvIR,
     plan: AtsCvPlan | None = None,
     *,
+    supported_keywords: list[str] | None = None,
     min_bullets_per_role: int | None = None,
+    max_bullets_per_role: int | None = None,
 ) -> str:
     plan = plan or AtsCvPlan()
     plan_errors = validate_ats_cv_plan(cv_ir, plan)
     if plan_errors:
         raise ValueError("; ".join(plan_errors))
 
+    # The planner prioritizes skills, while the source-backed ATS keyword map
+    # recovers relevant skills that model variability may omit.
     selected_skill_ids = set(plan.skill_ids)
+    keyword_tokens = {
+        token
+        for value in (supported_keywords or [])
+        for token in re.findall(r"[a-z0-9+#.]+", str(value or "").casefold())
+        if len(token) > 1
+    }
+    ranked_candidates: list[tuple[int, int, str]] = []
+    for index, skill in enumerate(cv_ir.skills):
+        skill_tokens = set(re.findall(r"[a-z0-9+#.]+", skill.name.casefold()))
+        relevance = len(skill_tokens & keyword_tokens)
+        if relevance:
+            ranked_candidates.append((relevance, -index, skill.id))
+    # LLM-selected skills lead; deterministic keyword relevance fills the
+    # remaining slots, keeping the main block focused and stable.
+    ordered_ids = [skill.id for skill in cv_ir.skills if skill.id in selected_skill_ids]
+    for _, _, skill_id in sorted(ranked_candidates, reverse=True):
+        if skill_id not in ordered_ids:
+            ordered_ids.append(skill_id)
+        if len(ordered_ids) >= 12:
+            break
+    selected_skill_ids = {
+        skill_id for skill_id in ordered_ids[:12]
+        if not _is_nontechnical_skill(
+            next((skill.name for skill in cv_ir.skills if skill.id == skill_id), "")
+        )
+    }
     selected_skills = [
         skill.name
         for skill in cv_ir.skills
@@ -339,6 +369,8 @@ def render_ats_cv(
             if bullet not in bullets:
                 bullets.append(bullet)
         bullets.sort(key=lambda bullet: _bullet_order(role, bullet))
+        if max_bullets_per_role is not None:
+            bullets = bullets[:max(int(max_bullets_per_role), required)]
 
         for bullet in bullets:
             output.append(f"- {_strip_bullet_prefix(bullet.source_text)}")
@@ -736,6 +768,12 @@ def _bullet_order(role: ExperienceRole, bullet: EvidenceBullet) -> int:
         return len(role.bullets)
 
 
+def _is_nontechnical_skill(name: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(name or "").casefold()).strip()
+    return bool(
+        re.search(r"\b(english|spanish|native|professional working proficiency|b2|c1|c2)\b", normalized)
+        or normalized in {"cloud", "internal platforms", "stakeholder", "business", "technical skills"}
+    )
 def _dedupe_strings(values: Iterable[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []

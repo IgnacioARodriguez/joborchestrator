@@ -11,6 +11,7 @@ import time
 import unicodedata
 from dataclasses import asdict, is_dataclass
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -31,7 +32,7 @@ from joborchestrator.intelligence.materials_cv_semantics import validate_rendere
 from joborchestrator.intelligence.materials_keywords import derive_keywords_used
 from joborchestrator.intelligence.materials_kit import parse_autofill, render_autofill
 from joborchestrator.intelligence.materials_language import detect_job_language, language_mismatch
-from joborchestrator.intelligence.materials_planner import build_cv_planner_context
+from joborchestrator.intelligence.materials_planner import build_cv_planner_context, validate_planner_response
 from joborchestrator.intelligence.materials_routing import (
     controlled_cv_enabled,
     max_semantic_repairs,
@@ -70,6 +71,66 @@ DEFAULT_MATERIALS_VALIDATION_RETRIES = int(
 MAX_MATERIALS_VALIDATION_RETRIES = int(os.getenv("MAX_MATERIALS_VALIDATION_RETRIES", "6"))
 RECRUITER_MESSAGE_MAX_CHARS = 320
 logger = logging.getLogger(__name__)
+CV_AUDIT_LOG_PATH = Path("logs") / "cv_generation_audit.jsonl"
+
+
+def _write_cv_audit(event: str, **data: Any) -> None:
+    """Persist provider-agnostic CV planner audit events."""
+    record = {"timestamp": time.time(), "event": event, **data}
+    try:
+        CV_AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with CV_AUDIT_LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    except OSError:
+        logger.exception("Could not persist CV audit event=%s", event)
+
+
+def record_cv_generation_history(
+    *,
+    job_id: int,
+    cv_text: str,
+    provider: str,
+    model: str,
+    stage: str = "cv_job_analysis_controlled_generation",
+    attempt_number: int = 1,
+    input_hash: str | None = None,
+    validation_errors: list[str] | None = None,
+    accepted: bool = True,
+    operation_id: int | None = None,
+) -> int:
+    """Persist a complete CV result for formal and manual generation paths."""
+    issues = [str(error) for error in validation_errors or []]
+    attempt_id = db.record_materials_generation_attempt(
+        operation_id=operation_id,
+        job_id=job_id,
+        stage=stage,
+        attempt_number=attempt_number,
+        provider=provider,
+        model=model,
+        prompt_version=_materials_prompt_versions_text(materials_prompt_versions()),
+        input_hash=input_hash,
+        output_text=str(cv_text or ""),
+        validation_issues=issues_to_dicts(
+            [issue for error in issues for issue in validation_feedback_to_issues(error)]
+        ),
+        accepted=accepted,
+    )
+    _write_cv_audit(
+        "cv_generation_persisted",
+        job_id=job_id,
+        attempt_id=attempt_id,
+        provider=provider,
+        model=model,
+        stage=stage,
+        attempt_number=attempt_number,
+        input_hash=input_hash,
+        cv_text=str(cv_text or ""),
+        validation_errors=issues,
+        accepted=accepted,
+    )
+    return attempt_id
+
+
 ROLE_ATTRIBUTION_TECH_TERMS = [
     "Python",
     "JavaScript",
@@ -153,6 +214,13 @@ def build_application_kit_with_llm(
         raise LLMMaterialsError("OPENAI_API_KEY is required to generate materials with API.")
 
     payload = _materials_payload(job, ranking)
+    _write_cv_audit(
+        "cv_reference_snapshot",
+        job_id=_to_dict(job).get("id"),
+        job_title=_to_dict(job).get("title"),
+        existing_cv_text=str(_to_dict(job).get("ats_cv_text") or ""),
+        has_existing_cv=bool(str(_to_dict(job).get("ats_cv_text") or "").strip()),
+    )
     kit_response = _call_openai(
         payload,
         key,
@@ -1351,11 +1419,18 @@ def _call_openai_controlled_cv_fallback(
     )
     planner_context = build_cv_planner_context(payload, cv_ir)
     planner_response = _call_openai_cv_planner(planner_context, api_key, model, timeout)
+    planner_errors = validate_planner_response(cv_ir, planner_response)
+    if planner_errors:
+        retry_context = dict(planner_context)
+        retry_context["planner_validation_feedback"] = planner_errors
+        planner_response = _call_openai_cv_planner(retry_context, api_key, model, timeout)
     rendered = build_controlled_ats_cv(
         _base_cv_text(payload),
         supported_keywords,
         canonical_skills=canonical_skills,
         planner_response=planner_response,
+        min_bullets_per_role=4,
+        max_bullets_per_role=6,
     )
 
     previous_metadata = (
@@ -1409,7 +1484,14 @@ def _call_openai_controlled_cv_fallback(
             "pipeline": "controlled_cv",
             "stage": "fallback",
             "fallback_provider": "openai",
+            "planner_coverage": _cv_planner_coverage_metrics(cv_ir, planner_response),
         }
+    )
+    _write_cv_audit(
+        "planner_coverage_measured",
+        provider=os.getenv("MATERIALS_PROVIDER") or "openai",
+        model=model,
+        metrics=metadata["planner_coverage"],
     )
     rendered["_generation_metadata"] = metadata
     return rendered
@@ -1422,26 +1504,53 @@ def _call_openai_cv_planner(
     model: str,
     timeout: float,
 ) -> dict[str, Any]:
+    configured_provider = ProviderRegistry().provider_name_for_role("materials")
+    provider_key = api_key
+    if configured_provider == "openrouter":
+        provider_key = os.getenv("OPENROUTER_API_KEY") or api_key
+    planner_messages = _openai_cv_planner_messages(planner_context)
+    _write_cv_audit(
+        "planner_request_prepared",
+        provider=configured_provider,
+        model=model,
+        context=planner_context,
+        messages=planner_messages,
+        response_schema=_cv_planner_schema(),
+    )
     try:
         provider = ProviderRegistry().get(
             "materials",
-            provider_name="openai",
-            api_key=api_key,
+            provider_name=configured_provider,
+            api_key=provider_key,
             timeout=timeout,
             http_module=httpx,
         )
         response = _call_with_transport_retries(
             lambda: provider.complete(
-                _openai_cv_planner_messages(planner_context),
+                planner_messages,
                 model=model,
                 response_format="json",
                 response_schema=_cv_planner_schema(),
                 schema_name="ats_cv_plan",
             ),
-            provider_name="OpenAI",
+            provider_name=configured_provider,
         )
     except LLMProviderError as exc:
-        raise LLMMaterialsError(f"OpenAI CV planner fallback request failed: {exc}") from exc
+        _write_cv_audit(
+            "planner_request_failed",
+            provider=configured_provider,
+            model=model,
+            error=str(exc),
+        )
+        raise LLMMaterialsError(f"{configured_provider} CV planner request failed: {exc}") from exc
+    _write_cv_audit(
+        "planner_response_received",
+        provider=response.provider,
+        model=response.model,
+        usage=response.usage,
+        raw_response=response.raw,
+        response_text=response.text,
+    )
     try:
         parsed = json.loads(response.text)
     except json.JSONDecodeError as exc:
@@ -1451,7 +1560,8 @@ def _call_openai_cv_planner(
         "validation_errors": [],
         "pipeline": "controlled_cv",
         "stage": "fallback",
-        "fallback_provider": "openai",
+        "provider": configured_provider,
+        "model": model,
     }
     return parsed
 
@@ -1470,18 +1580,66 @@ def _call_nvidia_controlled_cv(
     )
     planner_context = build_cv_planner_context(payload, cv_ir)
     planner_response = _call_nvidia_cv_planner(planner_context, api_key, model, timeout)
+    planner_errors = validate_planner_response(cv_ir, planner_response)
+    if planner_errors:
+        retry_context = dict(planner_context)
+        retry_context["planner_validation_feedback"] = planner_errors
+        planner_response = _call_nvidia_cv_planner(retry_context, api_key, model, timeout)
     rendered = build_controlled_ats_cv(
         _base_cv_text(payload),
         supported_keywords,
         canonical_skills=canonical_skills,
         planner_response=planner_response,
+        min_bullets_per_role=4,
+        max_bullets_per_role=6,
     )
-    return _validate_controlled_cv_result(
+    result = _validate_controlled_cv_result(
         rendered,
         payload,
-        provider="NVIDIA",
+        provider=ProviderRegistry().provider_name_for_role("materials"),
         stage="cv_render",
     )
+    metrics = _cv_planner_coverage_metrics(cv_ir, planner_response)
+    metadata = result.setdefault("_generation_metadata", {})
+    metadata["planner_coverage"] = metrics
+    _write_cv_audit(
+        "planner_coverage_measured",
+        provider=metadata.get("provider") or ProviderRegistry().provider_name_for_role("materials"),
+        model=model,
+        metrics=metrics,
+    )
+    return result
+
+
+def _cv_planner_coverage_metrics(
+    cv_ir: CandidateCvIR,
+    planner_response: dict[str, Any],
+) -> dict[str, Any]:
+    role_plans = [item for item in planner_response.get("role_plans") or [] if isinstance(item, dict)]
+    selected_bullet_ids = {
+        str(bullet_id)
+        for role_plan in role_plans
+        for bullet_id in role_plan.get("selected_bullet_ids") or []
+    }
+    available_bullet_count = sum(len(role.bullets) for role in cv_ir.roles)
+    selected_skill_ids = {
+        str(skill_id) for skill_id in planner_response.get("skill_ids") or []
+    }
+    return {
+        "summary_line_count": len(planner_response.get("summary_lines") or []),
+        "selected_skill_count": len(selected_skill_ids),
+        "available_skill_count": len(cv_ir.skills),
+        "selected_bullet_count": len(selected_bullet_ids),
+        "available_bullet_count": available_bullet_count,
+        "selected_bullet_ratio": round(
+            len(selected_bullet_ids) / available_bullet_count, 3
+        ) if available_bullet_count else 0.0,
+        "role_plan_count": len(role_plans),
+        "role_count": len(cv_ir.roles),
+        "all_roles_planned": {role.id for role in cv_ir.roles}.issubset(
+            {str(item.get("role_id")) for item in role_plans}
+        ),
+    }
 
 
 

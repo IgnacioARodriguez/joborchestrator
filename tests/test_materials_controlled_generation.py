@@ -351,6 +351,32 @@ def test_forbidden_aliases_are_absent_from_generation_context():
     assert forbidden_aliases_absent_from_generation_context(context, {"Kubernetes": ["Kubernetes", "EKS"]})
 
 
+def test_planner_coverage_metrics_measure_selection_without_forcing_it():
+    metrics = llm._cv_planner_coverage_metrics(
+        _cv_ir(),
+        {
+            "summary_lines": [{"text": "Backend developer", "evidence_ids": ["fact_01"]}],
+            "skill_ids": ["skill_python", "skill_rest"],
+            "role_plans": [
+                {"role_id": "role_fiction", "selected_bullet_ids": ["fiction_b1"]},
+                {"role_id": "role_talan", "selected_bullet_ids": ["talan_b1"]},
+            ],
+        },
+    )
+
+    assert metrics == {
+        "summary_line_count": 1,
+        "selected_skill_count": 2,
+        "available_skill_count": 2,
+        "selected_bullet_count": 2,
+        "available_bullet_count": 4,
+        "selected_bullet_ratio": 0.5,
+        "role_plan_count": 2,
+        "role_count": 2,
+        "all_roles_planned": True,
+    }
+
+
 def test_summary_claims_require_evidence_ids():
     plan = AtsCvPlan(summary_lines=[type("Line", (), {"text": "Unsupported claim", "evidence_ids": []})()])
     assert validate_ats_cv_plan(_cv_ir(), plan) == ["summary line must include at least one evidence id"]

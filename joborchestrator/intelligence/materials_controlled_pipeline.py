@@ -22,6 +22,7 @@ def build_controlled_ats_cv(
     canonical_skills: list[str] | None = None,
     planner_response: dict[str, Any] | None = None,
     min_bullets_per_role: int | None = None,
+    max_bullets_per_role: int | None = None,
 ) -> dict[str, Any]:
     canonical = list(canonical_skills or [])
     cv_ir = parse_candidate_cv_ir(
@@ -39,7 +40,9 @@ def build_controlled_ats_cv(
     ats_cv_text = render_ats_cv(
         cv_ir,
         plan,
+        supported_keywords=supported_keywords,
         min_bullets_per_role=min_bullets_per_role,
+        max_bullets_per_role=max_bullets_per_role,
     )
     validation_errors = [*cv_ir.parse_warnings, *plan_errors]
     return {
