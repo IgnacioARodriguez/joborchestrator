@@ -2132,7 +2132,7 @@ def _cv_planner_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
-        "required": ["summary_lines", "skill_ids", "role_plans"],
+        "required": ["summary_lines", "skill_ids", "role_plans", "bullet_evaluations"],
         "properties": {
             "summary_lines": {
                 "type": "array",
@@ -2156,6 +2156,31 @@ def _cv_planner_schema() -> dict[str, Any]:
                     "properties": {
                         "role_id": {"type": "string"},
                         "selected_bullet_ids": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
+            "rewritten_bullets": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["bullet_id", "rewritten_text"],
+                    "properties": {
+                        "bullet_id": {"type": "string"},
+                        "rewritten_text": {"type": "string"},
+                    },
+                },
+            },
+            "bullet_evaluations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["bullet_id", "action", "reason"],
+                    "properties": {
+                        "bullet_id": {"type": "string"},
+                        "action": {"type": "string", "enum": ["keep", "rewrite"]},
+                        "reason": {"type": "string"},
                     },
                 },
             },

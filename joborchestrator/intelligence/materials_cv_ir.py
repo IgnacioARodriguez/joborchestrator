@@ -277,6 +277,7 @@ def render_ats_cv(
     supported_keywords: list[str] | None = None,
     min_bullets_per_role: int | None = None,
     max_bullets_per_role: int | None = None,
+    rewritten_bullets: dict[str, str] | None = None,
 ) -> str:
     plan = plan or AtsCvPlan()
     plan_errors = validate_ats_cv_plan(cv_ir, plan)
@@ -373,7 +374,8 @@ def render_ats_cv(
             bullets = bullets[:max(int(max_bullets_per_role), required)]
 
         for bullet in bullets:
-            output.append(f"- {_strip_bullet_prefix(bullet.source_text)}")
+            rewritten = str((rewritten_bullets or {}).get(bullet.id) or "").strip()
+            output.append(f"- {_strip_bullet_prefix(rewritten or bullet.source_text)}")
         if role.canonical_technologies:
             output.append(f"Technologies: {', '.join(role.canonical_technologies)}")
 

@@ -45,4 +45,28 @@ def build_cv_job_analysis(full_payload: dict[str, Any]) -> dict[str, Any]:
         "adjacent_or_review_keywords": list(ats.get("adjacent_or_review_keywords") or [])[:15],
         "avoid_keywords": list(ats.get("avoid_keywords") or [])[:30],
         "recommended_cv_angle": clean(ranking.get("recommended_application_angle")),
+        "candidate_narrative": {
+            "professional_identity": _professional_identity(job, evidence),
+            "target_relevance": clean(
+                list(evidence.get("strong_matches") or [])
+                + list(ats.get("supported_keywords") or [])[:8]
+            ),
+            "value_proposition": clean(ranking.get("recommended_application_angle")),
+            "limitations": clean(list(evidence.get("missing_requirements") or [])),
+            "source_evidence": _narrative_evidence_ids(evidence),
+        },
     }
+
+
+def _professional_identity(job: dict[str, Any], evidence: dict[str, Any]) -> str:
+    title = str(job.get("title") or "professional").strip()
+    matches = [str(value) for value in evidence.get("strong_matches") or [] if str(value or '').strip()]
+    focus = ", ".join(matches[:3])
+    return f"Professional targeting {title}" + (f" with evidence in {focus}" if focus else "")
+
+
+def _narrative_evidence_ids(evidence: dict[str, Any]) -> list[str]:
+    ids = []
+    for key in ("strong_matches", "partial_matches"):
+        ids.extend(str(value) for value in evidence.get(key) or [] if str(value or '').strip())
+    return list(dict.fromkeys(ids))[:12]

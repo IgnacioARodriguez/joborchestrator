@@ -37,12 +37,21 @@ def build_controlled_ats_cv(
         if not plan_errors:
             plan = ats_cv_plan_from_response(planner_response)
 
+    valid_bullet_ids = {bullet.id for role in cv_ir.roles for bullet in role.bullets}
+    rewritten_bullets = {
+        str(item.get("bullet_id")): str(item.get("rewritten_text") or "").strip()
+        for item in planner_response.get("rewritten_bullets") or []
+        if isinstance(item, dict)
+        and str(item.get("bullet_id") or "") in valid_bullet_ids
+        and str(item.get("rewritten_text") or "").strip()
+    } if planner_response else {}
     ats_cv_text = render_ats_cv(
         cv_ir,
         plan,
         supported_keywords=supported_keywords,
         min_bullets_per_role=min_bullets_per_role,
         max_bullets_per_role=max_bullets_per_role,
+        rewritten_bullets=rewritten_bullets,
     )
     validation_errors = [*cv_ir.parse_warnings, *plan_errors]
     return {

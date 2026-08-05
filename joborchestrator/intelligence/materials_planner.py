@@ -66,4 +66,11 @@ def validate_planner_response(cv_ir: CandidateCvIR, response: dict[str, Any]) ->
         errors.append("planner response must not include ats_cv_text")
     if "keywords_used" in response:
         errors.append("planner response must not include keywords_used")
+    rewritten = response.get("rewritten_bullets") or []
+    valid_ids = {bullet.id for role in cv_ir.roles for bullet in role.bullets}
+    for item in rewritten:
+        if not isinstance(item, dict) or str(item.get("bullet_id") or "") not in valid_ids:
+            errors.append("rewritten bullet references unknown bullet id")
+        elif len(str(item.get("rewritten_text") or "").strip()) < 20:
+            errors.append("rewritten bullet is too short")
     return errors
