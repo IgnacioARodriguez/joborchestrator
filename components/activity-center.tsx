@@ -10,7 +10,7 @@ function operationLabel(operation: OperationRun) {
   const labels: Record<string, string> = {
     cv_profile_import: "Importacion de CV",
     linkedin_scan: "Busqueda de oportunidades en LinkedIn",
-    job_scan: "Busqueda de nuevas oportunidades",
+    job_scan: "Busqueda en portales ATS y fuentes publicas",
     materials_generation: "Generacion de materiales",
     application_session: "Preparacion de candidatura",
   }
@@ -20,7 +20,7 @@ function operationLabel(operation: OperationRun) {
 function operationDescription(operation: OperationRun) {
   if (operation.progress_message) return operation.progress_message
   if (operation.type === "linkedin_scan") return "Buscando oportunidades en LinkedIn y guardandolas a medida que aparecen."
-  if (operation.type === "job_scan") return "Consultando portales y fuentes de empleo configuradas."
+  if (operation.type === "job_scan") return "Consultando portales ATS, APIs y fuentes publicas configuradas."
   return "Procesando la operacion y sincronizando resultados."
 }
 
