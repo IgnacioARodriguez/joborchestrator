@@ -2,7 +2,7 @@
 
 import Image from "next/image"
 import { usePathname } from "next/navigation"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   Activity,
   Compass,
@@ -15,6 +15,8 @@ import { cn } from "@/lib/utils"
 import { LEGACY_SECTION_ALIASES, NAV_ITEMS, SECTION_PATHS, isPrimarySection, primarySectionFor, type Section } from "@/lib/nav"
 import { useStore } from "@/lib/store"
 import { api } from "@/lib/api"
+import { useVisiblePolling } from "@/lib/use-visible-polling"
+import { useSyncRevisions, type SyncRevisionCheck } from "@/lib/use-sync-revisions"
 import { Button } from "@/components/ui/button"
 import { JobsScreen } from "@/components/screens/review-screen"
 import { ApplicationsScreen } from "@/components/screens/applications-screen"
@@ -29,6 +31,22 @@ import { toast } from "sonner"
 import type { OperationRun, OpsStatus } from "@/lib/types"
 
 type SearchState = "idle" | "searching" | "success" | "empty" | "error"
+type StoreResource = "jobs" | "preparation" | "applications"
+
+const SECTION_RESOURCE: Partial<Record<Section, StoreResource>> = {
+  jobs: "jobs",
+  apply: "preparation",
+  applications: "applications",
+  insights: "jobs",
+}
+
+function isLoadedResource(status: string) {
+  return status === "success" || status === "empty"
+}
+
+function canRefreshResource(status: string) {
+  return !["idle", "loading", "refreshing"].includes(status)
+}
 
 function scanProgressCopy(operation: OperationRun) {
   const message = operation.progress_message?.toLowerCase() ?? ""
@@ -36,7 +54,7 @@ function scanProgressCopy(operation: OperationRun) {
   if (message.includes("linkedin")) return "Buscando oportunidades en LinkedIn y guardándolas a medida que aparecen."
   if (["greenhouse", "lever", "ashby", "ats"].some(value => message.includes(value))) return "Consultando portales de empresas y sistemas de empleo configurados."
   if (message.includes("search") || message.includes("api")) return "Consultando fuentes públicas de empleo con tus búsquedas configuradas."
-  return "Consultando las fuentes configuradas y guardando oportunidades nuevas."
+  return "Consultando portales ATS, APIs y fuentes publicas configuradas."
 }
 
 function DataLoadingBanner() {
@@ -131,18 +149,61 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
   const [searchOperationId, setSearchOperationId] = useState<number | null>(null)
   const [searchOperation, setSearchOperation] = useState<OperationRun | null>(null)
   const [opsStatus, setOpsStatus] = useState<OpsStatus | null>(null)
+  const [sessionsRevision, setSessionsRevision] = useState(0)
+  const jobsSyncPendingRef = useRef(false)
+  const applicationsSyncPendingRef = useRef(false)
   const {
     jobs,
     jobsMeta,
     backendOnline,
+    jobsStatus,
     loading,
+    preparationJobsStatus,
     preparationLoading,
+    applicationsStatus,
     refresh,
+    stageJobUpdates,
     refreshPreparationQueue,
+    refreshApplications,
   } = useStore()
-  const backendReady = backendOnline || jobsMeta !== null || jobs.length > 0
-  const totalJobs = jobsMeta?.pipeline_counts?.all ?? jobsMeta?.unfiltered_total ?? jobsMeta?.total ?? jobs.length
-  const currentLoading = section === "apply" ? preparationLoading : loading
+  const requiredResource = SECTION_RESOURCE[section]
+  const jobsLoaded = jobsStatus !== "idle"
+  const backendReady = backendOnline || opsStatus !== null || jobsMeta !== null || jobs.length > 0
+  const totalJobs = jobsMeta?.pipeline_counts?.all
+  const jobCountLabel = !jobsLoaded
+    ? "Jobs bajo demanda"
+    : totalJobs === undefined
+      ? "Calculando conteos…"
+      : `${totalJobs.toLocaleString()} oportunidades`
+  const currentLoading =
+    section === "apply"
+      ? preparationLoading
+      : section === "applications"
+        ? applicationsStatus === "loading" || applicationsStatus === "refreshing"
+        : loading
+
+  useEffect(() => {
+    if (requiredResource === "jobs" && jobsStatus === "idle") {
+      void refresh(null)
+      return
+    }
+    if (requiredResource === "preparation" && preparationJobsStatus === "idle") {
+      void refreshPreparationQueue()
+      return
+    }
+    if (requiredResource === "applications" && applicationsStatus === "idle") {
+      void refreshApplications()
+    }
+  }, [
+    applicationsStatus,
+    jobsStatus,
+    preparationJobsStatus,
+    refresh,
+    refreshApplications,
+    refreshPreparationQueue,
+    requiredResource,
+  ])
+  const canRefreshCurrentSection = ["jobs", "apply", "applications"].includes(section)
   const linkedinScanActive = Boolean(
     opsStatus?.active_local_operations.some(
       (operation) => operation.type === "linkedin_scan" && ["queued", "running"].includes(operation.status),
@@ -156,6 +217,7 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
 
   function refreshCurrentSection() {
     if (section === "apply") return refreshPreparationQueue()
+    if (section === "applications") return refreshApplications()
     return refresh()
   }
 
@@ -197,63 +259,116 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
     return () => window.removeEventListener("hashchange", syncHash)
   }, [])
 
-  useEffect(() => {
-    const poll = () => {
-      void loadOpsStatus()
+  const handleSyncStatus = useCallback(async ({
+    current,
+    previous,
+    changedResources,
+  }: SyncRevisionCheck) => {
+    const initialCheck = previous === null
+    const operationsChanged = initialCheck || changedResources.includes("operations")
+    const applicationsChanged = changedResources.includes("applications")
+    const sessionsChanged = changedResources.includes("sessions")
+    const backgroundJobsActive =
+      current.activity.operations > 0 || current.activity.ranking_jobs > 0
+
+    if (
+      changedResources.includes("jobs") ||
+      (initialCheck && backgroundJobsActive && jobsStatus !== "idle")
+    ) {
+      jobsSyncPendingRef.current = jobsStatus !== "idle"
     }
-    const initialTimer = window.setTimeout(poll, 0)
-    const timer = window.setInterval(() => {
-      poll()
-    }, 10000)
-    return () => {
-      window.clearTimeout(initialTimer)
-      window.clearInterval(timer)
+
+    if (applicationsChanged && applicationsStatus !== "idle") {
+      applicationsSyncPendingRef.current = true
     }
-  }, [loadOpsStatus])
+
+    if (sessionsChanged) {
+      setSessionsRevision(current.resources.sessions.revision)
+    }
+
+    const resourceUpdates: Promise<void>[] = []
+    if (operationsChanged) resourceUpdates.push(loadOpsStatus())
+    if (
+      applicationsSyncPendingRef.current &&
+      canRefreshResource(applicationsStatus)
+    ) {
+      resourceUpdates.push(
+        refreshApplications().then(() => {
+          applicationsSyncPendingRef.current = false
+        }),
+      )
+    }
+    await Promise.all(resourceUpdates)
+
+    if (
+      backgroundJobsActive ||
+      !jobsSyncPendingRef.current ||
+      !isLoadedResource(jobsStatus)
+    ) {
+      return
+    }
+
+    const changes = await stageJobUpdates()
+    if (changes) {
+      jobsSyncPendingRef.current = false
+    }
+  }, [
+    applicationsStatus,
+    jobsStatus,
+    loadOpsStatus,
+    refreshApplications,
+    stageJobUpdates,
+  ])
+
+  const checkSyncStatus = useSyncRevisions({
+    intervalMs: 5000,
+    onStatus: handleSyncStatus,
+  })
 
   useEffect(() => {
-    if (!jobSearchActive || section !== "jobs") return
-    const pollJobs = () => {
-      void refresh()
-    }
-    const initialTimer = window.setTimeout(pollJobs, 0)
-    const timer = window.setInterval(pollJobs, 4000)
-    return () => {
-      window.clearTimeout(initialTimer)
-      window.clearInterval(timer)
-    }
-  }, [jobSearchActive, refresh, section])
-
-  useEffect(() => {
-    if (searchOperationId) return
+    if (section !== "jobs" || searchOperationId) return
     const latest = opsStatus?.latest_scan_operation
     if (!latest || !["queued", "running"].includes(latest.status)) return
     const timer = window.setTimeout(() => {
       setSearchOperationId(latest.id); setSearchOperation(latest); setSearchState("searching"); setSearchMessage(scanProgressCopy(latest))
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [opsStatus, searchOperationId])
+  }, [opsStatus, searchOperationId, section])
 
-  useEffect(() => {
-    if (!searchOperationId) return
-    const operationId = searchOperationId
-    let stopped = false
-    let timer: number | undefined
-    async function poll() {
-      try {
-        const operation = (await api.getOperation(operationId)).operation
-        if (stopped) return
-        setSearchOperation(operation)
-        if (["queued", "running"].includes(operation.status)) { setSearchState("searching"); setSearchMessage(scanProgressCopy(operation)); timer = window.setTimeout(poll, 2500); return }
-        setSearchOperationId(null); setSearchOperation(null)
-        await Promise.all([refresh(), loadOpsStatus()])
-        setSearchState(operation.status === "completed" ? "success" : "error")
-        setSearchMessage(operation.status === "completed" ? "La búsqueda terminó y la lista de jobs ya está actualizada." : "La búsqueda se detuvo antes de completar todas las fuentes.")
-      } catch { if (!stopped) timer = window.setTimeout(poll, 4000) }
-    }
-    void poll()
-    return () => { stopped = true; if (timer !== undefined) window.clearTimeout(timer) }
-  }, [loadOpsStatus, refresh, searchOperationId])
+  useVisiblePolling({
+    enabled: searchOperationId !== null,
+    intervalMs: 2500,
+    errorIntervalMs: 4000,
+    poll: async () => {
+      if (!searchOperationId) return "stop"
+
+      const operation = (await api.getOperation(searchOperationId)).operation
+      setSearchOperation(operation)
+      if (["queued", "running"].includes(operation.status)) {
+        setSearchState("searching")
+        setSearchMessage(scanProgressCopy(operation))
+        return "continue"
+      }
+
+      setSearchOperationId(null)
+      setSearchOperation(null)
+      if (operation.status !== "completed") {
+        await checkSyncStatus().catch(loadOpsStatus)
+        setSearchState("error")
+        setSearchMessage("La búsqueda se detuvo antes de completar todas las fuentes.")
+        return "stop"
+      }
+
+      jobsSyncPendingRef.current = true
+      await checkSyncStatus().catch(async () => {
+        const [changes] = await Promise.all([stageJobUpdates(), loadOpsStatus()])
+        if (changes) jobsSyncPendingRef.current = false
+      })
+      setSearchState("success")
+      setSearchMessage("La búsqueda terminó. La lista se sincroniza sin interrumpir tu revisión.")
+      return "stop"
+    },
+  })
 
   async function scanFreshJobs() {
     setSearchState("searching")
@@ -263,8 +378,8 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
       setSearchOperationId(response.operation_id)
       const message = response.already_running
         ? "La búsqueda ya estaba en curso."
-        : response.progress_message || "Búsqueda iniciada. Los nuevos jobs aparecerán al sincronizar."
-      setSearchState(response.already_running ? "success" : "success")
+        : response.progress_message || "Búsqueda iniciada. La lista se mantendrá estable mientras trabaja."
+      setSearchState("searching")
       setSearchMessage(message)
       toast.success(response.already_running ? "Búsqueda en curso" : "Búsqueda iniciada", {
         description: message,
@@ -285,14 +400,30 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
         {/* Desktop sidebar */}
         <aside className="sticky top-0 hidden h-dvh w-[256px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-5 lg:flex">
           <div className="px-2 pb-7">
-            <Image
-              src="/rocket-development-logo.png"
-              alt="Rocket Development"
-              width={190}
-              height={53}
-              priority
-              className="h-12 w-[190px] object-contain object-left"
-            />
+            <div className="flex w-full flex-col items-center gap-1" aria-label="Laburito x Rocket Development">
+              <Image
+                src="/laburito-logo.png"
+                alt="Laburito"
+                width={240}
+                height={100}
+                priority
+                className="h-[100px] w-[240px] object-contain object-center"
+              />
+              <span
+                className="text-sm font-semibold italic leading-none text-[#f4bd32]"
+                style={{ fontFamily: "cursive" }}
+                aria-hidden="true"
+              >
+                by
+              </span>
+              <Image
+                src="/rocket-development-logo.png"
+                alt="Rocket Development"
+                width={106}
+                height={30}
+                className="h-6 w-[106px] object-contain object-center"
+              />
+            </div>
           </div>
           <nav className="flex flex-col gap-1.5">
             {NAV_ITEMS.map((item) => {
@@ -327,7 +458,7 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
                   {backendReady ? "Listo" : "Sin conexión"}
                 </p>
                 <p className="text-[11px] text-muted-foreground">
-                  {totalJobs.toLocaleString()} oportunidades
+        {jobCountLabel}
                 </p>
               </div>
             </div>
@@ -342,20 +473,22 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
                 <Compass className="size-4" />
               </div>
               <span className="text-xs text-muted-foreground">
-                {totalJobs.toLocaleString()} jobs
+                {totalJobs === undefined ? "" : `${totalJobs.toLocaleString()} jobs`}
               </span>
             </div>
             <div className="flex items-center gap-2">
               <ActivityCenter operations={activityOperations} onRetry={(operation) => toast("Reintento disponible", { description: `Vuelve a iniciar ${operation.type} desde su pantalla.` })} />
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={currentLoading}
-                onClick={() => void refreshCurrentSection()}
-              >
-                {currentLoading ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-                Actualizar
-              </Button>
+              {canRefreshCurrentSection ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={currentLoading}
+                  onClick={() => void refreshCurrentSection()}
+                >
+                  {currentLoading ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+                  Actualizar
+                </Button>
+              ) : null}
               <Button variant="outline" size="icon-sm" aria-label="Configuración" onClick={() => navigate("settings")}>
                 <Settings className="size-4" />
               </Button>
@@ -377,7 +510,12 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
                 searchStartedAt={searchOperation?.started_at ?? searchOperation?.created_at}
               />
             )}
-            {section === "apply" && <PipelineScreen onOpenJob={setOpenJobId} />}
+            {section === "apply" && (
+              <PipelineScreen
+                onOpenJob={setOpenJobId}
+                sessionsRevision={sessionsRevision}
+              />
+            )}
             {section === "applications" && <ApplicationsScreen onOpenJob={setOpenJobId} />}
             {section === "settings" && <SettingsScreen onNavigate={navigate} />}
             {section === "profile" && <ProfileScreen />}

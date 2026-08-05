@@ -24,6 +24,7 @@ from joborchestrator.storage import (
     rankings_repository,
     settings_repository,
     skill_catalog_repository,
+    sync_repository,
 )
 
 BACKUP_DIR_NAME = "backups"
@@ -157,6 +158,21 @@ CREATE TABLE IF NOT EXISTS job_postings (
 CREATE INDEX IF NOT EXISTS idx_job_postings_status ON job_postings(status);
 CREATE INDEX IF NOT EXISTS idx_job_postings_last_seen ON job_postings(last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_job_postings_identity ON job_postings(identity_key);
+CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness_v2
+    ON job_postings(
+        COALESCE(pipeline_status, 'new'),
+        COALESCE(posted_at, first_seen_at, last_seen_at)
+    );
+CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness_v3
+    ON job_postings(
+        CASE
+          WHEN posted_at IS NULL THEN COALESCE(first_seen_at, last_seen_at)
+          WHEN posted_at NOT LIKE '____-__-__%'
+               AND posted_at GLOB '[0-9]*'
+            THEN datetime(CAST(posted_at AS INTEGER), 'unixepoch')
+          ELSE posted_at
+        END
+    );
 
 CREATE TABLE IF NOT EXISTS job_hiring_contacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -318,6 +334,8 @@ CREATE TABLE IF NOT EXISTS job_rankings (
 
 CREATE INDEX IF NOT EXISTS idx_job_rankings_decision ON job_rankings(decision);
 CREATE INDEX IF NOT EXISTS idx_job_rankings_score ON job_rankings(final_score);
+CREATE INDEX IF NOT EXISTS idx_job_rankings_job_version
+    ON job_rankings(job_id, ranking_version, decision, final_score);
 
 CREATE TABLE IF NOT EXISTS ranking_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -409,6 +427,7 @@ CREATE TABLE IF NOT EXISTS applications (
 
 CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
 CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(job_id);
+CREATE INDEX IF NOT EXISTS idx_applications_job_status ON applications(job_id, status);
 
 CREATE TABLE IF NOT EXISTS application_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -552,6 +571,7 @@ CREATE TABLE IF NOT EXISTS follow_ups (
 );
 
 CREATE INDEX IF NOT EXISTS idx_follow_ups_due ON follow_ups(done_at, due_at);
+CREATE INDEX IF NOT EXISTS idx_follow_ups_application ON follow_ups(application_id, done_at, due_at);
 
 CREATE TABLE IF NOT EXISTS llm_eval_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -649,6 +669,7 @@ def _conn():
         _ensure_ranking_trace_schema(conn)
         _ensure_llm_eval_schema(conn)
         _ensure_llm_output_feedback_schema(conn)
+        sync_repository.ensure_sync_schema(conn)
         skill_catalog_repository.seed_skill_catalog(conn)
         _backfill_speed_ranking_columns(conn)
         _backfill_legacy_hiring_contacts(conn)
@@ -675,6 +696,7 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
         "llm_eval_runs",
         "llm_output_feedback",
         "materials_generation_attempts",
+        "sync_revisions",
     }
 
     placeholders = ",".join("?" for _ in required_tables)
@@ -686,6 +708,20 @@ def _cloud_schema_ready(conn: db_connection.LibsqlConnection) -> bool:
 
     existing = {row["name"] for row in rows}
     if not required_tables.issubset(existing):
+        return False
+
+    required_indexes = {
+        "idx_job_postings_apply_freshness_v2",
+        "idx_job_postings_apply_freshness_v3",
+        "idx_job_postings_pipeline_dates",
+        "idx_job_rankings_job_version",
+        "idx_applications_job_status",
+    }
+    index_rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'index'"
+    ).fetchall()
+    existing_indexes = {row["name"] for row in index_rows}
+    if not required_indexes.issubset(existing_indexes):
         return False
 
     job_posting_columns = _table_columns(conn, "job_postings")
@@ -746,6 +782,29 @@ def _ensure_scanner_columns(conn: sqlite3.Connection) -> None:
             columns.add(column)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_postings_repost_key ON job_postings(repost_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_postings_soft_identity ON job_postings(soft_identity_key)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_job_postings_pipeline_dates "
+        "ON job_postings(pipeline_status, last_seen_at, first_seen_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness_v2 "
+        "ON job_postings(COALESCE(pipeline_status, 'new'), "
+        "COALESCE(posted_at, first_seen_at, last_seen_at))"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness_v3 "
+        "ON job_postings(CASE WHEN posted_at IS NULL THEN COALESCE(first_seen_at, last_seen_at) "
+        "WHEN posted_at NOT LIKE '____-__-__%' AND posted_at GLOB '[0-9]*' "
+        "THEN datetime(CAST(posted_at AS INTEGER), 'unixepoch') ELSE posted_at END)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_job_rankings_job_version "
+        "ON job_rankings(job_id, ranking_version, decision, final_score)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_applications_job_status "
+        "ON applications(job_id, status)"
+    )
 
 
 def _ensure_application_material_snapshots_schema(conn: sqlite3.Connection) -> None:
@@ -1119,6 +1178,14 @@ def get_active_operation(operation_type: str) -> dict | None:
 
 def list_operations(limit: int = 20) -> list[dict]:
     return operations_repository.list_operations(_conn, limit)
+
+
+def list_operations_by_ids(operation_ids: list[int]) -> list[dict]:
+    return operations_repository.list_operations_by_ids(_conn, operation_ids)
+
+
+def get_sync_status() -> dict:
+    return sync_repository.get_sync_status(_conn)
 
 
 def claim_next_operation(worker_id: str, operation_types: list[str] | None = None) -> dict | None:

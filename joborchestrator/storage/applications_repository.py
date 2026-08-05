@@ -147,7 +147,31 @@ def list_applications(connect: ConnectionFactory, read_sql_query: ReadSqlQuery) 
             conn,
             None,
         )
-        return [_hydrate_application(conn, row, include_snapshot=False) for row in frame.to_dict("records")]
+        applications = frame.to_dict("records")
+        if not applications:
+            return []
+
+        application_ids = [int(row["id"]) for row in applications]
+        placeholders = ",".join("?" for _ in application_ids)
+        events_by_application: dict[int, list[dict]] = {application_id: [] for application_id in application_ids}
+        for event in conn.execute(
+            f"SELECT * FROM application_events WHERE application_id IN ({placeholders}) ORDER BY event_at ASC, id ASC",
+            application_ids,
+        ).fetchall():
+            events_by_application[int(event["application_id"])].append(dict(event))
+        follow_ups_by_application: dict[int, list[dict]] = {application_id: [] for application_id in application_ids}
+        for follow_up in conn.execute(
+            f"""SELECT * FROM follow_ups
+                WHERE application_id IN ({placeholders})
+                ORDER BY done_at IS NOT NULL ASC, due_at ASC, id ASC""",
+            application_ids,
+        ).fetchall():
+            follow_ups_by_application[int(follow_up["application_id"])].append(dict(follow_up))
+        for row in applications:
+            application_id = int(row["id"])
+            row["events"] = events_by_application[application_id]
+            row["follow_ups"] = follow_ups_by_application[application_id]
+        return applications
     finally:
         conn.close()
 

@@ -621,6 +621,16 @@ export interface OpsStatus {
   }
 }
 
+export type SyncResource = "jobs" | "applications" | "sessions" | "operations"
+
+export interface SyncStatus {
+  resources: Record<SyncResource, { revision: number; updated_at: string }>
+  activity: {
+    operations: number
+    ranking_jobs: number
+  }
+}
+
 export interface AutomationAccount {
   id: number
   provider: string

@@ -15,6 +15,7 @@ import type {
   LinkedInSearchPlan,
   OperationRun,
   OpsStatus,
+  SyncStatus,
   WorkerStatus,
   AutomationAccount,
   PipelineStatus,
@@ -95,12 +96,14 @@ export const api = {
     freshness = "active",
     query?: string,
     pipeline: ApplyQueuePipeline = "all",
+    includeCounts = true,
   ) {
     const params = new URLSearchParams()
     params.set("limit", String(limit))
     params.set("offset", String(offset))
     params.set("freshness", freshness)
     params.set("pipeline", pipeline)
+    params.set("include_counts", String(includeCounts))
     if (query?.trim()) {
       params.set("q", query.trim())
     }
@@ -154,12 +157,25 @@ export const api = {
     return request<{ operations: OperationRun[] }>(`/api/operations?limit=${limit}`, { fresh: true })
   },
 
+  async getOperationsByIds(ids: number[]): Promise<{ operations: OperationRun[] }> {
+    const operationIds = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0)
+    if (operationIds.length === 0) return { operations: [] }
+
+    const params = new URLSearchParams()
+    operationIds.forEach((id) => params.append("ids", String(id)))
+    return request<{ operations: OperationRun[] }>(`/api/operations?${params.toString()}`, { fresh: true })
+  },
+
   async getWorkerStatus() {
     return request<WorkerStatus>("/api/workers/status", { fresh: true })
   },
 
   async getOpsStatus() {
     return request<OpsStatus>("/api/ops/status", { fresh: true })
+  },
+
+  async getSyncStatus() {
+    return request<SyncStatus>("/api/sync/status", { fresh: true })
   },
 
   async getAutomationAccounts() {

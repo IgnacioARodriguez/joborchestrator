@@ -22,7 +22,7 @@ import {
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ScoreBadge } from "@/components/badges"
+import { DecisionBadge, ScoreRing } from "@/components/badges"
 import { ApplicationAssistantDialog } from "@/components/application-assistant-dialog"
 import {
   Empty,
@@ -69,6 +69,17 @@ const STATUS_TONE: Record<PreparationViewState["status"], string> = {
 
 function latestSessionForJob(sessions: ApplicationSession[], jobId: string) {
   return sessions.find((session) => String(session.job_id) === String(jobId)) ?? null
+}
+
+function withoutKeys<T>(record: Record<string, T>, keys: string[]) {
+  if (keys.length === 0) return record
+  const next = { ...record }
+  for (const key of keys) delete next[key]
+  return next
+}
+
+function trackedOperationIds(...records: Array<Record<string, number>>) {
+  return [...new Set(records.flatMap((record) => Object.values(record)))]
 }
 
 function StepIcon({ step }: { step: PreparationStep }) {
@@ -174,30 +185,33 @@ function PreparationCard({
     <article className="rounded-lg border border-border bg-card p-3 shadow-[0_1px_2px_rgba(16,24,40,0.03)] sm:p-4">
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <button
-            type="button"
-            onClick={() => onOpenJob(job.id)}
-            className="min-w-0 text-left"
-          >
-            <h2 className="line-clamp-2 text-base font-semibold leading-snug text-foreground">
-              {job.title}
-            </h2>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span className="inline-flex min-w-0 items-center gap-1">
-                <Building2 className="size-3.5 shrink-0" />
-                <span className="truncate">{job.company}</span>
-              </span>
-              <span className="inline-flex min-w-0 items-center gap-1">
-                <MapPin className="size-3.5 shrink-0" />
-                <span className="truncate">{job.location || (job.remote ? "Remote" : "Sin ubicacion")}</span>
-              </span>
-              <span>Actualizado {relativeTime(job.last_seen_at)}</span>
-            </div>
-          </button>
+          <div className="flex min-w-0 items-start gap-3">
+            <ScoreRing score={job.ranking.final_score} size={52} />
+            <button
+              type="button"
+              onClick={() => onOpenJob(job.id)}
+              className="min-w-0 text-left"
+            >
+              <h2 className="line-clamp-2 text-base font-semibold leading-snug text-foreground">
+                {job.title}
+              </h2>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span className="inline-flex min-w-0 items-center gap-1">
+                  <Building2 className="size-3.5 shrink-0" />
+                  <span className="truncate">{job.company}</span>
+                </span>
+                <span className="inline-flex min-w-0 items-center gap-1">
+                  <MapPin className="size-3.5 shrink-0" />
+                  <span className="truncate">{job.location || (job.remote ? "Remote" : "Sin ubicacion")}</span>
+                </span>
+                <span>Actualizado {relativeTime(job.last_seen_at)}</span>
+              </div>
+            </button>
+          </div>
           <div className="flex w-fit shrink-0 items-center gap-2">
-            <ScoreBadge
+            <DecisionBadge
+              decision={job.ranking.decision}
               score={job.ranking.final_score}
-              className="min-w-11 px-2 py-1 text-sm"
             />
             <Badge
               variant="outline"
@@ -416,8 +430,10 @@ function actionIcon(action: PreparationAction) {
 
 export function PipelineScreen({
   onOpenJob,
+  sessionsRevision,
 }: {
   onOpenJob: (id: string) => void
+  sessionsRevision?: number
 }) {
   const {
     preparationJobs: jobs,
@@ -443,10 +459,6 @@ export function PipelineScreen({
   const [assistantJob, setAssistantJob] = useState<JobListItem | null>(null)
 
   useEffect(() => {
-    void refresh()
-  }, [refresh])
-
-  useEffect(() => {
     let cancelled = false
     async function loadSessions() {
       try {
@@ -457,6 +469,13 @@ export function PipelineScreen({
       }
     }
     void loadSessions()
+    return () => {
+      cancelled = true
+    }
+  }, [sessionsRevision])
+
+  useEffect(() => {
+    let cancelled = false
     void api.getOperations(100).then((response) => {
       if (cancelled) return
       const recoveredMaterials: Record<string, number> = {}
@@ -483,86 +502,70 @@ export function PipelineScreen({
   }, [])
 
   useEffect(() => {
-    if (Object.keys(operationByJob).length === 0) return
+    const materialEntries = Object.entries(operationByJob)
+    const applicationEntries = Object.entries(applicationOperationByJob)
+    const operationIds = trackedOperationIds(operationByJob, applicationOperationByJob)
+    if (operationIds.length === 0) return
+
     let stopped = false
     let timer: number | undefined
 
     async function poll() {
-      const entries = Object.entries(operationByJob)
-      if (entries.length === 0 || stopped) return
-      const completed: string[] = []
-      await Promise.all(
-        entries.map(async ([jobId, operationId]) => {
-          try {
-            const response = await api.getOperation(operationId)
-            const operation = response.operation
-            if (operation.status === "completed") {
-              completed.push(jobId)
-              await loadJobDetail(jobId, { force: true })
-              setOperationIssueByJob((current) => {
-                const next = { ...current }
-                delete next[jobId]
-                return next
-              })
-              toast.success("Materiales listos")
-              return
-            }
-            if (["failed", "cancelled"].includes(operation.status)) {
-              completed.push(jobId)
-              const issue = "La generación se detuvo antes de completar los materiales. Volvé a intentarlo."
-              setOperationIssueByJob((current) => ({ ...current, [jobId]: issue }))
-              toast.error("No se pudieron generar materiales", { description: issue })
-              return
-            }
-            const updatedAt = Date.parse(operation.updated_at)
-            if (Number.isFinite(updatedAt) && Date.now() - updatedAt > 15 * 60_000) {
-              completed.push(jobId)
-              const issue = "La generación no mostró progreso durante 15 minutos. Podés reintentarla."
-              setOperationIssueByJob((current) => ({ ...current, [jobId]: issue }))
-              toast.error("La generación se detuvo", { description: issue })
-            }
-          } catch {
-            // Keep the operation active and retry; a transient API error must not lose recovery state.
-          }
-        }),
-      )
       if (stopped) return
-      if (completed.length > 0) {
-        setOperationByJob((current) => {
-          const next = { ...current }
-          for (const jobId of completed) delete next[jobId]
-          return next
-        })
+      if (document.visibilityState === "hidden") {
+        timer = window.setTimeout(poll, 2500)
+        return
       }
-      timer = window.setTimeout(poll, 2500)
-    }
 
-    void poll()
-    return () => {
-      stopped = true
-      if (timer !== undefined) window.clearTimeout(timer)
-    }
-  }, [loadJobDetail, operationByJob])
+      try {
+        const response = await api.getOperationsByIds(operationIds)
+        if (stopped) return
 
-  useEffect(() => {
-    if (Object.keys(applicationOperationByJob).length === 0) return
-    let stopped = false
-    let timer: number | undefined
+        const operationsById = new Map(response.operations.map((operation) => [operation.id, operation]))
+        const completedMaterials: string[] = []
+        const completedApplications: string[] = []
+        const resolvedIssues: string[] = []
+        const issueUpdates: Record<string, string> = {}
+        const progressUpdates: Record<string, string> = {}
 
-    async function poll() {
-      const completed: string[] = []
-      await Promise.all(
-        Object.entries(applicationOperationByJob).map(async ([jobId, operationId]) => {
-          try {
-            const response = await api.getOperation(operationId)
-            const operation = response.operation
-            setApplicationProgressByJob((current) => ({
-              ...current,
-              [jobId]: friendlyApplicationProgress(operation.progress_message),
-            }))
-            if (operation.status === "completed") {
-              completed.push(jobId)
+        for (const [jobId, operationId] of materialEntries) {
+          const operation = operationsById.get(operationId)
+          if (!operation) continue
+
+          if (operation.status === "completed") {
+            completedMaterials.push(jobId)
+            resolvedIssues.push(jobId)
+            await loadJobDetail(jobId, { force: true })
+            toast.success("Materiales listos")
+            continue
+          }
+
+          if (["failed", "cancelled"].includes(operation.status)) {
+            completedMaterials.push(jobId)
+            const issue = "La generación se detuvo antes de completar los materiales. Volvé a intentarlo."
+            issueUpdates[jobId] = issue
+            toast.error("No se pudieron generar materiales", { description: issue })
+            continue
+          }
+
+          const updatedAt = Date.parse(operation.updated_at)
+          if (Number.isFinite(updatedAt) && Date.now() - updatedAt > 15 * 60_000) {
+            completedMaterials.push(jobId)
+            const issue = "La generación no mostró progreso durante 15 minutos. Podés reintentarla."
+            issueUpdates[jobId] = issue
+            toast.error("La generación se detuvo", { description: issue })
+          }
+        }
+
+        for (const [jobId, operationId] of applicationEntries) {
+          const operation = operationsById.get(operationId)
+          if (!operation) continue
+
+          progressUpdates[jobId] = friendlyApplicationProgress(operation.progress_message)
+          if (operation.status === "completed") {
+            try {
               const sessionsResponse = await api.getApplicationSessions(jobId)
+              if (stopped) return
               setSessions((current) => [
                 ...sessionsResponse.sessions,
                 ...current.filter((item) => String(item.job_id) !== String(jobId)),
@@ -570,41 +573,48 @@ export function PipelineScreen({
               const completedJob = jobs.find((job) => String(job.id) === String(jobId))
               if (completedJob && sessionsResponse.sessions[0]) setAssistantJob(completedJob)
               await loadJobDetail(jobId, { force: true })
-              setOperationIssueByJob((current) => {
-                const next = { ...current }
-                delete next[jobId]
-                return next
-              })
+              completedApplications.push(jobId)
+              resolvedIssues.push(jobId)
               toast.success("Automatización pausada", {
                 description: "Revisá las instrucciones para continuar.",
               })
-              return
+            } catch {
+              // Keep polling until the completed session can be read successfully.
             }
-            if (["failed", "cancelled"].includes(operation.status)) {
-              completed.push(jobId)
-              const issue = "No se pudo completar el formulario. Podes abrir el job y continuar manualmente."
-              setOperationIssueByJob((current) => ({ ...current, [jobId]: issue }))
-              toast.error("No se pudo preparar la aplicacion", { description: issue })
-            }
-          } catch {
-            // Retry transient API failures without losing the active browser workflow.
+            continue
           }
-        }),
-      )
-      if (stopped) return
-      if (completed.length > 0) {
-        setApplicationOperationByJob((current) => {
-          const next = { ...current }
-          for (const jobId of completed) delete next[jobId]
-          return next
-        })
-        setApplicationProgressByJob((current) => {
-          const next = { ...current }
-          for (const jobId of completed) delete next[jobId]
-          return next
-        })
+
+          if (["failed", "cancelled"].includes(operation.status)) {
+            completedApplications.push(jobId)
+            const issue = "No se pudo completar el formulario. Podes abrir el job y continuar manualmente."
+            issueUpdates[jobId] = issue
+            toast.error("No se pudo preparar la aplicacion", { description: issue })
+          }
+        }
+
+        if (stopped) return
+        if (resolvedIssues.length > 0 || Object.keys(issueUpdates).length > 0) {
+          setOperationIssueByJob((current) => ({
+            ...withoutKeys(current, resolvedIssues),
+            ...issueUpdates,
+          }))
+        }
+        if (completedMaterials.length > 0) {
+          setOperationByJob((current) => withoutKeys(current, completedMaterials))
+        }
+        if (Object.keys(progressUpdates).length > 0 || completedApplications.length > 0) {
+          setApplicationProgressByJob((current) =>
+            withoutKeys({ ...current, ...progressUpdates }, completedApplications),
+          )
+        }
+        if (completedApplications.length > 0) {
+          setApplicationOperationByJob((current) => withoutKeys(current, completedApplications))
+        }
+      } catch {
+        // Retry transient API failures without losing the active operation state.
       }
-      timer = window.setTimeout(poll, 2000)
+
+      if (!stopped) timer = window.setTimeout(poll, 2500)
     }
 
     void poll()
@@ -612,7 +622,7 @@ export function PipelineScreen({
       stopped = true
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [applicationOperationByJob, jobs, loadJobDetail])
+  }, [applicationOperationByJob, jobs, loadJobDetail, operationByJob])
 
 
   const confirmedJobIds = useMemo(

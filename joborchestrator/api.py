@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import asdict
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -64,6 +67,23 @@ from joborchestrator.storage import persistence as db
 
 
 app = FastAPI(title="Job Orchestrator API")
+
+_APPLY_QUEUE_QUERY_TIMEOUT_SECONDS = 15
+_APPLY_QUEUE_COUNT_CACHE_TTL_SECONDS = 30
+_apply_queue_count_cache: dict[tuple[str, str, str], tuple[float, Any]] = {}
+_apply_queue_count_cache_lock = threading.Lock()
+
+
+def _cached_apply_queue_count(key: tuple[str, str, str], loader: Any) -> Any:
+    now = time.monotonic()
+    with _apply_queue_count_cache_lock:
+        cached = _apply_queue_count_cache.get(key)
+        if cached and now - cached[0] < _APPLY_QUEUE_COUNT_CACHE_TTL_SECONDS:
+            return cached[1]
+    value = loader()
+    with _apply_queue_count_cache_lock:
+        _apply_queue_count_cache[key] = (time.monotonic(), value)
+    return value
 
 app.add_middleware(
     CORSMiddleware,
@@ -337,6 +357,12 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/sync/status")
+def sync_status(response: Response) -> dict[str, Any]:
+    _private_no_store(response)
+    return db.get_sync_status()
+
+
 @app.get("/api/profile")
 def get_profile() -> dict[str, Any]:
     return {"profile": db.get_candidate_profile_payload()}
@@ -387,8 +413,19 @@ def latest_operation(type: str | None = None) -> dict[str, Any]:
 
 
 @app.get("/api/operations")
-def list_operations(limit: int = 20) -> dict[str, Any]:
-    return {"operations": db.list_operations(limit=max(1, min(int(limit), 100)))}
+def list_operations(
+    limit: int = 20,
+    ids: list[int] | None = Query(default=None),
+) -> dict[str, Any]:
+    if not ids:
+        return {"operations": db.list_operations(limit=max(1, min(int(limit), 100)))}
+
+    operation_ids = list(dict.fromkeys(ids))
+    if len(operation_ids) > 100:
+        raise HTTPException(status_code=400, detail="At most 100 operation ids can be requested.")
+    if any(operation_id <= 0 for operation_id in operation_ids):
+        raise HTTPException(status_code=400, detail="Operation ids must be positive integers.")
+    return {"operations": db.list_operations_by_ids(operation_ids)}
 
 
 @app.get("/api/workers/status")
@@ -599,6 +636,7 @@ def apply_queue(
     freshness: str = "active",
     q: str | None = None,
     pipeline: str = "all",
+    include_counts: bool = False,
 ) -> dict[str, Any]:
     _private_no_store(response)
     if ranking_version and is_heuristic_ranking_version(ranking_version):
@@ -609,15 +647,51 @@ def apply_queue(
     effective_offset = max(0, int(offset))
     ranking_versions = filter_llm_ranking_versions(db.get_ranking_versions())
     selected_ranking_version = ranking_version or (ranking_versions[0] if ranking_versions else None)
-    rows = db.get_apply_queue_job_postings(
-        selected_ranking_version,
-        freshness_filter,
-        effective_limit,
-        effective_offset,
-        q,
-        pipeline_filter,
-    ).to_dict("records")
-    current_profile_hash = profile_trace(db.get_candidate_profile_payload()).get("hash")
+    executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="apply-queue")
+    try:
+        jobs_future = executor.submit(
+            db.get_apply_queue_job_postings,
+            selected_ranking_version,
+            freshness_filter,
+            effective_limit,
+            effective_offset,
+            q,
+            pipeline_filter,
+        )
+        freshness_future = (
+            executor.submit(
+                _cached_apply_queue_count,
+                ("freshness", "", ""),
+                db.count_job_freshness_buckets,
+            )
+            if include_counts
+            else None
+        )
+        pipeline_future = (
+            executor.submit(
+                _cached_apply_queue_count,
+                ("pipeline", freshness_filter, q.strip() if q else ""),
+                lambda: db.count_apply_queue_pipeline_buckets(freshness_filter, q),
+            )
+            if include_counts
+            else None
+        )
+        total_future = executor.submit(
+            _cached_apply_queue_count,
+            ("total", freshness_filter, f"{q.strip() if q else ''}:{pipeline_filter}"),
+            lambda: db.count_apply_queue_job_postings(freshness_filter, q, pipeline_filter),
+        )
+        rows = jobs_future.result(timeout=_APPLY_QUEUE_QUERY_TIMEOUT_SECONDS).to_dict("records")
+        freshness_counts = freshness_future.result(timeout=_APPLY_QUEUE_QUERY_TIMEOUT_SECONDS) if freshness_future else {}
+        pipeline_counts = pipeline_future.result(timeout=_APPLY_QUEUE_QUERY_TIMEOUT_SECONDS) if pipeline_future else {}
+        total = total_future.result(timeout=_APPLY_QUEUE_QUERY_TIMEOUT_SECONDS)
+    except FutureTimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="La base de datos tardó demasiado en responder. Reintenta en unos segundos.",
+        ) from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
     jobs = sorted(
         [
             job_list_item_dto(row, _ranking_from_apply_queue_row(row))
@@ -626,9 +700,6 @@ def apply_queue(
         key=_apply_queue_sort_key,
         reverse=True,
     )
-    freshness_counts = db.count_job_freshness_buckets()
-    pipeline_counts = db.count_apply_queue_pipeline_buckets(freshness_filter, q)
-    total = db.count_apply_queue_job_postings(freshness_filter, q, pipeline_filter)
     return {
         "jobs": jobs,
         "ranking_versions": ranking_versions,

@@ -4,7 +4,6 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -24,6 +23,18 @@ import { api } from "./api"
 type ApplyQueueFreshness = "active" | "all" | "stale"
 type JobsPipelineFilter = Exclude<ApplyQueuePipeline, "apply">
 type ResourceStatus = "idle" | "loading" | "refreshing" | "success" | "empty" | "error"
+type JobsSnapshot = Awaited<ReturnType<typeof api.getApplyQueue>>
+
+interface PendingJobChanges {
+  added: number
+  updated: number
+  removed: number
+}
+
+interface PendingJobsSnapshot {
+  data: JobsSnapshot
+  changes: PendingJobChanges
+}
 
 interface JobDetailEntry {
   status: ResourceStatus
@@ -39,6 +50,7 @@ interface StoreValue {
   loading: boolean
   preparationLoading: boolean
   jobsStatus: ResourceStatus
+  jobsCountsLoading: boolean
   preparationJobsStatus: ResourceStatus
   applicationsStatus: ResourceStatus
   backendOnline: boolean
@@ -52,6 +64,7 @@ interface StoreValue {
   preparationJobsMeta: JobsMeta | null
   rankingVersions: string[]
   selectedRankingVersion: string | null
+  pendingJobChanges: PendingJobChanges | null
   setApplyQueuePage: (page: number) => void
   setApplyQueueFreshness: (freshness: ApplyQueueFreshness) => void
   setApplyQueueQuery: (query: string) => void
@@ -59,6 +72,8 @@ interface StoreValue {
   setPreparationQueuePage: (page: number) => void
   setSelectedRankingVersion: (version: string) => void
   refresh: (rankingVersion?: string | null) => Promise<void>
+  stageJobUpdates: (rankingVersion?: string | null) => Promise<PendingJobChanges | null>
+  applyPendingJobChanges: () => void
   refreshPreparationQueue: (rankingVersion?: string | null) => Promise<void>
   refreshApplications: () => Promise<void>
   recordApplication: (application: ApplicationRecord) => void
@@ -80,6 +95,48 @@ const StoreContext = createContext<StoreValue | null>(null)
 const APPLY_QUEUE_PAGE_SIZE = 50
 const DETAIL_CACHE_LIMIT = 25
 const DETAIL_CACHE_TTL_MS = 5 * 60 * 1000
+const SUBMITTED_APPLICATION_STATUSES = new Set<ApplicationStatus>([
+  "submitted",
+  "submitted_manually",
+  "submission_verified",
+])
+
+function isSubmittedApplication(status: ApplicationStatus) {
+  return SUBMITTED_APPLICATION_STATUSES.has(status)
+}
+
+function withoutJobId(jobs: JobListItem[], jobId: string) {
+  return jobs.filter((job) => String(job.id) !== jobId)
+}
+
+function decrementJobsMetaTotal(current: JobsMeta | null) {
+  return current ? { ...current, total: Math.max(0, current.total - 1) } : current
+}
+
+function getPendingJobChanges(
+  currentJobs: JobListItem[],
+  currentMeta: JobsMeta | null,
+  next: JobsSnapshot,
+): PendingJobChanges {
+  const currentById = new Map(currentJobs.map((job) => [job.id, job]))
+  const nextById = new Map(next.jobs.map((job) => [job.id, job]))
+  const added = next.jobs.filter((job) => !currentById.has(job.id)).length
+  const removed = currentJobs.filter((job) => !nextById.has(job.id)).length
+  let updated = next.jobs.filter((job) => {
+    const current = currentById.get(job.id)
+    return current ? JSON.stringify(current) !== JSON.stringify(job) : false
+  }).length
+
+  const rowsChanged = added + updated + removed > 0
+  const metadataChanged = JSON.stringify(currentMeta) !== JSON.stringify(next.meta ?? null)
+  if (!rowsChanged && metadataChanged) updated = 1
+
+  return { added, updated, removed }
+}
+
+function hasPendingJobChanges(changes: PendingJobChanges) {
+  return changes.added + changes.updated + changes.removed > 0
+}
 
 function upsertDetail(current: Record<string, JobDetailEntry>, id: string, entry: JobDetailEntry) {
   const next = { ...current, [id]: entry }
@@ -150,6 +207,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [preparationJobs, setPreparationJobs] = useState<JobListItem[]>([])
   const [applications, setApplications] = useState<ApplicationRecord[]>([])
   const [jobsStatus, setJobsStatus] = useState<ResourceStatus>("idle")
+  const [jobsCountsLoading, setJobsCountsLoading] = useState(false)
   const [preparationJobsStatus, setPreparationJobsStatus] = useState<ResourceStatus>("idle")
   const [applicationsStatus, setApplicationsStatus] = useState<ResourceStatus>("idle")
   const [backendOnline, setBackendOnline] = useState(false)
@@ -163,6 +221,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [rankingVersions, setRankingVersions] = useState<string[]>([])
   const [selectedRankingVersion, setSelectedRankingVersionState] = useState<string | null>(null)
   const [jobDetails, setJobDetails] = useState<Record<string, JobDetailEntry>>({})
+  const [pendingJobsSnapshot, setPendingJobsSnapshot] = useState<PendingJobsSnapshot | null>(null)
   const selectedRankingVersionRef = useRef<string | null>(null)
   const applyQueuePageRef = useRef(1)
   const applyQueueFreshnessRef = useRef<ApplyQueueFreshness>("active")
@@ -175,36 +234,86 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const submittedJobIdsRef = useRef(new Set<string>())
   const detailRequests = useRef(new Map<string, Promise<JobDetail | undefined>>())
 
-  const refresh = useCallback(async (rankingVersion?: string | null) => {
-    const requestId = ++listRequestSeq.current
-    setJobsStatus((current) => (current === "success" || current === "empty" ? "refreshing" : "loading"))
-    try {
-      const version = rankingVersion === undefined ? selectedRankingVersionRef.current : rankingVersion
-      const offset = (applyQueuePageRef.current - 1) * APPLY_QUEUE_PAGE_SIZE
-      const data = await api.getApplyQueue(
-        version,
-        APPLY_QUEUE_PAGE_SIZE,
-        offset,
-        applyQueueFreshnessRef.current,
-        applyQueueQueryRef.current,
-        jobsPipelineFilterRef.current,
-      )
-      if (requestId !== listRequestSeq.current) return
-      setJobs(data.jobs)
-      setRankingVersions(data.ranking_versions)
-      const nextRankingVersion = data.selected_ranking_version ?? data.ranking_versions[0] ?? null
-      selectedRankingVersionRef.current = nextRankingVersion
-      setSelectedRankingVersionState(nextRankingVersion)
-      setJobsMeta(data.meta ?? null)
-      setJobsStatus(data.jobs.length ? "success" : "empty")
-      setBackendOnline(true)
-    } catch {
-      if (requestId === listRequestSeq.current) {
-        setBackendOnline(false)
-        setJobsStatus("error")
-      }
-    }
+  const loadJobsSnapshot = useCallback((rankingVersion?: string | null, includeCounts = true) => {
+    const version = rankingVersion === undefined ? selectedRankingVersionRef.current : rankingVersion
+    const offset = (applyQueuePageRef.current - 1) * APPLY_QUEUE_PAGE_SIZE
+    return api.getApplyQueue(
+      version,
+      APPLY_QUEUE_PAGE_SIZE,
+      offset,
+      applyQueueFreshnessRef.current,
+      applyQueueQueryRef.current,
+      jobsPipelineFilterRef.current,
+      includeCounts,
+    )
   }, [])
+
+  const applyJobsSnapshot = useCallback((data: JobsSnapshot) => {
+    const nextRankingVersion = data.selected_ranking_version ?? data.ranking_versions[0] ?? null
+    setJobs(data.jobs)
+    setRankingVersions(data.ranking_versions)
+    selectedRankingVersionRef.current = nextRankingVersion
+    setSelectedRankingVersionState(nextRankingVersion)
+    setJobsMeta(data.meta ?? null)
+    setJobsStatus(data.jobs.length ? "success" : "empty")
+    setPendingJobsSnapshot(null)
+    setBackendOnline(true)
+  }, [])
+
+  const refresh = useCallback(
+    async (rankingVersion?: string | null) => {
+      const requestId = ++listRequestSeq.current
+      setPendingJobsSnapshot(null)
+      setJobsStatus((current) =>
+        current === "success" || current === "empty" ? "refreshing" : "loading",
+      )
+      try {
+        const data = await loadJobsSnapshot(rankingVersion, false)
+        if (requestId !== listRequestSeq.current) return
+        applyJobsSnapshot(data)
+        setJobsCountsLoading(true)
+        void loadJobsSnapshot(rankingVersion, true)
+          .then((countsData) => {
+            if (requestId === listRequestSeq.current) applyJobsSnapshot(countsData)
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            if (requestId === listRequestSeq.current) setJobsCountsLoading(false)
+          })
+      } catch {
+        if (requestId === listRequestSeq.current) {
+          setBackendOnline(false)
+          setJobsStatus("error")
+          setJobsCountsLoading(false)
+        }
+      }
+    },
+    [applyJobsSnapshot, loadJobsSnapshot],
+  )
+
+  const stageJobUpdates = useCallback(
+    async (rankingVersion?: string | null) => {
+      const requestId = ++listRequestSeq.current
+      try {
+        const data = await loadJobsSnapshot(rankingVersion)
+        if (requestId !== listRequestSeq.current) return { added: 0, updated: 0, removed: 0 }
+        const changes = getPendingJobChanges(jobs, jobsMeta, data)
+        setPendingJobsSnapshot(hasPendingJobChanges(changes) ? { data, changes } : null)
+        setBackendOnline(true)
+        return changes
+      } catch {
+        if (requestId === listRequestSeq.current) setBackendOnline(false)
+        return null
+      }
+    },
+    [jobs, jobsMeta, loadJobsSnapshot],
+  )
+
+  const applyPendingJobChanges = useCallback(() => {
+    if (!pendingJobsSnapshot) return
+    listRequestSeq.current += 1
+    applyJobsSnapshot(pendingJobsSnapshot.data)
+  }, [applyJobsSnapshot, pendingJobsSnapshot])
 
   const refreshPreparationQueue = useCallback(async (rankingVersion?: string | null) => {
     const requestId = ++preparationRequestSeq.current
@@ -221,6 +330,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         "active",
         undefined,
         "apply",
+        false,
       )
       if (requestId !== preparationRequestSeq.current) return
       setPreparationJobs(data.jobs)
@@ -248,7 +358,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setApplications(data.applications)
       submittedJobIdsRef.current = new Set(
         data.applications
-          .filter((application) => ["submitted", "submitted_manually", "submission_verified"].includes(application.status))
+          .filter((application) => isSubmittedApplication(application.status))
           .map((application) => String(application.job_id)),
       )
       setApplicationsStatus(data.applications.length ? "success" : "empty")
@@ -263,21 +373,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const recordApplication = useCallback((application: ApplicationRecord) => {
     setApplications((current) => [application, ...current.filter((item) => item.id !== application.id)])
-    const submitted = ["submitted", "submitted_manually", "submission_verified"].includes(application.status)
-    if (!submitted) return
+    if (!isSubmittedApplication(application.status)) return
 
+    setPendingJobsSnapshot(null)
     const jobId = String(application.job_id)
     const alreadySubmitted = submittedJobIdsRef.current.has(jobId)
     submittedJobIdsRef.current.add(jobId)
-    setJobs((current) => current.filter((job) => String(job.id) !== jobId))
-    setPreparationJobs((current) => current.filter((job) => String(job.id) !== jobId))
+    setJobs((current) => withoutJobId(current, jobId))
+    setPreparationJobs((current) => withoutJobId(current, jobId))
     if (!alreadySubmitted) {
-      setJobsMeta((current) => current ? { ...current, total: Math.max(0, current.total - 1) } : current)
-      setPreparationJobsMeta((current) => current ? { ...current, total: Math.max(0, current.total - 1) } : current)
+      setJobsMeta(decrementJobsMetaTotal)
+      setPreparationJobsMeta(decrementJobsMetaTotal)
     }
-    void refresh()
-    void refreshPreparationQueue()
-  }, [refresh, refreshPreparationQueue])
+  }, [])
 
 
   const setSelectedRankingVersion = useCallback((version: string) => {
@@ -331,14 +439,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void refreshPreparationQueue()
   }, [refreshPreparationQueue])
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void refresh(null)
-      void refreshApplications()
-    }, 0)
-    return () => window.clearTimeout(timer)
-  }, [refresh, refreshApplications])
-
   const getJob = useCallback((id: string) => jobDetails[id]?.job, [jobDetails])
 
   const getJobSummary = useCallback(
@@ -391,6 +491,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [jobDetails])
 
   const setPipelineStatus = useCallback(async (id: string, status: PipelineStatus) => {
+    setPendingJobsSnapshot(null)
     const previousStatus =
       jobs.find((job) => job.id === id)?.pipeline_status ??
       preparationJobs.find((job) => job.id === id)?.pipeline_status
@@ -478,6 +579,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       loading: jobsStatus === "loading",
       preparationLoading: preparationJobsStatus === "loading",
       jobsStatus,
+      jobsCountsLoading,
       preparationJobsStatus,
       applicationsStatus,
       backendOnline,
@@ -491,6 +593,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       preparationJobsMeta,
       rankingVersions,
       selectedRankingVersion,
+      pendingJobChanges: pendingJobsSnapshot?.changes ?? null,
       setApplyQueuePage,
       setApplyQueueFreshness,
       setApplyQueueQuery,
@@ -498,6 +601,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setPreparationQueuePage,
       setSelectedRankingVersion,
       refresh,
+      stageJobUpdates,
+      applyPendingJobChanges,
       refreshPreparationQueue,
       refreshApplications,
       recordApplication,
@@ -515,6 +620,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       preparationJobs,
       applications,
       jobsStatus,
+      jobsCountsLoading,
       preparationJobsStatus,
       applicationsStatus,
       backendOnline,
@@ -527,6 +633,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       preparationJobsMeta,
       rankingVersions,
       selectedRankingVersion,
+      pendingJobsSnapshot,
       setApplyQueuePage,
       setApplyQueueFreshness,
       setApplyQueueQuery,
@@ -534,6 +641,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setPreparationQueuePage,
       setSelectedRankingVersion,
       refresh,
+      stageJobUpdates,
+      applyPendingJobChanges,
       refreshPreparationQueue,
       refreshApplications,
       recordApplication,

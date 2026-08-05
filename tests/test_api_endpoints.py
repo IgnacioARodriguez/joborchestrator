@@ -437,7 +437,7 @@ def test_apply_queue_filters_stale_test_data(tmp_path, monkeypatch):
     for _, row in rows.iterrows():
         db.save_job_ranking(int(row["id"]), make_ranking("ranking_v1.1.0-nvidia", 80, "APPLY_NOW"))
 
-    active = client.get("/api/apply-queue").json()
+    active = client.get("/api/apply-queue", params={"include_counts": True}).json()
     stale = client.get("/api/apply-queue", params={"freshness": "stale"}).json()
 
     assert [job["title"] for job in active["jobs"]] == ["Fresh Role"]
@@ -489,7 +489,7 @@ def test_apply_queue_filters_and_counts_pipeline_before_pagination(tmp_path, mon
 
     saved = client.get(
         "/api/apply-queue",
-        params={"freshness": "all", "pipeline": "saved", "limit": 1, "offset": 1},
+        params={"freshness": "all", "pipeline": "saved", "limit": 1, "offset": 1, "include_counts": True},
     )
     ready = client.get("/api/apply-queue", params={"freshness": "all", "pipeline": "ready"})
     apply_queue = client.get("/api/apply-queue", params={"freshness": "all", "pipeline": "apply"})

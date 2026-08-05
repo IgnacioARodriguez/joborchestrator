@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   ArchiveRestore,
   Bookmark,
@@ -21,7 +21,6 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Input } from "@/components/ui/input"
 import { DecisionBadge, ScoreRing } from "@/components/badges"
 import { PageHeader } from "@/components/page-chrome"
-import { TaskProgressCard } from "@/components/task-progress-card"
 import { useStore } from "@/lib/store"
 import type { JobListItem, PipelineStatus } from "@/lib/types"
 import { PIPELINE_LABELS, rankingSummaryText, relativeTime } from "@/lib/job-ui"
@@ -29,6 +28,31 @@ import { cn } from "@/lib/utils"
 
 type JobsFilter = "all" | "new" | "saved" | "ready" | "discarded"
 type SearchState = "idle" | "searching" | "success" | "empty" | "error"
+
+interface ScrollAnchor {
+  id: string
+  offset: number
+}
+
+function captureScrollAnchor(container: HTMLDivElement | null): ScrollAnchor | null {
+  if (!container) return null
+  const containerTop = container.getBoundingClientRect().top
+  const item = Array.from(container.querySelectorAll<HTMLElement>("[data-job-id]")).find(
+    (element) => element.getBoundingClientRect().bottom > containerTop,
+  )
+  if (!item?.dataset.jobId) return null
+  return { id: item.dataset.jobId, offset: item.getBoundingClientRect().top - containerTop }
+}
+
+function restoreScrollAnchor(container: HTMLDivElement | null, anchor: ScrollAnchor | null) {
+  if (!container || !anchor) return
+  const item = Array.from(container.querySelectorAll<HTMLElement>("[data-job-id]")).find(
+    (element) => element.dataset.jobId === anchor.id,
+  )
+  if (!item) return
+  container.scrollTop +=
+    item.getBoundingClientRect().top - container.getBoundingClientRect().top - anchor.offset
+}
 
 const FILTERS: Array<{ id: JobsFilter; label: string; description: string }> = [
   { id: "all", label: "Todos", description: "Todas las oportunidades activas" },
@@ -80,7 +104,10 @@ function JobListCard({
   ].filter(Boolean)
 
   return (
-    <article className="rounded-lg border border-border bg-card p-3 shadow-[0_1px_2px_rgba(16,24,40,0.03)] transition-colors hover:border-primary/25 sm:p-4">
+    <article
+      data-job-id={job.id}
+      className="rounded-lg border border-border bg-card p-3 shadow-[0_1px_2px_rgba(16,24,40,0.03)] transition-colors hover:border-primary/25 sm:p-4"
+    >
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           <ScoreRing score={job.ranking.final_score} size={52} />
@@ -190,15 +217,19 @@ export function JobsScreen({
     jobsMeta,
     jobsPipelineFilter,
     jobsStatus,
+    jobsCountsLoading,
     loading,
     refresh,
+    pendingJobChanges,
     setApplyQueuePage,
+    applyPendingJobChanges,
     setApplyQueueQuery,
     setJobsPipelineFilter,
     setPipelineStatus,
   } = useStore()
   const [query, setQuery] = useState(applyQueueQuery)
   const [pendingJobId, setPendingJobId] = useState<string | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const filter = jobsPipelineFilter
   const activeJobsTotal = jobsMeta?.total ?? jobs.length
   const offset = jobsMeta?.offset ?? (applyQueuePage - 1) * applyQueuePageSize
@@ -207,13 +238,16 @@ export function JobsScreen({
   const rangeEnd = Math.min(offset + returnedJobs, activeJobsTotal)
   const canPagePrevious = Boolean(jobsMeta?.has_previous) || applyQueuePage > 1
   const canPageNext = Boolean(jobsMeta?.has_next)
+  const pendingChangeCount = pendingJobChanges
+    ? pendingJobChanges.added + pendingJobChanges.updated + pendingJobChanges.removed
+    : 0
 
-  const counts: Record<JobsFilter, number> = {
-    all: jobsMeta?.pipeline_counts?.all ?? jobs.length,
-    new: jobsMeta?.pipeline_counts?.new ?? jobs.filter((job) => statusForFilter(job, "new")).length,
-    saved: jobsMeta?.pipeline_counts?.saved ?? jobs.filter((job) => statusForFilter(job, "saved")).length,
-    ready: jobsMeta?.pipeline_counts?.ready ?? jobs.filter((job) => statusForFilter(job, "ready")).length,
-    discarded: jobsMeta?.pipeline_counts?.discarded ?? jobs.filter((job) => statusForFilter(job, "discarded")).length,
+  const counts: Record<JobsFilter, number | string> = {
+    all: jobsMeta?.pipeline_counts?.all ?? "",
+    new: jobsMeta?.pipeline_counts?.new ?? "",
+    saved: jobsMeta?.pipeline_counts?.saved ?? "",
+    ready: jobsMeta?.pipeline_counts?.ready ?? "",
+    discarded: jobsMeta?.pipeline_counts?.discarded ?? "",
   }
   const allJobsTotal = counts.all
 
@@ -232,6 +266,12 @@ export function JobsScreen({
     }, 250)
     return () => window.clearTimeout(timer)
   }, [applyQueueQuery, query, setApplyQueueQuery])
+
+  function showPendingChanges() {
+    const anchor = captureScrollAnchor(listRef.current)
+    applyPendingJobChanges()
+    window.requestAnimationFrame(() => restoreScrollAnchor(listRef.current, anchor))
+  }
 
   async function moveJob(job: JobListItem, status: PipelineStatus) {
     if (pendingJobId) return
@@ -269,7 +309,7 @@ export function JobsScreen({
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
       <PageHeader
         title="Jobs"
-        description={`${allJobsTotal.toLocaleString()} oportunidades para priorizar y mover a la cola de Aplicar.`}
+        description={`${allJobsTotal ? `${allJobsTotal} oportunidades` : ""} para priorizar y mover a la cola de Aplicar${jobsCountsLoading ? " · calculando conteos…" : "."}`}
         actions={
           <Button onClick={onSearchNewJobs} disabled={!onSearchNewJobs || searchActive}>
             {searchActive ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <Sparkles data-icon="inline-start" />}
@@ -278,9 +318,22 @@ export function JobsScreen({
         }
       />
 
-      {searchActive ? <TaskProgressCard title="Buscando nuevas oportunidades" description={searchMessage ?? "Consultando las fuentes configuradas."} startedAt={searchStartedAt} steps={[{ label: "Preparando tus búsquedas", state: "done" }, { label: "Consultando portales y fuentes", state: "active" }, { label: "Eliminando ofertas repetidas", state: "pending" }, { label: "Ordenando los resultados", state: "pending" }]} /> : searchMessage ? (
-        <div className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground" role="status" aria-live="polite">
-          {searchMessage}
+      {pendingJobChanges ? (
+        <div
+          className="flex flex-col gap-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+          role="status"
+          aria-live="polite"
+        >
+          <div>
+            <p className="text-sm font-medium text-foreground">Hay cambios listos para revisar</p>
+            <p className="text-xs text-muted-foreground">
+              {pendingChangeCount} cambios detectados en esta vista. La lista actual se mantiene estable hasta que decidas mostrarlos.
+            </p>
+          </div>
+          <Button size="sm" onClick={showPendingChanges}>
+            <RotateCcw data-icon="inline-start" />
+            Mostrar cambios
+          </Button>
         </div>
       ) : null}
 
@@ -322,7 +375,7 @@ export function JobsScreen({
 
       {jobsStatus === "refreshing" && !searchActive ? <div className="flex items-center gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2 text-xs text-muted-foreground" role="status"><LoaderCircle className="size-3.5 animate-spin text-primary" />Actualizando resultados…</div> : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1" aria-busy={jobsStatus === "loading" || jobsStatus === "refreshing"}>
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto pr-1" aria-busy={jobsStatus === "loading" || jobsStatus === "refreshing"}>
         {jobsStatus === "loading" ? (
           <div className="flex min-h-[360px] flex-col items-center justify-center gap-3 text-center" role="status"><LoaderCircle className="size-7 animate-spin text-primary" /><p className="text-sm font-medium text-foreground">Cargando oportunidades</p></div>
         ) : jobsStatus === "error" ? (

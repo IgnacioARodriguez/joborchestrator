@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import {
   Ban,
   BriefcaseBusiness,
@@ -154,6 +154,8 @@ type ScanOperationOutput = {
     skipped?: string
   }
 }
+
+type PostActionSync = "none" | "ops" | "changes"
 
 function scanOutput(operation: OperationRun | null): ScanOperationOutput {
   return (operation?.output_json || {}) as ScanOperationOutput
@@ -400,7 +402,7 @@ function ResultList({ results }: { results: ScanResult[] }) {
 }
 
 export function OpsScreen() {
-  const { refresh, backendOnline, jobs } = useStore()
+  const { refresh, stageJobUpdates, backendOnline, jobs } = useStore()
   const backendReady = backendOnline || jobs.length > 0
   const [sources, setSources] = useState<CompanySource[]>([])
   const [hasProfile, setHasProfile] = useState(false)
@@ -430,7 +432,6 @@ export function OpsScreen() {
   const [linkedinLimit, setLinkedinLimit] = useState(75)
   const [linkedinPlan, setLinkedinPlan] = useState<LinkedInSearchPlan | null>(null)
   const [scanOperationId, setScanOperationId] = useState<number | null>(null)
-  const liveRefreshAtRef = useRef(0)
   const busyCopy = operationCopy(busy)
 
   async function loadOps() {
@@ -508,20 +509,23 @@ export function OpsScreen() {
 
   useEffect(() => {
     if (!scanOperationId) return
-    const interval = window.setInterval(async () => {
+    const operationId = scanOperationId
+    let stopped = false
+    let timer: number | undefined
+
+    async function poll() {
+      if (stopped) return
+      if (document.visibilityState === "hidden") {
+        timer = window.setTimeout(poll, 2500)
+        return
+      }
       try {
-        const response = await api.getOperation(scanOperationId)
+        const response = await api.getOperation(operationId)
+        if (stopped) return
         const operation = response.operation
         setLatestScanOperation(operation)
         setBusy("all")
         setBusyDetail(operation.progress_message || "Unified job scan is running.")
-        if (["queued", "running"].includes(operation.status)) {
-          const now = Date.now()
-          if (now - liveRefreshAtRef.current >= 10000) {
-            liveRefreshAtRef.current = now
-            await loadOps()
-          }
-        }
         if (operation.status === "completed") {
           const output = (operation.output_json || {}) as {
             ats?: ScanResult[]
@@ -536,11 +540,11 @@ export function OpsScreen() {
           setBusyDetail("")
           setBusyStartedAt(null)
           setElapsedSeconds(0)
-          await refresh()
-          await loadOps()
+          await Promise.all([stageJobUpdates(), loadOps()])
           toast.success("Unified scrape finished", {
             description: `${output.summary?.new ?? 0} new, ${output.summary?.updated ?? 0} updated, ${output.ranking_job?.queued ?? 0} queued for ranking.`,
           })
+          return
         }
         if (operation.status === "failed") {
           setScanOperationId(null)
@@ -552,6 +556,7 @@ export function OpsScreen() {
           toast.error("Unified scrape failed", {
             description: operation.error ?? "Check local worker logs.",
           })
+          return
         }
       } catch (e) {
         setScanOperationId(null)
@@ -562,21 +567,37 @@ export function OpsScreen() {
         toast.error("Could not check scan operation", {
           description: e instanceof Error ? e.message : "Backend request failed.",
         })
+        return
       }
-    }, 1500)
-    return () => window.clearInterval(interval)
-  }, [refresh, scanOperationId])
 
-  async function runAction<T>(name: string, fn: () => Promise<T>) {
+      if (!stopped) timer = window.setTimeout(poll, 2500)
+    }
+
+    void poll()
+    return () => {
+      stopped = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [scanOperationId, stageJobUpdates])
+
+  async function runAction<T>(
+    name: string,
+    fn: () => Promise<T>,
+    sync: PostActionSync = "ops",
+  ) {
     setBusy(name)
     setBusyDetail(operationCopy(name)?.detail ?? "The backend is processing the request.")
     setBusyStartedAt(Date.now())
     setElapsedSeconds(0)
     try {
       const value = await fn()
-      setBusyDetail("Finishing up and refreshing the dashboard data.")
-      await refresh()
-      await loadOps()
+      const refreshes: Promise<unknown>[] = []
+      if (sync === "changes") refreshes.push(stageJobUpdates())
+      if (sync === "ops" || sync === "changes") refreshes.push(loadOps())
+      if (refreshes.length > 0) {
+        setBusyDetail("Finishing up and checking the relevant dashboard data.")
+        await Promise.all(refreshes)
+      }
       return value
     } catch (e) {
       toast.error("Operation failed", {
@@ -637,7 +658,7 @@ export function OpsScreen() {
           <Button
             variant="outline"
             disabled={busy !== null}
-            onClick={() => void runAction("refresh-jobs", refresh)}
+            onClick={() => void runAction("refresh-jobs", refresh, "none")}
           >
             {busy === "refresh-jobs" ? (
               <LoadingIcon />
@@ -649,7 +670,7 @@ export function OpsScreen() {
           <Button
             variant="outline"
             disabled={busy !== null}
-            onClick={() => void runAction("refresh-ops", loadOps)}
+            onClick={() => void runAction("refresh-ops", loadOps, "none")}
           >
             {busy === "refresh-ops" ? (
               <LoadingIcon />
@@ -682,7 +703,6 @@ export function OpsScreen() {
                     max_pages: 1,
                   })
                   setScanOperationId(res.operation_id)
-                  liveRefreshAtRef.current = 0
                   setBusyDetail(res.progress_message ?? "Queued. Waiting for the local worker.")
                   toast.success(res.already_running ? "Unified scrape already running" : "Unified scrape queued", {
                     description: `Operation #${res.operation_id}`,
@@ -727,7 +747,7 @@ export function OpsScreen() {
       <ScanSummaryCard
         operation={latestScanOperation}
         busy={busy !== null}
-        onRefresh={() => void runAction("refresh-ops", loadOps)}
+        onRefresh={() => void runAction("refresh-ops", loadOps, "none")}
       />
 
       <Card>
@@ -850,7 +870,7 @@ export function OpsScreen() {
                   toast.success("LinkedIn profile selected", {
                     description: res.linkedin_profile.current,
                   })
-                })
+                }, "none")
               }
             >
               {busy === "linkedin-profile" ? <LoadingIcon /> : <LinkIcon data-icon="inline-start" />}
@@ -905,7 +925,7 @@ export function OpsScreen() {
                     res.import_stats.updated ?? 0
                   } updated.`,
                 })
-              })
+              }, "changes")
             }
           >
             {busy === "linkedin" ? (
@@ -986,7 +1006,7 @@ export function OpsScreen() {
                   const res = await api.scanAts()
                   setResults(res.results)
                   toast.success("ATS scan finished")
-                })
+                }, "changes")
               }
             >
               {busy === "ats" ? (
@@ -1140,7 +1160,7 @@ export function OpsScreen() {
                 })
                 setResults(res.results)
                 toast.success("Search scan finished")
-              })
+              }, "changes")
             }
           >
             {busy === "search" ? (
