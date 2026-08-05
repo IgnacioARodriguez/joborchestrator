@@ -617,6 +617,7 @@ def apply_queue(
     freshness: str = "active",
     q: str | None = None,
     pipeline: str = "all",
+    include_counts: bool = True,
 ) -> dict[str, Any]:
     _private_no_store(response)
     if ranking_version and is_heuristic_ranking_version(ranking_version):
@@ -637,11 +638,15 @@ def apply_queue(
             q,
             pipeline_filter,
         )
-        freshness_future = executor.submit(db.count_job_freshness_buckets)
-        pipeline_future = executor.submit(
-            db.count_apply_queue_pipeline_buckets,
-            freshness_filter,
-            q,
+        freshness_future = executor.submit(db.count_job_freshness_buckets) if include_counts else None
+        pipeline_future = (
+            executor.submit(
+                db.count_apply_queue_pipeline_buckets,
+                freshness_filter,
+                q,
+            )
+            if include_counts
+            else None
         )
         total_future = executor.submit(
             db.count_apply_queue_job_postings,
@@ -650,8 +655,8 @@ def apply_queue(
             pipeline_filter,
         )
         rows = jobs_future.result().to_dict("records")
-        freshness_counts = freshness_future.result()
-        pipeline_counts = pipeline_future.result()
+        freshness_counts = freshness_future.result() if freshness_future else {}
+        pipeline_counts = pipeline_future.result() if pipeline_future else {}
         total = total_future.result()
     jobs = sorted(
         [
