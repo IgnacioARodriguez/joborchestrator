@@ -617,7 +617,7 @@ def apply_queue(
     freshness: str = "active",
     q: str | None = None,
     pipeline: str = "all",
-    include_counts: bool = True,
+    include_counts: bool = False,
 ) -> dict[str, Any]:
     _private_no_store(response)
     if ranking_version and is_heuristic_ranking_version(ranking_version):
