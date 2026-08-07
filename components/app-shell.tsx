@@ -496,7 +496,7 @@ export function AppShell({ initialSection }: { initialSection?: Section }) {
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <ActivityCenter operations={activityOperations} onRetry={(operation) => toast("Reintento disponible", { description: `Vuelve a iniciar ${operation.type} desde su pantalla.` })} />
+              <ActivityCenter operations={activityOperations} onOpen={() => void loadOpsStatus()} onRetry={(operation) => toast("Reintento disponible", { description: `Vuelve a iniciar ${operation.type} desde su pantalla.` })} />
               {canRefreshCurrentSection ? (
                 <Button
                   variant="outline"

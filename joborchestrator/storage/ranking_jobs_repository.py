@@ -68,11 +68,17 @@ def create_ranking_job(
         conn.close()
 
 
-def list_ranking_jobs(connect: ConnectionFactory, read_sql_query: ReadSqlQuery, limit: int = 20) -> pd.DataFrame:
+def list_ranking_jobs(
+    connect: ConnectionFactory,
+    read_sql_query: ReadSqlQuery,
+    limit: int = 20,
+    active_only: bool = False,
+) -> pd.DataFrame:
     conn = connect()
     try:
+        status_filter = "WHERE rj.status IN ('queued', 'running')" if active_only else ""
         return read_sql_query(
-            """SELECT
+            f"""SELECT
                    rj.*,
                    COALESCE(counts.queued_items, 0) AS queued_items,
                    COALESCE(counts.running_items, 0) AS running_items,
@@ -99,6 +105,7 @@ def list_ranking_jobs(connect: ConnectionFactory, read_sql_query: ReadSqlQuery, 
                    FROM ranking_job_items
                    GROUP BY ranking_job_id
                ) counts ON counts.ranking_job_id = rj.id
+               {status_filter}
                ORDER BY rj.created_at DESC
                LIMIT ?""",
             conn,
