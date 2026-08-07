@@ -55,10 +55,10 @@ function OperationItem({ operation, onRetry }: { operation: OperationRun; onRetr
 export function ActivityCenter({ operations, onRetry, onOpen }: { operations: OperationRun[]; onRetry?: (operation: OperationRun) => void; onOpen?: () => void }) {
   const [open, setOpen] = useState(false)
   const active = operations.filter((operation) => ["queued", "running"].includes(operation.status))
-  const attention = operations.filter((operation) => ["failed", "cancelled"].includes(operation.status))
   const recent = operations.filter((operation) => !["queued", "running"].includes(operation.status)).slice(0, 8)
   const visibleOperations = [...active, ...recent]
-  const badgeCount = active.length + attention.length
+  const recentAttention = recent.filter((operation) => ["failed", "cancelled"].includes(operation.status))
+  const badgeCount = active.length + recentAttention.length
   function toggleOpen() {
     if (!open) onOpen?.()
     setOpen((value) => !value)
