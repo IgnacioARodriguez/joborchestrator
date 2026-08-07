@@ -17,12 +17,10 @@ from scripts.smoke_vercel_backend import DEFAULT_BASE_URL, run_vercel_backend_sm
 
 
 SECTIONS = {
-    "Today": "Action queue",
-    "Review": "Opportunity review",
-    "Applications": "Application kanban",
-    "Profile": "Candidate profile",
-    "Automations": "Automation control room",
-    "Insights": "Performance signals",
+    "Jobs": "Jobs",
+    "Aplicar": "Aplicar",
+    "Aplicaciones": "Seguimiento de candidaturas",
+    "Configuración": "Configuración",
 }
 
 
@@ -54,6 +52,7 @@ def run_vercel_ui_smoke(
     console_errors: list[str] = []
     failed_requests: list[str] = []
     responses: list[dict[str, Any]] = []
+    smoke_started = time.perf_counter()
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=headless)
@@ -62,7 +61,9 @@ def run_vercel_ui_smoke(
         page.on("requestfailed", lambda request: failed_requests.append(f"{request.method} {request.url}: {request.failure}"))
         page.on("response", lambda response: _record_response(responses, response.url, response.status))
         try:
+            initial_load_started = time.perf_counter()
             page.goto(normalized_base_url, wait_until="networkidle", timeout=90_000)
+            initial_load_ms = _elapsed_ms(initial_load_started)
             ui_summary = verify_production_ui(page, backend["summary"] if backend else {})
             page.screenshot(path=str(target_screenshot), full_page=True)
         finally:
@@ -80,6 +81,14 @@ def run_vercel_ui_smoke(
     ]
     server_errors = [response for response in responses if response["status"] >= 500]
     ui_passed = not serious_console_errors and not serious_failed_requests and not server_errors
+    timings = {
+        "initial_load_ms": initial_load_ms,
+        "sections_ms": ui_summary["section_timings_ms"],
+        "total_ui_ms": _elapsed_ms(smoke_started),
+        "slow_sections": [
+            section for section, duration in ui_summary["section_timings_ms"].items() if duration > 2_000
+        ],
+    }
     return {
         "passed": bool((backend is None or backend["passed"]) and ui_passed),
         "mode": "vercel_ui_readonly",
@@ -90,18 +99,21 @@ def run_vercel_ui_smoke(
         "failed_requests": serious_failed_requests,
         "server_errors": server_errors,
         "api_response_count": len(responses),
+        "timings_ms": timings,
         "screenshot": str(target_screenshot),
     }
 
 
 def verify_production_ui(page: Page, backend_summary: dict[str, Any]) -> dict[str, Any]:
-    expect(page.get_by_text("Job Orchestrator").first).to_be_visible(timeout=30_000)
-    expect(page.get_by_role("heading", name="Action queue")).to_be_visible(timeout=30_000)
+    expect(page.get_by_role("heading", name="Jobs")).to_be_visible(timeout=30_000)
 
     checked_sections: list[str] = []
+    section_timings_ms: dict[str, int] = {}
     for nav_label, heading in SECTIONS.items():
+        started = time.perf_counter()
         _click_nav(page, nav_label)
         expect(page.get_by_role("heading", name=heading)).to_be_visible(timeout=30_000)
+        section_timings_ms[nav_label] = _elapsed_ms(started)
         checked_sections.append(nav_label)
 
     text = page.locator("body").inner_text(timeout=15_000)
@@ -111,17 +123,17 @@ def verify_production_ui(page: Page, backend_summary: dict[str, Any]) -> dict[st
         "body_text_chars": len(text),
         "visible_profile": bool(backend_summary.get("profile_present")),
         "visible_jobs_total": backend_summary.get("jobs_total"),
+        "section_timings_ms": section_timings_ms,
     }
 
 
 def require_screen_text(body_text: str, backend_summary: dict[str, Any]) -> None:
     required_labels = [
-        "Job Orchestrator",
-        "Performance signals",
-        "turso",
+        "Jobs",
+        "Aplicar",
+        "Aplicaciones",
+        "Configuración",
     ]
-    if backend_summary.get("profile_present"):
-        required_labels.append("Profile")
     missing = [label for label in required_labels if label not in body_text]
     if missing:
         raise AssertionError(f"Production UI missing expected text: {', '.join(missing)}")
@@ -135,6 +147,10 @@ def _click_nav(page: Page, name: str) -> None:
 def _record_response(responses: list[dict[str, Any]], url: str, status: int) -> None:
     if "/api/" in url:
         responses.append({"url": url, "status": status})
+
+
+def _elapsed_ms(started: float) -> int:
+    return round((time.perf_counter() - started) * 1000)
 
 
 def _run_backend_preflight(base_url: str, *, attempts: int) -> dict[str, Any]:
@@ -186,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
             backend_attempts=args.backend_attempts,
         )
     except Exception as exc:  # noqa: BLE001 - CLI should print a readable smoke failure.
-        print(json.dumps({"passed": False, "error": type(exc).__name__, "message": str(exc)}, ensure_ascii=False, indent=2))
+        print(json.dumps({"passed": False, "error": type(exc).__name__, "message": str(exc)}, ensure_ascii=True, indent=2))
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["passed"] else 1

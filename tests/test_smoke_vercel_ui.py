@@ -3,24 +3,33 @@ from __future__ import annotations
 from scripts import smoke_vercel_ui
 
 
+def test_elapsed_ms_returns_non_negative_integer():
+    started = smoke_vercel_ui.time.perf_counter()
+
+    elapsed = smoke_vercel_ui._elapsed_ms(started)
+
+    assert isinstance(elapsed, int)
+    assert elapsed >= 0
+
+
 def test_vercel_ui_required_text_accepts_readonly_production_summary():
     smoke_vercel_ui.require_screen_text(
-        "Job Orchestrator\nProfile\nPerformance signals\nturso",
+        "Jobs\nAplicar\nAplicaciones\nConfiguración",
         {"jobs_total": 383, "profile_present": True},
     )
 
 
 def test_vercel_ui_required_text_reports_missing_labels():
     try:
-        smoke_vercel_ui.require_screen_text("Job Orchestrator", {"jobs_total": 1, "profile_present": True})
+        smoke_vercel_ui.require_screen_text("Jobs", {"jobs_total": 1, "profile_present": True})
     except AssertionError as exc:
         message = str(exc)
     else:
         raise AssertionError("Expected missing text assertion.")
 
-    assert "Performance signals" in message
-    assert "Profile" in message
-    assert "turso" in message
+    assert "Aplicar" in message
+    assert "Aplicaciones" in message
+    assert "Configuración" in message
 
 
 def test_vercel_ui_smoke_short_circuits_when_backend_fails(monkeypatch):

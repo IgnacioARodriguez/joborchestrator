@@ -141,10 +141,15 @@ def seed_ui_database(db_path: Path) -> dict[str, Any]:
             db.save_job_ranking(job_id, _ui_ranking(score, decision))
             db.update_job_application_materials(
                 job_id,
-                pipeline_status="shortlisted",
+                pipeline_status="ready_to_apply" if index == 2 else "shortlisted",
                 recruiter_message=f"Hi {company}, Python and FastAPI backend fit for {title}.",
                 cover_letter=f"{company} needs {title} execution with Python, FastAPI and PostgreSQL.",
-                ats_cv_text=profile["base_cv_text"],
+                ats_cv_text=(
+                    profile["base_cv_text"]
+                    + "\n\nSelected impact\n"
+                    + "Delivered reliable backend services, improved API operations, and collaborated with product teams "
+                    + "to ship maintainable platform capabilities for SaaS users."
+                ),
                 autofill_notes="Use Python, FastAPI, PostgreSQL and AWS examples.",
                 materials_review_states={
                     "ats_cv": "approved",
@@ -188,14 +193,14 @@ def _verify_dashboard(page: Page, seed: dict[str, Any]) -> None:
     expect(page.get_by_role("heading", name="Aplicar")).to_be_visible(timeout=15_000)
     expect(page.get_by_text("Platform Engineer", exact=True)).to_be_visible(timeout=15_000)
     expect(page.get_by_text("Listo para aplicar", exact=True)).to_be_visible(timeout=15_000)
-    expect(page.get_by_text("Senior Backend Engineer", exact=True)).not_to_be_visible(timeout=15_000)
+    expect(page.get_by_text("Senior Backend Engineer", exact=True).first).not_to_be_visible(timeout=15_000)
     page.get_by_role("button", name="Revisar materiales").click(timeout=15_000)
     expect(page.get_by_role("dialog").get_by_text("Application materials")).to_be_visible(timeout=15_000)
     page.keyboard.press("Escape")
 
     _click_nav(page, "Aplicaciones")
     expect(page.get_by_role("heading", name="Seguimiento de candidaturas")).to_be_visible(timeout=15_000)
-    expect(page.get_by_text("Senior Backend Engineer", exact=True)).to_be_visible(timeout=15_000)
+    expect(page.get_by_text("Senior Backend Engineer", exact=True).first).to_be_visible(timeout=15_000)
     expect(page.get_by_text("Próxima acción", exact=True)).to_be_visible(timeout=15_000)
     expect(page.get_by_text("Enviar seguimiento al recruiter", exact=True)).to_be_visible(timeout=15_000)
 
