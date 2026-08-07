@@ -463,6 +463,8 @@ def worker_status() -> dict[str, Any]:
 def ops_status() -> dict[str, Any]:
     operations = db.list_operations(limit=25)
     ranking_jobs = db.list_ranking_jobs(limit=10).to_dict("records")
+    active_operations = db.list_active_operations()
+    active_ranking_jobs = db.list_ranking_jobs(active_only=True).to_dict("records")
     local_worker_types = {
         "cv_profile_import",
         "application_materials_generation",
@@ -472,17 +474,16 @@ def ops_status() -> dict[str, Any]:
         "application_execution",
     }
     local_ops = [op for op in operations if op["type"] in local_worker_types]
-    active_local_ops = [op for op in local_ops if op["status"] in {"queued", "running"}]
-    active_ranking_jobs = [job for job in ranking_jobs if job["status"] in {"queued", "running"}]
+    active_local_ops = [op for op in active_operations if op["type"] in local_worker_types]
     latest_scan = next((op for op in operations if op["type"] == "job_scan"), None)
     latest_ranking = ranking_jobs[0] if ranking_jobs else None
     return {
         "mode": db_connection.connection_mode(),
         "local_worker_needed": bool(active_local_ops),
         "ranking_worker_needed": bool(active_ranking_jobs),
-        "active_local_operations": active_local_ops[:5],
+        "active_local_operations": active_local_ops,
         "recent_local_operations": local_ops[:10],
-        "active_ranking_jobs": active_ranking_jobs[:5],
+        "active_ranking_jobs": active_ranking_jobs,
         "latest_scan_operation": latest_scan,
         "latest_ranking_job": latest_ranking,
         "summary": _ops_status_summary(active_local_ops, active_ranking_jobs, latest_scan, latest_ranking),
@@ -1439,7 +1440,7 @@ def _materials_model_for_provider(provider: str, model: str | None) -> str:
     if provider == "nvidia":
         return DEFAULT_NVIDIA_MATERIALS_MODEL
     if provider == "openai":
-        return DEFAULT_MATERIALS_MODEL
+        return DEFAULT_MATERIALS_MODEL.removeprefix("openai/")
     if provider == "openrouter":
         return os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
     return "heuristic"

@@ -93,6 +93,24 @@ def list_operations(connect: ConnectionFactory, limit: int = 20) -> list[dict]:
         conn.close()
 
 
+def list_active_operations(connect: ConnectionFactory) -> list[dict]:
+    conn = connect()
+    try:
+        rows = conn.execute(
+            """SELECT *
+               FROM operation_runs
+               WHERE status IN ('queued', 'running')
+               ORDER BY
+                 CASE status WHEN 'running' THEN 0 ELSE 1 END,
+                 updated_at DESC,
+                 created_at DESC,
+                 id DESC"""
+        ).fetchall()
+        return [operation_row_to_dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def list_operations_by_ids(connect: ConnectionFactory, operation_ids: list[int]) -> list[dict]:
     unique_ids = list(
         dict.fromkeys(operation_id for operation_id in operation_ids if operation_id > 0)

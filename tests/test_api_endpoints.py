@@ -631,13 +631,16 @@ def test_scan_fresh_queues_scan_with_auto_ranking(tmp_path, monkeypatch):
 
 def test_ops_status_reports_local_and_ranking_work(tmp_path, monkeypatch):
     client = client_for_tmp_db(tmp_path, monkeypatch)
-    db.create_operation("job_scan", {"include_ats": True}, "Queued scan.")
+    active_scan_id = db.create_operation("job_scan", {"include_ats": True}, "Queued scan.")
+    for index in range(30):
+        operation_id = db.create_operation("job_scan", {"index": index}, "Completed scan.")
+        db.complete_operation(operation_id, {}, "Completed.")
     db.upsert_job_posting(
         make_job(external_id="rank-me", title="Rank Me"),
         seen_at=datetime.now().isoformat(timespec="seconds"),
     )
     job_id = int(db.get_job_postings(limit=1).iloc[0]["id"])
-    db.create_ranking_job(
+    active_ranking_id = db.create_ranking_job(
         provider="nvidia",
         model="test-model",
         ranking_version="ranking_v1.1.0-nvidia",
@@ -645,6 +648,15 @@ def test_ops_status_reports_local_and_ranking_work(tmp_path, monkeypatch):
         request_batch_size=1,
         max_concurrency=1,
     )
+    for index in range(11):
+        db.create_ranking_job(
+            provider="nvidia",
+            model="test-model",
+            ranking_version="ranking_v1.1.0-nvidia",
+            job_ids=[job_id],
+            request_batch_size=1,
+            max_concurrency=1,
+        )
 
     response = client.get("/api/ops/status")
 
@@ -652,6 +664,8 @@ def test_ops_status_reports_local_and_ranking_work(tmp_path, monkeypatch):
     body = response.json()
     assert body["local_worker_needed"] is True
     assert body["ranking_worker_needed"] is True
+    assert active_scan_id in {operation["id"] for operation in body["active_local_operations"]}
+    assert active_ranking_id in {job["id"] for job in body["active_ranking_jobs"]}
     assert body["latest_scan_operation"]["type"] == "job_scan"
     assert body["latest_ranking_job"]["status"] == "queued"
     assert body["expected_commands"]["workers"] == "npm run workers"

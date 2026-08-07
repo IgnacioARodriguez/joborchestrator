@@ -158,22 +158,6 @@ CREATE TABLE IF NOT EXISTS job_postings (
 CREATE INDEX IF NOT EXISTS idx_job_postings_status ON job_postings(status);
 CREATE INDEX IF NOT EXISTS idx_job_postings_last_seen ON job_postings(last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_job_postings_identity ON job_postings(identity_key);
-CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness_v2
-    ON job_postings(
-        COALESCE(pipeline_status, 'new'),
-        COALESCE(posted_at, first_seen_at, last_seen_at)
-    );
-CREATE INDEX IF NOT EXISTS idx_job_postings_apply_freshness_v3
-    ON job_postings(
-        CASE
-          WHEN posted_at IS NULL THEN COALESCE(first_seen_at, last_seen_at)
-          WHEN posted_at NOT LIKE '____-__-__%'
-               AND posted_at GLOB '[0-9]*'
-            THEN datetime(CAST(posted_at AS INTEGER), 'unixepoch')
-          ELSE posted_at
-        END
-    );
-
 CREATE TABLE IF NOT EXISTS job_hiring_contacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_posting_id INTEGER NOT NULL,
@@ -1180,6 +1164,10 @@ def list_operations(limit: int = 20) -> list[dict]:
     return operations_repository.list_operations(_conn, limit)
 
 
+def list_active_operations() -> list[dict]:
+    return operations_repository.list_active_operations(_conn)
+
+
 def list_operations_by_ids(operation_ids: list[int]) -> list[dict]:
     return operations_repository.list_operations_by_ids(_conn, operation_ids)
 
@@ -1777,8 +1765,8 @@ def create_ranking_job(
     )
 
 
-def list_ranking_jobs(limit: int = 20) -> pd.DataFrame:
-    return ranking_jobs_repository.list_ranking_jobs(_conn, _read_sql_query, limit)
+def list_ranking_jobs(limit: int = 20, active_only: bool = False) -> pd.DataFrame:
+    return ranking_jobs_repository.list_ranking_jobs(_conn, _read_sql_query, limit, active_only)
 
 
 def get_ranking_job(ranking_job_id: int) -> dict | None:

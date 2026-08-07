@@ -1287,7 +1287,19 @@ def _call_openai(
     retry_limit = _coerce_validation_retry_limit(validation_retry_limit, payload)
     for attempt in range(retry_limit + 1):
         try:
-            parsed = _call_openai_once(payload, api_key, model, timeout, validation_feedback, provider_name=provider_name)
+            call_kwargs = (
+                {"provider_name": provider_name}
+                if "provider_name" in inspect.signature(_call_openai_once).parameters
+                else {}
+            )
+            parsed = _call_openai_once(
+                payload,
+                api_key,
+                model,
+                timeout,
+                validation_feedback,
+                **call_kwargs,
+            )
         except LLMMaterialsError as exc:
             raise LLMMaterialsError(
                 str(exc),
